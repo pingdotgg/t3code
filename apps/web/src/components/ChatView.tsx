@@ -2279,7 +2279,6 @@ export default function ChatView(props: ChatViewProps) {
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -2297,26 +2296,18 @@ export default function ChatView(props: ChatViewProps) {
     [activeRightPanelSurface, rightPanelState.surfaces],
   );
   const rightPanelPresence = usePanelPresence(
-    rightPanelOpen && activeThreadRef !== null,
+    rightPanelState.isOpen && activeThreadRef !== null,
     rightPanelPresenceValue,
     panelAnimationsActive,
     activeThreadKey,
     panelAnimationDurationMs,
   );
-  const rightPanelPresent = rightPanelPresence.present;
-  const rightPanelControlsInPanel =
-    shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
     activePreviewMiniPlayer?.source ?? null,
     renderedRightPanelSurface,
   );
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
@@ -3203,6 +3194,15 @@ export default function ChatView(props: ChatViewProps) {
   const cloudExecution = persistedProviderThread?.nativeMetadata?.cloudExecution;
   const isCloudThread =
     !!cloudExecution || persistedProviderThread?.driver === "kilo-cloud" || isCloudComposer;
+  const rightPanelOpen = !isCloudThread && rightPanelState.isOpen;
+  const rightPanelPresent = !isCloudThread && rightPanelPresence.present;
+  const rightPanelControlsInPanel =
+    shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
+  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
+  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const rightPanelMaximized =
+    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled && !isCloudComposer,
     provider: activeProviderStatus,
@@ -8998,6 +8998,7 @@ export default function ChatView(props: ChatViewProps) {
       });
       if (composerRef.current?.validateProviderInput(text) === false) return;
       multipleTargets.push({
+        requiresLocalWorktree: provider.driverKind !== "kilo-cloud",
         selection: createModelSelection(
           selection.instanceId,
           selection.model,
@@ -9199,12 +9200,16 @@ export default function ChatView(props: ChatViewProps) {
                       worktreePath: null,
                       createdAt: messageCreatedAt,
                     },
-                    prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
-                      baseBranch: activeThreadBranch!,
-                      requireWorktree: true,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
-                    },
+                    ...(target.requiresLocalWorktree
+                      ? {
+                          prepareWorktree: {
+                            projectCwd: activeProject.workspaceRoot,
+                            baseBranch: activeThreadBranch!,
+                            requireWorktree: true,
+                            ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                          },
+                        }
+                      : {}),
                     runSetupScript: true,
                   },
                   createdAt: messageCreatedAt,
@@ -11603,7 +11608,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={!isCloudThread && pullRequestsSurfaceAvailable}
           deviceAvailable={!isCloudThread && activeThreadRef !== null}
         >
-          {isCloudThread ? null : rightPanelContent}
+          {rightPanelContent}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
@@ -11658,7 +11663,7 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestsAvailable={!isCloudThread && pullRequestsSurfaceAvailable}
             deviceAvailable={!isCloudThread && activeThreadRef !== null}
           >
-            {isCloudThread ? null : rightPanelContent}
+            {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
