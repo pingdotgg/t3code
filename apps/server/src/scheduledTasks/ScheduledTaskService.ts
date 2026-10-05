@@ -1060,7 +1060,9 @@ export const layer = Layer.effect(
                               : Effect.fail(taskError(error.message, { taskId: id })),
                           ),
                         );
-                const provided = fromRef ?? signature?.secret;
+                // A ref, when given, is the only source: a plain secret sent
+                // alongside it must not replace what a replayed save stored.
+                const provided = signature?.secretRef === undefined ? signature?.secret : fromRef;
                 const secret = signature == null ? null : (provided ?? existing?.secret ?? null);
                 const secretChanged =
                   signature == null || provided !== undefined || existing === null;

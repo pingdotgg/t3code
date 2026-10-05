@@ -781,8 +781,24 @@ it.effect("a retried save with an already used secretRef keeps the stored secret
         },
       });
       const first = yield* service.upsert(yield* save);
-      // The agent never saw the first result, so it sends the same call again.
-      const retried = yield* service.upsert(yield* save);
+      // The agent never saw the first result, so it sends the same call again,
+      // this time with a plain secret alongside the used ref.
+      const retried = yield* service.upsert(
+        yield* webhookTaskInput({
+          id: undefined,
+          commandId: "command:mcp:schedule-task:release-hook",
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              secretRef: "secret-ref:00000000000000000000000000000002",
+              secret: "made-up-secret",
+            },
+          },
+        }),
+      );
       assert.equal(retried.task.id, first.task.id);
       const signed = yield* service.triggerWebhook(
         requestFor(retried.task, {

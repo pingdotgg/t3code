@@ -6928,32 +6928,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Turn item ${command.turnItemId} is not a secret request.`,
         });
       }
-      // A request is answered once; later updates cannot reopen or change it.
-      if (existing !== undefined && existing.secretStatus !== "pending") return;
-
+      if (existing !== undefined && existing.runId !== command.runId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Secret request ${command.turnItemId} belongs to another run.`,
+        });
+      }
       const now = yield* DateTime.now;
+      // A request is answered once, and a retry finds its card as it was
+      // asked: either one records the card unchanged.
+      const unchanged =
+        existing !== undefined &&
+        (existing.secretStatus !== "pending" || command.secretStatus === "pending");
       const pending = command.secretStatus === "pending";
-      const turnItem: OrchestrationV2TurnItem = {
-        id: command.turnItemId,
-        threadId: command.threadId,
-        runId: command.runId,
-        nodeId: command.nodeId,
-        providerThreadId: run.providerThreadId,
-        providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
-        status: pending ? "waiting" : command.secretStatus === "saved" ? "completed" : "cancelled",
-        title: command.label,
-        startedAt: existing?.startedAt ?? now,
-        completedAt: pending ? null : now,
-        updatedAt: now,
-        type: "secret_request",
-        label: command.label,
-        reason: command.reason,
-        ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
-        secretStatus: command.secretStatus,
-      };
+      const turnItem: OrchestrationV2TurnItem = unchanged
+        ? existing
+        : {
+            id: command.turnItemId,
+            threadId: command.threadId,
+            runId: command.runId,
+            nodeId: command.nodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+            status: pending
+              ? "waiting"
+              : command.secretStatus === "saved"
+                ? "completed"
+                : "cancelled",
+            title: command.label,
+            startedAt: existing?.startedAt ?? now,
+            completedAt: pending ? null : now,
+            updatedAt: now,
+            type: "secret_request",
+            label: command.label,
+            reason: command.reason,
+            ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
+            secretStatus: command.secretStatus,
+          };
       yield* emit(
         events,
         command,

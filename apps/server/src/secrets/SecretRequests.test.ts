@@ -32,7 +32,11 @@ const withService = <A, E>(
     readonly stored: Map<string, Uint8Array>;
     readonly dispatched: Array<OrchestrationV2ServerCommand>;
   }) => Effect.Effect<A, E>,
-  options: { readonly threadId?: ThreadId; readonly runStatus?: string } = {},
+  options: {
+    readonly threadId?: ThreadId;
+    readonly runStatus?: string;
+    readonly removeFails?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const stored = new Map<string, Uint8Array>();
@@ -70,7 +74,15 @@ const withService = <A, E>(
               stored.set(name, value);
               return value;
             }),
-          remove: (name) => Effect.sync(() => void stored.delete(name)),
+          remove: (name) =>
+            options.removeFails
+              ? Effect.fail(
+                  new ServerSecretStore.SecretStorePersistError({
+                    resource: name,
+                    cause: new Error("read-only"),
+                  }),
+                )
+              : Effect.sync(() => void stored.delete(name)),
         }),
       ),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -292,5 +304,22 @@ it.effect("drops values nobody used once they expire, and keeps the rest", () =>
         Layer.provideMerge(NodeServices.layer),
       ),
     ),
+  ),
+);
+
+it.effect("a used value that cannot be deleted is not handed out", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "ghp_secret" },
+        });
+        const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+        const failed = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
+        assert.include(failed.message, "Could not use");
+      }),
+    { removeFails: true },
   ),
 );

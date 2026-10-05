@@ -1546,6 +1546,23 @@ describe("orchestrator MCP toolkit", () => {
               label: "GitHub webhook secret",
               placeholder: "Paste the webhook secret",
             });
+            // Asking again with the same id leaves the open card exactly as it was.
+            yield* orchestrator.dispatch({
+              type: "secret_request.record",
+              commandId: CommandId.make("command:test:secret-request-replay"),
+              threadId: parentThreadId,
+              runId: card.runId!,
+              nodeId: card.nodeId!,
+              turnItemId: card.id,
+              label: "Something else",
+              reason: "A different reason.",
+              secretStatus: "pending",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.find(
+                (item) => item.id === card.id,
+              ),
+            ).toMatchObject({ label: "GitHub webhook secret", runId: card.runId });
             // The agent is blocked on the user, so the thread asks for input
             // like a question does, in both shell paths.
             expect(

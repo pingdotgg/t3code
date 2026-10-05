@@ -165,6 +165,17 @@ const make = Effect.gen(function* () {
       return Option.map(stored, () => ref);
     });
 
+  /** Removes a stored value; a failure is logged, since the value is still on disk. */
+  const removeLogged = (name: string) =>
+    store.remove(name).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("Could not delete a secret request value", {
+          errorTag: error._tag,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+
   const consume: SecretRequests["Service"]["consume"] = (input) =>
     consumeRef(input).pipe(
       Effect.tap(() => Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "used" })),
@@ -189,11 +200,15 @@ const make = Effect.gen(function* () {
         );
       }
       if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
-        yield* store.remove(storeName(input.ref)).pipe(Effect.ignore);
+        // The hourly sweep retries a removal that fails here.
+        yield* removeLogged(storeName(input.ref));
         return yield* fail("That secretRef expired. Ask the user again with request_secret.");
       }
-      // One use: the value moves into whatever consumed it.
-      yield* store.remove(storeName(input.ref)).pipe(Effect.ignore);
+      // One use: the value moves into whatever consumed it. If it cannot be
+      // deleted, it is not handed out, so a ref is never used twice.
+      if (!(yield* removeLogged(storeName(input.ref)))) {
+        return yield* fail("Could not use that secretRef. Try again.");
+      }
       return decoded.value.value;
     });
 
@@ -215,8 +230,7 @@ const make = Effect.gen(function* () {
         decodeStored(new TextDecoder().decode(bytes)),
       );
       if (Option.isSome(decoded) && now - decoded.value.savedAt <= SECRET_REF_TTL_MS) continue;
-      yield* store.remove(name).pipe(Effect.ignore);
-      removed += 1;
+      if (yield* removeLogged(name)) removed += 1;
     }
     yield* Effect.annotateCurrentSpan({ "secret_request.expired_removed": removed });
   }).pipe(
