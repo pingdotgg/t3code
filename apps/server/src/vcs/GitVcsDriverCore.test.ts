@@ -1211,7 +1211,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(
           remote,
           "hooks/pre-receive",
-          '#!/bin/sh\necho "authentication failed" >&2\nexit 1\n',
+          '#!/bin/sh\necho "authentication failed" >&2\necho "Permission denied (publickey)." >&2\necho "Host key verification failed." >&2\nexit 1\n',
         );
         yield* fileSystem.chmod(preReceive, 0o755);
 

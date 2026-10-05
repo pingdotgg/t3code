@@ -476,7 +476,10 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   const diagnostics = stderr
     .split(/\r?\n/)
     .filter(
-      (line) => GIT_DIAGNOSTIC_LINE_PATTERN.test(line) || SSH_TRANSPORT_REFUSAL_PATTERN.test(line),
+      (line) =>
+        GIT_DIAGNOSTIC_LINE_PATTERN.test(line) ||
+        // A remote hook can echo ssh's wording; only the local ssh's line counts.
+        (!/^remote:/.test(line) && SSH_TRANSPORT_REFUSAL_PATTERN.test(line)),
     )
     .join("\n");
   if (diagnostics.length === 0) return null;
