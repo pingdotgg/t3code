@@ -8,16 +8,18 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { useHtmlRenderSlot } from "../../lib/htmlRenderSlots";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { ThreadMediaVisibleContext } from "./threadMediaVisibility";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -205,6 +207,10 @@ export function ThreadHtmlRender(props: {
     }),
     [attachmentId, fileName],
   );
+  // Only a few pages keep a live WebView; the rest show a placeholder until
+  // they scroll back into view or are tapped.
+  const visible = use(ThreadMediaVisibleContext);
+  const slot = useHtmlRenderSlot(`${props.environmentId}:${attachmentId}`, visible);
   const asset = useAssetUrlState(props.environmentId, resource);
   const refresh = useRefreshAssetUrl(props.environmentId, resource);
   // Signed URLs are re-minted periodically; following them would reload the page.
@@ -231,7 +237,20 @@ export function ThreadHtmlRender(props: {
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
       <View style={{ height }}>
-        {uri !== null && !failed ? (
+        {uri !== null && !failed && !slot.live ? (
+          // Off screen there is nothing to show; on screen this page lost its
+          // slot to other visible pages, so a tap takes it back.
+          !visible ? null : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Load ${title}`}
+              className="flex-1 items-center justify-center"
+              onPress={slot.claim}
+            >
+              <Text className="text-sm text-foreground-muted">{title}</Text>
+            </Pressable>
+          )
+        ) : uri !== null && !failed ? (
           <HtmlRenderWebView
             key={`${uri}:${attempt}`}
             uri={uri}
