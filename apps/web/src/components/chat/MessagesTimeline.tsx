@@ -276,6 +276,7 @@ import {
   V2LifecycleRow,
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
+import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
@@ -2807,6 +2808,15 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
   const { item, visibility, sourceThreadId } = row.projectedItem;
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
     return <V2SubagentGroup key={row.id} row={row} />;
+  }
+  if (item.type === "secret_request") {
+    return (
+      <SecretRequestCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
   }
   if (isV2LifecycleItem(item)) {
     return (
