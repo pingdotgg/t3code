@@ -170,13 +170,11 @@ export const acquireSshPortForward = DesktopIpc.makeIpcMethod({
   }) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     return yield* sshEnvironment.acquirePortForward(target, remotePort).pipe(
-      Effect.catch((error) =>
-        DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
-          ? Effect.succeed({
-              type: DesktopSshPasswordPromptCancelledType,
-              message: error.message,
-            })
-          : Effect.fail(error),
+      Effect.catchIf(DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation, (error) =>
+        Effect.succeed({
+          type: DesktopSshPasswordPromptCancelledType,
+          message: error.message,
+        }),
       ),
     );
   }),

@@ -255,7 +255,13 @@ export function PreviewView({
     const currentUrl = navStatus._tag === "Idle" ? null : navStatus.url;
     if (currentUrl && readSshEnvironmentTarget(threadRef.environmentId) !== null) {
       void navigateToResolvedUrl(toRemotePreviewUrl(threadRef.environmentId, currentUrl)).catch(
-        () => undefined,
+        (error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to reload preview",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        },
       );
       return;
     }

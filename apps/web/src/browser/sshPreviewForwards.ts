@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -38,7 +39,8 @@ export function readSshEnvironmentTarget(
 
 const remoteLoopbackPort = (url: URL): number | null => {
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (!isLoopbackHost(url.hostname)) return null;
+  // All of 127.0.0.0/8 names the remote machine; the forward targets remote localhost.
+  if (!isLoopbackHost(url.hostname) && !isLocalLoopbackHost(url.hostname)) return null;
   return Number(url.port || (url.protocol === "https:" ? 443 : 80));
 };
 
@@ -85,6 +87,8 @@ export class SshPreviewForwardError extends Schema.TaggedError<SshPreviewForward
     return `Could not forward remote port ${this.remotePort}: ${this.detail}`;
   }
 }
+
+export const isSshPreviewForwardError = Schema.is(SshPreviewForwardError);
 
 /**
  * Acquires a forward when `url` is a loopback URL on an SSH environment.

@@ -90,6 +90,13 @@ describe("acquirePreviewForward", () => {
     });
   });
 
+  it("forwards any 127.0.0.0/8 address to the remote machine", async () => {
+    const forward = acquirePreviewForward(SSH_ENV, "http://127.0.0.2:5173/");
+    expect(pending.map((entry) => entry.remotePort)).toEqual([5173]);
+    pending[0]!.resolve(5173);
+    expect((await forward).url).toBe("http://localhost:5173/");
+  });
+
   it("leaves non-SSH environments, public hosts, and the environment server alone", async () => {
     for (const [environmentId, url] of [
       [LAN_ENV, "http://localhost:5173/"],

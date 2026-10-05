@@ -19,6 +19,7 @@ import {
   acquirePreviewForward,
   type PreviewForward,
   settleOpenedForward,
+  isSshPreviewForwardError,
   type SshPreviewForwardError,
 } from "~/browser/sshPreviewForwards";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
@@ -54,7 +55,8 @@ export async function openPreviewSession<E>(
     try {
       forward = await acquirePreviewForward(input.threadRef.environmentId, input.url);
     } catch (error) {
-      return AsyncResult.failure(Cause.fail(error as SshPreviewForwardError));
+      if (!isSshPreviewForwardError(error)) throw error;
+      return AsyncResult.failure(Cause.fail(error));
     }
   }
   const result = await input.openPreview({
