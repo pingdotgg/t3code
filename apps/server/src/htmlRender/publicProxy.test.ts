@@ -1,10 +1,33 @@
 // @effect-diagnostics nodeBuiltinImport:off - raw sockets speak SOCKS5 to the proxy.
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import { publicProxy } from "./publicProxy.ts";
+
+// A public IPv4 address this machine holds, which no private range covers.
+const OWN_PUBLIC_IPV4 = "198.51.100.7";
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeOS>();
+  return {
+    ...actual,
+    networkInterfaces: () => ({
+      ...actual.networkInterfaces(),
+      "t3-test": [
+        {
+          address: OWN_PUBLIC_IPV4,
+          netmask: "255.255.255.0",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: `${OWN_PUBLIC_IPV4}/24`,
+        },
+      ],
+    }),
+  };
+});
 
 /** Sends a SOCKS5 greeting and CONNECT, and resolves with the reply code. */
 const connectThrough = (proxyPort: number, target: Buffer, version = 5) =>
@@ -44,6 +67,12 @@ const ipv6Target = (address: string, port: number) => {
   return target;
 };
 
+/** `a.b.c.d` as the two hex groups of an IPv4-mapped IPv6 address. */
+const toHexPair = (address: string) => {
+  const [a = 0, b = 0, c = 0, d = 0] = address.split(".").map(Number);
+  return `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+};
+
 const domainTarget = (host: string, port: number) => {
   const name = Buffer.from(host, "latin1");
   const target = Buffer.alloc(4 + name.length);
@@ -81,9 +110,13 @@ describe("publicProxy", () => {
       const own = Object.values(NodeOS.networkInterfaces())
         .flatMap((entries) => entries ?? [])
         .filter((entry) => !entry.internal && !entry.address.startsWith("fe80"));
-      for (const entry of own) {
-        const target =
-          entry.family === "IPv6" ? ipv6Target(entry.address, 80) : ipv4Target(entry.address, 80);
+      // IPv4 also as IPv4-mapped IPv6, which names the same host.
+      const targets = own.flatMap((entry) =>
+        entry.family === "IPv6"
+          ? [ipv6Target(entry.address, 80)]
+          : [ipv4Target(entry.address, 80), ipv6Target(`::ffff:${toHexPair(entry.address)}`, 80)],
+      );
+      for (const target of targets) {
         const { code, socket } = yield* connectThrough(port, target);
         socket.destroy();
         expect(code).toBe(2);

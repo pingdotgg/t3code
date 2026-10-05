@@ -28,20 +28,23 @@ for (const [network, prefix] of [
   LOCAL_ADDRESSES.addSubnet(network, prefix, "ipv6");
 }
 
+/** The addresses this machine's interfaces hold right now. */
+const ownAddresses = () => {
+  const own = new NodeNet.BlockList();
+  for (const entry of Object.values(NodeOS.networkInterfaces()).flat()) {
+    if (entry) own.addAddress(entry.address, entry.family === "IPv6" ? "ipv6" : "ipv4");
+  }
+  return own;
+};
+
 /**
  * Whether `address` belongs to a local network or to this machine itself,
- * including a public address one of its interfaces holds right now.
+ * including a public address one of its interfaces holds. Both lists match
+ * IPv4-mapped IPv6 against their IPv4 entries.
  */
-const isLocal = (address: string, family: number) =>
-  LOCAL_ADDRESSES.check(address, family === 6 ? "ipv6" : "ipv4") ||
-  Object.values(NodeOS.networkInterfaces()).some((entries) =>
-    entries?.some((entry) => NodeNet.isIP(entry.address) === family && sameAddress(entry, address)),
-  );
-
-const sameAddress = (entry: NodeOS.NetworkInterfaceInfo, address: string) => {
-  const list = new NodeNet.BlockList();
-  list.addAddress(entry.address, entry.family === "IPv6" ? "ipv6" : "ipv4");
-  return list.check(address, entry.family === "IPv6" ? "ipv6" : "ipv4");
+const isLocal = (address: string, family: number) => {
+  const type = family === 6 ? "ipv6" : "ipv4";
+  return LOCAL_ADDRESSES.check(address, type) || ownAddresses().check(address, type);
 };
 
 /**
