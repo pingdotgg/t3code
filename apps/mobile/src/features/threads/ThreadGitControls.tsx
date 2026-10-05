@@ -21,9 +21,9 @@ import {
   basename,
   getTerminalStatusLabel,
   projectScriptMenuIcon,
-  projectScriptMenuLabel,
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
+import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {

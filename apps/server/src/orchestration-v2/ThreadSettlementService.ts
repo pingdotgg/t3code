@@ -20,6 +20,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -265,6 +266,10 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  // Settling a settled thread re-emits thread.settled with the same settledAt,
+  // so this keeps the settle action to one run per settlement.
+  const settleActionRunAt = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -514,20 +519,40 @@ export const make = Effect.gen(function* () {
 
   // Settling closes the thread's shells that sit at an idle prompt, so they stop
   // holding the worktree. A terminal running a command (a dev server, an
-  // editor) stays for the user to close.
-  const closeIdleTerminals = Effect.fn("ThreadSettlementServiceV2.closeIdleTerminals")(
+  // editor) stays for the user to close. Then the project's settle script runs
+  // in the thread's own worktree; a thread in the shared checkout skips it,
+  // because other threads may still be working there.
+  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       // A thread re-engaged before this event ran keeps its shells.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
       yield* terminals.closeIdle({ threadId });
+      const settledAtMs = toMillis(thread.settledAt);
+      if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      if (thread.worktreePath === null || !(yield* fileSystem.exists(thread.worktreePath))) {
+        return;
+      }
+      const run = yield* projectScripts.runForThread({
+        threadId,
+        projectId: thread.projectId,
+        worktreePath: thread.worktreePath,
+        trigger: "settle",
+        // A clean exit closes the script's shell so it does not hold the worktree.
+        observeCompletion: {},
+      });
+      // Recorded after a successful start, so a failed start retries on the next event.
+      settleActionRunAt.set(threadId, settledAtMs);
+      if (run.status === "started" && run.completion) {
+        yield* run.completion.pipe(Effect.forkDetach);
+      }
     },
     (effect, threadId) =>
       effect.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
-            : Effect.logWarning("closing idle terminals after settlement failed", {
+            : Effect.logWarning("cleaning up a settled thread failed", {
                 threadId,
                 cause: Cause.pretty(cause),
               }),
@@ -538,7 +563,7 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return closeIdleTerminals(event.threadId);
+        return cleanUpSettledThread(event.threadId);
       case "thread.pull-request-synced":
       case "provider-session.detached":
         return worker.enqueue(event.threadId);
