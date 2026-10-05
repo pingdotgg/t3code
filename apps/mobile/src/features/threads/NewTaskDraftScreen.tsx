@@ -438,7 +438,10 @@ export function NewTaskDraftScreen(props: {
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
-    isIncomingShareTransferPending || flow.submitting || isImportingContext;
+    isIncomingShareTransferPending ||
+    flow.submitting ||
+    submitNavigationAction !== null ||
+    isImportingContext;
   // Hardware keyboard: step to the next machine, from the one a switch in
   // progress is heading to so repeated presses keep advancing.
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
@@ -1331,6 +1334,7 @@ export function NewTaskDraftScreen(props: {
       flow.setSubmitting(false);
     }
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
+    flow.setSubmittedModelSelection(message.modelSelection ?? modelSelection);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
     } else {
