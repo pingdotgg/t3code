@@ -6,6 +6,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -73,18 +74,30 @@ const make = Effect.gen(function* () {
 
   const update: CloudPreferences["Service"]["update"] = Effect.fn("CloudPreferences.update")(
     function* (input) {
-      // Saved before the relay is told anything, so a failure here leaves the
-      // relay and the hold setting as they were.
+      // All or nothing: the activity setting is saved first, before the relay
+      // is told anything, and put back if the hold change then fails.
+      const previousActivity = yield* secrets
+        .get(PUBLISH_AGENT_ACTIVITY_SECRET)
+        .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
       yield* save(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
       if (input.holdWebhooksWhileOffline !== undefined) {
         const next = input.holdWebhooksWhileOffline;
         const previous = yield* readHoldWebhooksWhileOffline(secrets);
-        yield* pushHoldWebhooksWhileOffline(next);
-        yield* save(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, next).pipe(
+        yield* pushHoldWebhooksWhileOffline(next).pipe(
+          Effect.andThen(
+            save(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, next).pipe(
+              Effect.tapError(() =>
+                previous === next
+                  ? Effect.void
+                  : pushHoldWebhooksWhileOffline(previous).pipe(Effect.ignore),
+              ),
+            ),
+          ),
           Effect.tapError(() =>
-            previous === next
-              ? Effect.void
-              : pushHoldWebhooksWhileOffline(previous).pipe(Effect.ignore),
+            Option.match(previousActivity, {
+              onNone: () => secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
+              onSome: (bytes) => secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, bytes),
+            }).pipe(Effect.ignore),
           ),
         );
       }

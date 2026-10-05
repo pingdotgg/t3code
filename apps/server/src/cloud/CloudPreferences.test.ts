@@ -20,7 +20,11 @@ const encode = (value: string) => new TextEncoder().encode(value);
 
 /** A linked environment whose secret store can refuse writes, and the relay calls it made. */
 const withService = <A, E>(
-  options: { readonly failHoldWrite?: boolean; readonly failActivityWrite?: boolean },
+  options: {
+    readonly failHoldWrite?: boolean;
+    readonly failActivityWrite?: boolean;
+    readonly relayFails?: boolean;
+  },
   body: (input: {
     readonly preferences: CloudPreferences.CloudPreferences["Service"];
     readonly stored: Map<string, Uint8Array>;
@@ -32,13 +36,16 @@ const withService = <A, E>(
       [RELAY_URL_SECRET, encode("https://relay.test")],
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential")],
       [HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("false")],
+      [PUBLISH_AGENT_ACTIVITY_SECRET, encode("false")],
     ]);
     const relayCalls: Array<boolean> = [];
     const fetch: typeof globalThis.fetch = Object.assign(
       (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         const payload = JSON.parse(String(init?.body)) as { holdWebhooksWhileOffline: boolean };
         relayCalls.push(payload.holdWebhooksWhileOffline);
-        return Promise.resolve(Response.json(payload));
+        return options.relayFails
+          ? Promise.resolve(new Response("unavailable", { status: 503 }))
+          : Promise.resolve(Response.json(payload));
       },
       { preconnect: () => {} },
     );
@@ -107,6 +114,21 @@ it.effect("leaves the relay untouched when the activity setting can't be saved",
         .pipe(Effect.flip);
       assert.equal(error._tag, "EnvironmentHttpInternalServerError");
       assert.deepEqual(relayCalls, []);
+      assert.equal(
+        new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
+        "false",
+      );
+    }),
+  ),
+);
+
+it.effect("keeps both settings unchanged when the relay refuses the hold change", () =>
+  withService({ relayFails: true }, ({ preferences, stored }) =>
+    Effect.gen(function* () {
+      yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
+        .pipe(Effect.flip);
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
       assert.equal(
         new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
         "false",
