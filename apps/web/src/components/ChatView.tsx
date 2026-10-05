@@ -9525,7 +9525,7 @@ export default function ChatView(props: ChatViewProps) {
                       runtimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      worktreePath: isCloudComposer ? null : activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
                   }
