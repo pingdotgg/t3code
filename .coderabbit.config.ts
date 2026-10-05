@@ -12,5 +12,18 @@ export default defineConfig({
       // (see scripts/lib/reference-repos.ts). Nothing imports from them.
       "!.repos/**",
     ],
+    path_instructions: [
+      {
+        path: "{apps,packages,infra}/**/*.ts",
+        instructions: "Hold changed code to the rules in docs/internals/effect-services.md.",
+      },
+    ],
+  },
+  knowledge_base: {
+    code_guidelines: {
+      filePatterns: [
+        { files: "docs/internals/effect-services.md", applyTo: "{apps,packages,infra}/**/*.ts" },
+      ],
+    },
   },
 });
