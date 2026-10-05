@@ -246,7 +246,7 @@ describe("environment shell synchronization", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refreshes a warm shell cache from HTTP before resuming", () =>
+  it.effect("refreshes a warm shell cache from HTTP before resuming, naming each sync stage", () =>
     Effect.gen(function* () {
       const cachedSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
@@ -256,6 +256,7 @@ describe("environment shell synchronization", () => {
       const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
       const capturedCompletionMarker = yield* Ref.make(false);
       const loaderCalls = yield* SubscriptionRef.make(0);
+      const releaseLoad = yield* Deferred.make<void>();
       const httpSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
         snapshotSequence: 9,
@@ -300,8 +301,10 @@ describe("environment shell synchronization", () => {
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
-        load: () =>
+        load: (_prepared, options) =>
           SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
+            Effect.andThen(options?.onResponse ?? Effect.void),
+            Effect.andThen(Deferred.await(releaseLoad)),
             Effect.as(Option.some(httpSnapshot)),
           ),
       });
@@ -310,6 +313,16 @@ describe("environment shell synchronization", () => {
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
+
+      // The server has answered and the response is still being decoded.
+      const reading = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((value) => value.syncStage === "reading"),
+        Stream.runHead,
+      );
+      expect(Option.getOrThrow(reading).status).toBe("synchronizing");
+      // Let the UI pause after the stage change elapse.
+      yield* TestClock.adjust("32 millis");
+      yield* Deferred.succeed(releaseLoad, undefined);
 
       // Wait until the subscription is established from the warm cache.
       yield* SubscriptionRef.changes(capturedAfterSequence).pipe(
@@ -322,6 +335,7 @@ describe("environment shell synchronization", () => {
       expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
       const synchronizing = yield* SubscriptionRef.get(shellState);
       expect(synchronizing.status).toBe("synchronizing");
+      expect(synchronizing.syncStage).toBe("catchingUp");
       expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
 
       yield* Queue.offer(events, { kind: "synchronized" });

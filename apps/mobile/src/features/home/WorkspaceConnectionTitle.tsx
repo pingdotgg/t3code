@@ -21,6 +21,12 @@ import {
  * blips (the common reconnect case) resolve without any UI at all.
  */
 const STATUS_SHOW_DELAY_MS = 800;
+/**
+ * A sync running this long names its current stage, so a slow start shows what
+ * it waits on. Decoding a large snapshot blocks the JS thread, so this must
+ * fire while the server is still building one (about 3 s for 3,000 threads).
+ */
+const SYNC_STAGE_SHOW_DELAY_MS = 2_000;
 const FADE_IN_MS = 250;
 
 /**
@@ -30,7 +36,19 @@ const FADE_IN_MS = 250;
  */
 function useDelayedConnectionStatus(): WorkspaceConnectionStatusPresentation | null {
   const { state } = useWorkspaceState();
-  const presentation = workspaceConnectionStatusPresentation(state);
+  const isSyncing = state.hasPendingShellSnapshot;
+  const [showSyncStage, setShowSyncStage] = useState(false);
+
+  useEffect(() => {
+    if (!isSyncing) {
+      setShowSyncStage(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowSyncStage(true), SYNC_STAGE_SHOW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isSyncing]);
+
+  const presentation = workspaceConnectionStatusPresentation(state, { showSyncStage });
   const hasStatus = presentation !== null;
   const [visible, setVisible] = useState(false);
 

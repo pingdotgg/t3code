@@ -31,15 +31,25 @@ import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
 
+/**
+ * The part of a sync that is running, so a slow start can say what it is
+ * waiting on: the server building the snapshot, this client decoding it, or
+ * the socket replaying events after it.
+ */
+export type EnvironmentShellSyncStage = "waiting" | "reading" | "catchingUp";
+
 export interface EnvironmentShellState {
   readonly snapshot: Option.Option<OrchestrationV2ShellSnapshot>;
   readonly status: EnvironmentShellStatus;
+  /** Meaningful only while `status` is `"synchronizing"`. */
+  readonly syncStage: EnvironmentShellSyncStage;
   readonly error: Option.Option<string>;
 }
 
 const EMPTY_SHELL_STATE: EnvironmentShellState = {
   snapshot: Option.none(),
   status: "empty",
+  syncStage: "waiting",
   error: Option.none(),
 };
 
@@ -71,6 +81,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const state = yield* SubscriptionRef.make<EnvironmentShellState>({
     snapshot: cachedSnapshot,
     status: shellStatusForSnapshot(cachedSnapshot),
+    syncStage: "waiting",
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
@@ -128,8 +139,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const setSynchronizing = SubscriptionRef.update(state, (current) => ({
     ...current,
     status: "synchronizing" as const,
+    syncStage: "waiting" as const,
     error: Option.none(),
   }));
+  // Decoding a large snapshot blocks the JS thread, so leave the UI a couple of
+  // frames to show "reading" before decoding starts.
+  const setReading = SubscriptionRef.update(state, (current) =>
+    current.status === "synchronizing" ? { ...current, syncStage: "reading" as const } : current,
+  ).pipe(Effect.andThen(Effect.sleep("32 millis")));
   const setReady = SubscriptionRef.update(state, (current) =>
     current.status === "live"
       ? current
@@ -196,6 +213,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
+        syncStage: "catchingUp",
         error: Option.none(),
       };
     }
@@ -256,7 +274,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               }),
             ),
           );
-          const httpSnapshot = yield* snapshotLoader.load(prepared);
+          const httpSnapshot = yield* snapshotLoader.load(prepared, { onResponse: setReading });
+          if (Option.isNone(httpSnapshot)) {
+            // The socket sends the snapshot instead, so the server is still working.
+            yield* SubscriptionRef.update(state, (current) => ({
+              ...current,
+              syncStage: "waiting" as const,
+            }));
+          }
           if (Option.isSome(httpSnapshot)) {
             yield* applyItems([{ kind: "snapshot", snapshot: httpSnapshot.value }]);
             canResume = true;
@@ -317,8 +342,8 @@ function shellStateChanges(environmentId: EnvironmentId) {
 export interface EnvironmentShellSummary {
   readonly hasSnapshot: boolean;
   readonly hasSynchronizingShell: boolean;
-  /** Active threads in environments that are still catching up. */
-  readonly synchronizingThreadCount: number;
+  /** The least advanced stage among synchronizing environments. */
+  readonly synchronizingStage: EnvironmentShellSyncStage | null;
   readonly hasCachedShell: boolean;
   readonly hasLiveShell: boolean;
   readonly firstError: string | null;
@@ -327,11 +352,17 @@ export interface EnvironmentShellSummary {
 const EMPTY_ENVIRONMENT_SHELL_SUMMARY: EnvironmentShellSummary = Object.freeze({
   hasSnapshot: false,
   hasSynchronizingShell: false,
-  synchronizingThreadCount: 0,
+  synchronizingStage: null,
   hasCachedShell: false,
   hasLiveShell: false,
   firstError: null,
 });
+
+const SYNC_STAGE_ORDER: Record<EnvironmentShellSyncStage, number> = {
+  waiting: 0,
+  reading: 1,
+  catchingUp: 2,
+};
 
 const EMPTY_SERVER_CONFIGS: ReadonlyMap<EnvironmentId, ServerConfig> = new Map();
 
@@ -342,7 +373,7 @@ function shellSummariesEqual(
   return (
     left.hasSnapshot === right.hasSnapshot &&
     left.hasSynchronizingShell === right.hasSynchronizingShell &&
-    left.synchronizingThreadCount === right.synchronizingThreadCount &&
+    left.synchronizingStage === right.synchronizingStage &&
     left.hasCachedShell === right.hasCachedShell &&
     left.hasLiveShell === right.hasLiveShell &&
     left.firstError === right.firstError
@@ -369,14 +400,22 @@ export function createEnvironmentShellSummaryAtom(input: {
   return Atom.make((get) => {
     let hasSnapshot = false;
     let hasSynchronizingShell = false;
-    let synchronizingThreadCount = 0;
+    let synchronizingStage: EnvironmentShellSyncStage | null = null;
     let hasCachedShell = false;
     let hasLiveShell = false;
     let firstError: string | null = null;
 
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const state = get(input.shellStateValueAtom(environmentId));
-      hasSynchronizingShell ||= state.status === "synchronizing";
+      if (state.status === "synchronizing") {
+        hasSynchronizingShell = true;
+        if (
+          synchronizingStage === null ||
+          SYNC_STAGE_ORDER[state.syncStage] < SYNC_STAGE_ORDER[synchronizingStage]
+        ) {
+          synchronizingStage = state.syncStage;
+        }
+      }
       hasCachedShell ||= state.status === "cached";
       hasLiveShell ||= state.status === "live";
       if (firstError === null) {
@@ -386,15 +425,12 @@ export function createEnvironmentShellSummaryAtom(input: {
         continue;
       }
       hasSnapshot = true;
-      if (state.status === "synchronizing") {
-        synchronizingThreadCount += state.snapshot.value.threads.length;
-      }
     }
 
     const next: EnvironmentShellSummary = {
       hasSnapshot,
       hasSynchronizingShell,
-      synchronizingThreadCount,
+      synchronizingStage,
       hasCachedShell,
       hasLiveShell,
       firstError,

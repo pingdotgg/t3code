@@ -50,7 +50,7 @@ function environment(
 const EMPTY_SHELL_SUMMARY: EnvironmentShellSummary = {
   hasSnapshot: false,
   hasSynchronizingShell: false,
-  synchronizingThreadCount: 0,
+  synchronizingStage: null,
   hasCachedShell: false,
   hasLiveShell: false,
   firstError: null,

@@ -9,7 +9,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
-    pendingShellThreadCount: 0,
+    pendingShellStage: null,
     hasReadyEnvironment: true,
     hasConnectingEnvironment: false,
     connectingEnvironments: [],
@@ -72,15 +72,29 @@ describe("workspace connection status", () => {
     });
   });
 
-  it("counts the cached threads still catching up", () => {
-    const label = (pendingShellThreadCount: number) =>
+  it("shows shell catch-up while cached threads remain visible", () => {
+    const state = workspaceState({ hasPendingShellSnapshot: true });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Syncing threads...",
+      showsProgress: true,
+    });
+  });
+
+  it("names the stage a slow sync is on once the title asks for it", () => {
+    const label = (
+      pendingShellStage: WorkspaceState["pendingShellStage"],
+      showSyncStage: boolean,
+    ) =>
       workspaceConnectionStatusPresentation(
-        workspaceState({ hasPendingShellSnapshot: true, pendingShellThreadCount }),
+        workspaceState({ hasPendingShellSnapshot: true, pendingShellStage }),
+        { showSyncStage },
       )?.label;
 
-    expect(label(12)).toBe("Syncing 12 threads...");
-    expect(label(1)).toBe("Syncing 1 thread...");
-    expect(label(0)).toBe("Syncing threads...");
+    expect(label("waiting", false)).toBe("Syncing threads...");
+    expect(label("waiting", true)).toBe("Waiting for server...");
+    expect(label("reading", true)).toBe("Reading threads...");
+    expect(label("catchingUp", true)).toBe("Catching up...");
   });
 
   it("distinguishes initial shell loading from cached catch-up", () => {

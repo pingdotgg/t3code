@@ -27,6 +27,7 @@ function shellState(status: EnvironmentShellState["status"]): EnvironmentShellSt
             threads: [],
             archivedThreads: [],
           }),
+    syncStage: "waiting",
     error: Option.none(),
   };
 }

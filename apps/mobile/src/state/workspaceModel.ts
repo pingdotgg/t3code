@@ -1,4 +1,7 @@
-import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
+import {
+  type EnvironmentShellSummary,
+  type EnvironmentShellSyncStage,
+} from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import {
@@ -25,7 +28,7 @@ export interface WorkspaceConnectionState {
 export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
-  readonly pendingShellThreadCount: number;
+  readonly pendingShellStage: EnvironmentShellSyncStage | null;
   readonly shellSnapshotError: string | null;
 }
 
@@ -100,7 +103,7 @@ export function projectWorkspaceState(input: {
     ...projectWorkspaceConnectionState(input),
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
-    pendingShellThreadCount: input.shellSummary.synchronizingThreadCount,
+    pendingShellStage: input.shellSummary.synchronizingStage,
     shellSnapshotError: input.shellSummary.firstError,
   };
 }
