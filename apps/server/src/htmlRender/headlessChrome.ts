@@ -78,6 +78,9 @@ const decodeExceptionThrown = Schema.decodeUnknownOption(
     }),
   }),
 );
+const decodeRequestPaused = Schema.decodeUnknownOption(
+  Schema.Struct({ requestId: Schema.String, request: Schema.Struct({ url: Schema.String }) }),
+);
 const decodeLogEntryAdded = Schema.decodeUnknownOption(
   Schema.Struct({
     entry: Schema.Struct({
@@ -217,6 +220,15 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   let disconnected: BrowserFailure | undefined;
   let nextId = 0;
 
+  // A command whose reply nobody awaits; `receive` drops replies without a waiter.
+  const post = (method: string, params: Record<string, unknown>, sessionId: string) =>
+    Queue.offer(
+      outgoing,
+      new TextEncoder().encode(
+        `${encodeCdpCommand({ id: ++nextId, method, params, sessionId })}\0`,
+      ),
+    ).pipe(Effect.asVoid);
+
   const receive = (raw: string) => {
     const message = Option.getOrUndefined(decodeCdpMessage(raw));
     if (message?.id !== undefined) {
@@ -233,10 +245,25 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           )
         : Deferred.succeed(waiter.reply, message.result);
     }
-    const page = message?.sessionId === undefined ? undefined : pages.get(message.sessionId);
-    if (!page || !message?.method) return Effect.void;
+    const sessionId = message?.sessionId;
+    const page = sessionId === undefined ? undefined : pages.get(sessionId);
+    if (sessionId === undefined || !page || !message?.method) return Effect.void;
     if (message.method === "Page.loadEventFired") {
       return page.loaded ? Deferred.succeed(page.loaded, undefined) : Effect.void;
+    }
+    if (message.method === "Fetch.requestPaused") {
+      const paused = Option.getOrUndefined(decodeRequestPaused(message.params));
+      if (!paused) return Effect.void;
+      // Lowercased so drive letters and percent-escapes compare alike.
+      const isPage =
+        paused.request.url.split("#", 1)[0]!.toLowerCase() === page.pageUrl?.toLowerCase();
+      return isPage
+        ? post("Fetch.continueRequest", { requestId: paused.requestId }, sessionId)
+        : post(
+            "Fetch.failRequest",
+            { requestId: paused.requestId, errorReason: "AccessDenied" },
+            sessionId,
+          );
     }
     const consoleMessage = consoleMessageFromEvent(message.method, message.params);
     if (!consoleMessage) return Effect.void;
@@ -346,6 +373,10 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
+    // The page's own file is the only one it may load. A file:// script, frame,
+    // or navigation could otherwise read files the agent's provider withholds.
+    // Local images reach the page already inlined as data URIs.
+    yield* send("Fetch.enable", { patterns: [{ urlPattern: "file://*" }] }, Ignored, sessionId);
     yield* send(
       "Emulation.setDeviceMetricsOverride",
       { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },

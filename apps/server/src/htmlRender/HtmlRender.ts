@@ -159,6 +159,30 @@ const filePathFor = (reference: string) =>
 const dataUriPrefix = (path: string) =>
   `data:${IMAGE_MIME_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream"};base64,`;
 
+const latin1 = (bytes: Uint8Array, start: number, end: number) =>
+  String.fromCharCode(...bytes.subarray(start, end));
+
+/**
+ * Whether file bytes are an image, whatever the file is named, so a symlink or
+ * renamed file cannot carry other data, such as a secret, into a page.
+ */
+const isImageBytes = (bytes: Uint8Array) => {
+  const head = latin1(bytes, 0, 12);
+  if (
+    head.startsWith("\x89PNG") ||
+    head.startsWith("\xff\xd8\xff") ||
+    head.startsWith("GIF8") ||
+    head.startsWith("\0\0\x01\0") ||
+    (head.startsWith("BM") && head.slice(6, 10) === "\0\0\0\0") ||
+    (head.startsWith("RIFF") && head.slice(8, 12) === "WEBP") ||
+    /^ftyp(?:avif|avis|mif1)$/.test(head.slice(4, 12))
+  ) {
+    return true;
+  }
+  const text = new TextDecoder().decode(bytes.subarray(0, 4096));
+  return /^\s*</.test(text) && /<svg[\s/>]/i.test(text);
+};
+
 /** Replaces every local image reference with a data URI; unreadable paths stay as written. */
 const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -201,7 +225,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     (file) =>
       fileSystem.stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 }).pipe(
         Stream.mkUint8Array,
-        Effect.map((bytes) => [{ path: file.path, bytes }]),
+        Effect.map((bytes) => (isImageBytes(bytes) ? [{ path: file.path, bytes }] : [])),
         Effect.orElseSucceed(() => []),
       ),
     { concurrency: 4 },
@@ -272,7 +296,8 @@ const make = Effect.gen(function* () {
     >,
   ) =>
     browsers.withPermits(1)(
-      run(noSandbox).pipe(
+      // Read once a permit is held, so a queued call sees a fallback learned meanwhile.
+      Effect.suspend(() => run(noSandbox)).pipe(
         Effect.catchTag("HtmlRenderSandboxUnavailableError", () =>
           Effect.logInfo(
             "Chrome's sandbox is unavailable on this host; launching it without one.",

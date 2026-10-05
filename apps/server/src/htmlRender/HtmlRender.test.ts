@@ -16,6 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeURL from "node:url";
 
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -102,9 +103,14 @@ describe("HtmlRender", () => {
       const folder = path.join(directory, "folder.png");
       yield* fileSystem.makeDirectory(folder);
       const missing = path.join(directory, "missing.jpg");
+      // Named like an image, but a symlink or renamed file must not carry other data.
+      const secret = path.join(directory, "secret.png");
+      yield* fileSystem.writeFileString(secret, "API_KEY=abc123");
 
       const error = yield* htmlRender
-        .prepare(`<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp">`)
+        .prepare(
+          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}">`,
+        )
         .pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(HtmlRender.HtmlRenderImagesNotFoundError);
@@ -112,6 +118,7 @@ describe("HtmlRender", () => {
         missing,
         folder,
         "C:\\nope\\shot.webp",
+        secret,
       ]);
     }).pipe(Effect.provide(testLayer)),
   );
@@ -230,6 +237,37 @@ describe("HtmlRender", () => {
             ]),
           );
         }).pipe(Effect.provide(htmlRenderLayer(executable)));
+      }),
+    30_000,
+  );
+
+  it.live(
+    "keeps every local file but the page itself out of the browser",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        yield* Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-files-" });
+          const secret = path.join(directory, "secret.js");
+          yield* fileSystem.writeFileString(secret, 'window.secret = "abc123";');
+          const secretUrl = NodeURL.pathToFileURL(secret).href;
+
+          const preview = yield* htmlRender.preview({
+            html: [
+              `<script src="${secretUrl}"></script>`,
+              `<iframe src="${secretUrl}" onload="console.log('frame loaded')"></iframe>`,
+              '<script>addEventListener("load", () => console.log("secret:", window.secret ?? "none"));</script>',
+            ].join(""),
+          });
+
+          const texts = preview.consoleMessages.map((message) => message.text);
+          expect(texts).toContain("secret: none");
+          expect(texts.join(" ")).not.toContain("abc123");
+        }).pipe(Effect.scoped, Effect.provide(htmlRenderLayer(executable)));
       }),
     30_000,
   );
