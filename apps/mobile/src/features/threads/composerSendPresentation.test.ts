@@ -1,6 +1,10 @@
+import { ComposerContextId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveComposerSendPresentation } from "./composerSendPresentation";
+import {
+  resolveComposerSendPresentation,
+  resolveLocalComposerCommands,
+} from "./composerSendPresentation";
 
 const idle = {
   editingQueuedMessage: false,
@@ -77,5 +81,102 @@ describe("resolveComposerSendPresentation", () => {
     expect(presentation.label).toBe("Update queued message");
     expect(presentation.icon).toBe("checkmark");
     expect(presentation.offersFollowUpChoice).toBe(false);
+  });
+});
+
+describe("resolveLocalComposerCommands", () => {
+  const offered = {
+    prompt: "/context",
+    draftAttachmentCount: 0,
+    queuedAttachmentCount: 0,
+    draftContext: undefined,
+    contextOffered: true,
+    usageLimitsOffered: true,
+  };
+
+  it("answers both commands locally without attachments", () => {
+    expect(resolveLocalComposerCommands(offered)).toEqual({
+      context: true,
+      usageLimits: true,
+      typed: "context",
+    });
+    expect(resolveLocalComposerCommands({ ...offered, prompt: " /USAGE-LIMITS " }).typed).toBe(
+      "usage-limits",
+    );
+  });
+
+  it("keeps the menu entries for a partial command", () => {
+    expect(resolveLocalComposerCommands({ ...offered, prompt: "/cont" })).toEqual({
+      context: true,
+      usageLimits: true,
+      typed: null,
+    });
+  });
+
+  it.each(["/context", "/usage-limits"])(
+    "sends %s as a prompt when attachments are aboard",
+    (prompt) => {
+      for (const counts of [
+        { draftAttachmentCount: 0, queuedAttachmentCount: 1 },
+        { draftAttachmentCount: 1, queuedAttachmentCount: 0 },
+      ]) {
+        expect(resolveLocalComposerCommands({ ...offered, ...counts, prompt })).toEqual({
+          context: false,
+          usageLimits: false,
+          typed: null,
+        });
+      }
+    },
+  );
+
+  it("saves stored terminal context but ignores image context whose attachment was removed", () => {
+    const record = {
+      version: 1 as const,
+      contextId: ComposerContextId.make("ctx"),
+      label: "Build",
+    };
+    const terminal = {
+      ...record,
+      kind: "terminal" as const,
+      terminalId: "main",
+      terminalLabel: "Terminal",
+      lineStart: 1,
+      lineEnd: 1,
+      text: "Build failed",
+    };
+    const image = {
+      ...record,
+      kind: "image" as const,
+      attachmentId: "removed",
+      name: "a.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    expect(
+      resolveLocalComposerCommands({
+        ...offered,
+        draftContext: { version: 1, records: [terminal] },
+      }),
+    ).toEqual({ context: false, usageLimits: false, typed: null });
+    expect(
+      resolveLocalComposerCommands({ ...offered, draftContext: { version: 1, records: [image] } })
+        .typed,
+    ).toBe("context");
+  });
+
+  it("leaves native or unoffered commands and mixed text to the provider", () => {
+    expect(
+      resolveLocalComposerCommands({
+        ...offered,
+        contextOffered: false,
+        usageLimitsOffered: false,
+      }),
+    ).toEqual({ context: false, usageLimits: false, typed: null });
+    expect(
+      resolveLocalComposerCommands({ ...offered, prompt: "/context please" }).typed,
+    ).toBeNull();
+    expect(
+      resolveLocalComposerCommands({ ...offered, prompt: "/usage-limits now" }).typed,
+    ).toBeNull();
   });
 });

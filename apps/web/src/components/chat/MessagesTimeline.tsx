@@ -3,6 +3,8 @@ import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
+import { parseContextReport } from "@t3tools/shared/contextReport";
+import { ContextReportDisclosure } from "./ContextReportCard";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -2494,6 +2496,13 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const contextReport = useMemo(
+    () => (row.message.streaming ? null : parseContextReport(messageText)),
+    [messageText, row.message.streaming],
+  );
+  const [contextExpanded, setContextExpanded] = useState(() =>
+    ctx.workGroupViewState.expandedEntries.has(row.id),
+  );
 
   return (
     <>
@@ -2506,18 +2515,31 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           request={ctx.citationRequest}
           listRef={ctx.listRef}
         >
-          <ChatMarkdown
-            text={messageText}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            isStreaming={Boolean(row.message.streaming)}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-            skills={ctx.skills}
-            headingLevelOffset={MESSAGE_HEADING_LEVEL}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onRunShellCommand={ctx.onRunShellCommand}
-            onImageExpand={ctx.onImageExpand}
-          />
+          {contextReport ? (
+            <ContextReportDisclosure
+              report={contextReport}
+              expanded={contextExpanded}
+              onToggle={() => {
+                ctx.onToggleWorkEntry(row.id, contextExpanded);
+                if (contextExpanded) ctx.workGroupViewState.expandedEntries.delete(row.id);
+                else ctx.workGroupViewState.expandedEntries.add(row.id);
+                setContextExpanded(!contextExpanded);
+              }}
+            />
+          ) : (
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
+          )}
         </AssistantCitationSource>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}

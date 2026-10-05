@@ -339,6 +339,10 @@
       "types": "./src/thirdPartyLicenses.ts",
       "import": "./src/thirdPartyLicenses.ts"
     },
+    "./contextReport": {
+      "types": "./src/contextReport.ts",
+      "import": "./src/contextReport.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"

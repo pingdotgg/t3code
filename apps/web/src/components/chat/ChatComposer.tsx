@@ -1124,6 +1124,7 @@ import {
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  CONTEXT_COMMAND,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
@@ -1538,6 +1539,7 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  onContextCommand?: (() => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1782,6 +1784,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFileOpen,
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
+    onUsageLimitsCommand,
+    onContextCommand,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
@@ -2662,14 +2666,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
         selectedProviderSlashCommands,
         slashMenuSkills,
-      ).map((command) => ({
-        id: `provider-slash-command:${selectedProvider}:${command.name}`,
-        type: "provider-slash-command" as const,
-        provider: selectedProvider,
-        command,
-        label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
-      }));
+      )
+        .concat(onContextCommand ? [CONTEXT_COMMAND] : [])
+        .map((command) => ({
+          id: `provider-slash-command:${selectedProvider}:${command.name}`,
+          type: "provider-slash-command" as const,
+          provider: selectedProvider,
+          command,
+          label: `/${command.name}`,
+          description: command.description ?? command.input?.hint ?? "Run provider command",
+        }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
@@ -2770,6 +2776,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestTriggerNumber,
     selectedProvider,
     selectedProviderSkills,
+    onContextCommand,
     selectedProviderSlashCommands,
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
@@ -3900,7 +3907,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [readComposerSnapshot, resolveComposerTrigger]);
 
-  const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -3951,14 +3957,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "provider-slash-command") {
-        if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
+        const localCommand =
+          item.command.name === USAGE_LIMITS_COMMAND.name
+            ? onUsageLimitsCommand
+            : item.command.name === CONTEXT_COMMAND.name
+              ? onContextCommand
+              : undefined;
+        if (localCommand) {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
             focusEditorAfterReplace: false,
           });
           if (applied) {
             setComposerHighlightedItemId(null);
-            onUsageLimitsCommand();
+            localCommand();
           }
           return;
         }
@@ -4060,6 +4072,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       handleInteractionModeChange,
       planModeUiEnabled,
+      onContextCommand,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
     ],

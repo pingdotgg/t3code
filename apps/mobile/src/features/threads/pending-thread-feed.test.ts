@@ -6,6 +6,7 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
+import { latestContextReport } from "@t3tools/shared/contextReport";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { appendPendingThreadMessages } from "./pending-thread-feed";
 
@@ -61,5 +62,26 @@ describe("pending timeline messages", () => {
     expect(appendPendingThreadMessages([delivered], [delivered], [queued])).toEqual([delivered]);
     // Folded messages still count as delivered even when absent from the presented rows.
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
+  });
+
+  it("hides the previous context report while a sent message waits in the outbox", () => {
+    const report = appendPendingThreadMessages([], [], [pending("report")]).map((entry) =>
+      entry.type === "message"
+        ? {
+            ...entry,
+            message: {
+              ...entry.message,
+              role: "assistant" as const,
+              text: "## Context Usage\n\n**Tokens:** 10k / 200k (5%)",
+            },
+          }
+        : entry,
+    );
+    const messages = (queued: ReadonlyArray<QueuedThreadMessage>) =>
+      appendPendingThreadMessages(report, report, queued).flatMap((entry) =>
+        entry.type === "message" ? [entry.message] : [],
+      );
+    expect(latestContextReport(messages([]))?.id).toBe("report");
+    expect(latestContextReport(messages([pending("next")]))).toBeNull();
   });
 });

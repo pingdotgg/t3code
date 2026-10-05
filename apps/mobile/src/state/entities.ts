@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  deriveActiveContextUsage,
+  deriveReportedModelSelection,
+} from "@t3tools/client-runtime/state/thread-execution";
 
 import { appAtomRegistry } from "./atom-registry";
 import type {
@@ -95,4 +98,11 @@ const selectReportedModelSelection = (thread: EnvironmentThread | null) =>
 
 export function useThreadReportedModelSelection(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadDetails.threadAtom(ref), selectReportedModelSelection);
+}
+
+const selectActiveContextUsage = (thread: EnvironmentThread | null) =>
+  thread === null ? null : deriveActiveContextUsage(thread.projection);
+
+export function useThreadActiveContextUsage(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadDetails.threadAtom(ref), selectActiveContextUsage);
 }

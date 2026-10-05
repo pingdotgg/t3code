@@ -50,9 +50,11 @@ import {
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { formatContextHeadline, parseContextReport } from "@t3tools/shared/contextReport";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { ContextReportCardBody } from "./ContextReportCard";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -177,6 +179,7 @@ import {
   THREAD_DISCLOSURE_TRANSITION_MS,
   ThreadWorkGroupToggle,
   ThreadThinkingRow,
+  ThreadContextReportRow,
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
@@ -1842,6 +1845,7 @@ function renderFeedEntry(
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    const contextReport = message.streaming ? null : parseContextReport(message.text);
     return (
       <Animated.View
         className={cn(
@@ -1852,7 +1856,17 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {contextReport ? (
+          <ThreadContextReportRow
+            expanded={props.expandedWorkRows[entry.id] ?? false}
+            onToggle={() => props.onToggleWorkRow(entry.id, entry.id)}
+            rowSizing={props.workRowSizing}
+            iconSubtleColor={iconSubtleColor}
+            label={`Context window · ${contextReport.model ? `${contextReport.model} · ` : ""}${formatContextHeadline(contextReport)}`}
+          >
+            <ContextReportCardBody report={contextReport} />
+          </ThreadContextReportRow>
+        ) : renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}

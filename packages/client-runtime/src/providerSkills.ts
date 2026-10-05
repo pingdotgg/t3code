@@ -132,3 +132,22 @@ export function resolveProviderSlashCommandsForCwd(
 ): ServerProvider["slashCommands"] {
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }
+
+export const CONTEXT_COMMAND = {
+  name: "context",
+  description: "Show context window usage",
+} satisfies ServerProviderSlashCommand;
+
+export function isContextCommand(prompt: string): boolean {
+  return prompt.trim().toLowerCase() === "/context";
+}
+
+export function offersLocalContextCommand(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): boolean {
+  if (cwd && !hasCompleteProviderWorkspaceSnapshot(provider, cwd)) return false;
+  return !resolveProviderSlashCommandsForCwd(provider, cwd).some(
+    (command) => command.name === CONTEXT_COMMAND.name,
+  );
+}

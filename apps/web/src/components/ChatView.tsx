@@ -8,7 +8,11 @@ import {
   resolveWorktreeSetupProgress,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
-import { restorePlanFollowUpComposer } from "./ChatView.logic";
+import {
+  latestVisibleContextReport,
+  queuedEditHasStoredContent,
+  restorePlanFollowUpComposer,
+} from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import {
@@ -36,6 +40,8 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
+import { contextReportFromUsage } from "@t3tools/shared/contextReport";
+import { contextReportBannerItem } from "./chat/ComposerContextReport";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
@@ -89,6 +95,7 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
+  deriveActiveContextUsage,
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
   formatModelSelectionEffort,
@@ -398,7 +405,11 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
-import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
+import {
+  isContextCommand,
+  offersLocalContextCommand,
+  resolveProviderSkillsForCwd,
+} from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
@@ -1742,10 +1753,12 @@ export default function ChatView(props: ChatViewProps) {
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
   });
   // Anything beyond the prompt text: attachments, terminal or element contexts, annotations.
-  const composerHasNonPromptContent = useComposerDraftStore((store) => {
+  const composerDraftHasNonPromptContent = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
+  const composerHasNonPromptContent =
+    composerDraftHasNonPromptContent || queuedEditHasStoredContent(editingQueuedRun);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
@@ -3445,6 +3458,28 @@ export default function ChatView(props: ChatViewProps) {
   const usageLimitsOffered =
     activeProviderStatus !== null &&
     hasProviderUsageLimits(activeProviderStatus.driver, providerStatuses, usageLimitSources);
+  const [usageContextPanel, setUsageContextPanel] = useState<{
+    readonly threadKey: string;
+    readonly openedAt: number;
+  } | null>(null);
+  const [pendingContextMessages, setPendingContextMessages] = useState<
+    ReadonlyArray<{ readonly threadKey: string; readonly id: MessageId }>
+  >([]);
+  const releasePendingContextMessage = useCallback(
+    (id: MessageId) =>
+      setPendingContextMessages((current) => current.filter((message) => message.id !== id)),
+    [],
+  );
+  useEffect(() => {
+    setPendingContextMessages((current) => {
+      const pending = current.filter(
+        (message) =>
+          message.threadKey !== routeThreadKey ||
+          !serverProjection?.messages.some((candidate) => candidate.id === message.id),
+      );
+      return pending.length === current.length ? current : pending;
+    });
+  }, [routeThreadKey, serverProjection?.messages]);
   // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
     const now = Date.now();
@@ -7376,6 +7411,60 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const latestContextReport = useMemo(
+    () =>
+      latestVisibleContextReport(
+        serverProjection?.messages ?? [],
+        pendingContextMessages,
+        routeThreadKey,
+      ),
+    [pendingContextMessages, routeThreadKey, serverProjection?.messages],
+  );
+  const [dismissedContextReportIds, setDismissedContextReportIds] = useState<
+    Record<string, string>
+  >({});
+  const providerContextReportBanner = useMemo(
+    () =>
+      latestContextReport !== null &&
+      latestContextReport.id !== dismissedContextReportIds[routeThreadKey]
+        ? contextReportBannerItem(
+            `context-report:${latestContextReport.id}`,
+            latestContextReport.report,
+            () =>
+              setDismissedContextReportIds((current) => ({
+                ...current,
+                [routeThreadKey]: latestContextReport.id,
+              })),
+          )
+        : null,
+    [dismissedContextReportIds, latestContextReport, routeThreadKey],
+  );
+  const usageContextReport = useMemo(() => {
+    const active = serverProjection ? deriveActiveContextUsage(serverProjection) : null;
+    return contextReportFromUsage(active?.usage, active?.model);
+  }, [serverProjection]);
+  if (usageContextPanel !== null && usageContextPanel.threadKey !== routeThreadKey) {
+    setUsageContextPanel(null);
+  }
+  const usageContextBanner =
+    usageContextPanel?.threadKey === routeThreadKey && usageContextReport !== null
+      ? contextReportBannerItem(
+          `context-usage:${routeThreadKey}:${usageContextPanel.openedAt}`,
+          usageContextReport,
+          () => setUsageContextPanel(null),
+        )
+      : null;
+  const contextCommandOffered =
+    activeProviderStatus !== null && offersLocalContextCommand(activeProviderStatus, gitCwd);
+  const openUsageContext = useCallback(() => {
+    if (usageContextReport === null) {
+      setUsageContextPanel(null);
+      toastManager.add({ type: "info", title: "Context usage is not reported yet" });
+      return false;
+    }
+    setUsageContextPanel({ threadKey: routeThreadKey, openedAt: Date.now() });
+    return true;
+  }, [routeThreadKey, usageContextReport]);
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -7396,6 +7485,9 @@ export default function ChatView(props: ChatViewProps) {
         })
       : null;
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const contextItems = [providerContextReportBanner, usageContextBanner].filter(
+      (item) => item !== null,
+    );
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const backgroundWorkItems = backgroundWorkBannerItem === null ? [] : [backgroundWorkBannerItem];
     const resumeCompactionItems =
@@ -7410,6 +7502,7 @@ export default function ChatView(props: ChatViewProps) {
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
+        ...contextItems,
         ...projectCloneItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
@@ -7422,6 +7515,7 @@ export default function ChatView(props: ChatViewProps) {
       ...feedbackBannerItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
+      ...contextItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
@@ -7470,6 +7564,8 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     activeThreadShell,
+    providerContextReportBanner,
+    usageContextBanner,
     serverRuntime?.usageLimitResetAt,
     feedbackBannerItems,
     limitRecoveryBanner,
@@ -8207,6 +8303,10 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef.current = true;
     beginLocalDispatch();
     setThreadError(threadId, null);
+    setPendingContextMessages((current) => [
+      ...current,
+      { threadKey: routeThreadKey, id: messageId },
+    ]);
     setOptimisticUserMessages((messages) => [
       ...messages,
       {
@@ -8245,6 +8345,7 @@ export default function ChatView(props: ChatViewProps) {
               },
             });
       if (result._tag === "Failure") {
+        releasePendingContextMessage(messageId);
         setOptimisticUserMessages((messages) =>
           messages.filter((message) => message.id !== messageId),
         );
@@ -8361,6 +8462,19 @@ export default function ChatView(props: ChatViewProps) {
       isUsageLimitsCommand(promptRef.current)
     ) {
       if (openUsageLimits()) {
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
+    if (
+      contextCommandOffered &&
+      !directAnnotation &&
+      !composerHasNonPromptContent &&
+      isContextCommand(promptRef.current)
+    ) {
+      if (openUsageContext()) {
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
@@ -9344,6 +9458,10 @@ export default function ChatView(props: ChatViewProps) {
         messageId: messageIdForSend,
       });
     }
+    setPendingContextMessages((current) => [
+      ...current,
+      { threadKey: routeThreadKey, id: messageIdForSend },
+    ]);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -9594,6 +9712,7 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      releasePendingContextMessage(messageIdForSend);
       if (submissionIntent === "background" && draftId && draftThread) {
         restoreFailedBackgroundDraftThread(
           draftId,
@@ -9994,6 +10113,10 @@ export default function ChatView(props: ChatViewProps) {
       messageId: messageIdForSend,
     });
 
+    setPendingContextMessages((current) => [
+      ...current,
+      { threadKey: routeThreadKey, id: messageIdForSend },
+    ]);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -10061,6 +10184,7 @@ export default function ChatView(props: ChatViewProps) {
       return true;
     }
 
+    releasePendingContextMessage(messageIdForSend);
     setOptimisticUserMessages((existing) =>
       existing.filter((message) => message.id !== messageIdForSend),
     );
@@ -11210,6 +11334,11 @@ export default function ChatView(props: ChatViewProps) {
                                 usageLimitsKey !== null &&
                                 !composerHasNonPromptContent
                                   ? openUsageLimits
+                                  : undefined
+                              }
+                              onContextCommand={
+                                contextCommandOffered && !composerHasNonPromptContent
+                                  ? openUsageContext
                                   : undefined
                               }
                               environmentUnavailable={activeEnvironmentUnavailableState}

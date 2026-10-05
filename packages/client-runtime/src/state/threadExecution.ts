@@ -157,6 +157,30 @@ export function deriveReportedModelSelection(
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
+export function deriveActiveContextUsage(projection: OrchestrationV2ThreadProjection) {
+  const providerThread = projection.providerThreads.find(
+    (candidate) =>
+      candidate.id === projection.thread.activeProviderThreadId &&
+      candidate.providerInstanceId === projection.thread.modelSelection.instanceId,
+  );
+  if (!providerThread) return null;
+  const run = projection.runs.findLast(
+    (candidate) => candidate.providerThreadId === providerThread.id && candidate.startedAt !== null,
+  );
+  if (run?.status === "rolled_back") return null;
+  const turn = projection.providerTurns.findLast(
+    (candidate) =>
+      candidate.providerThreadId === providerThread.id &&
+      candidate.tokenUsage &&
+      (run === undefined || candidate.runAttemptId === run.activeAttemptId),
+  );
+  const usage = turn?.tokenUsage ?? providerThread.contextUsage;
+  if (!usage) return null;
+  const model =
+    run?.modelSelection.model ?? providerThread.nativeMetadata?.modelSelection?.model ?? null;
+  return { usage, model };
+}
+
 // Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 

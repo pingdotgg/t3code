@@ -1,4 +1,5 @@
 import * as Option from "effect/Option";
+import { latestContextReport } from "@t3tools/shared/contextReport";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -1356,4 +1357,30 @@ export function restorePlanFollowUpComposer(input: {
     prompt: input.snapshot.prompt,
     detectTrigger: true,
   });
+}
+
+export function latestVisibleContextReport(
+  messages: Parameters<typeof latestContextReport>[0],
+  pendingMessages: ReadonlyArray<{ readonly threadKey: string; readonly id: string }>,
+  threadKey: string,
+) {
+  return pendingMessages.some(
+    (pending) =>
+      pending.threadKey === threadKey && !messages.some((message) => message.id === pending.id),
+  )
+    ? null
+    : latestContextReport(messages);
+}
+
+export function queuedEditHasStoredContent(
+  edit: {
+    readonly existingAttachments: ReadonlyArray<unknown>;
+    readonly context?: { readonly records: ReadonlyArray<object> } | undefined;
+  } | null,
+) {
+  return (
+    edit !== null &&
+    (edit.existingAttachments.length > 0 ||
+      (edit.context?.records ?? []).some((record) => !("attachmentId" in record)))
+  );
 }

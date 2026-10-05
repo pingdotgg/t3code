@@ -4,7 +4,9 @@ import {
   MessageId,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   ProviderSessionId,
+  RunAttemptId,
   ProviderDriverKind,
   RunId,
   ThreadId,
@@ -18,6 +20,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  deriveActiveContextUsage,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -675,5 +678,86 @@ describe("provider-reported model selection", () => {
     const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
     expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
     expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
+  });
+
+  it("reads context usage from the active provider thread only, labeled by its run", () => {
+    const priorThread = { ...providerThread, id: ProviderThreadId.make("prior") };
+    const attemptRun = {
+      ...run("run-1", 1, "completed"),
+      modelSelection: { ...selected, model: "run-model" },
+      providerThreadId: providerThread.id,
+      activeAttemptId: RunAttemptId.make("attempt-1"),
+    };
+    const turn = (id: ProviderThreadId, usedTokens: number) => ({
+      id: ProviderTurnId.make(`turn-${id}`),
+      providerThreadId: id,
+      nodeId: NodeId.make("node"),
+      runAttemptId: RunAttemptId.make("attempt-1"),
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: now,
+      tokenUsage: { usedTokens, maxTokens: 200_000, updatedAt: "2026-07-28T10:00:00.000Z" },
+    });
+    const withUsage = {
+      ...projection,
+      providerThreads: [priorThread, providerThread],
+      runs: [attemptRun],
+      providerTurns: [turn(providerThread.id, 50_000), turn(priorThread.id, 90_000)],
+    };
+    expect(deriveActiveContextUsage(withUsage)).toEqual({
+      usage: expect.objectContaining({ usedTokens: 50_000 }),
+      model: "run-model",
+    });
+    expect(
+      deriveActiveContextUsage({
+        ...withUsage,
+        providerTurns: [turn(priorThread.id, 90_000)],
+      }),
+    ).toBeNull();
+    expect(
+      deriveActiveContextUsage({
+        ...withUsage,
+        thread: { ...withUsage.thread, activeProviderThreadId: priorThread.id },
+        providerThreads: [{ ...priorThread, providerInstanceId: ProviderInstanceId.make("other") }],
+      }),
+    ).toBeNull();
+    expect(deriveActiveContextUsage({ ...withUsage, runs: [] })).toEqual({
+      usage: expect.objectContaining({ usedTokens: 50_000 }),
+      model: reported.model,
+    });
+
+    const nextRun = {
+      ...run("run-2", 2, "running"),
+      modelSelection: { ...selected, model: "next-model" },
+      providerThreadId: providerThread.id,
+      activeAttemptId: RunAttemptId.make("attempt-2"),
+    };
+    const nextRunStarted = { ...withUsage, runs: [attemptRun, nextRun] };
+    expect(deriveActiveContextUsage(nextRunStarted)).toBeNull();
+    const switchedUsage = { usedTokens: 50_000, maxTokens: 1_000_000 };
+    expect(
+      deriveActiveContextUsage({
+        ...nextRunStarted,
+        providerThreads: [priorThread, { ...providerThread, contextUsage: switchedUsage }],
+      }),
+    ).toEqual({ usage: switchedUsage, model: "next-model" });
+    expect(
+      deriveActiveContextUsage({
+        ...nextRunStarted,
+        runs: [attemptRun, { ...nextRun, startedAt: null }],
+      }),
+    ).toEqual({ usage: expect.objectContaining({ usedTokens: 50_000 }), model: "run-model" });
+
+    const rolledBack = {
+      ...withUsage,
+      providerThreads: [priorThread, { ...providerThread, contextUsage: switchedUsage }],
+      runs: [{ ...attemptRun, status: "rolled_back" as const }],
+    };
+    expect(deriveActiveContextUsage(rolledBack)).toBeNull();
+    expect(
+      deriveActiveContextUsage({ ...rolledBack, runs: [...rolledBack.runs, nextRun] }),
+    ).toEqual({ usage: switchedUsage, model: "next-model" });
   });
 });

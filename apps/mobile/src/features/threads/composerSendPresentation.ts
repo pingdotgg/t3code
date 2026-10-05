@@ -1,7 +1,10 @@
+import { isContextCommand } from "@t3tools/client-runtime/providerSkills";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import {
   alternateComposerDispatchAction,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 
@@ -64,4 +67,27 @@ export function resolveComposerSendPresentation(input: {
     alternate: input.canSteer ? alternate : null,
     offersFollowUpChoice: input.canSteer,
   };
+}
+
+export function resolveLocalComposerCommands(input: {
+  readonly prompt: string;
+  readonly draftAttachmentCount: number;
+  readonly queuedAttachmentCount: number;
+  readonly draftContext: OrchestrationMessageContext | undefined;
+  readonly contextOffered: boolean;
+  readonly usageLimitsOffered: boolean;
+}) {
+  const promptOnly =
+    input.draftAttachmentCount === 0 &&
+    input.queuedAttachmentCount === 0 &&
+    !input.draftContext?.records.some((record) => !("attachmentId" in record));
+  const context = promptOnly && input.contextOffered;
+  const usageLimits = promptOnly && input.usageLimitsOffered;
+  const typed =
+    usageLimits && isUsageLimitsCommand(input.prompt)
+      ? "usage-limits"
+      : context && isContextCommand(input.prompt)
+        ? "context"
+        : null;
+  return { context, usageLimits, typed };
 }

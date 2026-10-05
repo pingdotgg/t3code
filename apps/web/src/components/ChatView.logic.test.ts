@@ -1,4 +1,9 @@
-import { findRecordedWorktreeSetup, resolveVisibleWorktreeSetup } from "./ChatView.logic";
+import {
+  findRecordedWorktreeSetup,
+  latestVisibleContextReport,
+  queuedEditHasStoredContent,
+  resolveVisibleWorktreeSetup,
+} from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -2158,5 +2163,96 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("latestVisibleContextReport", () => {
+  const report = {
+    id: "report",
+    role: "assistant",
+    text: "## Context Usage\n\n**Tokens:** 10k / 200k (5%)",
+    streaming: false,
+  };
+
+  it("hides the previous report until the server echoes the sent message", () => {
+    const pending = [{ threadKey: "first", id: "sent" }];
+    expect(latestVisibleContextReport([report], [], "first")?.id).toBe("report");
+    expect(latestVisibleContextReport([report], pending, "first")).toBeNull();
+    expect(
+      latestVisibleContextReport(
+        [report, { id: "sent", role: "user", text: "next", streaming: false }],
+        pending,
+        "first",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps sends in separate threads pending until each thread catches up", () => {
+    const pending = [
+      { threadKey: "first", id: "first-send" },
+      { threadKey: "second", id: "second-send" },
+    ];
+    expect(latestVisibleContextReport([report], pending, "first")).toBeNull();
+    expect(latestVisibleContextReport([report], pending, "second")).toBeNull();
+    expect(latestVisibleContextReport([report], pending, "third")?.id).toBe("report");
+    expect(
+      latestVisibleContextReport(
+        [
+          report,
+          { id: "first-send", role: "user", text: "next", streaming: false },
+          { ...report, id: "first-report" },
+        ],
+        pending,
+        "first",
+      )?.id,
+    ).toBe("first-report");
+    expect(latestVisibleContextReport([report], pending, "second")).toBeNull();
+  });
+
+  it("waits for every outstanding send in the same thread", () => {
+    const pending = [
+      { threadKey: "first", id: "first-send" },
+      { threadKey: "first", id: "second-send" },
+    ];
+    const messages = [
+      report,
+      { id: "first-send", role: "user", text: "next", streaming: false },
+      { ...report, id: "first-report" },
+    ];
+    expect(latestVisibleContextReport(messages, pending, "first")).toBeNull();
+    expect(
+      latestVisibleContextReport(
+        [
+          ...messages,
+          { id: "second-send", role: "user", text: "next again", streaming: false },
+          { ...report, id: "second-report" },
+        ],
+        pending,
+        "first",
+      )?.id,
+    ).toBe("second-report");
+  });
+});
+
+describe("queuedEditHasStoredContent", () => {
+  const terminal = { contextId: "terminal:1", kind: "terminal" };
+  const image = { contextId: "image:1", kind: "image", attachmentId: "a1" };
+
+  it("counts stored attachments and context so local commands save the edit instead", () => {
+    expect(queuedEditHasStoredContent(null)).toBe(false);
+    expect(queuedEditHasStoredContent({ existingAttachments: [] })).toBe(false);
+    expect(queuedEditHasStoredContent({ existingAttachments: [{ id: "a1" }] })).toBe(true);
+    expect(
+      queuedEditHasStoredContent({
+        existingAttachments: [],
+        context: { records: [terminal] },
+      }),
+    ).toBe(true);
+    expect(
+      queuedEditHasStoredContent({
+        existingAttachments: [],
+        context: { records: [image] },
+      }),
+    ).toBe(false);
   });
 });

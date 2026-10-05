@@ -39,6 +39,7 @@ import {
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  CONTEXT_COMMAND,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -183,6 +184,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onContext,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -204,6 +206,7 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
+  readonly onContext?: () => boolean;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
@@ -384,10 +387,13 @@ export function useComposerCommandMenu({
         selectedProviderStatus: selectedProviderStatus
           ? {
               ...selectedProviderStatus,
-              slashCommands: getProviderSlashCommandsForSlashMenu(
-                resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
-                visibleSkills,
-              ),
+              slashCommands: [
+                ...getProviderSlashCommandsForSlashMenu(
+                  resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
+                  visibleSkills,
+                ),
+                ...(onContext ? [CONTEXT_COMMAND] : []),
+              ],
             }
           : null,
       });
@@ -520,6 +526,7 @@ export function useComposerCommandMenu({
     threadShells,
     hasThread,
     hasCompactableConversation,
+    onContext,
     onUpdateInteractionMode,
     pathSearch.entries,
     pullRequestSearch.entries,
@@ -602,15 +609,22 @@ export function useComposerCommandMenu({
         return;
       }
 
-      if (
-        item.type === "provider-slash-command" &&
-        item.command.name === USAGE_LIMITS_COMMAND.name &&
-        onUsageLimits
-      ) {
+      const localCommand =
+        item.type !== "provider-slash-command"
+          ? undefined
+          : item.command.name === USAGE_LIMITS_COMMAND.name
+            ? onUsageLimits
+            : item.command.name === CONTEXT_COMMAND.name
+              ? onContext
+              : undefined;
+      if (localCommand) {
+        const opensContext =
+          item.type === "provider-slash-command" && item.command.name === CONTEXT_COMMAND.name;
+        if (opensContext && onContext?.() === false) return;
         const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
         setSelection({ start: cleared.cursor, end: cleared.cursor });
         onChangeDraftMessage(cleared.text);
-        onUsageLimits();
+        if (!opensContext) localCommand();
         return;
       }
 
@@ -633,6 +647,7 @@ export function useComposerCommandMenu({
       ownerKey,
       items,
       onChangeDraftMessage,
+      onContext,
       onUpdateInteractionMode,
       onUsageLimits,
       selectedProviderStatus?.showInteractionModeToggle,
