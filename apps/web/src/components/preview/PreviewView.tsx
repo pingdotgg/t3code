@@ -32,8 +32,10 @@ import {
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import {
+  isSshPreviewForwardError,
   navigateTabThroughForward,
   readSshEnvironmentTarget,
+  type SshPreviewForwardError,
   toRemotePreviewUrl,
 } from "~/browser/sshPreviewForwards";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -102,6 +104,14 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
  */
+const reportForwardFailure = (error: SshPreviewForwardError): void => {
+  toastManager.add({
+    type: "error",
+    title: "Could not reach the remote port",
+    description: error.message,
+  });
+};
+
 export function PreviewView({
   threadRef,
   tabId: requestedTabId,
@@ -200,6 +210,11 @@ export function PreviewView({
           tabId,
           url: resolvedUrl,
           navigate: (url) => bridge.navigate(runtimeTabId, url),
+        }).catch((error: unknown) => {
+          // A forward fails before navigation, so no server `failed` event follows.
+          if (!isSshPreviewForwardError(error)) throw error;
+          reportForwardFailure(error);
+          return null;
         });
         if (loadedUrl === null) return false;
         rememberPreviewUrl(threadRef, resolvedUrl);
@@ -214,6 +229,8 @@ export function PreviewView({
             title: "Unable to open browser",
             description: error.message,
           });
+        } else if (isSshPreviewForwardError(error)) {
+          reportForwardFailure(error);
         }
       }
       return result._tag === "Success";
