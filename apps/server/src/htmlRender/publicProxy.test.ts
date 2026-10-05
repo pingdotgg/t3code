@@ -91,6 +91,7 @@ describe("publicProxy", () => {
         ipv4Target("127.0.0.1", 80),
         ipv4Target("10.1.2.3", 80),
         ipv4Target("169.254.169.254", 80),
+        ipv4Target("198.18.0.1", 80),
         domainTarget("localhost", 80),
         // IPv6 forms that carry a local IPv4 address: NAT64, 6to4, Teredo,
         // and IPv4-compatible.

@@ -15,6 +15,7 @@ for (const [network, prefix] of [
   ["169.254.0.0", 16],
   ["172.16.0.0", 12],
   ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
   ["224.0.0.0", 3],
 ] as const) {
   LOCAL_ADDRESSES.addSubnet(network, prefix, "ipv4");
