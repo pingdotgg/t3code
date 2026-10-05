@@ -459,6 +459,23 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          case "delegated-tasks.stop":
+            return threads
+              .stopDelegatedTasks({
+                threadId: effect.threadId,
+                commandId: effect.commandId,
+                reason: effect.request.reason,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
         }
       },
     });
