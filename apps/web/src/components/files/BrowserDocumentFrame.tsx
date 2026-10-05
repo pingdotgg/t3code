@@ -78,8 +78,10 @@ export function HtmlRenderDocument(props: {
       ref={frameRef}
       src={src}
       title={props.title}
-      // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
-      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+      // Never allow-same-origin: the opaque origin keeps the page out of the app's
+      // session. Links the reader opens leave the sandbox so sites work normally;
+      // no modals, since an inline page runs without being opened.
+      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
       loading="lazy"
       onLoad={() => {
         setLoaded(true);

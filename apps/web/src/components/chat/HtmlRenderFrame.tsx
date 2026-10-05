@@ -6,9 +6,9 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import type { ChatFileAttachment } from "~/types";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
@@ -52,10 +52,28 @@ export function HtmlRenderFrame(props: {
     }),
     [attachmentId, fileName],
   );
-  // The page keeps the first URL it got, so later re-mints are not even requested.
+  // A fresh signed URL on mount: a cached one may have expired while the
+  // thread was closed, and a frame cannot report the failed load. The page
+  // keeps that URL for its lifetime, so it is minted once.
+  const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [src, setSrc] = useState<string | null>(null);
-  const assetUrl = useAssetUrlState(src === null ? props.environmentId : null, resource);
-  if (src === null && assetUrl._tag === "Success") setSrc(assetUrl.url);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (src !== null) return;
+    let cancelled = false;
+    // Null means the connection is not ready yet; the effect runs again when it is.
+    void refresh().then(
+      (url) => {
+        if (!cancelled && url !== null) setSrc(url);
+      },
+      () => {
+        if (!cancelled) setFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh, src]);
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
@@ -90,7 +108,7 @@ export function HtmlRenderFrame(props: {
             </Tooltip>
           </div>
         </>
-      ) : assetUrl._tag === "Failure" ? (
+      ) : failed ? (
         <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
           Unable to load {title}
         </p>

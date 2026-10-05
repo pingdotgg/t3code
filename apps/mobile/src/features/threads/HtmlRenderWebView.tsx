@@ -89,7 +89,7 @@ export function HtmlRenderWebView(props: {
   const [loaded, setLoaded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const webView = useRef<WebView<object>>(null);
-  const loadedRef = useRef(false);
+  const crashes = useRef(0);
   // The theme the loaded document shows; null until it loads.
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = useMemo(
@@ -102,14 +102,16 @@ export function HtmlRenderWebView(props: {
     postTheme(webView.current, theme);
   }, [theme]);
   const restart = () => {
-    loadedRef.current = false;
+    // A page that keeps crashing its web process is not reloaded forever.
+    crashes.current += 1;
+    if (crashes.current > 1) {
+      props.onLoadError?.();
+      return;
+    }
     shownTheme.current = null;
     setLoaded(false);
     setOverflows(false);
     setGeneration((value) => value + 1);
-  };
-  const openLink = (url: string) => {
-    if (loadedRef.current && /^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
   };
   const scrollable = !props.nested || overflows;
   return (
@@ -120,7 +122,6 @@ export function HtmlRenderWebView(props: {
         source={source}
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
-        setSupportMultipleWindows={false}
         allowsInlineMediaPlayback
         automaticallyAdjustContentInsets={!props.nested}
         bounces={!props.nested}
@@ -129,21 +130,18 @@ export function HtmlRenderWebView(props: {
         scrollEnabled={scrollable}
         nestedScrollEnabled={props.nested && overflows}
         overScrollMode={props.nested ? "never" : "always"}
-        // Only the page itself loads here. Other top-frame navigations open in
-        // the browser once the page is up, and are dropped before that.
-        onShouldStartLoadWithRequest={(request) => {
-          if (
-            request.isTopFrame === false ||
-            withoutFragment(request.url) === withoutFragment(props.uri)
-          ) {
-            return true;
-          }
-          openLink(request.url);
-          return false;
+        // Only the page itself loads here; other top-frame navigations are
+        // dropped. A link the reader taps opens as a new window, which the
+        // platform allows only from a tap, and goes to the browser.
+        onShouldStartLoadWithRequest={(request) =>
+          request.isTopFrame === false ||
+          withoutFragment(request.url) === withoutFragment(props.uri)
+        }
+        onOpenWindow={(event) => {
+          const url = event.nativeEvent.targetUrl;
+          if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "html-render");
         }}
-        onOpenWindow={(event) => openLink(event.nativeEvent.targetUrl)}
         onLoadEnd={() => {
-          loadedRef.current = true;
           setLoaded(true);
           shownTheme.current = theme;
           if (theme !== initialTheme) postTheme(webView.current, theme);

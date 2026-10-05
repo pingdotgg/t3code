@@ -99,21 +99,18 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
 }
 
 /**
- * The frame height for a page at a frame width: the measured content height,
- * interpolated between measured widths and capped at the agent's height.
+ * The frame height for a page at a frame width: the taller of the heights
+ * measured at the nearest widths on each side, capped at the agent's height.
+ * A breakpoint between two measured widths can make the page as tall as
+ * either, and the frame must never cut it off.
  */
 export function htmlRenderFrameHeight(reference: HtmlRenderReference, width: number) {
   const heights = reference.heights;
   if (heights === undefined || heights.length === 0) return reference.height;
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
-  const [lowWidth, lowHeight] =
-    heights[Math.max(0, above === -1 ? heights.length - 1 : above - 1)]!;
-  const [highWidth, highHeight] = heights[above === -1 ? heights.length - 1 : above]!;
-  const ratio =
-    highWidth === lowWidth
-      ? 0
-      : Math.min(1, Math.max(0, (width - lowWidth) / (highWidth - lowWidth)));
-  const measured = Math.ceil(lowHeight + (highHeight - lowHeight) * ratio);
+  const high = above === -1 ? heights.length - 1 : above;
+  const low = heights[high]![0] === width ? high : Math.max(0, high - 1);
+  const measured = Math.max(heights[low]![1], heights[high]![1]);
   return clampHtmlRenderHeight(Math.min(reference.height, measured));
 }
 
@@ -281,8 +278,10 @@ function rootRule(theme: HtmlRenderTheme): string {
 // Runs synchronously in <head>, before the page's own styles and body, so the
 // first paint is already themed. It rewrites its own <style> element rather
 // than setting inline properties, so a page's later `:root` rules still win,
-// then drops the fragment so a page's own hash routing never sees it.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});})();`;
+// then drops the fragment so a page's own hash routing never sees it. A link
+// the reader clicks to another page opens in a new window, which clients send
+// to the browser, rather than replacing the page inside the thread.
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme");if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type===${JSON.stringify(HTML_RENDER_THEME_MESSAGE_TYPE)})a(d.theme);});document.addEventListener("click",function(e){var l=e.isTrusted&&e.target&&e.target.closest?e.target.closest("a[href]"):null;if(l&&/^https?:$/.test(l.protocol)&&l.href.split("#")[0]!==location.href.split("#")[0]){l.target="_blank";l.rel="noopener";}},true);})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");

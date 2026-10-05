@@ -675,14 +675,16 @@ describe("assetResponseHeaders", () => {
       assetResponseHeaders("/attachments/upload.bin", { mimeType: "text/html" }),
     ).toMatchObject({
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+      "Content-Security-Policy":
+        "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals",
     });
   });
   it("serves HTML assets as utf-8 inside a sandboxed origin", () => {
     for (const path of ["/workspace/page.html", "/workspace/PAGE.HTM", "/tmp/report.html"]) {
       expect(assetResponseHeaders(path)).toMatchObject({
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+        "Content-Security-Policy":
+          "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals",
       });
     }
   });

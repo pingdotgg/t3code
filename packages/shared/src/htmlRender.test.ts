@@ -109,11 +109,25 @@ describe("htmlRenderFrameHeight", () => {
     ],
   })!;
 
-  it("interpolates between measured widths and holds the ends", () => {
+  it("takes the taller neighbor between measured widths and holds the ends", () => {
     expect(measured.heights?.map(([width]) => width)).toEqual([390, 728, 1000]);
     expect(htmlRenderFrameHeight(measured, 728)).toBe(1403);
-    expect(htmlRenderFrameHeight(measured, 559)).toBe(1347);
+    expect(htmlRenderFrameHeight(measured, 559)).toBe(1403);
     expect(htmlRenderFrameHeight(measured, 320)).toBe(1290);
+  });
+
+  it("never cuts off a page whose breakpoint falls between measured widths", () => {
+    // 900px tall below a 600px media query, 450px above it.
+    const responsive = readHtmlRenderReference({
+      ...reference,
+      height: 2000,
+      heights: [
+        [520, 900],
+        [640, 450],
+      ],
+    })!;
+    expect(htmlRenderFrameHeight(responsive, 590)).toBe(900);
+    expect(htmlRenderFrameHeight(responsive, 640)).toBe(450);
   });
 
   it("never exceeds the agent's height and falls back to it without measurements", () => {
