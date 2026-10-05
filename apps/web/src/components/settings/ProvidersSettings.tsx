@@ -279,6 +279,12 @@ export function ProvidersSettingsPanel() {
   );
   const delegatedInstanceId = delegatedThreadModelSelection.instanceId;
   const delegatedModel = delegatedThreadModelSelection.model;
+  const delegatedModelOptions = delegatedThreadModelSelection.options;
+  const delegatedInstanceEntry = gitModelInstanceEntries.find(
+    (entry) => entry.instanceId === delegatedInstanceId,
+  );
+  const delegatedProvider: ProviderDriverKind =
+    delegatedInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const isDelegatedThreadModelDirty = !Equal.equals(
     settings.delegatedThreadModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection ?? null,
@@ -473,7 +479,7 @@ export function ProvidersSettingsPanel() {
 
         <SettingsRow
           title="Delegated thread model"
-          description="Default model for helper threads created via delegate_work when no explicit model is given. Explicit per-delegation models always win."
+          description="Default model and thinking level for helper threads created via delegate_work when no explicit model is given. Explicit per-delegation models and reasoning always win."
           resetAction={
             isDelegatedThreadModelDirty ? (
               <SettingResetButton
@@ -503,6 +509,32 @@ export function ProvidersSettingsPanel() {
                       {
                         ...settings,
                         delegatedThreadModelSelection: createModelSelection(instanceId, model),
+                      },
+                      serverProviders,
+                    ),
+                  });
+                }}
+              />
+              <TraitsPicker
+                provider={delegatedProvider}
+                models={delegatedInstanceEntry?.models ?? []}
+                model={delegatedModel}
+                prompt=""
+                onPromptChange={() => {}}
+                modelOptions={delegatedModelOptions}
+                allowPromptInjectedEffort={false}
+                triggerVariant="outline"
+                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                onModelOptionsChange={(nextOptions) => {
+                  updateSettings({
+                    delegatedThreadModelSelection: resolveDelegatedThreadModelSelectionState(
+                      {
+                        ...settings,
+                        delegatedThreadModelSelection: createModelSelection(
+                          delegatedInstanceId,
+                          delegatedModel,
+                          nextOptions,
+                        ),
                       },
                       serverProviders,
                     ),

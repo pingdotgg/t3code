@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { Effect, Schema } from "effect";
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { killProcessTree } from "@t3tools/shared/processTree";
 import { ChildDecision, ChildWaitCondition, MessageId, ThreadId } from "@t3tools/contracts";
 import { buildRevision } from "./buildIdentity.ts";
@@ -1549,6 +1550,12 @@ async function createNestedThreadToolImpl(
     options.delegatedDefaultModelSelection?.model?.trim() ||
     options.defaultModel?.trim() ||
     "gpt-6-luna";
+  const effectiveReasoning =
+    reasoning ??
+    // Settings thinking level. Reads only the canonical `reasoning` option id
+    // that `chat new --reasoning` writes back; a provider whose effort
+    // descriptor uses a different id needs the settings picker to normalize it.
+    getModelSelectionStringOptionValue(options.delegatedDefaultModelSelection, "reasoning");
 
   const childPrompt =
     args.promptTemplate === undefined
@@ -1585,7 +1592,7 @@ async function createNestedThreadToolImpl(
       title,
       prompt: childPrompt,
       model: effectiveModel,
-      reasoning,
+      reasoning: effectiveReasoning,
       workspace,
       dryRun: true,
       followUp,
@@ -1609,7 +1616,7 @@ async function createNestedThreadToolImpl(
           title,
           prompt: childPrompt,
           model: effectiveModel,
-          reasoning,
+          reasoning: effectiveReasoning,
           workspace,
           dryRun: false,
           followUp,
@@ -1736,7 +1743,7 @@ async function createNestedThreadToolImpl(
         title,
         prompt: childPrompt,
         model: effectiveModel,
-        reasoning,
+        reasoning: effectiveReasoning,
         workspace,
         dryRun: false,
         followUp,
