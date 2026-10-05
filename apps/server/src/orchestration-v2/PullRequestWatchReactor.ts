@@ -71,7 +71,7 @@ interface WatchTarget {
   readonly watch: ThreadPullRequestWatch;
 }
 
-/** Every thread that watches one pull request, read once per pass. */
+/** Every thread of one project that watches one pull request, read once per pass. */
 interface WatchGroup {
   readonly key: string;
   readonly targets: ReadonlyArray<WatchTarget>;
@@ -133,7 +133,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
  * Wakes a thread's agent when a pull request it watches (`watch_pull_request`) needs a look:
  * checks finished on the head commit, someone else commented, or the branch started to
  * conflict. A pass every two minutes reads each watched pull request once for all the threads
- * that watch it, and skips one whose sync snapshot has not moved while nothing is in flight.
+ * of a project that watch it, and skips one whose sync snapshot has not moved while nothing is
+ * in flight.
  * Settling or archiving a thread ends its watches, and a merged or closed pull request ends
  * its watch.
  */
@@ -290,12 +291,14 @@ export const make = Effect.gen(function* () {
     Effect.forEach(group.targets, (target) =>
       step(target).pipe(
         Effect.as(true),
-        Effect.catchCause((cause) =>
-          logFailure("pull request watch update failed", {
+        Effect.catchCause((cause) => {
+          // A thread that did not get its update must not wait for the quiet reread.
+          lastReads.delete(group.key);
+          return logFailure("pull request watch update failed", {
             threadId: target.thread.id,
             pullRequest: group.key,
-          })(cause).pipe(Effect.as(false)),
-        ),
+          })(cause).pipe(Effect.as(false));
+        }),
       ),
     ).pipe(Effect.map((landed) => landed.every(Boolean)));
 
@@ -381,7 +384,9 @@ export const make = Effect.gen(function* () {
         ending.push(target);
         continue;
       }
-      const key = threadPullRequestKeyOf(target.link);
+      // Grouped per project too: each project reads through its own checkout, so one that cannot
+      // read the pull request must not end another project's watches.
+      const key = `${target.thread.projectId} ${threadPullRequestKeyOf(target.link)}`;
       byPullRequest.set(key, [...(byPullRequest.get(key) ?? []), target]);
     }
     const groups = [...byPullRequest].map(([key, members]): WatchGroup => ({
