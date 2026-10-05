@@ -366,19 +366,20 @@ export function isDefaultCloneParentDirectory(input: {
 }): boolean {
   if (input.parentDirectory === null) return false;
   /** Expand aliases using the server's home before comparing separators, case, and trailing slashes. */
-  const normalize = (value: string): string => {
+  function normalize(value: string): string {
     const path = value.trim();
     const expanded =
       input.homeDirectory && (path === "~" || path.startsWith("~/") || path.startsWith("~\\"))
         ? resolveProjectPathForDispatch(`./${path.slice(2)}`, input.homeDirectory)
         : path;
     return normalizeProjectPathForComparison(expanded);
-  };
+  }
   return (
     normalize(input.parentDirectory) === normalize(getAddProjectInitialQuery(input.baseDirectory))
   );
 }
 
+/** Find an existing workspace in this environment using normalized path comparison. */
 export function findExistingAddProject(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId;

@@ -1293,92 +1293,95 @@ export function AddProjectDestinationScreen(props: {
     }
   };
 
-  /** Validate the destination and wait for the streamed project record before opening its draft. */
-  const submitPath = useCallback(async () => {
-    if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
-      return;
-    setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
-    if (!resolved.ok) {
-      setError(resolved.error);
-      return;
-    }
+  const submitPath = useCallback(
+    /** Validate the destination and wait for the streamed project record before opening its draft. */
+    async () => {
+      if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting || isSavingCloneFolder)
+        return;
+      setError(null);
+      const resolved = resolveAddProjectPath({
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      });
+      if (!resolved.ok) {
+        setError(resolved.error);
+        return;
+      }
 
-    setIsSubmitting(true);
-    if (environment.supportsCloneTracking) {
-      // The server creates the project and clones in the background; the
-      // draft screen shows progress and holds Start until the files land.
-      const projectId = ProjectId.make(uuidv4());
-      const title = inferProjectTitleFromPath(resolved.path);
-      const startResult = await startProjectClone({
+      setIsSubmitting(true);
+      if (environment.supportsCloneTracking) {
+        // The server creates the project and clones in the background; the
+        // draft screen shows progress and holds Start until the files land.
+        const projectId = ProjectId.make(uuidv4());
+        const title = inferProjectTitleFromPath(resolved.path);
+        const startResult = await startProjectClone({
+          environmentId: environment.environmentId,
+          input: {
+            projectId,
+            title,
+            createdAt: new Date().toISOString(),
+            remoteUrl,
+            destinationPath: resolved.path,
+          },
+        });
+        if (AsyncResult.isFailure(startResult)) {
+          setError(errorMessage(Cause.squash(startResult.cause)));
+        } else {
+          // The draft screen resolves its project from the client store, so it
+          // must not open before the create event has arrived (it would fall
+          // back to the project picker and lose the clone controls). Stay in
+          // the submitting state until then; the clone keeps running either way.
+          const project = await waitForProject(
+            { environmentId: environment.environmentId, projectId },
+            15_000,
+          );
+          if (project === null) {
+            setError(
+              "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            );
+          } else {
+            openNewTaskDraft(navigation, {
+              environmentId: environment.environmentId,
+              projectId,
+              title,
+              cloning: "1",
+            });
+          }
+        }
+        setIsSubmitting(false);
+        return;
+      }
+      const cloneResult = await cloneRepository({
         environmentId: environment.environmentId,
         input: {
-          projectId,
-          title,
-          createdAt: new Date().toISOString(),
           remoteUrl,
           destinationPath: resolved.path,
         },
       });
-      if (AsyncResult.isFailure(startResult)) {
-        setError(errorMessage(Cause.squash(startResult.cause)));
+      if (AsyncResult.isFailure(cloneResult)) {
+        setError(errorMessage(Cause.squash(cloneResult.cause)));
       } else {
-        // The draft screen resolves its project from the client store, so it
-        // must not open before the create event has arrived (it would fall
-        // back to the project picker and lose the clone controls). Stay in
-        // the submitting state until then; the clone keeps running either way.
-        const project = await waitForProject(
-          { environmentId: environment.environmentId, projectId },
-          15_000,
-        );
-        if (project === null) {
-          setError(
-            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
-          );
-        } else {
-          openNewTaskDraft(navigation, {
-            environmentId: environment.environmentId,
-            projectId,
-            title,
-            cloning: "1",
-          });
+        const createResult = await createProject(cloneResult.value.cwd);
+        if (createResult && AsyncResult.isFailure(createResult)) {
+          setError(errorMessage(Cause.squash(createResult.cause)));
         }
       }
       setIsSubmitting(false);
-      return;
-    }
-    const cloneResult = await cloneRepository({
-      environmentId: environment.environmentId,
-      input: {
-        remoteUrl,
-        destinationPath: resolved.path,
-      },
-    });
-    if (AsyncResult.isFailure(cloneResult)) {
-      setError(errorMessage(Cause.squash(cloneResult.cause)));
-    } else {
-      const createResult = await createProject(cloneResult.value.cwd);
-      if (createResult && AsyncResult.isFailure(createResult)) {
-        setError(errorMessage(Cause.squash(createResult.cause)));
-      }
-    }
-    setIsSubmitting(false);
-  }, [
-    cloneRepository,
-    createProject,
-    environment,
-    isBrowseNavigating,
-    isSavingCloneFolder,
-    isSubmitting,
-    navigation,
-    pathInput,
-    remoteUrl,
-    startProjectClone,
-  ]);
+    },
+    [
+      cloneRepository,
+      createProject,
+      environment,
+      isBrowseNavigating,
+      isSavingCloneFolder,
+      isSubmitting,
+      navigation,
+      pathInput,
+      remoteUrl,
+      startProjectClone,
+    ],
+  );
 
   return (
     <AddProjectShell title="Clone destination">
