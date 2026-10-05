@@ -179,8 +179,10 @@ const isImageBytes = (bytes: Uint8Array) => {
   ) {
     return true;
   }
-  const text = new TextDecoder().decode(bytes.subarray(0, 4096));
-  return /^\s*</.test(text) && /<svg[\s/>]/i.test(text);
+  // An SVG's root element is <svg>, after an optional XML declaration, comments, and doctype.
+  return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--[\s\S]*?-->|<!doctype[^>]*>)\s*)*<svg[\s/>]/i.test(
+    new TextDecoder().decode(bytes.subarray(0, 4096)),
+  );
 };
 
 /** Replaces every local image reference with a data URI; unreadable paths stay as written. */
@@ -322,7 +324,7 @@ const make = Effect.gen(function* () {
     );
 
   // Never installs the browser: html_render must not depend on it.
-  const measure = (pagePath: string) =>
+  const measure = (html: string) =>
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
@@ -330,7 +332,7 @@ const make = Effect.gen(function* () {
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
-          pagePath,
+          html,
           widths: HTML_RENDER_MEASURE_WIDTHS,
           urlFragment: MEASURE_FRAGMENT,
         }).pipe(Effect.provideContext(services)),
@@ -388,7 +390,7 @@ const make = Effect.gen(function* () {
     }
     const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
-      Effect.andThen(measure(filePath)),
+      Effect.andThen(measure(html)),
       // Only the returned reference lets thread deletion find the page, so a
       // publish that fails or is interrupted before returning removes it.
       Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),

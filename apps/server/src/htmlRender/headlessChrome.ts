@@ -1,8 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeURL from "node:url";
-
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -44,8 +42,16 @@ const MAX_CONSOLE_TEXT_CHARS = 500;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
-// Stack traces and load errors name the page this way instead of its temporary file URL.
+// Pages load from this made-up web origin, never from a file. Chrome refuses
+// local files to every web page, frame, worker, and popup, so a page cannot
+// read files the agent's provider withholds; local images reach it already
+// inlined as data URIs. `.localhost` keeps it a secure context that may still
+// load plain-http resources, and the request never leaves the browser.
+const PAGE_URL = "http://t3-page.localhost/page.html";
+// Stack traces and load errors name the page this way instead of its URL.
 const PAGE_NAME = "page.html";
+// Each measuring load gets its own copy of the page over the pipe.
+const MEASURE_CONCURRENCY = 3;
 // What Chrome prints before aborting when it cannot sandbox itself, e.g. on
 // Ubuntu 23.10+ where AppArmor restricts unprivileged user namespaces.
 const NO_SANDBOX_SIGNATURE = "No usable sandbox";
@@ -144,7 +150,8 @@ const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
 interface PageEvents {
-  pageUrl: string | undefined;
+  /** The page, base64, served for `PAGE_URL`. */
+  body: string | undefined;
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
   omittedConsoleMessages: number;
@@ -254,11 +261,18 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     if (message.method === "Fetch.requestPaused") {
       const paused = Option.getOrUndefined(decodeRequestPaused(message.params));
       if (!paused) return Effect.void;
-      // Lowercased so drive letters and percent-escapes compare alike.
-      const isPage =
-        paused.request.url.split("#", 1)[0]!.toLowerCase() === page.pageUrl?.toLowerCase();
-      return isPage
-        ? post("Fetch.continueRequest", { requestId: paused.requestId }, sessionId)
+      const body = page.body;
+      return paused.request.url.split("#", 1)[0] === PAGE_URL && body !== undefined
+        ? post(
+            "Fetch.fulfillRequest",
+            {
+              requestId: paused.requestId,
+              responseCode: 200,
+              responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }],
+              body,
+            },
+            sessionId,
+          )
         : post(
             "Fetch.failRequest",
             { requestId: paused.requestId, errorReason: "AccessDenied" },
@@ -271,11 +285,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       page.omittedConsoleMessages += 1;
       return Effect.void;
     }
-    const pageUrl = page.pageUrl;
-    const text =
-      pageUrl === undefined
-        ? consoleMessage.text
-        : consoleMessage.text.replaceAll(pageUrl, PAGE_NAME);
+    const text = consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME);
     page.consoleMessages.push({
       level: consoleMessage.level,
       text:
@@ -364,7 +374,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Schema.Struct({ sessionId: Schema.String }),
     );
     const events: PageEvents = {
-      pageUrl: undefined,
+      body: undefined,
       loaded: undefined,
       consoleMessages: [],
       omittedConsoleMessages: 0,
@@ -373,10 +383,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
-    // The page's own file is the only one it may load. A file:// script, frame,
-    // or navigation could otherwise read files the agent's provider withholds.
-    // Local images reach the page already inlined as data URIs.
-    yield* send("Fetch.enable", { patterns: [{ urlPattern: "file://*" }] }, Ignored, sessionId);
+    // Serves the page at `PAGE_URL`; anything else on that origin fails.
+    yield* send(
+      "Fetch.enable",
+      { patterns: [{ urlPattern: "http://t3-page.localhost/*" }] },
+      Ignored,
+      sessionId,
+    );
     yield* send(
       "Emulation.setDeviceMetricsOverride",
       { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
@@ -384,14 +397,14 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       sessionId,
     );
 
-    const load = Effect.fnUntraced(function* (pagePath: string, urlFragment: string) {
-      const pageUrl = NodeURL.pathToFileURL(pagePath).href;
+    /** Loads the page, given base64, so callers loading it often encode it once. */
+    const load = Effect.fnUntraced(function* (body: string, urlFragment: string) {
       const loaded = yield* Deferred.make<void, BrowserFailure>();
-      events.pageUrl = pageUrl;
+      events.body = body;
       events.loaded = loaded;
       const navigation = yield* send(
         "Page.navigate",
-        { url: `${pageUrl}${urlFragment}` },
+        { url: `${PAGE_URL}${urlFragment}` },
         Navigation,
         sessionId,
       );
@@ -443,7 +456,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   return { openPage };
 });
 
-/** A temporary directory for the browser profile and any page file, removed with the scope. */
+/** A temporary directory for the browser profile, removed with the scope. */
 const scratchDirectory = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.acquireRelease(
@@ -466,24 +479,15 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
     readonly width: number;
     readonly urlFragment: string;
   }) {
-    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* scratchDirectory;
-    const pagePath = path.join(directory, "index.html");
-    yield* fileSystem
-      .writeFileString(pagePath, input.html)
-      .pipe(
-        Effect.mapError(
-          (cause) => new HtmlRenderBrowserError({ reason: "the page could not be written", cause }),
-        ),
-      );
     const browser = yield* launchBrowser({
       executable: input.executable,
       noSandbox: input.noSandbox,
       profileDirectory: path.join(directory, "profile"),
     });
     const page = yield* browser.openPage(input.width);
-    const contentHeight = yield* page.load(pagePath, input.urlFragment);
+    const contentHeight = yield* page.load(Encoding.encodeBase64(input.html), input.urlFragment);
     const capturedHeight = Math.max(1, Math.min(contentHeight, MAX_CAPTURE_HEIGHT));
     const png = yield* page.screenshot(capturedHeight);
     return { png, contentHeight, capturedHeight, consoleMessages: page.consoleMessages() };
@@ -503,12 +507,12 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 /**
  * Content heights of the page at each width, each from a fresh load, since
  * pages often lay themselves out from the width once at load. One browser,
- * all widths in parallel.
+ * a few widths at a time.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
-  readonly pagePath: string;
+  readonly html: string;
   readonly widths: ReadonlyArray<number>;
   readonly urlFragment: string;
 }) {
@@ -519,13 +523,14 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     noSandbox: input.noSandbox,
     profileDirectory: path.join(directory, "profile"),
   });
+  const body = Encoding.encodeBase64(input.html);
   return yield* Effect.forEach(
     input.widths,
     (width) =>
       browser.openPage(width).pipe(
-        Effect.flatMap((page) => page.load(input.pagePath, input.urlFragment)),
+        Effect.flatMap((page) => page.load(body, input.urlFragment)),
         Effect.map((height) => [width, height] as const),
       ),
-    { concurrency: "unbounded" },
+    { concurrency: MEASURE_CONCURRENCY },
   );
 }, Effect.scoped);

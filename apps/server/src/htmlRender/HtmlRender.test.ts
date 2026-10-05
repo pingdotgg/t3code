@@ -106,10 +106,12 @@ describe("HtmlRender", () => {
       // Named like an image, but a symlink or renamed file must not carry other data.
       const secret = path.join(directory, "secret.png");
       yield* fileSystem.writeFileString(secret, "API_KEY=abc123");
+      const report = path.join(directory, "report.svg");
+      yield* fileSystem.writeFileString(report, "<!doctype html><body><svg></svg>API_KEY=abc123");
 
       const error = yield* htmlRender
         .prepare(
-          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}">`,
+          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}">`,
         )
         .pipe(Effect.flip);
 
@@ -119,6 +121,7 @@ describe("HtmlRender", () => {
         folder,
         "C:\\nope\\shot.webp",
         secret,
+        report,
       ]);
     }).pipe(Effect.provide(testLayer)),
   );
