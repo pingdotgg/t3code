@@ -146,12 +146,15 @@ export function useReviewFilePatches({
     [requestFiles, settledFileCount],
   );
   const requestFile = useCallback((index: number) => requestFiles([index]), [requestFiles]);
+  const retryInputsRef = useRef({ queries, files });
+  retryInputsRef.current = { queries, files };
   const retry = useCallback(
     (path: string) => {
+      const { queries, files } = retryInputsRef.current;
       const query = queries.find(({ index }) => files[index]?.path === path)?.query;
       if (query) registry.refresh(query);
     },
-    [queries, files, registry],
+    [registry],
   );
   const renderableFiles = useMemo(
     () =>
@@ -185,23 +188,27 @@ export function useReviewFilePatches({
           ),
     [source, files, patches, scope, preview],
   );
-  const fileStates = new Map(
-    files.map((file, index) => {
-      const patch = patches.get(index);
-      return [
-        file.path,
-        {
-          error:
-            patch?._tag === "Failure" ||
-            (patch?._tag === "Success" &&
-              (patch.value.patch?.kind !== "files" ||
-                !patch.value.patch.files.some(
-                  (candidate) => resolveFileDiffPath(candidate) === file.path,
-                ))),
-          truncated: patch?._tag === "Success" && patch.value.source.truncated,
-        },
-      ] as const;
-    }),
+  const fileStates = useMemo(
+    () =>
+      new Map(
+        files.map((file, index) => {
+          const patch = patches.get(index);
+          return [
+            file.path,
+            {
+              error:
+                patch?._tag === "Failure" ||
+                (patch?._tag === "Success" &&
+                  (patch.value.patch?.kind !== "files" ||
+                    !patch.value.patch.files.some(
+                      (candidate) => resolveFileDiffPath(candidate) === file.path,
+                    ))),
+              truncated: patch?._tag === "Success" && patch.value.source.truncated,
+            },
+          ] as const;
+        }),
+      ),
+    [files, patches],
   );
   const readyFilePaths = useMemo(
     () =>

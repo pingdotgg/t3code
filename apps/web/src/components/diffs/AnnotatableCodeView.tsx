@@ -8,7 +8,7 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { fnv1a32 } from "~/lib/diffRendering";
@@ -132,6 +132,8 @@ export function AnnotatableCodeView({
   const [draftText, setDraftText] = useState("");
 
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
+  const filesByKeyRef = useRef(filesByKey);
+  filesByKeyRef.current = filesByKey;
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
       files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
@@ -217,7 +219,7 @@ export function AnnotatableCodeView({
       if (!range) return;
       const item = context.item;
       if (item.type !== "diff") return;
-      const file = filesByKey.get(item.id);
+      const file = filesByKeyRef.current.get(item.id);
       if (!file) return;
       const id = nextFileCommentId();
       const comment = buildDiffReviewComment({
@@ -242,7 +244,7 @@ export function AnnotatableCodeView({
         },
       });
     },
-    [filesByKey, sectionId, sectionTitle],
+    [sectionId, sectionTitle],
   );
 
   const hasOpenComment = draft !== null;
