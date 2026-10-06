@@ -23,7 +23,7 @@ const scope: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-function serviceLayer(
+function layerService(
   getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"],
 ) {
   return ThreadMetadataMcp.layer.pipe(
@@ -51,7 +51,7 @@ const updateCallingThread = Effect.gen(function* () {
 it.effect("reports an absent calling thread as thread_not_found", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
-      Effect.provide(serviceLayer(() => Effect.succeed(null))),
+      Effect.provide(layerService(() => Effect.succeed(null))),
       Effect.flip,
     );
 
@@ -63,7 +63,7 @@ it.effect("keeps calling-thread storage failures as orchestration errors", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
       Effect.provide(
-        serviceLayer(() =>
+        layerService(() =>
           Effect.fail(
             new OrchestratorProjectionError({
               threadId,
@@ -115,7 +115,7 @@ it.effect("refuses to change a thread that runs above the caller's modes", () =>
         title: "Renamed from a narrower thread",
       });
     }).pipe(
-      Effect.provide(serviceLayer((id) => Effect.succeed((shells.get(id) ?? null) as never))),
+      Effect.provide(layerService((id) => Effect.succeed((shells.get(id) ?? null) as never))),
       Effect.flip,
     );
 
@@ -159,7 +159,7 @@ it.effect("refuses another thread's metadata to a thread caller whose run has en
         title: "Renamed after the run ended",
       });
     }).pipe(
-      Effect.provide(serviceLayer((id) => Effect.succeed((shells.get(id) ?? null) as never))),
+      Effect.provide(layerService((id) => Effect.succeed((shells.get(id) ?? null) as never))),
       Effect.flip,
     );
 

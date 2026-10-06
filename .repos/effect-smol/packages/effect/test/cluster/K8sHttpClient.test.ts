@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
-import * as K8sHttpClient from "effect/unstable/cluster/K8sHttpClient"
+import * as K8sHttpClient from "effect/cluster/K8sHttpClient"
 
 describe.concurrent("K8sHttpClient", () => {
   describe("Pod", () => {

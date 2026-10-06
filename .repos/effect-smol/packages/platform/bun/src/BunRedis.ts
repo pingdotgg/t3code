@@ -7,6 +7,7 @@
  * directly, while `layerConfig` reads them from Effect config. Both close the
  * underlying client when the layer scope finalizes.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type { RedisClient, RedisOptions } from "bun"
@@ -16,12 +17,13 @@ import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Fn from "effect/Function"
 import * as Layer from "effect/Layer"
+import * as Redis from "effect/persistence/Redis"
 import * as Scope from "effect/Scope"
-import * as Redis from "effect/unstable/persistence/Redis"
 
 /**
  * Service tag for Bun Redis integration, exposing the raw `RedisClient` and a `use` helper that maps client promise failures to `RedisError`.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -101,6 +103,7 @@ const make = Effect.fnUntraced(function*(
 /**
  * Creates scoped Bun Redis layers for `Redis.Redis` and `BunRedis`, closing the underlying client when the scope finalizes.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -111,6 +114,7 @@ export const layer = (
 /**
  * Creates scoped Bun Redis layers from configurable Redis options, closing the underlying client when the scope finalizes.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

@@ -28,6 +28,7 @@ export interface PutObjectRequest extends Omit<S3.PutObjectRequest, "Bucket"> {}
  * ```
  *
  * @binding
+ * @product Bucket
  */
 export interface PutObject extends Binding.Service<
   PutObject,

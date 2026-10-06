@@ -1,0 +1,975 @@
+/* PR preview lifecycle (landing page, "Review" stage). Windows use the
+   dark code surface in both themes; the tab bar follows the page theme. */
+
+.prf {
+  /* CI colors from the brand palette: GitHub's "open = green, merged =
+     purple" convention, in Alchemy's moss and a dusty plum that sits with
+     the terracotta. Solid shades carry cream text; light shades are for
+     icons and text on the dark windows. */
+  --prf-open: #9fc06b;
+  --prf-open-solid: #4f6d35;
+  --prf-merged: #c4a2f0;
+  --prf-merged-solid: #7d4db8;
+  --prf-h: 420px;
+  margin-top: 28px;
+  font-family: var(--alc-font-sans);
+}
+
+/* ---------- tabs ---------- */
+.prf-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.prf-tabs {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  /* Extra bottom room: the progress line runs below the highlight. */
+  padding: 4px 4px 13px;
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: 12px;
+  background: var(--alc-bg-elev-1);
+  position: relative;
+}
+.prf-tabs__pill {
+  position: absolute;
+  top: 4px;
+  bottom: 13px;
+  z-index: 0;
+  border-radius: 8px;
+  background: var(--alc-bg);
+  box-shadow: var(--alc-shadow-sm);
+  pointer-events: none;
+  transition:
+    left 380ms cubic-bezier(0.2, 0, 0, 1),
+    width 380ms cubic-bezier(0.2, 0, 0, 1);
+}
+.prf-tab {
+  all: unset;
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 8px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--alc-fg-3, var(--alc-fg-2));
+  white-space: nowrap;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+.prf-tab:hover {
+  color: var(--alc-fg-1);
+  background: var(--alc-hairline);
+}
+.prf-tab:focus-visible {
+  outline: 2px solid var(--alc-accent);
+  outline-offset: -2px;
+}
+.prf-tab.is-active {
+  color: var(--alc-fg-1);
+}
+.prf-tab.is-active:hover {
+  background: transparent;
+}
+.prf-tab__num {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  border: 1px solid var(--alc-hairline-3);
+  transition: all 160ms ease;
+}
+.prf-tab.is-done .prf-tab__num,
+.prf-tab.is-active .prf-tab__num {
+  border-color: transparent;
+  background: var(--alc-accent);
+  color: var(--alc-fg-on-accent);
+}
+.prf-tabs__track {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 6px;
+  z-index: 2;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--alc-hairline-2);
+  overflow: hidden;
+  pointer-events: none;
+}
+.prf-tabs__progress {
+  display: block;
+  height: 100%;
+  background: var(--alc-accent);
+  transform-origin: left;
+}
+/* Pausing freezes CSS animations too (fades, tab open/close, spinners). */
+.prf.is-paused *,
+.prf.is-paused *::before,
+.prf.is-paused *::after {
+  animation-play-state: paused !important;
+}
+.prf-play {
+  all: unset;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--alc-hairline-2);
+  background: var(--alc-bg-elev-1);
+  color: var(--alc-fg-2);
+  fill: currentColor;
+  cursor: pointer;
+}
+.prf-play:hover {
+  color: var(--alc-fg-1);
+  border-color: var(--alc-accent);
+}
+.prf-play:focus-visible {
+  outline: 2px solid var(--alc-accent);
+}
+
+/* ---------- stage ---------- */
+.prf-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+.prf-side {
+  min-width: 0;
+}
+.prf-right {
+  position: relative;
+  min-width: 0;
+}
+
+/* ---------- window chrome ---------- */
+.prf-win {
+  height: var(--prf-h);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 220, 192, 0.1);
+  background: var(--alc-bg-code);
+  color: var(--alc-code-var);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 14px 40px rgba(0, 0, 0, 0.28);
+}
+.prf-win__bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+.prf-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+.prf-win__title {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+}
+.prf-win__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.prf-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-family: var(--alc-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.prf-badge--green {
+  color: var(--alc-accent-bright);
+}
+.prf-badge--red {
+  color: var(--alc-danger);
+}
+.prf-badge--sky {
+  color: var(--alc-code-type);
+}
+
+/* ---------- shared text bits ---------- */
+.prf-muted {
+  color: var(--alc-code-comment);
+}
+.prf-strong {
+  color: var(--alc-fg-invert);
+  font-weight: 600;
+}
+.prf-small {
+  font-size: 12px;
+}
+.prf-hl {
+  color: var(--alc-code-string);
+}
+.prf-u {
+  text-decoration: underline;
+  font-weight: 600;
+}
+.prf-enter {
+  animation: prf-rise 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes prf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes prf-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* status icon: queued ring / spinner / check */
+.prf-si {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+/* Optical alignment: center each icon on its row's cap height (what the
+   eye reads as the text's middle), not the line box, which carries extra
+   room for descenders. Offsets measured per font and size. */
+.prf-check > .prf-si,
+.prf-job__head > .prf-si,
+.prf-mergebox__ok > .prf-si {
+  translate: 0 -0.5px;
+}
+.prf-job__step > .prf-si,
+.prf-xstep__head > .prf-si {
+  translate: 0 -1px;
+}
+.prf-si--queued {
+  border: 1.5px solid rgba(232, 220, 192, 0.3);
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+}
+.prf-si--run {
+  color: var(--alc-warn);
+}
+.prf-si--ok {
+  background: var(--prf-open-solid);
+  color: var(--alc-fg-on-accent);
+}
+
+/* ---------- pull request ---------- */
+.prf-pr .prf-win__body {
+  display: flex;
+  flex-direction: column;
+}
+.prf-pr__head {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+}
+.prf-pr__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--alc-fg-invert);
+  line-height: 1.3;
+}
+.prf-pr__num {
+  font-weight: 400;
+  color: var(--alc-code-comment);
+}
+.prf-pr__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.prf-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--alc-fg-on-accent);
+  transition: background 240ms ease;
+}
+.prf-state--open {
+  background: var(--prf-open-solid);
+}
+.prf-state--merged {
+  background: var(--prf-merged-solid);
+}
+.prf-branch {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(125, 223, 255, 0.1);
+  color: var(--alc-code-type);
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+}
+.prf-arrow {
+  color: var(--alc-code-comment);
+}
+/* Scrolled to the newest entry from JS; older ones move off the top. */
+.prf-feed {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 18px;
+}
+.prf-feed > * {
+  flex: none;
+}
+.prf-add {
+  color: var(--prf-open);
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+}
+.prf-del {
+  color: var(--alc-danger);
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+}
+.prf-checks {
+  border: 1px solid rgba(232, 220, 192, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.prf-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+}
+.prf-checks > * + .prf-check {
+  border-top: 1px solid rgba(232, 220, 192, 0.08);
+}
+.prf-check__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--alc-fg-invert);
+}
+.prf-check__state {
+  color: var(--alc-code-comment);
+  font-size: 12px;
+}
+.prf-checks .prf-mergebox {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--prf-open) 35%, transparent);
+  border-radius: 0;
+}
+.prf-comment {
+  border: 1px solid rgba(232, 220, 192, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.prf-comment__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--alc-fg-invert);
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+}
+.prf-avatar {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #14110d;
+  border: 1px solid rgba(232, 220, 192, 0.18);
+}
+.prf-avatar svg {
+  display: block;
+}
+.prf-bot {
+  padding: 0 6px;
+  border: 1px solid rgba(232, 220, 192, 0.25);
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--alc-code-comment);
+}
+.prf-comment__body {
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 4px;
+}
+.prf-comment__h {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--alc-fg-invert);
+}
+.prf-url {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-code-type);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prf-comment code,
+.prf-event code {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--alc-fg-invert);
+}
+.prf-mergebox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--prf-open) 40%, transparent);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--alc-fg-invert);
+}
+.prf-mergebox__ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prf-mergebtn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--prf-open-solid);
+  color: var(--alc-fg-on-accent);
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+.prf-mergebtn.is-pressed {
+  transform: scale(0.95);
+  background: var(--prf-merged-solid);
+}
+.prf-event {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--alc-fg-invert);
+}
+.prf-event__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--alc-fg-on-accent);
+}
+.prf-event__icon--merged {
+  background: var(--prf-merged-solid);
+}
+.prf-event__icon--you {
+  background: var(--alc-terracotta);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+/* ---------- Actions job (expandable) ---------- */
+/* Height 0 <-> auto via a single-row grid. */
+.prf-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 420ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 260ms ease;
+}
+.prf-collapse > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.prf-collapse.is-closed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.prf-jobs {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  font-size: 12.5px;
+}
+.prf-jobs__wait {
+  padding: 2px 4px;
+}
+.prf-job__trigger {
+  padding: 10px 14px 4px;
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+  color: var(--alc-fg-invert);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prf-job {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(232, 220, 192, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.prf-job__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  color: var(--alc-fg-invert);
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid transparent;
+  transition: border-color 300ms ease;
+}
+.prf-job.is-expanded .prf-job__head {
+  border-bottom-color: rgba(232, 220, 192, 0.08);
+}
+.prf-job__head .prf-muted {
+  margin-left: auto;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.prf-job__step:last-child {
+  margin-bottom: 6px;
+}
+.prf-job__step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 14px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-code-comment);
+  transition: color 200ms ease;
+}
+.prf-job__step.is-running,
+.prf-job__step.is-success {
+  color: var(--alc-fg-invert);
+}
+.prf-job__done {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  animation: prf-fade 300ms ease both;
+}
+.prf-job__done .prf-muted {
+  margin-left: 4px;
+  font-size: 11.5px;
+}
+.prf-xstep {
+  display: flex;
+  flex-direction: column;
+  margin: 0 10px 10px;
+  border: 1px solid rgba(232, 220, 192, 0.12);
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+  animation: prf-expand 460ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes prf-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.prf-xstep__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-invert);
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+}
+.prf-xstep__chev {
+  margin-left: auto;
+  color: var(--alc-code-comment);
+}
+.prf-log {
+  padding: 8px 0 12px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.prf-log__line {
+  display: flex;
+  gap: 12px;
+  padding: 0 12px 0 0;
+  white-space: pre;
+}
+.prf-log__n {
+  flex: none;
+  width: 26px;
+  text-align: right;
+  color: rgba(232, 220, 192, 0.3);
+  user-select: none;
+}
+.prf-log__t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prf-log__icon {
+  display: inline-block;
+  width: 1.4em;
+}
+
+/* ---------- browser tab (test step) ---------- */
+/* PR window title bar doubles as a browser tab strip. */
+.prf-win__bar--tabs {
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 12px 0;
+  background: rgba(0, 0, 0, 0.22);
+}
+.prf-win__bar--tabs .prf-dot {
+  margin-bottom: 11px;
+}
+.prf-win__bar--tabs .prf-dot:nth-child(3) {
+  margin-right: 8px;
+}
+.prf-btab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 200px;
+  padding: 7px 12px 8px;
+  border-radius: 7px 7px 0 0;
+  font-size: 11.5px;
+  color: var(--alc-code-comment);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background 200ms ease,
+    color 200ms ease;
+}
+.prf-btab svg {
+  flex: none;
+}
+.prf-btab.is-active {
+  background: var(--alc-bg-code);
+  color: var(--alc-fg-invert);
+}
+.prf-btab.is-new {
+  animation: prf-tab-grow 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.prf-btab.is-closing {
+  animation: prf-tab-shrink 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes prf-tab-grow {
+  from {
+    max-width: 0;
+    padding-inline: 0;
+    opacity: 0;
+  }
+}
+@keyframes prf-tab-shrink {
+  to {
+    max-width: 0;
+    padding-inline: 0;
+    opacity: 0;
+  }
+}
+.prf-btab__x {
+  margin-left: 4px;
+  color: var(--alc-code-comment);
+}
+.prf-btab__spin {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(232, 220, 192, 0.25);
+  border-top-color: var(--alc-accent-bright);
+  animation: prf-spin 700ms linear infinite;
+}
+.prf-pr .prf-win__body {
+  position: relative;
+}
+.prf-pr__url {
+  flex: none;
+  margin: 8px 12px 0;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The preview page covers the PR while its tab is active. */
+.prf-tabpage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--alc-bg-code);
+  animation: prf-fade 220ms ease both;
+}
+.prf-tabpage.is-closing {
+  animation: prf-fade-out 300ms ease both;
+}
+@keyframes prf-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+.prf-tabwin__url {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-invert);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.prf-tabwin__url svg {
+  flex: none;
+  color: var(--prf-open);
+}
+.prf-tabwin__driven {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(232, 176, 74, 0.14);
+  color: var(--alc-warn);
+  font-family: var(--alc-font-sans);
+  font-size: 10.5px;
+}
+.prf-site {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f4efe2;
+  color: #2a2620;
+}
+.prf-site__loading {
+  margin: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(42, 38, 32, 0.15);
+  border-top-color: #3f5a2a;
+  animation: prf-spin 700ms linear infinite;
+}
+@keyframes prf-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.prf-site__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(42, 38, 32, 0.1);
+  animation: prf-fade 240ms ease both;
+}
+.prf-site__logo {
+  font-family: var(--alc-font-serif);
+  font-style: italic;
+  font-size: 18px;
+  font-weight: 600;
+}
+.prf-site__upload {
+  padding: 5px 11px;
+  border-radius: 6px;
+  background: #3f5a2a;
+  color: #fbf6ea;
+  font-size: 12px;
+  font-weight: 600;
+}
+.prf-site__grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.prf-site__tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(42, 38, 32, 0.08);
+}
+.prf-site__progress {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(42, 38, 32, 0.12);
+  overflow: hidden;
+}
+.prf-site__progress span {
+  display: block;
+  height: 100%;
+  background: #3f5a2a;
+  transform-origin: left;
+}
+.prf-site__new {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fbf6ea;
+  color: #3f5a2a;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.prf-site__foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px 12px;
+  border-top: 1px solid rgba(42, 38, 32, 0.08);
+  font-size: 11.5px;
+  color: rgba(42, 38, 32, 0.7);
+}
+.prf-site__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--alc-warn);
+  animation: prf-pulse 1s ease-in-out infinite;
+}
+@keyframes prf-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.prf-site__slow {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(42, 38, 32, 0.08);
+  font-size: 10.5px;
+}
+.prf-site__ok {
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 880px) {
+  .prf-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .prf {
+    --prf-h: 340px;
+  }
+}
+@media (max-width: 640px) {
+  .prf-tabs {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .prf-tab {
+    flex: none;
+    padding-inline: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prf-enter,
+  .prf-xstep,
+  .prf-job__done,
+  .prf-tabpage,
+  .prf-btab.is-new,
+  .prf-btab.is-closing {
+    animation: none;
+  }
+  .prf-collapse,
+  .prf-tabs__pill {
+    transition: none;
+  }
+}

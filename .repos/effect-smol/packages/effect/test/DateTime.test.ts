@@ -2,6 +2,7 @@ import { describe, it } from "@effect/vitest"
 import { assertNone, assertSome, deepStrictEqual, strictEqual, throws } from "@effect/vitest/utils"
 import { DateTime, Duration, Effect, Option } from "effect"
 import { TestClock } from "effect/testing"
+import { vi } from "vitest"
 
 const setTo2024NZ = TestClock.setTime(new Date("2023-12-31T11:00:00.000Z").getTime())
 const assertSomeIso = (value: Option.Option<DateTime.DateTime>, expected: string) => {
@@ -11,6 +12,25 @@ const assertSomeIso = (value: Option.Option<DateTime.DateTime>, expected: string
 const isDeno = "Deno" in globalThis
 
 describe("DateTime", () => {
+  it("preserves pre-epoch milliseconds when Intl omits fractionalSecond", () => {
+    const formatToParts = Intl.DateTimeFormat.prototype.formatToParts
+    const mock = vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts").mockImplementation(function(
+      this: Intl.DateTimeFormat,
+      date
+    ) {
+      return formatToParts.call(this, date).filter((part) => part.type !== "fractionalSecond")
+    })
+    try {
+      const dt = DateTime.makeZonedUnsafe("1969-12-31T23:59:59.999Z", {
+        timeZone: "Australia/Brisbane"
+      })
+      strictEqual(DateTime.toDate(dt).toISOString(), "1970-01-01T09:59:59.999Z")
+      strictEqual(DateTime.formatIsoDate(dt), "1970-01-01")
+    } finally {
+      mock.mockRestore()
+    }
+  })
+
   describe("mutate", () => {
     it.effect("should mutate the date", () =>
       Effect.gen(function*() {

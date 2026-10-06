@@ -2,6 +2,7 @@
 
 @import "./tokens.css";
 @import "./terminal.css";
+@import "./text-wrap.css";
 @import "@astrojs/starlight-tailwind";
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);

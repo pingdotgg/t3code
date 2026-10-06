@@ -376,6 +376,33 @@ export const checkPass100 = () => {
   }
 }
 
+export const arrayCheckPass100 = () => {
+  const property = FastCheck.property(FastCheck.array(FastCheck.integer(), { maxLength: 50 }), () => true)
+  return {
+    run: () => FastCheck.check(property, { numRuns: 100, seed }),
+    validate: (result: FastCheck.RunDetails<[Array<number>]>) => {
+      assert.equal(result.failed, false)
+      assert.equal(result.numRuns, 100)
+      assert.equal(result.numSkips, 0)
+    }
+  }
+}
+
+export const arrayCheckFalsifyAndShrink = () => {
+  const arbitrary = FastCheck.array(FastCheck.constantFrom(8, 27, 0, 1), { maxLength: 4 })
+  const property = FastCheck.property(
+    arbitrary,
+    (values) => !(values.includes(27) && values.indexOf(0) > values.indexOf(27))
+  )
+  return {
+    run: () => FastCheck.check(property, { examples: [[[8, 27, 0, 1]]], numRuns: 1, seed }),
+    validate: (result: FastCheck.RunDetails<[Array<number>]>) => {
+      assert.equal(result.failed, true)
+      assert.deepEqual(result.counterexample, [[27, 0]])
+    }
+  }
+}
+
 export const testSchemaVerifyGeneration100 = () => ({
   run: () => {
     const schema = Schema.Int

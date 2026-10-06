@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -41,9 +41,7 @@ function makeStubInstance(
   };
 }
 
-function makePoolLayer(
-  labelRef: Ref.Ref<string>,
-): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
+function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
   return DesktopBackendPool.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -81,6 +79,7 @@ function makePoolLayer(
           resolvePrimary: Effect.die("unexpected primary config resolve"),
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
+          currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
         DesktopWslEnvironment.layerTest(),
@@ -144,7 +143,7 @@ describe("DesktopBackendPool", () => {
       Effect.gen(function* () {
         const labelRef = yield* Ref.make("Windows");
         const pool = yield* DesktopBackendPool.DesktopBackendPool.pipe(
-          Effect.provide(makePoolLayer(labelRef)),
+          Effect.provide(layerPool(labelRef)),
         );
         const primary = yield* pool.primary;
 

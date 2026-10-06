@@ -9,6 +9,7 @@ import {
   BearerConnectionRegistration,
   BearerConnectionTarget,
   ConnectionBlockedError,
+  type ConnectionAttemptError,
   ConnectionTransientError,
   Connectivity,
   mapRemoteEnvironmentError,
@@ -37,11 +38,11 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
-import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
   type PrimaryEnvironmentTarget,
@@ -56,7 +57,7 @@ import {
   readDesktopSecondaryBootstrapsResult,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
-import { connectionStorageLayer } from "./storage";
+import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 
 let nextObservedRpcRequestId = 0;
@@ -68,7 +69,7 @@ function currentNetworkStatus(): "unknown" | "offline" | "online" {
   return navigator.onLine ? "online" : "offline";
 }
 
-const connectivityLayer = Connectivity.layer({
+const layerConnectivity = Connectivity.layer({
   status: Effect.sync(currentNetworkStatus),
   changes: Stream.callback((queue) =>
     Effect.acquireRelease(
@@ -124,7 +125,7 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   ).pipe(Effect.asVoid),
 );
 
-const wakeupsLayer = Wakeups.layer({
+const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
       Stream.callback<"application-active">((queue) =>
@@ -223,7 +224,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
-const capabilitiesLayer = Layer.effectContext(
+const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: clientMetadata(),
@@ -346,7 +347,10 @@ const loadPrimaryConnectionRegistration = Effect.fn(
 )(function* (resolved: PrimaryEnvironmentTarget) {
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
-  }).pipe(Effect.provide(primaryEnvironmentHttpLayer), Effect.mapError(mapRemoteEnvironmentError));
+  }).pipe(
+    Effect.provide(PrimaryEnvironmentHttpLayer.layer),
+    Effect.mapError(mapRemoteEnvironmentError),
+  );
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: descriptor.environmentId,
@@ -417,7 +421,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 
 // Poll cadence for the desktop bootstrap topology. There is no change event on
 // the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint + token until bearer credentials approach expiry.
+// signature of their endpoint until bearer credentials approach expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
@@ -444,6 +448,8 @@ interface CachedPlatformRegistration {
   readonly registration: PlatformConnectionRegistration;
   readonly expiresAtEpochMs?: number;
   readonly refreshAtEpochMs?: number;
+  /** The bootstrap token a desktop-local bearer was exchanged for. */
+  readonly bootstrapToken?: string;
 }
 
 export type PrimaryEnvironmentTargetRead =
@@ -496,6 +502,52 @@ export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
   );
 }
 
+const REJECTED_BOOTSTRAP_RETRY_INITIAL_MS = 60_000;
+const REJECTED_BOOTSTRAP_RETRY_MAX_MS = 30 * 60_000;
+
+/** A bootstrap token a backend rejected, and when the poll may try it again. */
+export interface RejectedSecondaryBootstrap {
+  readonly signature: string;
+  readonly retryAtEpochMs: number;
+  readonly delayMs: number;
+}
+
+/**
+ * A backend that rejected a bootstrap token will usually keep rejecting it, so
+ * the poll backs off on that exact signature instead of re-presenting a dead
+ * credential every few seconds. It still retries on a capped backoff: a
+ * backend that restarts on the same port seeds a fresh grant for the same
+ * token, and nothing in the topology says it restarted. A new token or
+ * endpoint retries at once.
+ */
+export function isRejectedSecondaryBootstrap(
+  rejected: RejectedSecondaryBootstrap | undefined,
+  signature: string,
+  nowEpochMs: number,
+): rejected is RejectedSecondaryBootstrap {
+  return (
+    rejected !== undefined &&
+    rejected.signature === signature &&
+    nowEpochMs < rejected.retryAtEpochMs
+  );
+}
+
+export function nextRejectedSecondaryBootstrap(
+  previous: RejectedSecondaryBootstrap | undefined,
+  signature: string,
+  nowEpochMs: number,
+): RejectedSecondaryBootstrap {
+  const delayMs =
+    previous?.signature === signature
+      ? Math.min(previous.delayMs * 2, REJECTED_BOOTSTRAP_RETRY_MAX_MS)
+      : REJECTED_BOOTSTRAP_RETRY_INITIAL_MS;
+  return { signature, retryAtEpochMs: nowEpochMs + delayMs, delayMs };
+}
+
+export function isRejectedBootstrapCredentialError(error: ConnectionAttemptError): boolean {
+  return error._tag === "ConnectionBlockedError" && error.reason === "authentication";
+}
+
 export function secondaryRegistrationsToRetainAfterTopologyRead(
   previous: ReadonlyMap<string, CachedPlatformRegistration>,
   topologyRead: DesktopSecondaryBootstrapsRead,
@@ -511,7 +563,7 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
   );
 }
 
-const platformConnectionSourceLayer = Layer.effect(
+const layerPlatformConnectionSource = Layer.effect(
   PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
@@ -520,6 +572,7 @@ const platformConnectionSourceLayer = Layer.effect(
       });
     }
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
+    const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
     // Resolve the full set of platform-managed environments the host currently
     // reports: the primary (same-origin cookie auth) plus any desktop-local
@@ -585,15 +638,43 @@ const platformConnectionSourceLayer = Layer.effect(
           cause: topologyRead.cause,
         });
       } else {
+        const rejected = yield* Ref.get(rejectedRef);
+        const nextRejected = new Map<string, RejectedSecondaryBootstrap>();
         for (const bootstrap of topologyRead.bootstraps) {
-          const signature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}|${bootstrap.bootstrapToken ?? ""}`;
+          // The cached bearer belongs to the endpoint, not to the bootstrap
+          // token it was exchanged for: a new token must not drop a live
+          // session (its removal also clears the environment's drafts). The
+          // token only decides whether a rejected exchange is retried.
+          const endpointSignature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}`;
+          const signature = `${endpointSignature}|${bootstrap.bootstrapToken ?? ""}`;
           const cached = previous.get(bootstrap.id);
+          // A new token from the desktop means something changed (rotation, a
+          // restarted backend): exchange it rather than reusing a bearer that
+          // may be dead. The old bearer stays registered if that exchange fails.
           if (
             cached !== undefined &&
-            canReuseCachedPlatformRegistration(cached, signature, nowEpochMs)
+            cached.bootstrapToken === bootstrap.bootstrapToken &&
+            canReuseCachedPlatformRegistration(cached, endpointSignature, nowEpochMs)
           ) {
             next.set(bootstrap.id, cached);
             registrations.push(cached.registration);
+            continue;
+          }
+          const previouslyRejected = rejected.get(bootstrap.id);
+          if (isRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs)) {
+            nextRejected.set(bootstrap.id, previouslyRejected);
+            // The bearer minted before the token died is still good until it expires.
+            if (
+              cached !== undefined &&
+              canRetainCachedPlatformRegistrationAfterRefreshFailure(
+                cached,
+                endpointSignature,
+                nowEpochMs,
+              )
+            ) {
+              next.set(bootstrap.id, cached);
+              registrations.push(cached.registration);
+            }
             continue;
           }
           const built = yield* loadSecondaryConnectionRegistration(bootstrap).pipe(
@@ -603,20 +684,49 @@ const platformConnectionSourceLayer = Layer.effect(
                 error,
               }),
             ),
+            Effect.tapError((error) =>
+              isRejectedBootstrapCredentialError(error)
+                ? // Back off from when the rejection arrived; the exchanges in
+                  // this poll can take longer than the first backoff step.
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((rejectedAtEpochMs) =>
+                      nextRejected.set(
+                        bootstrap.id,
+                        nextRejectedSecondaryBootstrap(
+                          previouslyRejected,
+                          signature,
+                          rejectedAtEpochMs,
+                        ),
+                      ),
+                    ),
+                  )
+                : Effect.void,
+            ),
             Effect.option,
           );
           if (Option.isSome(built)) {
-            const cacheEntry = { signature, ...built.value };
+            const cacheEntry = {
+              signature: endpointSignature,
+              ...(bootstrap.bootstrapToken === undefined
+                ? {}
+                : { bootstrapToken: bootstrap.bootstrapToken }),
+              ...built.value,
+            };
             next.set(bootstrap.id, cacheEntry);
             registrations.push(built.value.registration);
           } else if (
             cached !== undefined &&
-            canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, signature, nowEpochMs)
+            canRetainCachedPlatformRegistrationAfterRefreshFailure(
+              cached,
+              endpointSignature,
+              nowEpochMs,
+            )
           ) {
             next.set(bootstrap.id, cached);
             registrations.push(cached.registration);
           }
         }
+        yield* Ref.set(rejectedRef, nextRejected);
       }
 
       yield* Ref.set(cacheRef, next);
@@ -631,7 +741,7 @@ const platformConnectionSourceLayer = Layer.effect(
   }),
 );
 
-const environmentOwnedDataCleanupLayer = Layer.succeed(
+const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
@@ -641,7 +751,7 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   }),
 );
 
-const rpcRequestObserverLayer = Layer.succeed(
+const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
     observe: ({ environmentId, method }) =>
@@ -657,24 +767,24 @@ const rpcRequestObserverLayer = Layer.succeed(
 );
 
 type ConnectionPlatformLayerSource =
-  | typeof connectionStorageLayer
-  | typeof connectivityLayer
-  | typeof wakeupsLayer
-  | typeof capabilitiesLayer
-  | typeof platformConnectionSourceLayer
-  | typeof environmentOwnedDataCleanupLayer
-  | typeof rpcRequestObserverLayer;
+  | typeof ConnectionStorage.layer
+  | typeof layerConnectivity
+  | typeof layerWakeups
+  | typeof layerCapabilities
+  | typeof layerPlatformConnectionSource
+  | typeof layerEnvironmentOwnedDataCleanup
+  | typeof layerRpcRequestObserver;
 
-export const connectionPlatformLayer: Layer.Layer<
+export const layer: Layer.Layer<
   Layer.Success<ConnectionPlatformLayerSource>,
   Layer.Error<ConnectionPlatformLayerSource>,
   Layer.Services<ConnectionPlatformLayerSource>
 > = Layer.mergeAll(
-  connectionStorageLayer,
-  connectivityLayer,
-  wakeupsLayer,
-  capabilitiesLayer,
-  platformConnectionSourceLayer,
-  environmentOwnedDataCleanupLayer,
-  rpcRequestObserverLayer,
+  ConnectionStorage.layer,
+  layerConnectivity,
+  layerWakeups,
+  layerCapabilities,
+  layerPlatformConnectionSource,
+  layerEnvironmentOwnedDataCleanup,
+  layerRpcRequestObserver,
 );

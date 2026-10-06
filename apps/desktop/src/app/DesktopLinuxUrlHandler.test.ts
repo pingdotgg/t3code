@@ -10,7 +10,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
@@ -52,7 +52,7 @@ const mockProcess = (exitCode: number, stalled = false) =>
     getOutputFd: () => Stream.empty,
   });
 
-const makeHandlerLayer = (
+const layerHandler = (
   recorded: RecordedRegistration,
   input: {
     readonly environment?: Record<string, unknown>;
@@ -143,12 +143,12 @@ const makeHandlerLayer = (
 
 const runRegister = (
   recorded: RecordedRegistration,
-  input: Parameters<typeof makeHandlerLayer>[1] = {},
+  input: Parameters<typeof layerHandler>[1] = {},
 ) =>
   Effect.gen(function* () {
     const handler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
     yield* handler.register;
-  }).pipe(Effect.provide(makeHandlerLayer(recorded, input)));
+  }).pipe(Effect.provide(layerHandler(recorded, input)));
 
 const emptyRecording = (): RecordedRegistration => ({
   directories: [],

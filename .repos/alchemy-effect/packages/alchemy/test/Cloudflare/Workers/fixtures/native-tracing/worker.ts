@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { WorkerProps } from "@/Cloudflare/Workers/Worker.ts";
 
 /** KV namespace read by `/fanout` so each fiber emits a platform span. */
@@ -160,13 +160,15 @@ export const tracedWorkerImpl = Effect.gen(function* () {
       }
 
       if (url.pathname === "/sampled") {
-        const sampled = yield* Effect.gen(function* () {
-          const outer = yield* currentSampled;
-          const child = yield* currentSampled.pipe(
-            Effect.withSpan("sampled.child"),
-          );
-          return { operation: outer, child };
-        }).pipe(Effect.withSpan("operation"));
+        const sampled = yield* operation(
+          Effect.gen(function* () {
+            const outer = yield* currentSampled;
+            const child = yield* currentSampled.pipe(
+              Effect.withSpan("sampled.child"),
+            );
+            return { operation: outer, child };
+          }),
+        );
         return yield* HttpServerResponse.json({
           marker: "native-did-sample",
           ...sampled,

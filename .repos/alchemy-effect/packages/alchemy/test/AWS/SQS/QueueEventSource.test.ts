@@ -6,127 +6,133 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import QueueEventSourceFunctionLive, {
   QueueEventSourceFunction,
 } from "./event-source-handler.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-describe.sequential("AWS.SQS.QueueEventSource", () => {
-  test.provider(
-    "delivers real SQS messages through the Lambda event source",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.sequential(
+  "AWS.SQS.QueueEventSource",
+  { tags: ["provider:aws", "provider:aws:lambda", "provider:aws:sqs", "live"] },
+  () => {
+    test.provider(
+      "delivers real SQS messages through the Lambda event source",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const fn = yield* stack.deploy(
-          QueueEventSourceFunction.pipe(
-            Effect.provide(QueueEventSourceFunctionLive),
-          ),
-        );
-
-        const functionUrl = fn.functionUrl!;
-
-        // First request rides out cold-start / URL propagation; keep polling
-        // until the fixture reports both queue identifiers.
-        const { sourceQueueUrl, sourceQueueArn, resultQueueUrl } =
-          yield* HttpClient.get(functionUrl).pipe(
-            Effect.timeout("4 seconds"),
-            Effect.mapError(
-              () => new FunctionNotReady("Function URL request timed out"),
+          const fn = yield* stack.deploy(
+            QueueEventSourceFunction.pipe(
+              Effect.provide(QueueEventSourceFunctionLive),
             ),
-            Effect.flatMap((response) =>
-              response.status === 200
-                ? (response.json as Effect.Effect<{
-                    sourceQueueUrl?: string;
-                    sourceQueueArn?: string;
-                    resultQueueUrl?: string;
-                  }>)
-                : Effect.fail(
-                    new FunctionNotReady(
-                      `Function not ready: ${response.status}`,
+          );
+
+          const functionUrl = fn.functionUrl!;
+
+          // First request rides out cold-start / URL propagation; keep polling
+          // until the fixture reports both queue identifiers.
+          const { sourceQueueUrl, sourceQueueArn, resultQueueUrl } =
+            yield* HttpClient.get(functionUrl).pipe(
+              Effect.timeout("4 seconds"),
+              Effect.mapError(
+                () => new FunctionNotReady("Function URL request timed out"),
+              ),
+              Effect.flatMap((response) =>
+                response.status === 200
+                  ? (response.json as Effect.Effect<{
+                      sourceQueueUrl?: string;
+                      sourceQueueArn?: string;
+                      resultQueueUrl?: string;
+                    }>)
+                  : Effect.fail(
+                      new FunctionNotReady(
+                        `Function not ready: ${response.status}`,
+                      ),
                     ),
-                  ),
-            ),
-            Effect.flatMap((body) =>
-              body.sourceQueueUrl && body.sourceQueueArn && body.resultQueueUrl
-                ? Effect.succeed(
-                    body as {
-                      sourceQueueUrl: string;
-                      sourceQueueArn: string;
-                      resultQueueUrl: string;
-                    },
-                  )
-                : Effect.fail(
-                    new FunctionNotReady(
-                      "Function returned empty queue identifiers",
+              ),
+              Effect.flatMap((body) =>
+                body.sourceQueueUrl &&
+                body.sourceQueueArn &&
+                body.resultQueueUrl
+                  ? Effect.succeed(
+                      body as {
+                        sourceQueueUrl: string;
+                        sourceQueueArn: string;
+                        resultQueueUrl: string;
+                      },
+                    )
+                  : Effect.fail(
+                      new FunctionNotReady(
+                        "Function returned empty queue identifiers",
+                      ),
                     ),
-                  ),
-            ),
+              ),
+              Effect.retry({
+                schedule: Schedule.max([
+                  Schedule.fixed("4 seconds"),
+                  Schedule.recurs(10),
+                ]),
+              }),
+            );
+
+          // The event-source mapping activates asynchronously after deploy.
+          const mapping = yield* waitForEventSourceMappingEnabled(
+            fn.functionName,
+            sourceQueueArn,
+          );
+          expect(mapping.State).toEqual("Enabled");
+
+          // Send a message to the source queue out-of-band; the Lambda handler
+          // forwards its body to the result queue via QueueSink.
+          const messageBody = `event-source-${crypto.randomUUID()}`;
+          yield* SQS.sendMessage({
+            QueueUrl: sourceQueueUrl,
+            MessageBody: messageBody,
+          });
+
+          // Poll the result queue until the forwarded body shows up. Bounded:
+          // ~30 polls, each an SQS long-poll of 2s.
+          const received = yield* Effect.gen(function* () {
+            const result = yield* SQS.receiveMessage({
+              QueueUrl: resultQueueUrl,
+              MaxNumberOfMessages: 10,
+              WaitTimeSeconds: 2,
+            });
+            const match = (result.Messages ?? []).find(
+              (message) => message.Body === messageBody,
+            );
+            if (!match?.ReceiptHandle) {
+              return yield* Effect.fail(new MessageNotDelivered());
+            }
+            yield* SQS.deleteMessage({
+              QueueUrl: resultQueueUrl,
+              ReceiptHandle: match.ReceiptHandle,
+            });
+            return match.Body!;
+          }).pipe(
             Effect.retry({
+              while: (error) => error._tag === "MessageNotDelivered",
               schedule: Schedule.max([
-                Schedule.fixed("4 seconds"),
+                Schedule.fixed("3 seconds"),
                 Schedule.recurs(10),
               ]),
             }),
           );
 
-        // The event-source mapping activates asynchronously after deploy.
-        const mapping = yield* waitForEventSourceMappingEnabled(
-          fn.functionName,
-          sourceQueueArn,
-        );
-        expect(mapping.State).toEqual("Enabled");
+          expect(received).toEqual(messageBody);
 
-        // Send a message to the source queue out-of-band; the Lambda handler
-        // forwards its body to the result queue via QueueSink.
-        const messageBody = `event-source-${crypto.randomUUID()}`;
-        yield* SQS.sendMessage({
-          QueueUrl: sourceQueueUrl,
-          MessageBody: messageBody,
-        });
+          yield* stack.destroy();
 
-        // Poll the result queue until the forwarded body shows up. Bounded:
-        // ~30 polls, each an SQS long-poll of 2s.
-        const received = yield* Effect.gen(function* () {
-          const result = yield* SQS.receiveMessage({
-            QueueUrl: resultQueueUrl,
-            MaxNumberOfMessages: 10,
-            WaitTimeSeconds: 2,
-          });
-          const match = (result.Messages ?? []).find(
-            (message) => message.Body === messageBody,
-          );
-          if (!match?.ReceiptHandle) {
-            return yield* Effect.fail(new MessageNotDelivered());
-          }
-          yield* SQS.deleteMessage({
-            QueueUrl: resultQueueUrl,
-            ReceiptHandle: match.ReceiptHandle,
-          });
-          return match.Body!;
-        }).pipe(
-          Effect.retry({
-            while: (error) => error._tag === "MessageNotDelivered",
-            schedule: Schedule.max([
-              Schedule.fixed("3 seconds"),
-              Schedule.recurs(10),
-            ]),
-          }),
-        );
-
-        expect(received).toEqual(messageBody);
-
-        yield* stack.destroy();
-
-        // Out-of-band: both queues are actually gone after the destroy.
-        yield* assertQueueDeleted(sourceQueueUrl);
-        yield* assertQueueDeleted(resultQueueUrl);
-      }),
-    { timeout: 240_000 },
-  );
-});
+          // Out-of-band: both queues are actually gone after the destroy.
+          yield* assertQueueDeleted(sourceQueueUrl);
+          yield* assertQueueDeleted(resultQueueUrl);
+        }),
+      { timeout: 240_000 },
+    );
+  },
+);
 
 const waitForEventSourceMappingEnabled = Effect.fn(function* (
   functionName: string,

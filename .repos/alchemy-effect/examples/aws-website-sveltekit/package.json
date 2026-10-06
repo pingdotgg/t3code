@@ -24,7 +24,7 @@
     "alchemy-test": "workspace:*",
     "svelte": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:",
+    "typescript": "catalog:typescript-classic",
     "vite": "catalog:"
   },
   "repository": {

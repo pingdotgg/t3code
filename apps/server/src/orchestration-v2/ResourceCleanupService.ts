@@ -30,7 +30,7 @@ export class ResourceCleanupService extends Context.Reference<{
   }),
 }) {}
 
-export const live = Layer.effect(
+export const layer = Layer.effect(
   ResourceCleanupService,
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;

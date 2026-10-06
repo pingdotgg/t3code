@@ -25,6 +25,7 @@ test.provider(
       );
       expect(error._tag).toBe("ClusterNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:redshift", "live"] },
 );
 
 // Resolve two default-for-AZ subnets in the default VPC.
@@ -140,5 +141,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertClusterDeleting(cluster.clusterIdentifier);
     }),
   // create (~5-10 min) + delete initiation, one test.
-  { timeout: 1_500_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:redshift", "live"],
+    timeout: 1_500_000,
+  },
 );

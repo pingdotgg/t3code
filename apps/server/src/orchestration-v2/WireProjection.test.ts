@@ -23,6 +23,7 @@ import {
   projectDomainEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
+import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -272,6 +273,56 @@ describe("orchestration V2 wire projection", () => {
     const projected = projectTurnItemForDetail(item);
     expect(projected).toMatchObject({ input: expected, output: "ok" });
     expect(item.input).toBe(input);
+  });
+
+  it("leaves a screenshot's bytes out of the fetched tool output", () => {
+    const data = "A".repeat(600_000);
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "mcp__t3-code__device_screenshot",
+      input: { deviceId: "phone" },
+      output: {
+        content: [{ type: "image", source: { type: "base64", media_type: "image/png", data } }],
+      },
+    };
+    expect(projectTurnItemForDetail(item)).toMatchObject({
+      output: { content: [{ type: "image", mimeType: "image/png" }] },
+    });
+    expect(item.output.content[0]?.source.data).toBe(data);
+  });
+
+  it("keeps image markers when the rest of a tool output is too large to send", () => {
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "AAAA" },
+    };
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      output: { content: [{ type: "text", text: "x".repeat(300_000) }, image] },
+    };
+    const projected = projectTurnItemForDetail(item);
+    const output = projected.type === "dynamic_tool" ? projected.output : null;
+    expect(Array.isArray(output) ? output.slice(1) : null).toEqual([
+      { type: "image", mimeType: "image/png" },
+    ]);
+    expect(JSON.stringify(output).length).toBeLessThan(270_000);
+  });
+
+  it("bounds a tool output made of many images", () => {
+    const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      output: Array.from({ length: 10_000 }, () => image),
+    };
+    const projected = projectTurnItemForDetail(item);
+    const output = projected.type === "dynamic_tool" ? projected.output : null;
+    // The truncated text block plus a fixed number of markers, however many images there are.
+    expect(Array.isArray(output) ? output.length : null).toBe(1 + MAX_TOOL_OUTPUT_IMAGES);
+    expect(Array.isArray(output) ? String(output[0]?.text).length : null).toBeLessThan(263_000);
+    expect(toolOutputImages(output)).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
   });
 
   it("keeps failure evidence without retaining command output", () => {

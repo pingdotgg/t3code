@@ -21,6 +21,8 @@
  *
  * @module orchestration-v2/Adapters/OpenCode2AdapterV2
  */
+import * as NodeCrypto from "node:crypto";
+
 import {
   AbsolutePath,
   Agent,
@@ -447,9 +449,16 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
  * T3's MCP server is registered per directory, not per session, so each thread
  * gets its own `t3-code-<thread>` entry with its own credential. OpenCode names
  * an MCP tool's permission `<server>_<tool>` (non-alphanumerics become `_`).
+ * OpenCode skips every tool of a server whose name is over 64 characters (its
+ * tool namespace limit), and its router rejects adding one over 100, so a
+ * thread id that does not fit is replaced by a digest of it.
  */
-const t3McpServerName = (threadId: string) =>
-  `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+export const t3McpServerName = (threadId: string) => {
+  const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+  if (name.length <= 64) return name;
+  const digest = NodeCrypto.createHash("sha256").update(threadId).digest("hex");
+  return `t3-code-${digest.slice(0, 16)}`;
+};
 
 /**
  * The rules that keep T3's MCP servers to their own thread, after the mode's:
