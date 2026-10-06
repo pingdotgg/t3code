@@ -686,10 +686,18 @@ const layerPlatformConnectionSource = Layer.effect(
             ),
             Effect.tapError((error) =>
               isRejectedBootstrapCredentialError(error)
-                ? Effect.sync(() =>
-                    nextRejected.set(
-                      bootstrap.id,
-                      nextRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs),
+                ? // Back off from when the rejection arrived; the exchanges in
+                  // this poll can take longer than the first backoff step.
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((rejectedAtEpochMs) =>
+                      nextRejected.set(
+                        bootstrap.id,
+                        nextRejectedSecondaryBootstrap(
+                          previouslyRejected,
+                          signature,
+                          rejectedAtEpochMs,
+                        ),
+                      ),
                     ),
                   )
                 : Effect.void,
