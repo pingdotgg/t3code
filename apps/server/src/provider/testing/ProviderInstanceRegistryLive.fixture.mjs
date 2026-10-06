@@ -13,7 +13,7 @@ if (process.argv.includes("auth") && process.argv.includes("status")) {
   process.stdout.write(
     JSON.stringify({ loggedIn: !signedOut, authMethod: signedOut ? "none" : "claude.ai" }) + "\n",
   );
-  process.exit(0);
+  process.exit(signedOut ? 1 : 0);
 }
 const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {

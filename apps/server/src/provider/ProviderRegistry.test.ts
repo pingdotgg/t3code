@@ -3046,7 +3046,8 @@ it.layer(
             return {
               stdout: `{"loggedIn":${loggedIn},"authMethod":"none"}\n`,
               stderr: "",
-              code: 0,
+              // The real CLI exits 1 when signed out, still printing its JSON status.
+              code: loggedIn ? 0 : 1,
             };
           throw new Error(`Unexpected args: ${joined}`);
         });
