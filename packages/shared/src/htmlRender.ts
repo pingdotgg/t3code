@@ -98,22 +98,37 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
   );
 }
 
-/**
- * The frame height for a page at a frame width: the taller of the heights
- * measured at the nearest widths on each side, capped at the agent's height.
- * A breakpoint between two measured widths can make the page as tall as
- * either, so the frame takes the taller. A page whose height grows with its
- * width inside one layout can still run slightly past the frame between
- * measured widths.
- */
-export function htmlRenderFrameHeight(reference: HtmlRenderReference, width: number) {
-  const heights = reference.heights;
-  if (heights === undefined || heights.length === 0) return reference.height;
+// The taller of the heights measured at the nearest widths on each side. A
+// breakpoint between two measured widths can make the page as tall as either.
+function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
   const high = above === -1 ? heights.length - 1 : above;
   const low = heights[high]![0] === width ? high : Math.max(0, high - 1);
-  const measured = Math.max(heights[low]![1], heights[high]![1]);
-  return clampHtmlRenderHeight(Math.min(reference.height, measured));
+  return Math.max(heights[low]![1], heights[high]![1]);
+}
+
+/**
+ * The frame height for a page at a frame width. It is the page's own reported
+ * `contentHeight` when the client has one, else the server's measurement for
+ * that width. A page even a few pixels taller than its frame scrolls inside it
+ * and takes the reader's scroll, so the frame fits the page. The agent's height
+ * caps it only when it is below the page's height at the column width (the
+ * agent asked for a scrolling frame) or when the page was never measured.
+ */
+export function htmlRenderFrameHeight(
+  reference: HtmlRenderReference,
+  width: number,
+  contentHeight?: number,
+) {
+  const heights = reference.heights;
+  if (heights === undefined || heights.length === 0) {
+    return clampHtmlRenderHeight(Math.min(reference.height, contentHeight ?? reference.height));
+  }
+  const cap =
+    measuredHeight(heights, HTML_RENDER_COLUMN_WIDTH) > reference.height
+      ? reference.height
+      : HTML_RENDER_MAX_HEIGHT;
+  return clampHtmlRenderHeight(Math.min(cap, contentHeight ?? measuredHeight(heights, width)));
 }
 
 /** A readable download name: the title without characters file systems reject. */
@@ -248,6 +263,7 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   `The frame is borderless on the thread's background, as wide as the reply column (${HTML_RENDER_COLUMN_WIDTH}px on desktop by default, wider if the reader widens chat, about 360px on phones), and its left edge lines up with your reply text.`,
   "Use a fluid width with no horizontal padding on the outermost element, and no outer card, border, or banner title: the page is part of your reply.",
   "Give charts fixed pixel heights rather than heights that scale with width.",
+  "Let content set the page's height. Avoid viewport-based heights such as 100vh or height:100% on html or body; the frame grows to fit the page, so they can make it grow again and again.",
 ].join(" ");
 
 // The bridge between a render and its client speaks the MCP Apps protocol
@@ -255,6 +271,19 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
 // MCP apps: https://github.com/modelcontextprotocol/ext-apps
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";
 const OPEN_LINK_METHOD = "ui/open-link";
+const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
+
+/** The content height in a framed render's `ui/notifications/size-changed` notification. */
+export function readHtmlRenderContentHeight(data: unknown): number | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== SIZE_CHANGED_METHOD) return undefined;
+  const height =
+    typeof params === "object" && params !== null
+      ? (params as { height?: unknown }).height
+      : undefined;
+  return typeof height === "number" && Number.isFinite(height) && height > 0 ? height : undefined;
+}
 
 /** A render's `ui/open-link` request, if `data` is one with an http(s) URL. */
 export function readHtmlRenderLinkRequest(
@@ -309,8 +338,10 @@ function rootRule(theme: HtmlRenderTheme): string {
 // then drops the fragment so a page's own hash routing never sees it. A link
 // the reader clicks to another page never replaces the page inside the thread:
 // a framed page asks its client to open it, and a top-level page (mobile)
-// opens it as a new window, which the client sends to the browser.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);})();`;
+// opens it as a new window, which the client sends to the browser. A framed
+// page also reports its content height, measured as the server measures it,
+// so its client can fit the frame to the page.
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);}})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");

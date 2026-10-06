@@ -2,9 +2,10 @@ import {
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
+  readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { cn } from "~/lib/utils";
@@ -69,6 +70,8 @@ export function HtmlRenderDocument(props: {
   readonly src: string;
   readonly title: string;
   readonly className?: string;
+  /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
+  readonly onContentHeight?: (height: number) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -102,6 +105,20 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
   }, []);
+  const { onContentHeight } = props;
+  // A page posts its height once per change, so listen from the commit that
+  // inserts the frame; a passive effect could run after a fast page's first post.
+  useLayoutEffect(() => {
+    if (onContentHeight === undefined) return;
+    const resize = (event: MessageEvent) => {
+      const height = readHtmlRenderContentHeight(event.data);
+      if (height !== undefined && event.source === frameRef.current?.contentWindow) {
+        onContentHeight(height);
+      }
+    };
+    window.addEventListener("message", resize);
+    return () => window.removeEventListener("message", resize);
+  }, [onContentHeight]);
   return (
     <iframe
       ref={frameRef}

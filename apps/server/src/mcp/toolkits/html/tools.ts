@@ -68,7 +68,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 // touches no workspace, so plan mode and read-only sandboxes can use it.
 // Open-world, since the page may load remote resources, as in a preview.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page (chart, table, diagram, collage, mockup) inline in this thread, above your final text reply; call it before writing that reply. The reader already sees the page, so the reply should not announce it, say where it is, or restate it: add only what the page doesn't say. Preview with html_preview first. T3 fits the frame to the page's height at each reader's width, up to height; anything taller scrolls inside the frame. ${PAGE_RULES} ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description: `Show a finished HTML page (chart, table, diagram, collage, mockup) inline in this thread, above your final text reply; call it before writing that reply. The reader already sees the page, so the reply should not announce it, say where it is, or restate it: add only what the page doesn't say. Preview with html_preview first. T3 fits the frame to the page's height at each reader's width. A height below the page's contentHeight caps the frame there, and the rest scrolls inside it. ${PAGE_RULES} ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
   parameters: Schema.Struct({
     html: Html,
     title: Schema.String.check(
@@ -76,7 +76,7 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
       Schema.isMaxLength(HTML_RENDER_MAX_TITLE_LENGTH),
     ).annotate({ description: "Short name for the page." }),
     height: Schema.Int.annotate({
-      description: `The most the frame may take, in CSS pixels, ${HTML_RENDER_MIN_HEIGHT}-${HTML_RENDER_MAX_HEIGHT}. Use html_preview's contentHeight, or less to make long content scroll inside the frame.`,
+      description: `The frame height in CSS pixels, ${HTML_RENDER_MIN_HEIGHT}-${HTML_RENDER_MAX_HEIGHT}. Use html_preview's contentHeight, or less to make long content scroll inside the frame.`,
     }),
   }),
   success: Schema.Struct({

@@ -20,8 +20,9 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
 
 /**
  * An agent's HTML render inline in the thread: the page itself on the thread's
- * own background, at its measured height for this width (capped at the agent's
- * height). Loading and failure hold the same box so nothing below it moves.
+ * own background, at the server's measured height for this width until the
+ * page reports its own. Loading and failure hold the same box so nothing below
+ * it moves.
  */
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -43,7 +44,10 @@ export function HtmlRenderFrame(props: {
     observer.observe(box);
     return () => observer.disconnect();
   }, []);
-  const height = htmlRenderFrameHeight(props.htmlRender, width);
+  // Client fonts can wrap a page taller than the server measured it; a frame
+  // left short would scroll inside the thread and take the reader's scroll.
+  const [contentHeight, setContentHeight] = useState<number>();
+  const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
   const resource = useMemo(
     () => ({
@@ -91,7 +95,12 @@ export function HtmlRenderFrame(props: {
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
       {src !== null ? (
         <>
-          <HtmlRenderDocument src={src} title={title} className="block size-full" />
+          <HtmlRenderDocument
+            src={src}
+            title={title}
+            className="block size-full"
+            onContentHeight={setContentHeight}
+          />
           <div className="absolute end-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
               <TooltipTrigger
