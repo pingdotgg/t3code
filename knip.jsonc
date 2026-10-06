@@ -16,6 +16,16 @@
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
+    "e2e": {
+      // The e2e runner loads its config and test files and spawns the launcher; the
+      // server spawns the fake provider CLIs.
+      "entry": [
+        "e2e.config.ts",
+        "scripts/start-app.ts",
+        "tests/**/*.e2e.ts",
+        "fixtures/fake-*/fake-*.ts",
+      ],
+    },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly.

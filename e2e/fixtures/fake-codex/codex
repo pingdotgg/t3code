@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the Codex CLI on the e2e server's PATH. See fake-codex.ts.
+exec node "$(dirname "$0")/fake-codex.ts" "$@"

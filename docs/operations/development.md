@@ -129,6 +129,57 @@ export check's workspace selectors as more workspaces become clean. Review calle
 deleting code; production mode can also report development scripts and test fixtures.
 Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
 
+### End-to-end tests
+
+The [e2e](../../e2e) workspace drives the built web client in a real browser with
+[e2e](https://e2e.tester.army/docs). Each run boots its own server on a free port through
+[start-app.ts](../../e2e/scripts/start-app.ts), with a fresh temp T3 home and an allowlisted
+environment from [instance.ts](../../e2e/support/instance.ts): the server and its terminals see
+a throwaway `HOME` and XDG dirs, and none of the developer's tokens or git and gh config.
+Every provider except Cursor runs as a scripted fake CLI under [e2e/fixtures](../../e2e/fixtures),
+so turns, approvals, Stop, diffs, and commits run without credentials or model calls. The fakes
+share the prompt rules in [scenario.ts](../../e2e/fixtures/scenario.ts) and, where the provider
+publishes one, are typed against its protocol: the generated Codex and ACP schemas, the Claude
+Agent SDK, and the OpenCode SDK. Pi has no typed protocol, so its fake follows the recorded
+transcripts. Cursor's SDK runs inside the server and talks to Cursor's backend directly, so
+there is no process boundary to fake and it stays disabled.
+Nothing touches `~/.t3/userdata`.
+
+```sh
+vp run test:e2e                            # builds apps/web, then runs the suite
+cd e2e && pnpm exec e2e run tests/turns.e2e.ts
+```
+
+`pnpm exec e2e run` serves whatever is in `apps/web/dist`, so rebuild after web changes. Tests
+share one server and run in parallel. Each pairs its own browser through the `t3` fixture in
+[support/test.ts](../../e2e/support/test.ts), and a test that changes files or commits adds its
+own project with `t3.addProject`, so tests never see each other's threads or edits.
+
+[tests/providers](../../e2e/tests/providers) runs the same reply, approval, and Stop flows
+through every faked provider, one file each so they run in parallel. The Codex, ACP, and OpenCode fakes reject requests they do not
+serve, so a newly required call fails a test. The Claude and Pi fakes acknowledge unknown
+control requests, as the real CLIs do for optional ones.
+
+[journeys.e2e.ts](../../e2e/tests/journeys.e2e.ts) drives whole user journeys with
+`agent.act`, one goal per call, each pinned by an exact check. These tests are tagged `agent`,
+need `AI_GATEWAY_API_KEY`, and are skipped without it. Passing actions replay from
+`e2e/.e2e/cache`, so a warm run makes a handful of model calls, about $0.005, against about
+$0.013 to record from scratch. Locally the cache is a gitignored directory. The `Test E2E` CI
+job reads the key from the `AI_GATEWAY_API_KEY` repository secret and round-trips the cache
+through the GitHub Actions cache: it restores the newest `e2e-replay-*` entry and saves what
+the run re-recorded under its own key. Fork pull requests get no secret, so the journeys skip
+there.
+
+For a bug bash, ask an agent to bug bash an area and it will follow the `e2e` skill's
+`bug-bash` topic from the `e2e` directory. Explorations always call the model. Pass
+`--session paired` to each `e2e explore` charter so it starts
+signed in, and pick a persona (`default`, `skeptic`, `fuzzer`) with `--agent`. Every charter
+boots its own server. The agent context in [e2e.config.ts](../../e2e/e2e.config.ts) tells
+explorers how to drive the fake and which controls act on the host machine; keep it current.
+
+The skill in `.agents/skills/e2e` is a copy of the one the `e2e` package ships. Refresh it
+when bumping `e2e`: `cp -R e2e/node_modules/e2e/skills/e2e .agents/skills/`.
+
 ## Desktop artifacts
 
 Local artifact builds are unsigned by default and write to `release/`:

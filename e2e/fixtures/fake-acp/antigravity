@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the Antigravity agent on the e2e server. See fake-acp.ts.
+exec node "$(dirname "$0")/fake-acp.ts" antigravity "$@"

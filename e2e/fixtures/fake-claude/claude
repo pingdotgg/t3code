@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the Claude Code CLI on the e2e server. See fake-claude.ts.
+exec node "$(dirname "$0")/fake-claude.ts" "$@"

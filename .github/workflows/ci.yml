@@ -222,6 +222,75 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+  # Browser suite against an isolated server and the scripted fake Codex. Agent
+  # journeys need AI_GATEWAY_API_KEY and skip without it (fork PRs). Their replay
+  # cache round-trips through the Actions cache: each run restores the newest
+  # entry and saves what it re-recorded under its own key.
+  test_e2e:
+    name: Test E2E
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        run: vp run --filter @t3tools/e2e install:browser
+
+      - name: Restore replay cache
+        uses: actions/cache/restore@v6
+        with:
+          path: e2e/.e2e/cache
+          key: e2e-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: e2e-replay-
+
+      - name: Build web
+        run: vp run --filter @t3tools/web build
+
+      - name: Test
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          E2E_TELEMETRY_DISABLED: "1"
+        run: vp run --filter @t3tools/e2e e2e:ci
+
+      - name: Save replay cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v6
+        with:
+          path: e2e/.e2e/cache
+          key: e2e-replay-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report
+          path: |
+            e2e/.e2e/report.json
+            e2e/.e2e/junit.xml
+            e2e/.e2e/artifacts
+            e2e/.e2e/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
@@ -490,6 +559,7 @@ jobs:
         build,
         test,
         test_web,
+        test_e2e,
         test_server,
         transfer-report,
         rust,

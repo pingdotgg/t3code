@@ -1,0 +1,3 @@
+#!/bin/sh
+# Antigravity requires this harness next to its executable; the fake never runs it.
+exit 99

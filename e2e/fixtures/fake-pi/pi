@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the Pi CLI on the e2e server. See fake-pi.ts.
+exec node "$(dirname "$0")/fake-pi.ts" "$@"

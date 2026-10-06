@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the OpenCode CLI on the e2e server. See fake-opencode.ts.
+exec node "$(dirname "$0")/fake-opencode.ts" "$@"
