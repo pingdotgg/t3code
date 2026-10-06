@@ -202,6 +202,17 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.driver === ProviderDriverKind.make("pi")) {
+    // Pi reports its complete inventory after discovery, including an empty
+    // inventory with unauthenticated status. Failed or interactive discovery
+    // remains ready with unknown auth, so keep its last discovered models.
+    return !(
+      provider.installed &&
+      (provider.status === "ready" || provider.status === "warning") &&
+      (provider.auth.status === "authenticated" || provider.auth.status === "unauthenticated")
+    );
+  }
+
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
     // ACP Registry discovery probes return the agent's complete inventory, so
     // a completed probe (ready and authenticated) replaces the model list —

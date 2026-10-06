@@ -1230,6 +1230,152 @@ it.layer(
       );
     });
 
+    describe("Pi model inventories", () => {
+      const cachedProvider = {
+        instanceId: ProviderInstanceId.make("pi"),
+        driver: ProviderDriverKind.make("pi"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated", type: "pi" },
+        checkedAt: "2026-10-06T19:00:00.000Z",
+        version: "1.0.4",
+        models: ["default", "pi-claude/claude-opus-5-5", "cursor/composer:slow"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: null,
+        })),
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const refreshedProvider = {
+        ...cachedProvider,
+        checkedAt: "2026-10-06T19:01:00.000Z",
+        models: cachedProvider.models.slice(0, 2),
+      } satisfies ServerProvider;
+      const fallbackProvider = {
+        ...refreshedProvider,
+        auth: { status: "unknown" },
+        models: cachedProvider.models.slice(0, 1),
+      } satisfies ServerProvider;
+
+      it("removes models from uninstalled Pi extensions after successful discovery", () => {
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(cachedProvider, refreshedProvider).models,
+          refreshedProvider.models,
+        );
+      });
+
+      it("removes old models when successful discovery reports no usable models", () => {
+        const emptyDiscovery = {
+          ...fallbackProvider,
+          status: "warning",
+          auth: { status: "unauthenticated", type: "pi" },
+        } satisfies ServerProvider;
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(cachedProvider, emptyDiscovery).models,
+          emptyDiscovery.models,
+        );
+      });
+
+      it("retains discovered models when startup, failed or interactive discovery is incomplete", () => {
+        for (const provider of [
+          fallbackProvider,
+          { ...fallbackProvider, status: "error" },
+          { ...fallbackProvider, status: "warning", installed: false },
+        ] satisfies ReadonlyArray<ServerProvider>) {
+          assert.deepStrictEqual(
+            ProviderRegistry.mergeProviderSnapshot(cachedProvider, provider).models,
+            cachedProvider.models,
+          );
+        }
+      });
+
+      it.effect(
+        "persists extension model removals across failed refreshes and registry restarts",
+        () =>
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const filePath = yield* resolveProviderStatusCachePath({
+              cacheDir: config.providerStatusCacheDir,
+              instanceId: cachedProvider.instanceId,
+            });
+            yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
+            const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+            const instance = {
+              instanceId: cachedProvider.instanceId,
+              driverKind: cachedProvider.driver,
+              continuationIdentity: {
+                driverKind: cachedProvider.driver,
+                continuationKey: "pi:instance:pi",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: cachedProvider.driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(fallbackProvider),
+                refresh: Ref.get(nextProvider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+            const layerInstanceRegistry = Layer.succeed(
+              ProviderInstanceRegistry.ProviderInstanceRegistry,
+              {
+                getInstance: (id) =>
+                  Effect.succeed(id === instance.instanceId ? instance : undefined),
+                listInstances: Effect.succeed([instance]),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.empty,
+                subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+              },
+            );
+
+            for (const restarted of [false, true]) {
+              yield* Effect.gen(function* () {
+                const registry = yield* ProviderRegistry.ProviderRegistry;
+                assert.deepStrictEqual(
+                  (yield* registry.getProviders)[0]?.models,
+                  restarted ? refreshedProvider.models : cachedProvider.models,
+                );
+                yield* registry.refreshInstance(instance.instanceId);
+                assert.deepStrictEqual(
+                  (yield* readProviderStatusCache(filePath))?.models,
+                  refreshedProvider.models,
+                );
+                yield* Ref.set(nextProvider, fallbackProvider);
+                assert.deepStrictEqual(
+                  (yield* registry.refreshInstance(instance.instanceId))[0]?.models,
+                  refreshedProvider.models,
+                );
+                assert.deepStrictEqual(
+                  (yield* readProviderStatusCache(filePath))?.models,
+                  refreshedProvider.models,
+                );
+              }).pipe(
+                Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
+                Effect.scoped,
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-pi-retired-model-cache-",
+              }).pipe(Layer.provideMerge(NodeServices.layer)),
+            ),
+          ),
+      );
+    });
+
     describe("Antigravity model inventories", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("antigravity-personal"),
