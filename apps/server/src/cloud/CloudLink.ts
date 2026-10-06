@@ -107,11 +107,6 @@ import {
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
 import {
-  CLOUD_HEALTH_JTI_PREFIX,
-  CLOUD_HEALTH_NONCE_PREFIX,
-  CLOUD_MINT_JTI_PREFIX,
-  CLOUD_MINT_NONCE_PREFIX,
-  consumeCloudReplayGuards,
   hasBoundedCloudProofLifetime,
   hasExactScope,
   hasForwardedAuthorityHeaders,
@@ -124,6 +119,17 @@ import {
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
+const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
+const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
+const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
+const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
+/** Secret store name prefixes of cloud replay markers. The server prunes expired ones. */
+export const CLOUD_REPLAY_MARKER_PREFIXES = [
+  CLOUD_MINT_NONCE_PREFIX,
+  CLOUD_MINT_JTI_PREFIX,
+  CLOUD_HEALTH_NONCE_PREFIX,
+  CLOUD_HEALTH_JTI_PREFIX,
+] as const;
 const MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT = Duration.minutes(2);
 const RELAY_CONFIG_FIELD_MESSAGES = {
   relayUrl: "Relay URL must be a secure absolute HTTPS URL.",
@@ -323,6 +329,27 @@ function bytesToString(bytes: Uint8Array): string {
 
 function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
+}
+
+/** Records each one-shot marker; false when any already existed, so the request is a replay. */
+export function consumeCloudReplayGuards(input: {
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly names: ReadonlyArray<string>;
+  readonly value: Uint8Array;
+}) {
+  return Effect.forEach(
+    input.names,
+    (name) =>
+      input.secrets.create(name, input.value).pipe(
+        Effect.as(true),
+        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+          ServerSecretStore.isSecretAlreadyExistsError(error)
+            ? Effect.succeed(false)
+            : Effect.fail(error),
+        ),
+      ),
+    { concurrency: input.names.length },
+  ).pipe(Effect.map((created) => created.every(Boolean)));
 }
 
 function validateCloudMintPublicKey(
