@@ -371,6 +371,14 @@ describe("getDesktopUpdateIdleTooltip", () => {
     expect(getDesktopUpdateIdleTooltip(baseState, "1.2.4", now).details).toEqual(["Version 1.2.4"]);
   });
 
+  it("omits the release age when the version date does not exist", () => {
+    for (const version of ["1.2.4-nightly.20260230.1", "1.2.4-nightly.20261301.1"]) {
+      expect(getDesktopUpdateIdleTooltip(baseState, version, now).details).toEqual([
+        `Version ${version}`,
+      ]);
+    }
+  });
+
   it("explains why checking is unavailable", () => {
     expect(
       getDesktopUpdateIdleTooltip(
