@@ -19,6 +19,7 @@ describe("ManagedEndpointAllocations", () => {
           readonly readyAt: unknown;
           readonly recoveryEnabledAt: unknown;
           readonly recoveryEnvironmentPublicKey: unknown;
+          readonly tunnelReleasedAt: unknown;
         }
       | undefined;
     const fakeDb = {
@@ -30,6 +31,7 @@ describe("ManagedEndpointAllocations", () => {
             readonly readyAt: unknown;
             readonly recoveryEnabledAt: unknown;
             readonly recoveryEnvironmentPublicKey: unknown;
+            readonly tunnelReleasedAt: unknown;
           }) => {
             updated = values;
             return {
@@ -53,6 +55,8 @@ describe("ManagedEndpointAllocations", () => {
         }),
       ).toBe(8);
       expect(updated?.tunnelId).toBe("replacement-tunnel");
+      // Any recorded tunnel ends a released state, so status stops reporting it.
+      expect(updated?.tunnelReleasedAt).toBeNull();
       const query = new PgDialect().sqlToQuery(updated?.readyAt as never);
       expect(query.sql).toBe(
         'case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."ready_at" else null end',
@@ -249,6 +253,38 @@ describe("ManagedEndpointAllocations", () => {
       expect(batchSizes).toEqual([500, 500, 1]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
+
+  it.effect.each([
+    { markReleased: true, released: true },
+    { markReleased: undefined, released: false },
+  ] as const)(
+    "marks the tunnel released only for the claim that deletes it ($markReleased)",
+    ({ markReleased, released }) => {
+      let updated: Record<string, unknown> | undefined;
+      const fakeDb = {
+        update: () => ({
+          set: (values: Record<string, unknown>) => {
+            updated = values;
+            return {
+              where: () => ({ returning: () => Effect.succeed([{ generation: 4 }]) }),
+            };
+          },
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+
+      return Effect.gen(function* () {
+        const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+        yield* allocations.claimRelease({
+          userId: "user-1",
+          environmentId: "environment-1",
+          tunnelId: "tunnel-1",
+          generation: 3,
+          ...(markReleased === undefined ? {} : { markReleased }),
+        });
+        expect(typeof updated?.tunnelReleasedAt === "string").toBe(released);
+      }).pipe(Effect.provide(layerWithDb(fakeDb)));
+    },
+  );
 
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
     const fakeDb = {
