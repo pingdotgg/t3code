@@ -122,22 +122,20 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
 function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
     <Attachment
-      className={cn(
-        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
-        className,
-      )}
+      className={cn("flex items-end gap-1 not-has-data-[slot=composer-banner]:hidden", className)}
       {...props}
     />
   );
 }
 
-/** Attachments share a column while neighboring tabs keep their own surface. */
+/** One backdrop for the column; only its bottom overlaps the composer. */
 function Column({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
+    <Surface
       className={cn(
-        "flex min-w-0 flex-1 flex-col empty:hidden",
-        "[&>[data-slot=composer-banner-attachment]]:w-full [&>[data-slot=composer-banner-attachment]:last-child]:mb-0",
+        "flex min-w-0 flex-1 flex-col pb-(--chat-composer-attachment-overlap) not-has-data-[slot=composer-banner]:hidden",
+        "[&>[data-slot=composer-banner-attachment]]:mb-0 [&>[data-slot=composer-banner-attachment]]:w-full",
+        "[&_[data-composer-banner-surface=attached]]:[--chat-composer-attachment-overlap:0px] [&_[data-composer-banner-surface=attached]]:before:hidden",
         className,
       )}
       {...props}
@@ -325,7 +323,7 @@ function ToggleIcon({ expanded }: { expanded: boolean }) {
       tabIndex={-1}
       className="pointer-events-none"
     >
-      <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
+      <ChevronDownIcon className={cn("size-3.5", expanded && "rotate-180")} />
     </Button>
   );
 }
