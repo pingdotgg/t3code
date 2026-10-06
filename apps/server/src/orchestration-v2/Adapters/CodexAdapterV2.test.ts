@@ -32,6 +32,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1870,7 +1871,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
-    readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -6708,6 +6709,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   });
 
   it.effect.each([
+    { name: "current Codex Sol", model: "gpt-6-sol" },
+    { name: "current Codex wrong child", model: null },
     { name: "Sol", model: "gpt-5.6-sol" },
     { name: "Fable", model: "gpt-5.6-fable" },
     { name: "Astra", model: "gpt-6-astra" },
@@ -6719,6 +6722,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const metadataRead = yield* Deferred.make<void>();
         const modelReported = yield* Deferred.make<void>();
+        let metadataRequests = 0;
         const harness = yield* makeCodexReplayHarness(
           resumeSubagentTranscript,
           (event) =>
@@ -6727,14 +6731,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : Effect.void,
           undefined,
           (threadId) => {
+            metadataRequests++;
             assert.equal(threadId, RESUME_CHILD_THREAD);
             return Deferred.succeed(metadataRead, undefined).pipe(
               Effect.as(
                 name === "invalid"
                   ? {}
                   : {
-                      thread: { id: name === "wrong child" ? "other-child" : threadId },
-                      model: name === "wrong child" ? "gpt-5.6-sol" : model,
+                      thread: {
+                        id: name.includes("wrong child") ? "other-child" : threadId,
+                        ...(name.startsWith("current Codex") ? { model: "gpt-6-sol" } : {}),
+                      },
+                      model: name.startsWith("current Codex")
+                        ? null
+                        : name === "wrong child"
+                          ? "gpt-5.6-sol"
+                          : model,
                     },
               ),
             );
@@ -6754,8 +6766,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("100 millis");
         yield* harness.firstTerminal;
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+        assert.equal(metadataRequests, name === "current Codex Sol" ? 1 : 2);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
+  );
+
+  it.effect.each(["failed", "malformed", "wrong child", "blank model"] as const)(
+    "resumes child metadata after a %s read",
+    (readResult) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const modelReported = yield* Deferred.make<void>();
+          const model = "gpt-6-sol";
+          const metadataRequests: Array<string> = [];
+          const harness = yield* makeCodexReplayHarness(
+            resumeSubagentTranscript,
+            (event) =>
+              event.type === "subagent.updated" && event.subagent.model === model
+                ? Deferred.succeed(modelReported, undefined)
+                : Effect.void,
+            undefined,
+            (threadId, method) => {
+              assert.equal(threadId, RESUME_CHILD_THREAD);
+              metadataRequests.push(method);
+              if (method === "thread/resume") {
+                return Effect.succeed({ thread: { id: threadId }, model });
+              }
+              switch (readResult) {
+                case "failed":
+                  return Effect.fail(
+                    new CodexError.CodexAppServerRequestError({
+                      code: -32000,
+                      errorMessage: "Child metadata unavailable",
+                      method,
+                    }),
+                  );
+                case "malformed":
+                  return Effect.succeed({});
+                case "wrong child":
+                  return Effect.succeed({ thread: { id: "other-child", model: "gpt-6-astra" } });
+                case "blank model":
+                  return Effect.succeed({ thread: { id: threadId, model: " \t " } });
+              }
+            },
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-child-model-fallback"),
+              text: RESUME_PROMPT,
+            }),
+          );
+          yield* Deferred.await(modelReported);
+          yield* TestClock.adjust("100 millis");
+          yield* harness.firstTerminal;
+          assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+          assert.deepEqual(metadataRequests, ["thread/read", "thread/resume"]);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
   );
 
   it.effect.each(["thread/settings/updated", "model/rerouted"] as const)(
