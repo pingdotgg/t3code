@@ -45,6 +45,8 @@ catalog:
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
+  "@trycua/cua-driver": 0.34.0
+  "@ubjs/node": 0.31.0-3
   "@types/node": 24.12.4
   effect: 4.0.1
   jose: 6.2.2
@@ -164,6 +166,13 @@ minimumReleaseAgeExclude:
   - "@opencode/client@2.0.23"
   - "@opencode/protocol@2.0.23"
   - "@opencode/schema@2.0.23"
+  - "@trycua/cua-driver-darwin-arm64@0.34.0"
+  - "@trycua/cua-driver-darwin-x64@0.34.0"
+  - "@trycua/cua-driver-linux-arm64-gnu@0.34.0"
+  - "@trycua/cua-driver-linux-x64-gnu@0.34.0"
+  - "@trycua/cua-driver-win32-arm64-msvc@0.34.0"
+  - "@trycua/cua-driver-win32-x64-msvc@0.34.0"
+  - "@trycua/cua-driver@0.34.0"
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
@@ -283,6 +292,7 @@ patchedDependencies:
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
+  "@ubjs/node@0.31.0-3": patches/@ubjs__node@0.31.0-3.patch
 
 peerDependencyRules:
   allowAny:

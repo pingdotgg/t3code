@@ -52,6 +52,9 @@ describe("shouldBundleCliDependency", () => {
       "@napi-rs/keyring",
       "@clerk/electron-passkeys",
       "node-addon-api",
+      "@trycua/cua-driver/embedded",
+      "@trycua/cua-driver-darwin-arm64",
+      "@ubjs/node",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
@@ -83,7 +86,16 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@cursor/sdk", "@ff-labs/fff-node", "@napi-rs/keyring", "node-pty", "playwright-core"],
+      [
+        "@cursor/sdk",
+        "@ff-labs/fff-node",
+        "@napi-rs/keyring",
+        "@trycua/cua-driver",
+        // Direct so the staged install carries its patch.
+        "@ubjs/node",
+        "node-pty",
+        "playwright-core",
+      ],
     );
   });
 });

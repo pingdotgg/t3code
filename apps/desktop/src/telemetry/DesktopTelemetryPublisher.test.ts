@@ -30,6 +30,10 @@ const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory
   shutdown: Effect.void,
 });
 
+const decodeMessage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DesktopHostTelemetryMessage),
+);
+
 function layerElectronApp(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
   onMetricsRead: () => void = () => undefined,
@@ -169,9 +173,6 @@ describe("DesktopTelemetryPublisher", () => {
         const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
         const encoded = yield* publisher.encoded.pipe(Stream.take(2), Stream.runCollect);
         const decoder = new TextDecoder();
-        const decodeMessage = Schema.decodeUnknownEffect(
-          Schema.fromJsonString(DesktopHostTelemetryMessage),
-        );
         const messages = yield* Effect.forEach(encoded, (bytes) =>
           decodeMessage(decoder.decode(bytes).trim()),
         );
@@ -432,6 +433,53 @@ describe("DesktopTelemetryPublisher", () => {
       yield* Effect.gen(function* () {
         const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
 
+        yield* publisher.handleControlForSource("wsl:Ubuntu", {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId: "remote",
+          enabled: true,
+        });
+        yield* publisher.handleControlForSource("primary", {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId: "local",
+          enabled: true,
+        });
+        const cuaRequest = yield* Stream.runHead(publisher.cuaRequests);
+        assert.equal(Option.getOrThrow(cuaRequest).requestId, "local");
+        yield* publisher.removeControlSource("wsl:Ubuntu");
+        yield* publisher.removeControlSource("primary");
+        const detachRequest = Option.getOrThrow(yield* Stream.runHead(publisher.cuaRequests));
+        assert.equal(detachRequest.requestId, "desktop-primary-detached");
+        assert.equal(detachRequest.enabled, false);
+
+        const primaryAttached = yield* Deferred.make<void>();
+        const cuaReportFiber = yield* publisher.encodedForSource("primary").pipe(
+          Stream.mapEffect((bytes) => decodeMessage(new TextDecoder().decode(bytes).trim())),
+          Stream.tap((message) =>
+            message.type === "desktopTelemetryHello"
+              ? Deferred.succeed(primaryAttached, undefined)
+              : Effect.void,
+          ),
+          Stream.filter((message) => message.type === "cuaDriverReport"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(primaryAttached);
+        const cuaReport = {
+          version: 1,
+          type: "cuaDriverReport",
+          requestId: "local",
+          status: "ready",
+          mcp: {
+            command: "/driver",
+            args: ["mcp"],
+            environment: [{ name: "SESSION", value: "opaque" }],
+          },
+        } as const;
+        yield* publisher.publishCuaReport(cuaReport);
+        assert.deepEqual(Option.getOrThrow(yield* Fiber.join(cuaReportFiber)), cuaReport);
+
         const requestFiber = yield* Stream.runHead(publisher.updateRequests).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         yield* publisher.handleControlForSource("test", {
@@ -470,9 +518,6 @@ describe("DesktopTelemetryPublisher", () => {
         // A subscriber that attaches after the publish (the backend spawned
         // by a relaunch) still sees the latest report replayed.
         const decoder = new TextDecoder();
-        const decodeMessage = Schema.decodeUnknownEffect(
-          Schema.fromJsonString(DesktopHostTelemetryMessage),
-        );
         const replayed = yield* publisher.encoded.pipe(
           Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
           Stream.filter((message) => message.type === "desktopUpdateStatus"),
@@ -484,6 +529,15 @@ describe("DesktopTelemetryPublisher", () => {
         }
         assert.equal(replayedReport.outcome, "up-to-date");
         assert.equal(replayedReport.state.currentVersion, "1.2.3");
+        const wslMessages = yield* publisher.encodedForSource("wsl:Ubuntu").pipe(
+          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
+          Stream.takeUntil((message) => message.type === "desktopUpdateStatus"),
+          Stream.runCollect,
+        );
+        assert.equal(
+          wslMessages.some((message) => message.type === "cuaDriverReport"),
+          false,
+        );
       }).pipe(Effect.provide(layer));
     }),
   );

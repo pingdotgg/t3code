@@ -36,7 +36,8 @@
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
-      "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web"],
+      // Direct only so staged release installs carry its asar patch; the Cua SDK loads it.
+      "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web", "@ubjs/node"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -57,7 +58,8 @@
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.
-      "ignoreDependencies": ["playwright-core", "electron-builder"],
+      // @ubjs/node: direct only so staged release installs carry its asar patch.
+      "ignoreDependencies": ["playwright-core", "electron-builder", "@ubjs/node"],
     },
     "apps/web": {
       // Vitest loads this through the per-file @vitest-environment directive.

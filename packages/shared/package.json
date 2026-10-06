@@ -398,6 +398,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./cuaDriverRelease": {
+      "types": "./src/cuaDriverRelease.ts",
+      "import": "./src/cuaDriverRelease.ts"
     }
   },
   "scripts": {

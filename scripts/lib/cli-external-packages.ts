@@ -36,6 +36,8 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@ff-labs/",
   "@napi-rs/keyring",
   "@clerk/electron-passkeys",
+  "@trycua/cua-driver",
+  "@ubjs/",
   "node-gyp-build",
   "node-addon-api",
   // ws's optional accelerators. Nothing in this repo declares them, so they are

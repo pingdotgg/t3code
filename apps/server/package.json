@@ -39,6 +39,8 @@
     "@opencode/client": "2.0.23",
     "@opencode/protocol": "2.0.23",
     "@opencode/schema": "2.0.23",
+    "@trycua/cua-driver": "catalog:",
+    "@ubjs/node": "catalog:",
     "diff": "8.0.3",
     "effect": "catalog:",
     "jose": "catalog:",
