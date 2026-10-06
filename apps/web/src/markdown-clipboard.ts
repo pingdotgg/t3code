@@ -386,8 +386,21 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
+    const range = selection.getRangeAt(index).cloneRange();
     if (range.collapsed) continue;
+    // KaTeX spreads one expression over visual and accessibility nodes. Copy
+    // any selected part as one source expression, including mixed selections.
+    for (const [node, start] of [
+      [range.startContainer, true],
+      [range.endContainer, false],
+    ] as const) {
+      const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+      const math = element?.closest(".chat-markdown-math[data-markdown-copy]");
+      if (math) {
+        if (start) range.setStartBefore(math);
+        else range.setEndAfter(math);
+      }
+    }
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;

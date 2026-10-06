@@ -1913,6 +1913,26 @@ code {
   font-size: 0.75rem;
 }
 
+.chat-markdown .chat-markdown-math {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.chat-markdown .chat-markdown-math-display {
+  display: block;
+  margin-block: 0.75rem;
+}
+
+.chat-markdown .chat-markdown-math-display .katex-display {
+  margin: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;

@@ -401,6 +401,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
+    id: "math-rendering",
+    title: "Render LaTeX math",
+    to: "/settings/general",
+    searchTerms: ["equations formulas katex double dollar markdown"],
+  },
+  {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
     to: "/settings/general",

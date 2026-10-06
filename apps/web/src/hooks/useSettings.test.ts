@@ -37,6 +37,20 @@ afterEach(() => {
 });
 
 describe("client settings hydration", () => {
+  it("restores the math opt-in and persists disabling it", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      mathRenderingEnabled: true,
+    });
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().mathRenderingEnabled).toBe(true);
+    await persistClientSettingsPatch({ mathRenderingEnabled: false });
+    expect(getClientSettings().mathRenderingEnabled).toBe(false);
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mathRenderingEnabled: false }),
+    );
+  });
+
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
     timestampFormat: "12-hour" as const,
