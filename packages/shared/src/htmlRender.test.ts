@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderReferencesEqual,
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   htmlRenderThemeMessage,
+  readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
@@ -96,6 +98,22 @@ describe("readHtmlRenderLinkRequest", () => {
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
     ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderContentHeight", () => {
+  it("reads only the height of an MCP Apps size-changed notification", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "ui/notifications/size-changed",
+      params,
+    });
+    expect(readHtmlRenderContentHeight(notification({ height: 412 }))).toBe(412);
+    expect(readHtmlRenderContentHeight(notification({ height: "412" }))).toBe(undefined);
+    expect(readHtmlRenderContentHeight(notification({ height: 0 }))).toBe(undefined);
+    expect(readHtmlRenderContentHeight({ ...notification({ height: 412 }), method: "x" })).toBe(
+      undefined,
+    );
   });
 });
 
@@ -193,9 +211,21 @@ describe("htmlRenderFrameHeight", () => {
     expect(htmlRenderFrameHeight(responsive, 640)).toBe(450);
   });
 
-  it("never exceeds the agent's height and falls back to it without measurements", () => {
-    expect(htmlRenderFrameHeight(measured, 1400)).toBe(1500);
+  it("fits a page the client lays out taller than the server measured", () => {
+    // The agent passed contentHeight at the column width, so the page should never scroll.
+    const fitted = { ...measured, height: 1403 };
+    expect(htmlRenderFrameHeight(fitted, 728, 1415)).toBe(1415);
+    expect(htmlRenderFrameHeight(fitted, 1400)).toBe(1660);
+    expect(htmlRenderFrameHeight(fitted, 728, 5000)).toBe(HTML_RENDER_MAX_HEIGHT);
+  });
+
+  it("keeps the agent's height when it asked for a scrolling frame or the page is unmeasured", () => {
+    const scrolling = { ...measured, height: 600 };
+    expect(htmlRenderFrameHeight(scrolling, 728, 1415)).toBe(600);
+    expect(htmlRenderFrameHeight(scrolling, 1400)).toBe(600);
     expect(htmlRenderFrameHeight(reference, 728)).toBe(reference.height);
+    expect(htmlRenderFrameHeight(reference, 728, 900)).toBe(reference.height);
+    expect(htmlRenderFrameHeight(reference, 728, 300)).toBe(300);
   });
 
   it("drops a malformed table and compares tables by value", () => {

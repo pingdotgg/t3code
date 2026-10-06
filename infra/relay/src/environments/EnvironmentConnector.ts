@@ -163,6 +163,16 @@ const isEnvironmentHealthError = Schema.is(
   ]),
 );
 
+/**
+ * Cleanup deleted this environment's tunnel and nothing has recorded a new
+ * one, so the host is unreachable until it updates and requests recovery.
+ */
+function offlineReasonFor(
+  allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null,
+): { readonly offlineReason?: "tunnel_released" } {
+  return allocation?.tunnelReleasedAt ? { offlineReason: "tunnel_released" } : {};
+}
+
 function environmentHealthRequestFailureMessage(cause: unknown): string {
   return isEnvironmentHealthError(cause)
     ? `Managed endpoint health request failed: ${cause.message}`
@@ -510,6 +520,7 @@ const make = Effect.gen(function* () {
           status: "offline" as const,
           checkedAt,
           error: "Managed endpoint health request timed out.",
+          ...offlineReasonFor(allocation),
           traceId,
         };
       }
@@ -532,6 +543,7 @@ const make = Effect.gen(function* () {
           status: "offline" as const,
           checkedAt,
           error: environmentHealthRequestFailureMessage(responseOption.value.cause),
+          ...offlineReasonFor(allocation),
           traceId,
         };
       }

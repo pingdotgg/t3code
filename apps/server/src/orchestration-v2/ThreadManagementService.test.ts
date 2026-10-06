@@ -268,7 +268,7 @@ it.effect("classifies projection infrastructure failures separately from a missi
     threadId,
     cause: infrastructureCause,
   });
-  const testLayer = ThreadManagementService.layer.pipe(
+  const layerTest = ThreadManagementService.layer.pipe(
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.fail(projectionError),
@@ -287,7 +287,7 @@ it.effect("classifies projection infrastructure failures separately from a missi
       cause: projectionError,
     });
     expect(error.message).toBe(`Unable to load thread ${threadId} in project ${projectId}.`);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("uses thread-not-found only after a projection loads outside the project", () => {
@@ -301,7 +301,7 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
       deletedAt: null,
     },
   } as OrchestrationV2ThreadProjection;
-  const testLayer = ThreadManagementService.layer.pipe(
+  const layerTest = ThreadManagementService.layer.pipe(
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.succeed(projection),
@@ -316,7 +316,7 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     expect(error).toBeInstanceOf(ThreadManagementService.ThreadManagementThreadNotFoundError);
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("preserves failed legacy materialization when reading checkpoint context", () => {
@@ -326,7 +326,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     operation: "hydrate transcript for",
     cause: new Error("checkpoint import failed"),
   });
-  const testLayer = ThreadManagementService.layerWithLegacyImporter.pipe(
+  const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -344,7 +344,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     const error = yield* service.getCheckpointContext(threadId).pipe(Effect.flip);
     expect(error).toBeInstanceOf(Orchestrator.OrchestratorProjectionError);
     expect(error).toMatchObject({ threadId, cause: importError });
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect.each([
@@ -367,7 +367,7 @@ it.effect.each([
         thread: { id: threadId, projectId, deletedAt: null },
         runs: status === "missing" ? [] : [{ id: runId, status }],
       }) as unknown as OrchestrationV2ThreadProjection;
-    const testLayer = ThreadManagementService.layer.pipe(
+    const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -387,7 +387,7 @@ it.effect.each([
       ),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
     const fiber = yield* service
       .waitForThread({
@@ -433,7 +433,7 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     let reads = 0;
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
-    const testLayer = ThreadManagementService.layer.pipe(
+    const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -457,7 +457,7 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
       ),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
     const fiber = yield* service
       .waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 })

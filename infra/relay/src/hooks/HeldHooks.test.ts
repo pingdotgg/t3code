@@ -31,6 +31,7 @@ const allocationFor = (
   tunnelName: `t3coderelay-managedendpoint-dev-${key}`,
   dnsRecordId: "dns-record-id",
   readyAt: ready ? "2026-05-25T00:00:00.000Z" : null,
+  tunnelReleasedAt: null,
   origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
   updatedAt: "2026-05-25T00:00:00.000Z",
   generation: 1,
@@ -66,7 +67,7 @@ const withService = <A, E>(
     allocationFor("user_1", ownKey, options.ownReady ?? true),
     allocationFor("user_2", otherKey, true),
   ];
-  const dependencies = Layer.mergeAll(
+  const layerDependencies = Layer.mergeAll(
     Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
     Layer.mock(EnvironmentLinks.EnvironmentLinks, {
       findActiveManagedForEnvironment: (input) =>
@@ -103,7 +104,7 @@ const withService = <A, E>(
   return Effect.gen(function* () {
     const heldHooks = yield* HeldHooks.HeldHooks;
     return yield* body({ heldHooks, cleared, woken });
-  }).pipe(Effect.provide(HeldHooks.layer.pipe(Layer.provide(dependencies))));
+  }).pipe(Effect.provide(HeldHooks.layer.pipe(Layer.provide(layerDependencies))));
 };
 
 describe("HeldHooks", () => {

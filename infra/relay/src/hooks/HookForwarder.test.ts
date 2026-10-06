@@ -30,12 +30,8 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
-import {
-  RELAY_HTTP_ROUTER_CONFIG,
-  relayCors,
-  relayNotFoundRoute,
-  traceRelayHttpRequestWith,
-} from "../http/Api.ts";
+import { RELAY_HTTP_ROUTER_CONFIG, traceRelayHttpRequestWith } from "../http/Api.ts";
+import * as RelayHttpApi from "../http/Api.ts";
 import * as HookForwarder from "./HookForwarder.ts";
 import { RELAY_HOOK_DELIVERY_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as HeldHooks from "./HeldHooks.ts";
@@ -71,6 +67,7 @@ const readyAllocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
   tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
   dnsRecordId: "dns-record-id",
   readyAt: "2026-05-25T00:00:00.000Z",
+  tunnelReleasedAt: null,
   origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
   updatedAt: "2026-05-25T00:00:00.000Z",
   generation: 1,
@@ -115,7 +112,7 @@ function makeHarness(options: Harness = {}) {
           new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }),
         ),
       ));
-  const forwarderLayer = HookForwarder.layer.pipe(
+  const layerForwarder = HookForwarder.layer.pipe(
     Layer.provideMerge(HeldHooks.layer),
     Layer.provide(
       Layer.mergeAll(
@@ -168,11 +165,11 @@ function makeHarness(options: Harness = {}) {
   const httpEffect = HttpRouter.toHttpEffect(
     Layer.mergeAll(
       HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.hooks)).pipe(
-        Layer.provide(HookForwarder.hooksApi.pipe(Layer.provide(forwarderLayer))),
+        Layer.provide(HookForwarder.layerApi.pipe(Layer.provide(layerForwarder))),
         Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),
       ),
-      relayNotFoundRoute,
-      relayCors,
+      RelayHttpApi.layerNotFoundRoute,
+      RelayHttpApi.layerCors,
     ),
   ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
   // Goes through Effect's request handler, which applies pre-response handlers

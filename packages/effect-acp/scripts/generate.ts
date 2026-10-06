@@ -514,7 +514,7 @@ const generateCommand = Command.make(
   ({ skipDownload }) => generateSchemas(skipDownload),
 ).pipe(Command.withDescription("Generate Effect ACP schemas from the pinned ACP release assets."));
 
-const runtimeLayer = Layer.mergeAll(
+const layerRuntime = Layer.mergeAll(
   Logger.layer([Logger.consolePretty()]),
   NodeServices.layer,
   FetchHttpClient.layer,
@@ -522,6 +522,6 @@ const runtimeLayer = Layer.mergeAll(
 
 Command.run(generateCommand, { version: "0.0.0" }).pipe(
   Effect.scoped,
-  Effect.provide(runtimeLayer),
+  Effect.provide(layerRuntime),
   NodeRuntime.runMain,
 );

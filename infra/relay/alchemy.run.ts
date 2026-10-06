@@ -12,7 +12,7 @@ import { PublishClientConfig, tokenDigest } from "./src/clientConfig.ts";
 import * as RelayDb from "./src/db.ts";
 import { RelayObservability } from "./src/observability.ts";
 import { ManagedEndpointZone, RelayApiZone } from "./src/zone.ts";
-import ApiLive, { Api } from "./src/worker.ts";
+import * as RelayWorker from "./src/worker.ts";
 
 export default Alchemy.Stack(
   "T3CodeRelay",
@@ -31,7 +31,7 @@ export default Alchemy.Stack(
     const managedEndpointZone = yield* ManagedEndpointZone.pipe(Effect.orDie);
     const relayApiZone = yield* RelayApiZone.pipe(Effect.orDie);
     const observability = yield* RelayObservability;
-    const api = yield* Api;
+    const api = yield* RelayWorker.Api;
     yield* PublishClientConfig({
       url: api.url,
       mobileTracingUrl: observability.traces.otelTracesEndpoint,
@@ -61,5 +61,5 @@ export default Alchemy.Stack(
       clientTracingDataset: observability.traces.name,
       clientTracingToken: observability.clientIngestToken.token,
     };
-  }).pipe(Effect.provide(ApiLive)),
+  }).pipe(Effect.provide(RelayWorker.layer)),
 );

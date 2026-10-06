@@ -24,9 +24,9 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../ProjectStore.ts";
-import { buildInitialGrokProviderSnapshot } from "../../provider/Layers/GrokProvider.ts";
+import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
@@ -311,10 +311,10 @@ describe("Grok permission prompts", () => {
 });
 
 describe("Grok launch permission mode", () => {
-  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-grok-v2-launch-",
   }).pipe(Layer.provide(NodeServices.layer));
-  const testLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, serverConfigLayer);
+  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerServerConfig);
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
@@ -357,7 +357,7 @@ describe("Grok launch permission mode", () => {
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
       Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
 
   const policy = (

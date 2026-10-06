@@ -446,7 +446,7 @@ export const layer = Layer.effect(HookForwarder, make);
  * re-reads the encoded path segments from the request so the token and hook
  * id reach the environment byte for byte, and streams the body itself.
  */
-export const hooksApi = HttpApiBuilder.group(
+export const layerApi = HttpApiBuilder.group(
   RelayApi,
   "hooks",
   Effect.fnUntraced(function* (handlers) {

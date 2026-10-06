@@ -3,7 +3,9 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
@@ -12,7 +14,10 @@ import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
-const DETECTION_CACHE_TTL = Duration.seconds(2);
+// Status polls detect every open cwd each tick, and detection costs three git
+// processes. `detect` re-checks each hit against the disk, so this TTL only
+// bounds rare changes those stats cannot see.
+const DETECTION_CACHE_TTL = Duration.minutes(5);
 
 export interface VcsDriverResolveInput {
   readonly cwd: string;
@@ -61,6 +66,8 @@ function parseDetectionCacheKey(key: string): {
 }
 
 export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
@@ -111,8 +118,44 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
-  const detectionCache = yield* Cache.makeWith<string, VcsDriverHandle | null, VcsError>(
-    (key) => detectResolvedKind(parseDetectionCacheKey(key)),
+  // The cwd and each parent below the repository root. A new `.git` in any of
+  // them means `git init` made a nested repository. Falls back to the cwd alone
+  // when the root is not above it, such as a cwd reached through a symlink.
+  const foldersBelowRoot = (cwd: string, rootPath: string) => {
+    const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
+    if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
+    return Array.from({ length: relative.split(path.sep).length }, (_, levelsUp) =>
+      path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
+    );
+  };
+
+  // What `detect` re-checks on every cache hit, using stats instead of git.
+  const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
+    Effect.all({
+      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
+        fileSystem.exists(path.join(folder, ".git")),
+      ),
+      repositoryOnDisk: Effect.forEach(
+        repository.metadataPath === null
+          ? [cwd]
+          : [cwd, path.resolve(cwd, repository.metadataPath)],
+        (target) => fileSystem.exists(target),
+      ).pipe(Effect.map((results) => results.every(Boolean))),
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  const detectionCache = yield* Cache.makeWith<
+    string,
+    { readonly handle: VcsDriverHandle; readonly gitEntries: ReadonlyArray<boolean> } | null,
+    VcsError
+  >(
+    (key) =>
+      Effect.gen(function* () {
+        const input = parseDetectionCacheKey(key);
+        const handle = yield* detectResolvedKind(input);
+        if (handle === null) return null;
+        const disk = yield* readDiskState(input.cwd, handle.repository);
+        return { handle, gitEntries: disk?.gitEntries ?? [] };
+      }),
     {
       capacity: DETECTION_CACHE_CAPACITY,
       timeToLive: Exit.match({
@@ -122,10 +165,24 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A hit is stale when its worktree or `.git` folder was removed, or when
+  // `git init` created a nested repository between the cwd and its root.
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);
-      return yield* Cache.get(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind }));
+      const key = detectionCacheKey({ cwd: input.cwd, requestedKind });
+      const cached = yield* Cache.get(detectionCache, key);
+      if (cached === null) return null;
+      const disk = yield* readDiskState(input.cwd, cached.handle.repository);
+      if (
+        disk?.repositoryOnDisk &&
+        disk.gitEntries.length === cached.gitEntries.length &&
+        disk.gitEntries.every((exists, index) => exists === cached.gitEntries[index])
+      ) {
+        return cached.handle;
+      }
+      yield* Cache.invalidate(detectionCache, key);
+      return (yield* Cache.get(detectionCache, key))?.handle ?? null;
     },
   );
 

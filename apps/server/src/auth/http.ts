@@ -198,7 +198,7 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   return session;
 });
 
-export const environmentAuthenticatedAuthLayer = Layer.effect(
+export const layerAuthenticatedAuth = Layer.effect(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -227,7 +227,7 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
   }),
 );
 
-export const authHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "auth",
   Effect.fnUntraced(function* (handlers) {
