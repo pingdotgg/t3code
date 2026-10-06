@@ -261,6 +261,9 @@ patchedDependencies:
   expo-blur@58.0.3: patches/expo-blur@58.0.3.patch
   expo-audio@58.0.4: patches/expo-audio@58.0.4.patch
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
+  # Child stdin and input fds keep an "error" listener after their writer stops.
+  # Otherwise a child that exits with unread input resets the pipe and crashes the server.
+  "@effect/platform-node-shared@4.0.1": patches/@effect__platform-node-shared@4.0.1.patch
   "@effect/vitest@4.0.1": patches/@effect__vitest@4.0.1.patch
   "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch
   expo-sharing@58.0.13: patches/expo-sharing@58.0.13.patch

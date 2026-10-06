@@ -1,0 +1,69 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index 822127c..d7d588d 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -170,6 +170,7 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+             // Create a sink to write to for input file descriptors
+             let sink = Sink.drain;
+             if (nodeStream && "write" in nodeStream) {
++              observeLateErrors(nodeStream);
+               sink = NodeSink.fromWritable({
+                 evaluate: () => nodeStream,
+                 onError: error => toPlatformError(`fromWritable(fd${fd})`, toError(error), command)
+@@ -209,11 +210,20 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+       getOutputFd: fd => outputStreams.get(fd) ?? Stream.empty
+     };
+   });
++  // A sink only listens for "error" while it is writing. Node child pipes are
++  // sockets, so a child that exits with unread input resets them and the
++  // parent sees EPIPE or ECONNRESET later, after the sink finished or was
++  // interrupted. With no listener left that event is an uncaught exception
++  // that kills this process. The exit code already reports what happened.
++  const observeLateErrors = stream => {
++    stream.on("error", () => {});
++  };
+   const setupChildStdin = (command, childProcess, config) => Effect.suspend(() => {
+     // If the child process has a standard input stream, connect it to the
+     // sink that will attached to the process handle
+     let sink = Sink.drain;
+     if (Predicate.isNotNull(childProcess.stdin)) {
++      observeLateErrors(childProcess.stdin);
+       sink = NodeSink.fromWritable({
+         evaluate: () => childProcess.stdin,
+         onError: error => toPlatformError("fromWritable(stdin)", toError(error), command),
+diff --git a/src/NodeChildProcessSpawner.ts b/src/NodeChildProcessSpawner.ts
+index 26143d5..3016d3f 100644
+--- a/src/NodeChildProcessSpawner.ts
++++ b/src/NodeChildProcessSpawner.ts
+@@ -243,6 +243,7 @@ const make = Effect.gen(function*() {
+           // Create a sink to write to for input file descriptors
+           let sink: Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError> = Sink.drain
+           if (nodeStream && "write" in nodeStream) {
++            observeLateErrors(nodeStream)
+             sink = NodeSink.fromWritable({
+               evaluate: () => nodeStream,
+               onError: (error) => toPlatformError(`fromWritable(fd${fd})`, toError(error), command)
+@@ -289,6 +290,15 @@ const make = Effect.gen(function*() {
+     }
+   })
+ 
++  // A sink only listens for "error" while it is writing. Node child pipes are
++  // sockets, so a child that exits with unread input resets them and the
++  // parent sees EPIPE or ECONNRESET later, after the sink finished or was
++  // interrupted. With no listener left that event is an uncaught exception
++  // that kills this process. The exit code already reports what happened.
++  const observeLateErrors = (stream: NodeJS.WritableStream) => {
++    stream.on("error", () => {})
++  }
++
+   const setupChildStdin = (
+     command: ChildProcess.StandardCommand,
+     childProcess: NodeChildProcess.ChildProcess,
+@@ -299,6 +309,7 @@ const make = Effect.gen(function*() {
+       // sink that will attached to the process handle
+       let sink: Sink.Sink<void, unknown, never, PlatformError.PlatformError> = Sink.drain
+       if (Predicate.isNotNull(childProcess.stdin)) {
++        observeLateErrors(childProcess.stdin)
+         sink = NodeSink.fromWritable({
+           evaluate: () => childProcess.stdin!,
+           onError: (error) => toPlatformError("fromWritable(stdin)", toError(error), command),
