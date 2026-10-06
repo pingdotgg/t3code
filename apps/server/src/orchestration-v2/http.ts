@@ -7,8 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   annotateEnvironmentRequest,
@@ -17,7 +17,7 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
   buildBoundedThreadProjection,
@@ -63,7 +63,7 @@ function selectHistoryPageFromCursorOrError(
  * compressible and cacheable — and then resume the WebSocket subscription via
  * `afterSequence`.
  */
-export const orchestrationHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {

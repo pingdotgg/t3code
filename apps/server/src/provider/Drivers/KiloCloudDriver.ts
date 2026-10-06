@@ -2,7 +2,7 @@ import { KiloCloudSettings, TextGenerationError, type ServerProvider } from "@t3
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Hex } from "effect/encoding";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
@@ -46,9 +46,9 @@ export const KiloCloudDriver: ProviderDriver<KiloCloudSettings, KiloCloudDriverE
         input.config.branch,
       ].join("\0");
       const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(identity));
-      const continuationKey = `kilo-cloud:${Encoding.encodeHex(digest)}`;
+      const continuationKey = `kilo-cloud:${Hex.encode(digest)}`;
       const journal = yield* Journal.make(
-        path.join(server.stateDir, "providers", "kilo-cloud", Encoding.encodeHex(digest)),
+        path.join(server.stateDir, "providers", "kilo-cloud", Hex.encode(digest)),
       );
       const client = Cloud.make({ ...credentials, credentials: account.load });
       const adapter = yield* CloudAdapter.make({

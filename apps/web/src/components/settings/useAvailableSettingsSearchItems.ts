@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { AuthAccessWriteScope } from "@t3tools/contracts";
 
+import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
@@ -23,6 +24,10 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const desktopWsl = useEnvironmentQuery(
     isElectron && !localEnvironmentDisabled ? desktopWslStateAtom : null,
   );
+  const cloudLinkState = usePrimaryCloudLinkState().data;
+  // Same fallback as the Connections row: older servers imply a tunnel from `linked`.
+  const managedTunnelActive =
+    cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false;
   const canManageLocalBackend =
     !localEnvironmentDisabled &&
     (isElectron ||
@@ -59,8 +64,10 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         }),
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
+        managedTunnelActive,
       }),
     [
+      managedTunnelActive,
       canManageLocalBackend,
       desktopWsl.data,
       desktopWsl.error,

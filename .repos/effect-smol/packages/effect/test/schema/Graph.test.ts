@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { throws } from "@effect/vitest/utils"
 import { Effect, Equivalence, Graph, Option, Schema } from "effect"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 
 const directedCodec = Schema.toCodecJson(Schema.Graph("directed", Schema.String, Schema.Number))
 const undirectedCodec = Schema.toCodecJson(Schema.Graph("undirected", Schema.String, Schema.Number))

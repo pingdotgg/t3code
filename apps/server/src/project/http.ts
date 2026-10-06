@@ -4,7 +4,7 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
@@ -29,7 +29,7 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
 });
 
-export const projectHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "projects",
   Effect.fnUntraced(function* (handlers) {

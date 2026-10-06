@@ -24,11 +24,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import { describe } from "vite-plus/test";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { KiloSessionError } from "../../provider/kilo/KiloSessionClient.ts";
@@ -738,9 +738,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "kilo-native-integration" },
-              ProviderAdapterRegistry.makeSingleLayer(adapter),
+              ProviderAdapterRegistry.layerSingle(adapter),
             ),
           ),
         );

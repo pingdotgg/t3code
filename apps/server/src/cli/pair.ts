@@ -32,13 +32,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
@@ -442,7 +437,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     });
   }).pipe(
     Effect.provide(
-      EnvironmentAuth.runtimeLayer.pipe(
+      EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(input.config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
       ),

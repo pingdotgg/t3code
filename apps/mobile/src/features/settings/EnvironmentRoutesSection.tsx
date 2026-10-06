@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ConnectionRoute,
+  type ConnectionRouteKind,
   connectionRouteAddress,
   connectionRouteId,
+  connectionRouteKind,
   connectionRouteLabel,
   connectionRoutes,
   isLearned,
@@ -10,18 +12,32 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Alert, Platform, Pressable, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
-import { SymbolView } from "../../components/AppSymbol";
+import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { StatusPill } from "../../components/StatusPill";
 import { environmentCatalog } from "../../connection/catalog";
+import { cn } from "../../lib/cn";
 import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { connectionTone } from "../connection/connectionTone";
+import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 
-const ROW_HEIGHT = 64;
+const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
+const REMOVE_SIZE = 20;
+
+const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
+  relay: "cloud",
+  loopback: "desktopcomputer",
+  lan: "wifi",
+  tailnet: "point.3.connected.trianglepath.dotted",
+  public: "globe",
+  ssh: "terminal",
+};
 
 /**
  * The ways this device reaches an environment, preferred first. The first
@@ -56,6 +72,12 @@ export function EnvironmentRoutesSection({
   const [drag, setDrag] = useState<{ readonly id: string; readonly translation: number } | null>(
     null,
   );
+  // Rows size to their content, so a drag measures how far it has moved past each one.
+  const [heights, setHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // Each drop remounts the rows so the new order and the cleared drag offsets
+  // land in one frame. Kept rows would show their old offsets in their new
+  // slots until the animated style catches up, and the card flashes empty.
+  const [drops, setDrops] = useState(0);
   if (entry === undefined) return null;
 
   const byId = new Map(saved.map((route) => [connectionRouteId(route.target), route]));
@@ -76,8 +98,19 @@ export function EnvironmentRoutesSection({
     next.splice(to, 0, moved!);
     commit(next);
   };
-  const dropIndex = (from: number, translation: number) =>
-    Math.max(0, Math.min(order.length - 1, from + Math.round(translation / ROW_HEIGHT)));
+  // A lifted row takes a neighbour's slot once it has moved past half of that row.
+  const dropIndex = (from: number, translation: number) => {
+    const step = translation > 0 ? 1 : -1;
+    let to = from;
+    let remaining = Math.abs(translation);
+    while (to + step >= 0 && to + step < order.length) {
+      const next = heights.get(order[to + step]!) ?? 0;
+      if (next === 0 || remaining < next / 2) break;
+      remaining -= next;
+      to += step;
+    }
+    return to;
+  };
   const confirmRemove = (route: ConnectionRoute) =>
     Alert.alert(
       `Remove ${connectionRouteLabel(route)}?`,
@@ -106,7 +139,7 @@ export function EnvironmentRoutesSection({
             onPress={() => setEditing((value) => !value)}
             className="px-2 py-1 active:opacity-70"
           >
-            <Text className="text-sm font-t3-medium text-primary-text">
+            <Text className="text-sm font-t3-medium text-foreground android:text-primary-text">
               {editing ? "Done" : "Edit"}
             </Text>
           </Pressable>
@@ -116,17 +149,18 @@ export function EnvironmentRoutesSection({
       {routes.map((route, index) => {
         const id = connectionRouteId(route.target);
         // Rows between the lifted row and its drop slot shift to make room.
+        const lifted = drag === null ? 0 : (heights.get(drag.id) ?? 0);
         const shift =
           dragFrom === -1 || index === dragFrom
             ? 0
             : dragFrom < dragTo && index > dragFrom && index <= dragTo
-              ? -ROW_HEIGHT
+              ? -lifted
               : dragFrom > dragTo && index < dragFrom && index >= dragTo
-                ? ROW_HEIGHT
+                ? lifted
                 : 0;
         return (
           <RouteRow
-            key={id}
+            key={`${id}:${drops}`}
             route={route}
             position={index + 1}
             count={routes.length}
@@ -134,10 +168,16 @@ export function EnvironmentRoutesSection({
             editing={editing}
             offset={index === dragFrom ? (drag?.translation ?? 0) : shift}
             lifted={index === dragFrom}
+            onHeight={(height) =>
+              setHeights((current) =>
+                current.get(id) === height ? current : new Map(current).set(id, height),
+              )
+            }
             onDragStart={() => setDrag({ id, translation: 0 })}
             onDragMove={(translation) => setDrag({ id, translation })}
             onDragEnd={(translation, cancelled) => {
               setDrag(null);
+              setDrops((count) => count + 1);
               if (!cancelled) move(index, dropIndex(index, translation));
             }}
             onStep={(direction) => move(index, direction === "up" ? index - 1 : index + 1)}
@@ -149,14 +189,7 @@ export function EnvironmentRoutesSection({
           />
         );
       })}
-      <Pressable
-        accessibilityRole="button"
-        onPress={onAddRoute}
-        className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
-      >
-        <SymbolView name="plus" size={16} tintColorClassName="accent-icon" type="monochrome" />
-        <Text className="text-base text-primary-text">Add route</Text>
-      </Pressable>
+      <SettingsActionRow icon="plus" label="Add route" onPress={onAddRoute} />
     </SettingsSection>
   );
 }
@@ -169,6 +202,7 @@ function RouteRow(props: {
   readonly editing: boolean;
   readonly offset: number;
   readonly lifted: boolean;
+  readonly onHeight: (height: number) => void;
   readonly onDragStart: () => void;
   readonly onDragMove: (translation: number) => void;
   readonly onDragEnd: (translation: number, cancelled: boolean) => void;
@@ -190,25 +224,27 @@ function RouteRow(props: {
   }));
   return (
     <Reanimated.View
-      style={[{ height: ROW_HEIGHT }, style]}
-      className={
-        lifted ? "flex-row items-center bg-grouped-card shadow-md" : "flex-row items-center"
-      }
+      style={style}
+      onLayout={(event) => props.onHeight(event.nativeEvent.layout.height)}
+      className={cn("flex-row items-center gap-4 pl-4", lifted && "bg-grouped-card shadow-md")}
     >
       {props.editing && props.onRemove ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Remove ${label} route`}
+          hitSlop={8}
           onPress={props.onRemove}
-          className="h-full items-center justify-center pl-4 active:opacity-70"
+          className="active:opacity-70"
         >
           <SymbolView
             name="xmark.circle.fill"
-            size={20}
+            size={REMOVE_SIZE}
             tintColorClassName="accent-danger-foreground"
             type="monochrome"
           />
         </Pressable>
+      ) : props.editing ? (
+        <View style={{ width: REMOVE_SIZE }} />
       ) : null}
       <View
         accessible
@@ -221,19 +257,35 @@ function RouteRow(props: {
         ]
           .filter((part) => part !== null)
           .join(", ")}
-        className="min-w-0 flex-1 gap-0.5 px-4"
+        // Matches the padding of the settings rows around it.
+        className={cn(
+          "min-w-0 flex-1 flex-row items-center gap-4 py-4 android:py-3",
+          address !== null ? "android:min-h-18" : "android:min-h-14",
+          !props.editing && "pr-4",
+        )}
       >
-        <View className="flex-row items-center gap-2">
-          <Text className="text-base text-foreground">{label}</Text>
-          {props.inUse ? (
-            <Text className="text-xs font-t3-medium text-success-foreground">In use</Text>
+        <SymbolView
+          name={ROUTE_ICONS[connectionRouteKind(route)]}
+          size={ICON_SIZE}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+          weight="regular"
+        />
+        <View className="min-w-0 flex-1 gap-0.5 android:gap-1">
+          <View className="flex-row items-center gap-2">
+            <Text numberOfLines={1} className="shrink text-lg text-foreground android:text-base">
+              {label}
+            </Text>
+            {props.inUse ? (
+              <StatusPill {...connectionTone("connected")} label="In use" size="compact" />
+            ) : null}
+          </View>
+          {address !== null ? (
+            <Text numberOfLines={1} className="text-sm text-foreground-muted">
+              {isLearned(route) ? `${address} · found automatically` : address}
+            </Text>
           ) : null}
         </View>
-        {address !== null ? (
-          <Text numberOfLines={1} className="text-sm text-foreground-muted">
-            {isLearned(route) ? `${address} · found automatically` : address}
-          </Text>
-        ) : null}
       </View>
       {props.editing ? (
         <DragHandle
@@ -297,7 +349,7 @@ function DragHandle(props: {
           if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");
           if (nativeEvent.actionName === "increment" && props.canMoveDown) props.onStep("down");
         }}
-        style={{ width: 48, height: ROW_HEIGHT, alignItems: "center", justifyContent: "center" }}
+        style={{ width: 48, alignSelf: "stretch", alignItems: "center", justifyContent: "center" }}
       >
         <SymbolView
           name="line.3.horizontal"

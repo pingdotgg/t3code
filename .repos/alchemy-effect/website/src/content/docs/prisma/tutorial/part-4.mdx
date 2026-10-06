@@ -1,0 +1,202 @@
+---
+title: "Part 4: A Vite Frontend"
+description: Connect a Vite frontend to your Prisma API, develop locally, and destroy the tutorial resources.
+sidebar:
+  order: 4
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Continue from [Part 3](/prisma/tutorial/part-3). Add a browser button that
+queries the API, then run the frontend locally against the deployed backend.
+
+## Install the frontend tooling
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code="bun add -d vite @vercel/nft" lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code="npm install -D vite @vercel/nft" lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm add -D vite @vercel/nft" lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn add -D vite @vercel/nft" lang="sh" /></TabItem>
+</Tabs>
+
+Vite builds the frontend. `@vercel/nft` traces the server dependencies that
+Alchemy includes in the deployment archive.
+
+## Allow the frontend origin
+
+The frontend and API have separate origins. Add a response-header variable
+inside the API's `fetch` Effect:
+
+```diff lang="typescript"
+// src/Api.ts
+        const request = yield* HttpServerRequest;
++        const headers = { "access-control-allow-origin": "*" };
+```
+
+This tutorial exposes only a public, read-only timestamp query. For a real
+application, restrict allowed origins and add authentication before exposing
+private data. CORS is a browser policy, not an authorization mechanism.
+
+## Attach the response headers
+
+```diff lang="typescript"
+// src/Api.ts
+            status: 405,
+-            headers: { allow: "GET" },
++            headers: { ...headers, allow: "GET" },
+
+-          return yield* HttpServerResponse.json({ ok: true });
++          return yield* HttpServerResponse.json({ ok: true }, { headers });
+
+-          return yield* HttpServerResponse.json(rows[0]);
++          return yield* HttpServerResponse.json(rows[0], { headers });
+
+-        return HttpServerResponse.text("Not found", { status: 404 });
++        return HttpServerResponse.text("Not found", { status: 404, headers });
+
+            status: 503,
++            headers: { "access-control-allow-origin": "*" },
+```
+
+All explicitly constructed API responses now use the same CORS policy.
+The frontend sends a simple GET without credentials or custom headers.
+
+## Create the page
+
+Create `index.html` in the project root:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prisma tutorial</title>
+  </head>
+  <body>
+    <main>
+      <h1>Prisma database clock</h1>
+      <p>Read the current time from Prisma Postgres through an Effect API.</p>
+      <button id="refresh" type="button">Read database time</button>
+      <p id="result" role="status">No query yet.</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+```
+
+The status element announces query results, while the button gives the user
+control over when to send a request.
+
+## Query from the browser
+
+Create `src/main.ts`:
+
+```typescript
+const button = document.querySelector<HTMLButtonElement>("#refresh")!;
+const result = document.querySelector<HTMLParagraphElement>("#result")!;
+
+button.addEventListener("click", async () => {
+  button.disabled = true;
+  result.textContent = "Querying Postgres…";
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/time`);
+    if (!response.ok) throw new Error(`Request failed (${response.status})`);
+    const data: { time: string } = await response.json();
+    result.textContent = `Database time: ${data.time}`;
+  } catch {
+    result.textContent = "Could not read the database. Please try again.";
+  } finally {
+    button.disabled = false;
+  }
+});
+```
+
+The button is disabled during the request and re-enabled after either success
+or failure. `VITE_API_URL` will contain a public API URL, never a database
+credential. If your editor needs Vite's `import.meta.env` types, add
+`/// <reference types="vite/client" />` to `src/vite-env.d.ts`.
+
+## Keep the backend remote during development
+
+```diff lang="typescript"
+// alchemy.run.ts
+-    const project = yield* Project;
+-    const api = yield* Api;
++    const project = yield* Project.pipe(Alchemy.remote());
++    const api = yield* Api.pipe(Alchemy.remote());
+```
+
+`Alchemy.remote()` keeps this backend on Prisma when running `alchemy dev`.
+It is a no-op during deployment. This tutorial deliberately uses real
+Postgres during frontend development, so credentials and cloud charges still
+apply. The Project is also remote because it is shared with the website.
+
+## Add the website
+
+```diff lang="typescript"
+// alchemy.run.ts
+    const api = yield* Api.pipe(Alchemy.remote());
++    const site = yield* Prisma.Website.Vite("Website", {
++      project,
++      regionId: "eu-west-3",
++      env: { VITE_API_URL: api.url },
++    });
+-    return { projectId: project.projectId, apiUrl: api.url };
++    return { url: site.url, apiUrl: api.url };
+```
+
+The website uses the same Project. Its environment references the API output,
+so Alchemy resolves the API URL before building the frontend. `VITE_` values
+are embedded in the public browser bundle; only put public configuration there.
+
+## Deploy the frontend
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code="bun alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code="npx alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm exec alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn alchemy deploy" lang="sh" /></TabItem>
+</Tabs>
+
+Open `url` and click **Read database time**. The response should display a
+Postgres timestamp. Click again to execute a new query.
+
+## Develop locally
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code="bun alchemy dev" lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code="npx alchemy dev" lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm exec alchemy dev" lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn alchemy dev" lang="sh" /></TabItem>
+</Tabs>
+
+Open the local website URL that Alchemy prints. Edit the heading and confirm
+Vite updates the page. Click the button to query the remote API. Provider-mode
+changes can replace the deployed website with its local counterpart in this
+stage; use a separate `--stage dev` when you want to keep a production site.
+A separate stage creates its own remote backend resources too.
+
+## Remove the resources
+
+Stop the dev command, then destroy the Stack:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code="bun alchemy destroy" lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code="npx alchemy destroy" lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm exec alchemy destroy" lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn alchemy destroy" lang="sh" /></TabItem>
+</Tabs>
+
+Confirm the deletion. This removes the website, API, connection, database, and
+Project. Use the same profile and stage used to deploy; destroy every extra
+stage you created. Keep `.alchemy/` until cleanup completes so Alchemy can
+find the resources it owns.
+
+## Where to go next
+
+- [Complete tutorial example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-tutorial)
+- [Frontend frameworks](/prisma/frontend/websites) — Astro, Next.js, and the other Website helpers.
+- [Postgres](/prisma/data/postgres) — database configuration and local development.
+- [Connections](/prisma/data/connections) — runtime connection bindings.
+- [Compute apps](/prisma/compute/apps) — deployment options and custom domains.

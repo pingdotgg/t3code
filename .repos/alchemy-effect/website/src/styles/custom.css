@@ -147,7 +147,9 @@ starlight-menu-button button {
   --sl-color-black: var(--alc-bg-nav);
   --sl-color-gray-1: var(--alc-walnut-900);
   --sl-color-gray-2: var(--alc-walnut-700);
-  --sl-color-gray-3: var(--alc-walnut-600);
+  /* Starlight uses gray-3 for muted text (Edit page, meta); fg-3 keeps it
+     at AAA 7:1 on the parchment surfaces. */
+  --sl-color-gray-3: var(--alc-fg-3);
   --sl-color-gray-4: var(--alc-walnut-500);
   --sl-color-gray-5: var(--alc-walnut-300);
   --sl-color-gray-6: var(--alc-walnut-100);
@@ -871,42 +873,6 @@ p:has(> .alc-btn) {
 }
 
 /* ============================================================
-   Expressive Code frames (the file-name tab on docs code blocks)
-
-   The default Starlight rendering of the editor-style frame paints
-   the tab title with a very low-contrast walnut on a near-walnut
-   strip — practically unreadable on the cream page. Force the
-   active tab to use the bright sunrise palette so the file name
-   reads cleanly against the dark code surface.
-   ============================================================ */
-
-.expressive-code .frame {
-  --ec-frm-edBg: var(--alc-bg-code);
-  --ec-frm-edTabBarBg: var(--alc-bg-code);
-  --ec-frm-edTabBarBrdBtmCol: var(--alc-walnut-700);
-  --ec-frm-edActTabBg: var(--alc-bg-code);
-  --ec-frm-edActTabFg: var(--alc-walnut-100);
-  --ec-frm-edActTabBrdCol: var(--alc-walnut-700);
-  --ec-frm-edActTabIndTopCol: var(--alc-accent-warm);
-  --ec-frm-edActTabIndBtmCol: transparent;
-  --ec-frm-edTabsMargBlkStart: 0;
-  --ec-frm-edTabsMargInlStart: 0;
-  --ec-frm-trmTtbBg: var(--alc-bg-code);
-  --ec-frm-trmTtbBrdBtmCol: var(--alc-walnut-700);
-  --ec-frm-trmTtbFg: var(--alc-walnut-100);
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .title {
-  color: var(--alc-walnut-100);
-  font-family: var(--alc-font-mono);
-  font-weight: 500;
-}
-
-.expressive-code .frame.is-terminal .title {
-  color: var(--alc-walnut-100);
-}
-
-/* ============================================================
    Starlight Tabs (Code/Tabs component used on Getting Started
    for bun / npm / pnpm / yarn).
 
@@ -1004,7 +970,7 @@ header.header {
 /* ── Docs sidebar: elide long entries with an ellipsis instead of wrapping
    onto a second line (the generated provider pages have long names like
    GitHubRepositoryEventSourcePolicy). ── */
-.sidebar-content a {
+.sidebar-content .top-level a {
   display: block;
   white-space: nowrap;
   overflow: hidden;
@@ -1043,18 +1009,18 @@ header.header {
 }
 
 /* Entries: tighter and smaller, with a reserved rail for the accent bar. */
-#starlight__sidebar .sidebar-content a {
+#starlight__sidebar .sidebar-content .top-level a {
   font-size: 13px;
   padding-block: 0.22rem;
   border-inline-start: 3px solid transparent;
   border-radius: 0;
 }
-#starlight__sidebar .sidebar-content a.large {
+#starlight__sidebar .sidebar-content .top-level a.large {
   font-size: 13px;
   font-weight: 400;
   color: var(--sl-color-gray-2);
 }
-#starlight__sidebar .sidebar-content a:hover {
+#starlight__sidebar .sidebar-content .top-level a:hover {
   color: var(--alc-accent-deep);
 }
 
@@ -1071,9 +1037,27 @@ header.header {
 }
 
 /* Active page: left accent bar + tint, mockup-style. */
-#starlight__sidebar .sidebar-content a[aria-current="page"] {
+#starlight__sidebar .sidebar-content .top-level a[aria-current="page"] {
   background: var(--alc-accent-12);
   color: var(--alc-accent-deep);
   border-inline-start-color: var(--alc-accent-deep);
   font-weight: 500;
+}
+
+/* ============================================================
+   Blog index: starlight-blog hides the title panel with
+   `display: none`, which drops the page's only <h1>. Keep it
+   visually hidden but available to assistive tech instead.
+   ============================================================ */
+.content-panel:first-of-type:has(+ .content-panel .sl-blog-posts) {
+  display: block !important;
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

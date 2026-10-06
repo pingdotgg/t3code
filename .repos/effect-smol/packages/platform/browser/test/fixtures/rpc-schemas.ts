@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Metric, Option, Queue, Schema } from "effect"
-import { Headers } from "effect/unstable/http"
-import * as Rpc from "effect/unstable/rpc/Rpc"
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup"
-import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware"
-import * as RpcServer from "effect/unstable/rpc/RpcServer"
+import { Headers } from "effect/http"
+import * as Rpc from "effect/rpc/Rpc"
+import * as RpcGroup from "effect/rpc/RpcGroup"
+import * as RpcMiddleware from "effect/rpc/RpcMiddleware"
+import * as RpcServer from "effect/rpc/RpcServer"
 
 export class User extends Schema.Class<User>("User")({
   id: Schema.String,

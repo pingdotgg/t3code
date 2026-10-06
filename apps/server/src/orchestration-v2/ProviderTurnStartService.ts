@@ -2,6 +2,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -22,7 +23,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -645,11 +646,11 @@ export const layer: Layer.Layer<
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
-          const sourceProviderTurn = sourceProjection.providerTurns.find(
-            (candidate) =>
-              candidate.id === sourceAttempt?.providerTurnId ||
-              candidate.runAttemptId === sourceAttempt?.id,
-          );
+          const sourceProviderTurn =
+            latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
+            sourceProjection.providerTurns.find(
+              (candidate) => candidate.id === sourceAttempt?.providerTurnId,
+            );
           if (sourceRun === undefined || sourceProviderThread === undefined) {
             return yield* new ProviderTurnStartError({
               runId,

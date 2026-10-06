@@ -67,4 +67,4 @@ const handlers = {
     }),
 } satisfies Parameters<typeof WorktreeToolkit.toLayer>[0];
 
-export const WorktreeToolkitHandlersLive = WorktreeToolkit.toLayer(handlers);
+export const layer = WorktreeToolkit.toLayer(handlers);

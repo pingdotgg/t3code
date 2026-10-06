@@ -33,7 +33,10 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
-import { presentPendingBackgroundWork } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  presentPendingBackgroundWork,
+  presentProviderGoal,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import {
   formatModelSelectionEffort,
@@ -495,6 +498,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           .map((item) => item.label)
           .join(", ")}`,
         waiting: pendingBackgroundWork.waiting,
+      };
+    }
+    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
+      const goal = presentProviderGoal(props.selectedThread.goal, false);
+      return {
+        kind: "goal",
+        label: goal.title,
+        accessibilityLabel: `${goal.title}: ${goal.objective}`,
       };
     }
     return null;

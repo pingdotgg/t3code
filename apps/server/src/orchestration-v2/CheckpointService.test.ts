@@ -47,7 +47,7 @@ it.effect.each([false, true, "interrupt"] as const)(
             )
           : Effect.succeed(true),
     );
-    const testLayer = CheckpointService.layer.pipe(
+    const layerTest = CheckpointService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           IdAllocator.layer,
@@ -98,6 +98,6 @@ it.effect.each([false, true, "interrupt"] as const)(
         cwd: scope.cwd,
         checkpointRef: baseline.ref,
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   },
 );

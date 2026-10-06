@@ -2,14 +2,14 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Base64Url } from "effect/encoding";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -166,7 +166,7 @@ export const make = Effect.fn("KiloRuntime.make")(function* (input: {
             .makeDirectory(path.join(profile, name), { recursive: true })
             .pipe(Effect.mapError(fail("profile", "Could not prepare the Kilo account profile.")));
         }
-        const password = Encoding.encodeBase64Url(
+        const password = Base64Url.encode(
           yield* crypto
             .randomBytes(32)
             .pipe(Effect.mapError(fail("password", "Could not secure the local Kilo server."))),

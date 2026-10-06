@@ -20,14 +20,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -42,18 +37,15 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
-import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
+import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
-import {
-  bootServiceLayer,
-  offerServiceDuringOnboarding,
-  recoverServiceOnboardingOffer,
-} from "./service.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -439,22 +431,22 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-  const runtimeLayer = Layer.mergeAll(
+  const layerRuntime = Layer.mergeAll(
     ServerSecretStore.layer,
     CliTokenManager.layer.pipe(
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(ExternalLauncher.layer),
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-    EnvironmentAuth.runtimeLayer,
-    bootServiceLayer(config),
-    headlessRelayClientTracingLayer,
+    EnvironmentAuth.layerRuntime,
+    CliService.layer(config),
+    RelayTracing.layerHeadlessRelayClient,
   ).pipe(
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ServerConfig.layer(config)),
     Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
   );
-  return yield* run.pipe(Effect.provide(runtimeLayer));
+  return yield* run.pipe(Effect.provide(layerRuntime));
 });
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");

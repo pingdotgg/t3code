@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:osis", "live"] },
 );
 
 // Ungated probe for the ResourcePolicy provider's read path: OSIS reports
@@ -38,15 +39,19 @@ test.provider(
         true,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:osis", "live"] },
 );
 
 // Ungated probe for the PipelineEndpoint provider's observe path: the list
 // API answers (typed) even when the account has no endpoints.
-test.provider("listPipelineEndpoints succeeds on an empty account", () =>
-  Effect.gen(function* () {
-    const response = yield* osis.listPipelineEndpoints({});
-    expect(Array.isArray(response.PipelineEndpoints ?? [])).toBe(true);
-  }),
+test.provider(
+  "listPipelineEndpoints succeeds on an empty account",
+  () =>
+    Effect.gen(function* () {
+      const response = yield* osis.listPipelineEndpoints({});
+      expect(Array.isArray(response.PipelineEndpoints ?? [])).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:osis", "live"] },
 );
 
 // Data Prepper configuration: HTTP source draining to an S3 sink. The role
@@ -235,5 +240,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
     }),
   // pipeline create (~5-10 min) + endpoint create (~5 min) + delete
   // initiation, one test.
-  { timeout: 1_800_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:osis",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 1_800_000,
+  },
 );

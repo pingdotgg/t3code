@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { KiloCloudError } from "./KiloCloudError.ts";
 
 // Customer routes used by Kilo's web/mobile clients (Kilo-Org/cloud 78ea0a5e).

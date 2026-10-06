@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({ queries: [] as string[] }));
 vi.mock("../state/entities", () => ({ useProject: () => null, useServerConfigs: () => new Map() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => undefined }));
 vi.mock("../state/vcs", async () => {
-  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const statuses = Atom.family((cwd: string) =>
     Atom.make(() => {
       state.queries.push(`vcs:${cwd}`);
@@ -42,7 +42,7 @@ vi.mock("../state/vcs", async () => {
 });
 vi.mock("../state/pullRequests", async (importOriginal) => {
   const original = await importOriginal<typeof import("../state/pullRequests")>();
-  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const { ProjectId } = await import("@t3tools/contracts");
   const summaries = Atom.family((number: number) =>
     Atom.make(() => {

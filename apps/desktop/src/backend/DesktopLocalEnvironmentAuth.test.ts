@@ -2,8 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
@@ -32,7 +32,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
   it.effect("exchanges the desktop bootstrap credential only once", () =>
     Effect.gen(function* () {
       const requestCount = yield* Ref.make(0);
-      const httpClientLayer = Layer.succeed(
+      const layerHttpClient = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Ref.update(requestCount, (count) => count + 1).pipe(
@@ -54,7 +54,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
           ),
         ),
       );
-      const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+      const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
         list: Effect.succeed([
           {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -63,14 +63,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
           },
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
-      const testLayer = DesktopLocalEnvironmentAuth.layer.pipe(
-        Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer)),
+      const layerTest = DesktopLocalEnvironmentAuth.layer.pipe(
+        Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
       );
 
       const [first, second] = yield* Effect.gen(function* () {
         const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
         return yield* Effect.all([auth.getBearerToken, auth.getBearerToken]);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       assert.strictEqual(first, "desktop-bearer-token");
       assert.strictEqual(second, "desktop-bearer-token");

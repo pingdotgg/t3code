@@ -75,7 +75,7 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
     });
   return { ...context, request, item };
 });
-export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+export const layer = ThreadToolkit.toLayer({
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
       yield* readFullAccessCaller(

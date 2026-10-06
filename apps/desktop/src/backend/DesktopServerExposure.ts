@@ -17,8 +17,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";

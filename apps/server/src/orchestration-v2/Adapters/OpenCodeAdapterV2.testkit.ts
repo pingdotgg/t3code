@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -389,7 +389,7 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
   } as unknown as OpencodeClient;
 }
 
-function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript) {
+function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
   return Layer.effect(
     OpenCodeRuntime.OpenCodeRuntime,
     Effect.gen(function* () {
@@ -456,12 +456,12 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
   );
 }
 
-function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
-  const serverConfigLayer = Layer.effect(
+function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
       [OPENCODE_DEFAULT_INSTANCE_ID]: {
@@ -472,8 +472,8 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeOpenCodeReplayRuntimeLayer(transcript),
-        serverConfigLayer,
+        layerOpenCodeReplayRuntime(transcript),
+        layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(
@@ -508,5 +508,5 @@ export const OpenCodeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarn
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: makeOpenCodeProviderAdapterRegistryReplayLayer,
+  makeProviderAdapterRegistryLayer: layerOpenCodeProviderAdapterRegistryReplay,
 };

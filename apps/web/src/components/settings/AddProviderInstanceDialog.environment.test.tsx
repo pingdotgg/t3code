@@ -239,6 +239,74 @@ describe("AddProviderInstanceDialog environment routing", () => {
     ).not.toBeNull();
   });
 
+  it("creates a local command in the selected environment without a sign-in step", async () => {
+    const onOpenChange = vi.fn();
+    let tree = render(onOpenChange);
+    const search = visitElements(
+      tree,
+      (element) =>
+        typeof element.type === "function" && element.type.name === "AcpRegistrySearchStep",
+    );
+    (search!.props.onLocalConfiguration as () => void)();
+    tree = render(onOpenChange);
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render(onOpenChange);
+    expect(findByChildren(tree, "Executable is required.")).not.toBeNull();
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
+
+    const configuration = visitElements(
+      tree,
+      (element) => element.props.idPrefix === "add-provider-acpRegistry-manual",
+    );
+    const commandArgs = ["--profile", "acp", " literal $(value) ; ", ""];
+    (configuration!.props.onChange as (value: Record<string, unknown>) => void)({
+      source: "local",
+      commandPath: "dsh",
+      commandArgs,
+    });
+    const environmentEditor = visitElements(
+      tree,
+      (element) =>
+        typeof element.type === "function" && element.type.name === "ProviderEnvironmentSection",
+    );
+    const environment = [{ name: "DSH_PROFILE", value: "work", sensitive: false }];
+    (environmentEditor!.props.onChange as (value: typeof environment) => void)(environment);
+    tree = render(onOpenChange);
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render(onOpenChange);
+    const label = visitElements(tree, (element) => element.props.id === "add-provider-label");
+    (label!.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "Deepseek Harness" },
+    });
+    tree = render(onOpenChange);
+    (findByChildren(tree, "Add instance").props.onClick as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_deepseek_harness",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        displayName: "Deepseek Harness",
+        config: { source: "local", commandPath: "dsh", commandArgs },
+        environment,
+      },
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    tree = render(onOpenChange);
+    expect(
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.type === "function" &&
+          element.type.name === "ProviderWizardAuthenticationStep",
+      ),
+    ).toBeNull();
+  });
+
   it("keeps the dialog open when the atomic upsert fails", async () => {
     settingsHooks.mutate.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Conflict") });
     const onOpenChange = vi.fn();

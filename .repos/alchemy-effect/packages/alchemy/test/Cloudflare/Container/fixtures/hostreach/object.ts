@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 /**
  * Deterministic port the test's host-side HTTP server listens on. It stands

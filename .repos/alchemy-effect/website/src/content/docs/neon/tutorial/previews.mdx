@@ -1,0 +1,137 @@
+---
+title: Fork a preview and clean up
+description: Keep preview writes isolated from the parent, verify inheritance, and destroy only owned resources.
+---
+
+`alchemy.preview.ts` is a companion stack, not a second deployment of the parent stack under a different stage. It accepts only public identities from an existing tutorial deployment and owns a new child branch. Deploy it after the parent contains at least one processed upload.
+
+## Select the existing project
+
+```diff lang="sh"
++export PARENT_PROJECT_ID='<projectId from the parent stack>'
+```
+
+The preview references this project but does not declare or take ownership of a parent `Neon.Project` resource.
+
+## Select the parent branch
+
+```diff lang="sh"
++export PARENT_BRANCH_ID='<branchId from the parent stack>'
+```
+
+The ID determines the snapshot lineage; never replace it with a project default-branch guess.
+
+## Select the inherited bucket
+
+```diff lang="sh"
++export PARENT_BUCKET_NAME='<bucketName from the parent stack>'
+```
+
+The bucket name identifies inherited storage, while the child Function's injected credentials and endpoint determine which branch receives new writes.
+
+## Fork the data
+
+```diff lang="typescript"
++const branch = yield* Neon.Branch("Preview", {
++  project: { projectId },
++  parentBranch: { branchId: parentBranchId },
++  initSource: "parent-data",
++});
+```
+
+The child starts from parent database and storage state. Forking is not a live replication promise; subsequent writes in the child must not alter the parent.
+
+## Manage child Auth explicitly
+
+```diff lang="typescript"
++const auth = yield* Neon.Auth("PreviewAuth", {
++  branch,
++  name: "Upload journal preview",
++  allowLocalhost: true,
++}).pipe(Alchemy.AdoptPolicy.adopt());
+```
+
+Adoption is deliberate and restricted to Auth on the newly owned child branch. Do not apply stack-wide adoption or retag the parent's integration.
+
+The engine checks ownership after the new branch identity resolves, so this scoped policy can adopt inherited Auth during the first deployment. The preview has passed live data/trigger isolation checks and complete desktop/mobile upload and download flows. Parent Auth, data and browser flows remained intact after preview destruction.
+
+:::caution[Keep ownership and cleanup explicit]
+Preserve stack state if deployment fails; do not use global adoption, remove state, or delete the parent around a failed dependency. The isolation test checks forked data separately from the new child trigger, so passing data checks alone do not prove a working preview application.
+:::
+
+## Redeploy child-local API configuration
+
+```diff lang="typescript"
++const api = yield* Neon.Function("PreviewApi", {
++  branch,
++  main: "./src/native.ts",
++  env: {
++    APP_ORIGIN: appOrigin,
++    UPLOAD_BUCKET: bucketName,
++    AUTH_URL: auth.baseUrl,
++    AUTH_JWKS_URL: auth.jwksUrl,
++    TRIGGER_NAME: "PreviewUploads",
++  },
++});
+```
+
+A new Function receives the child's injected database/storage configuration and child Auth URLs. The preview does not assume inherited browser assets or custom environment values have been rewritten automatically.
+
+## Enable one child upload trigger
+
+```diff lang="typescript"
++yield* Neon.FunctionTrigger("PreviewUploads", {
++  function: api,
++  name: "PreviewUploads",
++  type: "storage_object_created",
++  storageObjectCreated: { bucket: { projectId, branchId: branch.branchId, bucketName }, prefix: "incoming/" },
++  path: "/jobs/upload",
++  enabled: true,
++});
+```
+
+Inherited triggers remain disabled; this new trigger explicitly targets the preview Function without enabling or modifying the parent's trigger. The companion also rebuilds Vite with child API/Auth URLs and registers its own trusted origin.
+
+## Deploy the preview
+
+```diff lang="sh"
++pnpm preview:deploy --profile testing --stage upload-preview
+```
+
+Open the returned preview website in a separate tab, sign in against child Auth, and verify that the parent's existing journal and files are visible before making any new writes.
+
+## Prove parent isolation
+
+```diff lang="sh"
++ALCHEMY_PROFILE=testing timeout 240 bun test test/preview.test.ts
+```
+
+The read-and-write isolation test requires `PARENT_PROJECT_ID`, `PARENT_BRANCH_ID`, `PARENT_BUCKET_NAME`, and `PREVIEW_BRANCH_ID`. It observes both branches through the real SDK, checks inherited Functions, disabled inherited triggers, and absent child custom domains, and writes a deterministic child-only probe to Postgres and storage while verifying the parent is unchanged. It removes its child probe afterward; it does not directly delete parent data or inherited resources.
+
+## Verify the browser independently
+
+Upload a distinct small file through the preview, wait for the child event-backed result, and download it. Refresh the parent's journal in its own tab: the new file must not appear there. Custom domains are not inherited; the parent's hostname must still reach the parent. An empty domain list without any parent domains is only a negative observation, not a live custom-domain routing test.
+
+## Destroy the preview first
+
+```diff lang="sh"
++pnpm preview:destroy --profile testing --stage upload-preview
+```
+
+Keep the parent identity environment variables available while destroying the companion. It deletes its child resources and branch, not the referenced parent project; verify the parent's website and files still work afterward.
+
+## Destroy the Effect tutorial
+
+```diff lang="sh"
++pnpm destroy --profile testing --stage upload-journal
+```
+
+Run this with the same stage and retained local state used for deployment. `forceDestroy: true` intentionally erases the tutorial bucket's files before removing its branch and project. If state is missing or ownership recovery fails, follow [State and recovery](/neon/guides/state-recovery) before making further changes.
+
+## Destroy the native alternative
+
+```diff lang="sh"
++pnpm destroy:native --profile testing --stage upload-journal
+```
+
+This is a different stack from the Effect variant; use this command if you deployed the native alternative, or clean up both stacks if you deliberately deployed both.

@@ -8,6 +8,7 @@ import type {
 } from "../AWS/S3/BucketNotifications.ts";
 import * as S3 from "../AWS/S3/index.ts";
 import type { S3EventType } from "../AWS/S3/S3Event.ts";
+import { normalizeBucketNotification } from "../AWS/S3/normalizeBucketNotification.ts";
 import * as SQS from "../AWS/SQS/index.ts";
 import { SQSQueueEventSource } from "./SQSQueueEventSource.ts";
 
@@ -35,11 +36,20 @@ export const S3BucketEventSource = Layer.effect(
       // Function (the global guard); the runtime only registers the consumer below.
       if (!globalThis.__ALCHEMY_RUNTIME__) {
         const events = props.events ?? ["s3:ObjectCreated:*"];
+        const filterRules = [
+          ...(props.prefix !== undefined
+            ? [{ Name: "prefix" as const, Value: props.prefix }]
+            : []),
+          ...(props.suffix !== undefined
+            ? [{ Name: "suffix" as const, Value: props.suffix }]
+            : []),
+        ];
         yield* queue.bind(`AWS.SQS.SendMessage(${bucket.LogicalId})`, {
           policyStatements: [
             {
               Sid: `AllowS3EventsFrom${bucket.LogicalId}`,
               Effect: "Allow",
+              Principal: { Service: "s3.amazonaws.com" },
               Action: ["sqs:SendMessage"],
               Resource: [queue.queueArn],
               Condition: {
@@ -58,6 +68,9 @@ export const S3BucketEventSource = Layer.effect(
                 {
                   QueueArn: queue.queueArn,
                   Events: events,
+                  ...(filterRules.length > 0
+                    ? { Filter: { Key: { FilterRules: filterRules } } }
+                    : {}),
                 },
               ],
             },
@@ -67,16 +80,15 @@ export const S3BucketEventSource = Layer.effect(
 
       yield* SQS.consumeQueueMessages(queue, (stream) =>
         stream.pipe(
-          Stream.flatMap((record) =>
-            Stream.fromArray((JSON.parse(record.body) as S3.S3Event).Records),
+          Stream.mapEffect((record) =>
+            Effect.sync(
+              () =>
+                (JSON.parse(record.body) as { Records?: S3.S3Record[] })
+                  .Records ?? [],
+            ),
           ),
-          Stream.map((event) => ({
-            type: event.eventName as S3.S3EventType,
-            bucket: event.s3.bucket.name,
-            key: event.s3.object.key,
-            size: event.s3.object.size,
-            eTag: event.s3.object.eTag,
-          })),
+          Stream.flatMap((records) => Stream.fromArray(records)),
+          Stream.mapEffect(normalizeBucketNotification),
           process,
         ),
       );

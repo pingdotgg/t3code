@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
+import * as Ndjson from "effect/encoding/Ndjson";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";

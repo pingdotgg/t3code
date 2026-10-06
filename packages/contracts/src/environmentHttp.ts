@@ -1,12 +1,13 @@
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   AuthAccessTokenResult,
@@ -403,11 +404,16 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   // Optional so newer clients tolerate older environment servers.
   managedTunnelActive: Schema.optional(Schema.Boolean),
   publishAgentActivity: Schema.Boolean,
+  // Opt-in: T3 Connect holds webhook requests while this environment is
+  // offline. Optional so newer clients tolerate older environment servers.
+  holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
 export const EnvironmentCloudPreferencesRequest = Schema.Struct({
   publishAgentActivity: Schema.Boolean,
+  // Omit to leave the current value unchanged.
+  holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
 
@@ -651,10 +657,35 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/**
+ * Public entry point for webhook tasks. Unauthenticated by design: the token
+ * in the path, and an optional body signature, are the credential. The handler
+ * reads the raw body itself so a signature is checked over the exact bytes.
+ */
+const WebhookParams = Schema.Struct({
+  hookId: TrimmedNonEmptyString,
+  token: TrimmedNonEmptyString,
+});
+const WebhookAccepted = Schema.Struct({ deliveryId: TrimmedNonEmptyString }).pipe(
+  HttpApiSchema.status(202),
+);
+const webhookEndpoint = {
+  params: WebhookParams,
+  success: WebhookAccepted,
+} as const;
+const WEBHOOK_PATH = "/api/hooks/:hookId/:token";
+
+class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
+  .add(HttpApiEndpoint.post("webhookPost", WEBHOOK_PATH, webhookEndpoint))
+  .add(HttpApiEndpoint.put("webhookPut", WEBHOOK_PATH, webhookEndpoint))
+  .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
+  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentWebhooksHttpApi) {}

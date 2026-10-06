@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ProviderAuthFlow from "./ProviderAuthFlow.ts";
 import type { ProviderAuthFlowContext } from "./ProviderAuthFlow.ts";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { withChatGptSessionLock } from "./CodexChatGptSessionLock.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";

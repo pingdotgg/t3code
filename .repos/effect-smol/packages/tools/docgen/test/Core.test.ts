@@ -7,9 +7,9 @@ import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
 import * as Path from "effect/Path"
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
 import * as Sink from "effect/Sink"
 import * as Stream from "effect/Stream"
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner"
 import * as path from "node:path"
 import * as ast from "ts-morph"
 
@@ -89,7 +89,9 @@ const assertExampleFiles = (source: string, expected: ReadonlyArray<string>, run
   }).pipe(Effect.provide(NodeServices.layer))
 
 describe("Core", () => {
-  describe("class property examples", () => {
+  describe("class property examples", { timeout: 20_000 }, () => {
+    // These tests run the full docgen program (including ts-morph and Prettier) in parallel.
+    // Under Bun with other CI projects running, that can exceed Vitest's 5s default.
     for (const runExamples of [true, false]) {
       it.effect(`collects property-only examples with runExamples: ${runExamples}`, () =>
         assertExampleFiles(
@@ -154,7 +156,9 @@ describe("Core", () => {
       ))
   })
 
-  describe("[internal] getModuleMarkdownFiles", () => {
+  // The first case initializes ts-morph and renders Markdown for three modules.
+  // Concurrent Bun CI projects can push that cold start beyond the 5s default.
+  describe("[internal] getModuleMarkdownFiles", { timeout: 20_000 }, () => {
     for (const srcDir of [".", "src", "source/lib", path.resolve("source/lib"), process.cwd()]) {
       it.effect(`generates distinct source-relative pages for ${srcDir}`, () =>
         Effect.gen(function*() {

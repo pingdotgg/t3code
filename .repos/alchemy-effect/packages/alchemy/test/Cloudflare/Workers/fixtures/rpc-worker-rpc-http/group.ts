@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 
 /**
  * RPCs implemented locally on the {@link RpcWorker} itself.

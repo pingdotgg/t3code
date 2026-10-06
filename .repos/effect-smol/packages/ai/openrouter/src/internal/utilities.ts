@@ -1,5 +1,5 @@
+import type * as Response from "effect/ai/Response"
 import * as Predicate from "effect/Predicate"
-import type * as Response from "effect/unstable/ai/Response"
 import type { ReasoningDetails } from "../OpenRouterLanguageModel.ts"
 
 const finishReasonMap: Record<string, Response.FinishReason> = {

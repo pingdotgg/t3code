@@ -133,7 +133,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(arn);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ram", "live"], timeout: 240_000 },
 );
 
 test.provider(
@@ -155,5 +155,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(permission.permissionArn);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ram", "live"], timeout: 240_000 },
 );

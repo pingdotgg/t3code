@@ -9,14 +9,15 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import * as Schema from "effect/Schema";
+import { McpSchema, McpServer } from "effect/ai";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
-import { WorktreeToolkitHandlersLive } from "./handlers.ts";
+import * as WorktreeToolkitHandlers from "./handlers.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
 it.effect.each([
@@ -127,7 +128,7 @@ it.effect.each([
     }).pipe(
       Effect.provide(
         McpServer.toolkit(WorktreeToolkit).pipe(
-          Layer.provide(WorktreeToolkitHandlersLive),
+          Layer.provide(WorktreeToolkitHandlers.layer),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(dependencies),
@@ -138,7 +139,13 @@ it.effect.each([
     if (test.allowed) {
       expect(result.isError).toBe(false);
     } else {
-      expect(result.structuredContent).toMatchObject({
+      expect(result.isError).toBe(true);
+      const text = result.content[0];
+      const failure =
+        text?.type === "text"
+          ? yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text.text)
+          : undefined;
+      expect(failure).toMatchObject({
         code:
           test.persisted === null && test.configured === "missing"
             ? "orchestration_error"

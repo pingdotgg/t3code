@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   IsoDateTime,
@@ -203,6 +203,7 @@ export const PullRequestComment = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   body: Schema.String,
   createdAt: IsoDateTime,
+  editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
@@ -228,6 +229,7 @@ export const PullRequestThreadComment = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   body: Schema.String,
   createdAt: IsoDateTime,
+  editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });

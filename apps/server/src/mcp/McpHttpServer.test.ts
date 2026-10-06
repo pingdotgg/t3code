@@ -11,8 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
-import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer } from "effect/ai";
+import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerConfig from "../config.ts";
@@ -49,13 +49,13 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
-const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
+const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
-const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.pipe(
+const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provide(
     Layer.mergeAll(
@@ -179,7 +179,7 @@ it.effect.each([{}, { includeImage: false }])(
           },
         });
       }),
-    ).pipe(Effect.provide(TestLayer)),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each([
@@ -214,7 +214,7 @@ it.effect.each([
         { type: "text", text: `Preview snapshot failed: ${advice}` },
       ]);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
@@ -229,7 +229,7 @@ it.effect("tells the agent how to fall back when no desktop app can run the snap
     expect(snapshot.structuredContent).toMatchObject({
       error: { _tag: "PreviewAutomationNoAvailableHostError" },
     });
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each([
@@ -350,7 +350,7 @@ it.effect.each([
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("rejects non-boolean snapshot image options before selecting a browser host", () =>
@@ -372,7 +372,7 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
         error: { _tag: "AiError", operation: "snapshot", failureCount: 1 },
       });
     }
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("saves the snapshot PNG on request and reports its path", () =>
@@ -411,7 +411,7 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       expect(others).toEqual([]);
       expect(only?.type === "text" ? decodeJsonText(only.text) : null).toEqual(saved);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reports a tagged error when the screenshot cannot be saved", () =>
@@ -433,7 +433,7 @@ it.effect("reports a tagged error when the screenshot cannot be saved", () =>
         error: { _tag: "PreviewScreenshotSaveError", operation: "snapshot", failureCount: 1 },
       });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(
@@ -465,7 +465,7 @@ it.effect(
       expect(denied.content).toEqual([
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
       ]);
-    }).pipe(Effect.provide(PullRequestsTestLayer)),
+    }).pipe(Effect.provide(layerPullRequestsTest)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
@@ -535,7 +535,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
         omitted: expect.arrayContaining(["60 older console entries"]),
       });
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("bounds the snapshot text even when nothing but logs and the title are large", () =>
@@ -567,7 +567,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       expect(noticeText).toContain("url or title after 2048 characters");
       expect(noticeText).toContain("console entries text after 500 characters");
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("bounds page text made of wide characters before dropping locators", () =>
@@ -606,7 +606,7 @@ it.effect("bounds page text made of wide characters before dropping locators", (
         "visibleText after 4000 characters",
       );
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("sheds log entries before locators when every list is full", () =>
@@ -672,19 +672,19 @@ it.effect("sheds log entries before locators when every list is full", () =>
       expect(noticeText).toContain("40 of 40 actionTimeline");
       expect(noticeText).not.toMatch(/\d+ of \d+ interactiveElements/);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const serverLayer = McpServer.layerHttp({
+      const layerServer = McpServer.layerHttp({
         name: "MCP termination test",
         version: "1.0.0",
         path: "/mcp",
         protocols: [McpProtocol.v2025_06_18],
       });
-      yield* HttpRouter.serve(serverLayer, {
+      yield* HttpRouter.serve(layerServer, {
         disableListenLog: true,
         disableLogger: true,
       }).pipe(Layer.build);
@@ -872,5 +872,5 @@ it.effect("registers annotated tools and preserves authenticated request context
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );

@@ -5,8 +5,8 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { expectUrlContains } from "../Cloudflare/Utils/Http.ts";
 import AxiomTracedWorker, {
   Ingest,
@@ -79,5 +79,15 @@ test.provider.skipIf(!hasAxiomCreds)(
 
       yield* stack.destroy();
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:axiom",
+      "provider:axiom:apitoken",
+      "provider:axiom:dataset",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

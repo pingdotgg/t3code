@@ -17,7 +17,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Hex } from "effect/encoding";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -1012,7 +1012,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
               }),
             ),
           ),
-        ).pipe(Effect.map(Encoding.encodeHex));
+        ).pipe(Effect.map(Hex.encode));
       const bind = Effect.fn("KiloCloudAdapterV2.bind")(function* (
         saved: OrchestrationV2ProviderThread,
       ) {
@@ -1227,7 +1227,7 @@ export const make = Effect.fn("KiloCloudAdapterV2.make")(function* (options: {
                 branch: options.branch,
                 operationKey,
                 messageId,
-                payloadHash: Encoding.encodeHex(hash),
+                payloadHash: Hex.encode(hash),
                 policyHash: selectedPolicyHash,
                 binding: binding ?? null,
                 prepared: null,

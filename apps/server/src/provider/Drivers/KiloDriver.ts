@@ -3,7 +3,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Hex } from "effect/encoding";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
@@ -113,7 +113,7 @@ export const KiloDriver: ProviderDriver<KiloSettings, KiloDriverEnv> = {
           }),
       ),
     );
-    const continuationKey = `kilo:${input.instanceId}:${Encoding.encodeHex(digest)}`;
+    const continuationKey = `kilo:${input.instanceId}:${Hex.encode(digest)}`;
     const runtime = yield* KiloRuntime.make({
       instanceId: continuationKey,
       binaryPath: input.config.binaryPath,

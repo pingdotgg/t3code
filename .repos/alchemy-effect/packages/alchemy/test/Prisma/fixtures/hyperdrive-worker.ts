@@ -8,8 +8,8 @@ import { Postgres } from "@/Prisma/Postgres.ts";
 import { Project } from "@/Prisma/Project.ts";
 import * as SQL from "@/SQL/Postgres.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Prisma Postgres origin + Hyperdrive wiring shared by the fixture Worker.

@@ -32,8 +32,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Ndjson from "effect/encoding/Ndjson";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import * as ServerConfig from "../config.ts";

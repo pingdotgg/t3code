@@ -10,20 +10,20 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Terminal from "effect/Terminal";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import { buildConnectAuthorizeRequestUrl } from "@t3tools/shared/connectAuth";
 
@@ -170,7 +170,7 @@ function idTokenIdentity(idToken: string | undefined): string | null {
   if (!idToken) return null;
   const payload = idToken.split(".")[1];
   if (!payload) return null;
-  const decoded = Encoding.decodeBase64UrlString(payload);
+  const decoded = Base64Url.decodeString(payload);
   if (decoded._tag !== "Success") return null;
   const claims = decodeOidcIdentityClaimsJson(decoded.success);
   if (Option.isNone(claims)) return null;
@@ -299,11 +299,11 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
 
 const makePkceRequest = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const verifier = Encoding.encodeBase64Url(yield* crypto.randomBytes(32));
-  const challenge = Encoding.encodeBase64Url(
+  const verifier = Base64Url.encode(yield* crypto.randomBytes(32));
+  const challenge = Base64Url.encode(
     yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
   );
-  const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
+  const state = Base64Url.encode(yield* crypto.randomBytes(16));
   return { verifier, challenge, state };
 });
 
@@ -461,7 +461,7 @@ export const make = Effect.gen(function* () {
     const hostedAppUrl = yield* hostedAppUrlConfig;
     const { verifier, challenge, state } = yield* makePkceRequest;
     const callback = yield* Deferred.make<string>();
-    const callbackRoute = HttpRouter.add(
+    const layerCallbackRoute = HttpRouter.add(
       "GET",
       "/callback",
       Effect.gen(function* () {
@@ -477,7 +477,7 @@ export const make = Effect.gen(function* () {
         return HttpServerResponse.html(renderLoopbackAuthorizationCompleteHtml());
       }),
     );
-    yield* HttpRouter.serve(callbackRoute, {
+    yield* HttpRouter.serve(layerCallbackRoute, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(

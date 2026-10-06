@@ -41,7 +41,7 @@ import * as IdAllocator from "../IdAllocator.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import type * as Adapter from "../ProviderAdapter.ts";
 import * as CloudAdapter from "./KiloCloudAdapterV2.ts";
 
@@ -750,9 +750,9 @@ it.live(
         }
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "kilo-cloud-contract" },
-            Registry.makeLayer([
+            Registry.layerFromAdapters([
               {
                 ...adapter,
                 openSession: (input) =>

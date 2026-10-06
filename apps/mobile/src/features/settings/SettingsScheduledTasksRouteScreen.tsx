@@ -4,7 +4,10 @@ import type {
   ScheduledTask,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
@@ -12,6 +15,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_WEBHOOK_PROMPT,
+  parseMaxDeliveryAge,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   useCallback,
   useEffect,
@@ -37,6 +44,9 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
@@ -87,6 +97,7 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
+  if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
@@ -127,7 +138,7 @@ function FormField(props: {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
-  readonly keyboardType?: "decimal-pad";
+  readonly keyboardType?: "decimal-pad" | "number-pad";
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
@@ -598,7 +609,24 @@ function TaskForm({
       environmentUnavailable
     )
       return;
-    const schedule = scheduleFromDraft(draft.schedule);
+    // Signatures are edited on desktop and web; send the task's current one,
+    // not the copy taken when this form opened, so a newer edit survives.
+    const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
+    const schedule = scheduleFromDraft(
+      draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
+        ? { ...draft.schedule, signature: liveTask.schedule.signature }
+        : draft.schedule,
+    );
+    if (
+      draft.schedule.mode === "webhook" &&
+      parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
+    ) {
+      Alert.alert(
+        "Invalid age limit",
+        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
@@ -810,12 +838,20 @@ function TaskForm({
           <SegmentedControl
             options={[
               { value: "fixed_time", label: "At a time" },
-              { value: "interval", label: "Every interval" },
+              { value: "interval", label: "Interval" },
+              { value: "webhook", label: "On webhook" },
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
               setTimePickerOpen(false);
-              setDraft({ ...draft, schedule: { ...draft.schedule, mode } });
+              setDraft({
+                ...draft,
+                prompt:
+                  mode === "webhook" && !draft.prompt.trim()
+                    ? DEFAULT_WEBHOOK_PROMPT
+                    : draft.prompt,
+                schedule: { ...draft.schedule, mode },
+              });
             }}
           />
         </View>
@@ -889,6 +925,32 @@ function TaskForm({
               }}
             />
           </>
+        ) : draft.schedule.mode === "webhook" ? (
+          <>
+            <WebhookScheduleDetails
+              environmentId={environmentId}
+              // The live row, so a rotated URL shows up without reopening the form.
+              // Once the list has loaded, a missing task is gone; don't keep showing its URL.
+              task={
+                tasks.data
+                  ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
+                  : draft.task
+              }
+              signatureConfigured={draft.schedule.signature !== null}
+              disabled={saving || environmentUnavailable}
+            />
+            <FormField
+              label="Skip requests older than (minutes)"
+              value={draft.schedule.maxDeliveryAgeMinutes}
+              placeholder="Run every request"
+              keyboardType="number-pad"
+              disabled={saving}
+              borderTop
+              onChange={(maxDeliveryAgeMinutes) =>
+                setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
+              }
+            />
+          </>
         ) : (
           <>
             <FormField
@@ -940,6 +1002,100 @@ function TaskForm({
           {saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
         </Text>
       </Pressable>
+    </View>
+  );
+}
+
+function WebhookScheduleDetails({
+  environmentId,
+  task,
+  signatureConfigured,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask | null;
+  readonly signatureConfigured: boolean;
+  readonly disabled: boolean;
+}) {
+  const [rotating, setRotating] = useState(false);
+  const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
+    label: "scheduled task rotate webhook token",
+    reportFailure: false,
+  });
+  const preparedConnection = usePreparedConnection(environmentId);
+  const httpBaseUrl =
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
+  const webhook = task?.schedule.type === "webhook" ? task.webhook : undefined;
+  // Without T3 Connect, the path is resolved on the address this phone uses.
+  const resolved = webhook ? webhookAddress(webhook, httpBaseUrl) : null;
+  return (
+    <View className="gap-2 border-t border-border-subtle px-4 py-3">
+      <Text className="text-sm text-foreground-muted">
+        {
+          "The prompt can use {{body.a.b}}, {{headers.name}}, {{query.name}}, {{body}} and {{request}}. The filled-in prompt is all the agent sees."
+        }
+      </Text>
+      {task === null || resolved === null ? (
+        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+      ) : (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Copy webhook URL"
+            accessibilityHint="Copies the URL to the clipboard"
+            // A bare path is not something a sender can call, so only full URLs copy.
+            disabled={!resolved.copyable}
+            onPress={() => void tryCopyTextWithHaptic(resolved.address)}
+            className="gap-1 active:opacity-70"
+          >
+            <Text className="text-lg text-foreground">
+              {resolved.copyable ? "Webhook URL" : "Webhook path"}
+            </Text>
+            <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
+              {resolved.address}
+            </Text>
+          </Pressable>
+          {resolved.note !== null ? (
+            <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: disabled || rotating }}
+            disabled={disabled || rotating}
+            onPress={() =>
+              Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Rotate",
+                  style: "destructive",
+                  onPress: () => {
+                    setRotating(true);
+                    void rotate({ environmentId, input: { id: task.id } }).then((result) => {
+                      setRotating(false);
+                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                        Alert.alert(
+                          "Could not rotate URL",
+                          String(squashAtomCommandFailure(result)),
+                        );
+                      }
+                    });
+                  },
+                },
+              ])
+            }
+            className="min-h-11 justify-center active:opacity-70 disabled:opacity-50"
+          >
+            <Text className="text-base text-danger-foreground">
+              {rotating ? "Rotating…" : "Rotate URL"}
+            </Text>
+          </Pressable>
+        </>
+      )}
+      {signatureConfigured ? (
+        <Text className="text-sm text-foreground-muted">
+          Signature check configured on desktop/web.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1050,7 +1206,8 @@ function EnvironmentTasks({
               actions={[
                 { id: "edit", title: "Edit" },
                 { id: "toggle", title: task.enabled ? "Pause" : "Resume" },
-                { id: "run", title: "Run now" },
+                // A webhook task has no request to run without.
+                ...(task.schedule.type === "webhook" ? [] : [{ id: "run", title: "Run now" }]),
                 { id: "delete", title: "Delete", attributes: { destructive: true } },
               ]}
               onPressAction={({ nativeEvent }) => {

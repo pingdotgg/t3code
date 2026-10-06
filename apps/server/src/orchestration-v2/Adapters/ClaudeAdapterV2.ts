@@ -48,6 +48,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderGoal,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2PendingBackgroundTask,
@@ -105,13 +106,13 @@ import {
   boundProviderEventForLogging,
   type EventNdjsonLogger,
   shouldPersistProviderEvent,
-} from "../../provider/Layers/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+} from "../../provider/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import {
   claudeRateLimitEventToUpdate,
   type ClaudeScopedLimitNames,
-} from "../../provider/Layers/claudeUsageLimits.ts";
-import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
+} from "../../provider/claudeUsageLimits.ts";
+import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
@@ -592,7 +593,7 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
   };
 }
 
-export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
+export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
   Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
@@ -945,6 +946,8 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_environment_read",
   "mcp__t3-code__t3_queue_list",
   "mcp__t3-code__t3_queue_read",
+  "mcp__t3-code__html_preview",
+  "mcp__t3-code__html_render",
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
@@ -1014,6 +1017,64 @@ function providerSession(input: {
 function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"]): string {
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
+
+// In SDK mode Claude reports `/goal` only through the transcript (its
+// `active_goal` event is remote-only): synthetic command output names the
+// goal, and each unmet evaluator check returns as Stop hook feedback.
+const CLAUDE_GOAL_SET_PREFIX = "Goal set: ";
+const CLAUDE_GOAL_ACTIVE = /^Goal active: ([\s\S]+?) \((?:not yet evaluated|(\d+) turns?)\)/u;
+
+/**
+ * The goal after one root SDK frame, or undefined when the frame says nothing
+ * about it. Completion has no frame of its own; see finalizeActiveTurn.
+ */
+function nextClaudeGoal(
+  current: OrchestrationV2ProviderGoal | null,
+  message: SDKMessage,
+): OrchestrationV2ProviderGoal | null | undefined {
+  if (message.type === "assistant") {
+    if (message.parent_tool_use_id !== null || message.message.model !== "<synthetic>") {
+      return undefined;
+    }
+    const text = textFromClaudeContent(message.message.content).trim();
+    if (text.startsWith(CLAUDE_GOAL_SET_PREFIX)) {
+      const objective = text.slice(CLAUDE_GOAL_SET_PREFIX.length).trim();
+      return objective.length === 0 ? undefined : { objective, status: "active", checks: 0 };
+    }
+    if (text.startsWith("Goal cleared: ") || text.startsWith("No goal set")) return null;
+    const active = CLAUDE_GOAL_ACTIVE.exec(text);
+    if (active?.[1] === undefined) return undefined;
+    return {
+      ...(current?.objective === active[1] ? current : {}),
+      objective: active[1],
+      status: "active",
+      checks: Number(active[2] ?? 0),
+    };
+  }
+  if (
+    message.type !== "user" ||
+    message.parent_tool_use_id !== null ||
+    message.isSynthetic !== true ||
+    current === null
+  ) {
+    return undefined;
+  }
+  const prefix = `Stop hook feedback:\n[${current.objective}]: `;
+  const content = message.message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  if (!text.startsWith(prefix)) return undefined;
+  return {
+    ...current,
+    status: "active",
+    checks: (current.checks ?? 0) + 1,
+    lastCheck: text.slice(prefix.length).trim(),
+  };
+}
+
+const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 /** Compares a subagent result with its routed text regardless of block joins. */
 function normalizeClaudeResultText(text: string): string {
@@ -3049,6 +3110,10 @@ export function makeClaudeAdapterV2(
         const lastProviderThreadByNativeThread = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThread>(),
         );
+        // Native `/goal` per session, seeded from the persisted provider thread.
+        const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // Turns whose model output met an active goal's Stop hook check at its end.
+        const goalCheckedTurns = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
         // (Agent with run_in_background) can complete after the root turn
         // ended, and its task_notification must both count as wake evidence
@@ -3452,6 +3517,9 @@ export function makeClaudeAdapterV2(
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
             pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+            ...(goalsByNativeThread.has(input.nativeThreadId)
+              ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
+              : {}),
             updatedAt: now,
           };
           yield* rememberProviderThread(providerThread);
@@ -3459,6 +3527,37 @@ export function makeClaudeAdapterV2(
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
+          });
+        });
+
+        /** Applies one root frame's goal signal and writes any change onto the provider thread. */
+        const trackClaudeGoal = Effect.fnUntraced(function* (input: {
+          readonly nativeThreadId: string;
+          readonly context: ActiveClaudeTurnContext;
+          readonly message: SDKMessage;
+        }) {
+          const current = goalsByNativeThread.get(input.nativeThreadId) ?? null;
+          if (
+            current?.status === "active" &&
+            input.message.type === "assistant" &&
+            input.message.parent_tool_use_id === null &&
+            input.message.message.model !== "<synthetic>"
+          ) {
+            goalCheckedTurns.add(input.context.providerTurnId);
+          }
+          const next = nextClaudeGoal(current, input.message);
+          if (next === undefined || providerGoalsEqual(current, next)) return;
+          goalsByNativeThread.set(input.nativeThreadId, next);
+          const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+            input.nativeThreadId,
+          );
+          if (providerThread === undefined) return;
+          const updated = { ...providerThread, goal: next, updatedAt: yield* DateTime.now };
+          yield* rememberProviderThread(updated);
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver: CLAUDE_PROVIDER,
+            providerThread: updated,
           });
         });
 
@@ -4975,10 +5074,36 @@ export function makeClaudeAdapterV2(
                 const clearConversationHead =
                   input.status === "completed" &&
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
+                // While a goal is set, Claude ends a turn on its own only after the
+                // goal's Stop hook passes. It defers that check while background
+                // work runs, and a hook that stops the turn reports another reason.
+                // SDK mode does not report an evaluator timeout or an impossible
+                // verdict, so those still read as complete.
+                const goal =
+                  nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
+                const goalChecked = goalCheckedTurns.delete(input.context.providerTurnId);
+                const terminalReason = input.result?.terminal_reason;
+                if (
+                  nativeThreadId !== null &&
+                  goal?.status === "active" &&
+                  goalChecked &&
+                  input.status === "completed" &&
+                  (terminalReason === undefined || terminalReason === "completed") &&
+                  roster.size === 0
+                ) {
+                  goalsByNativeThread.set(nativeThreadId, {
+                    objective: goal.objective,
+                    status: "complete",
+                    ...(goal.checks === undefined ? {} : { checks: goal.checks }),
+                  });
+                }
                 const providerThread: OrchestrationV2ProviderThread = {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
+                  ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
+                    ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
+                    : {}),
                   firstRunOrdinal:
                     input.context.input.providerThread.firstRunOrdinal ??
                     input.context.input.runOrdinal,
@@ -5552,6 +5677,7 @@ export function makeClaudeAdapterV2(
             }
             return;
           }
+          yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
           // Subagent narration belongs to its child thread, never the parent log.
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
@@ -7137,6 +7263,9 @@ export function makeClaudeAdapterV2(
               return updated;
             });
             yield* rememberProviderThread(turnInput.providerThread);
+            if (!goalsByNativeThread.has(nativeThreadId)) {
+              goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
+            }
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               nativeTurnId,

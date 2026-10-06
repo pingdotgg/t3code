@@ -13,7 +13,7 @@ import type {
   PullRequestSummary,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";

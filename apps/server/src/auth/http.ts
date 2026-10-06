@@ -29,10 +29,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
-import * as Cookies from "effect/unstable/http/Cookies";
-import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Cookies from "effect/http/Cookies";
+import * as HttpEffect from "effect/http/HttpEffect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -198,7 +198,7 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   return session;
 });
 
-export const environmentAuthenticatedAuthLayer = Layer.effect(
+export const layerAuthenticatedAuth = Layer.effect(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -227,7 +227,7 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
   }),
 );
 
-export const authHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "auth",
   Effect.fnUntraced(function* (handlers) {

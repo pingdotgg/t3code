@@ -91,6 +91,11 @@ class ClusterStillActive extends Data.TaggedError("ClusterStillActive")<{
   readonly status: string | undefined;
 }> {}
 
+class ClusterNotActive extends Data.TaggedError("ClusterNotActive")<{
+  readonly cluster: string;
+  readonly status: string | undefined;
+}> {}
+
 export const ClusterProvider = () =>
   Provider.effect(
     Cluster,
@@ -270,6 +275,34 @@ export const ClusterProvider = () =>
             });
             cluster = created.cluster;
           }
+
+          // CreateCluster may return before the cluster is ready for updates.
+          // Re-read its status before configuration, capacity-provider or tag writes.
+          cluster = yield* ecs
+            .describeClusters({
+              clusters: [clusterArn],
+              include: ["SETTINGS", "TAGS", "CONFIGURATIONS"],
+            })
+            .pipe(
+              Effect.flatMap((response) => {
+                const observed = response.clusters?.find(
+                  (candidate) => candidate.clusterArn === clusterArn,
+                );
+                return observed?.status === "ACTIVE"
+                  ? Effect.succeed(observed)
+                  : Effect.fail(
+                      new ClusterNotActive({
+                        cluster: clusterArn,
+                        status: observed?.status,
+                      }),
+                    );
+              }),
+              Effect.retry({
+                while: (error) => error._tag === "ClusterNotActive",
+                schedule: Schedule.spaced("2 seconds"),
+                times: 10,
+              }),
+            );
 
           // Sync cluster config — call updateCluster to converge settings,
           // configuration, and serviceConnectDefaults to desired state.

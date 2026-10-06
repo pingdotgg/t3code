@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 
@@ -212,7 +212,7 @@ const withSchemaErrorAttributes = (delegate: Tracer.Tracer): Tracer.Tracer =>
     ...(delegate.context ? { context: delegate.context } : {}),
   });
 
-export const makeRelayTraceLayer = (input: {
+export const layer = (input: {
   readonly tracesEndpoint: string;
   readonly tracesDatasetName: string;
   readonly ingestToken: Redacted.Redacted<string>;

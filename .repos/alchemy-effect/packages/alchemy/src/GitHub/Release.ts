@@ -281,6 +281,7 @@ export interface Release extends Resource<
  * ```
  *
  * @resource
+ * @product Release
  */
 export const Release = Resource<Release>("GitHub.Release");
 
