@@ -85,10 +85,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
-import {
-  ThreadCommandExecutor,
-  layer as threadCommandExecutorLayer,
-} from "./ThreadCommandExecutor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   applyToProjection,
   emptyProjection,
@@ -787,7 +784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
-  const threadDispatch = yield* ThreadCommandExecutor;
+  const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -10616,7 +10613,7 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
-  Layer.provide(threadCommandExecutorLayer),
+  Layer.provide(ThreadCommandExecutor.layer),
 );
 
 const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
