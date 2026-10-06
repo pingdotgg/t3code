@@ -68,11 +68,13 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
+  decideToolCallUpdateEmission,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
+  toolCallProgressLength,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
   type AcpSessionModeState,
@@ -1162,6 +1164,11 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
+  /** Streamed tool updates held back from persistence; see `decideToolCallUpdateEmission`. */
+  readonly toolEmissions: Map<
+    string,
+    { readonly lastEmittedDetailLength: number | undefined; readonly skippedSinceEmit: number }
+  >;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
@@ -3195,6 +3202,22 @@ export function makeAcpAdapterV2(
               yield* rearmDeferredFinalize(context);
               return;
             }
+          }
+          if (projectedStatus === undefined) {
+            const emission = context.toolEmissions.get(toolCall.toolCallId);
+            const decision = decideToolCallUpdateEmission({
+              previous,
+              next: toolCall,
+              lastEmittedDetailLength: emission?.lastEmittedDetailLength,
+              skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
+            });
+            context.toolEmissions.set(toolCall.toolCallId, {
+              lastEmittedDetailLength: decision.emit
+                ? toolCallProgressLength(toolCall)
+                : emission?.lastEmittedDetailLength,
+              skippedSinceEmit: decision.skippedSinceEmit,
+            });
+            if (!decision.emit) return;
           }
           const status = projectedStatus ?? toolStatus(toolCall.status);
           const now = yield* DateTime.now;
@@ -6953,6 +6976,7 @@ export function makeAcpAdapterV2(
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              toolEmissions: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
