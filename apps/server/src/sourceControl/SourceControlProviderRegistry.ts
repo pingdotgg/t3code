@@ -15,6 +15,7 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import * as PhabricatorSourceControlProvider from "./PhabricatorSourceControlProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
@@ -311,6 +312,8 @@ export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
+  const phabricator = yield* PhabricatorSourceControlProvider.make;
+  const phabricatorDiscovery = yield* PhabricatorSourceControlProvider.makeDiscovery;
   return yield* makeWithProviders([
     {
       kind: "github",
@@ -333,6 +336,7 @@ export const make = Effect.gen(function* () {
       discovery: bitbucketDiscovery,
     },
     { kind: "forgejo", provider: forgejo, discovery: forgejoDiscovery },
+    { kind: "phabricator", provider: phabricator, discovery: phabricatorDiscovery },
   ]);
 });
 

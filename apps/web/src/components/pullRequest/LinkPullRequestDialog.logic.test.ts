@@ -64,6 +64,28 @@ describe("resolveLinkPullRequestInput", () => {
     });
   });
 
+  it("links short Differential references only for a Phabricator project", () => {
+    for (const reference of ["D42", "arc patch D42"]) {
+      expect(
+        resolveLinkPullRequestInput({ reference, project, hasProject: () => true }),
+      ).toBeNull();
+      expect(
+        resolveLinkPullRequestInput({
+          reference,
+          project: {
+            provider: "phabricator",
+            host: "reviews.example",
+            repository: "differential",
+            webUrl: (number) => `https://reviews.example/D${number}`,
+          },
+          hasProject: () => true,
+        }),
+      ).toMatchObject({
+        link: { repository: "differential", number: 42, url: "https://reviews.example/D42" },
+      });
+    }
+  });
+
   it("returns null for input that is not a reference", () => {
     expect(
       resolveLinkPullRequestInput({ reference: "hello", project, hasProject: () => true }),

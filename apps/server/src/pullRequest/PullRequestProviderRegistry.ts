@@ -9,6 +9,7 @@ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import * as PhabricatorPullRequestProvider from "./PhabricatorPullRequestProvider.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
@@ -51,6 +52,7 @@ export const make = Effect.map(
     GitHubPullRequestProvider.make,
     GitLabPullRequestProvider.make,
     ForgejoPullRequestProvider.make,
+    PhabricatorPullRequestProvider.make,
     BitbucketPullRequestProvider.make,
     AzureDevOpsPullRequestProvider.make,
   ]),

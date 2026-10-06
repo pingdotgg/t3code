@@ -51,7 +51,7 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { listRefs: () => null } }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (query: string) => ({
-    data: query === "detail" ? detail : null,
+    data: query === "detail" ? activeDetail : null,
     isPending: false,
     isSuccess: true,
     error: null,
@@ -196,6 +196,7 @@ const detail: PullRequestDetailView = {
     requestReviewers: false,
   },
 };
+let activeDetail = detail;
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("env-1"),
@@ -206,6 +207,7 @@ const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  activeDetail = detail;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -216,6 +218,43 @@ beforeEach(() => {
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
+});
+
+it("Phabricator thread handoffs prepare a Local checkout", async () => {
+  activeDetail = {
+    ...detail,
+    provider: "phabricator",
+    repository: "differential",
+    url: "https://reviews.example/D1",
+    headBranch: "D1",
+  };
+  await act(async () => {
+    renderer = create(
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={activeDetail}
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />,
+    );
+  });
+  await click("Fix check");
+  expect(prepareThread).toHaveBeenCalledWith(expect.objectContaining({ mode: "local" }));
+  await click("Timeline");
+  expect(
+    renderer.root.findAll((node) =>
+      node.children.some(
+        (child) => typeof child === "string" && child.includes("Differential revision activity"),
+      ),
+    ),
+  ).toHaveLength(1);
 });
 afterEach(() => {
   act(() => renderer?.unmount());

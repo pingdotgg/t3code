@@ -18,6 +18,7 @@ import {
   ForgejoIcon,
   GitHubIcon,
   GitLabIcon,
+  PhabricatorIcon,
 } from "./components/Icons";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
@@ -61,6 +62,12 @@ export function getSourceControlPresentation(
         providerName: provider?.name || presentation.providerName,
         terminology: getChangeRequestTerminology(provider),
         Icon: BitbucketIcon,
+      };
+    case "phabricator":
+      return {
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: PhabricatorIcon,
       };
     case "change-request":
       return {

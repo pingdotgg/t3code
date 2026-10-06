@@ -71,3 +71,26 @@ describe("parsePullRequestReference", () => {
     expect(parsePullRequestReference("feature/my-branch")).toBeNull();
   });
 });
+
+it("accepts Differential revision numbers, URLs, and arc patch commands", () => {
+  expect(parsePullRequestReference("D42", "phabricator")).toBe("42");
+  expect(parsePullRequestReference("arc patch D42", "phabricator")).toBe("42");
+  expect(parsePullRequestReference("https://reviews.example/D42?diff=7")).toBe(
+    "https://reviews.example/D42?diff=7",
+  );
+});
+
+it.each([
+  undefined,
+  "github",
+  "gitlab",
+  "forgejo",
+  "bitbucket",
+  "azure-devops",
+  "unknown",
+] as const)("rejects Differential short references for %s", (provider) => {
+  expect(parsePullRequestReference("D42", provider)).toBeNull();
+  expect(parsePullRequestReference("arc patch D42", provider)).toBeNull();
+  expect(parsePullRequestReference("arc patch 42", provider)).toBeNull();
+  expect(parsePullRequestReference("#42", provider)).toBe("42");
+});

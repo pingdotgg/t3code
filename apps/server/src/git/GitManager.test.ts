@@ -4614,6 +4614,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "rejects Differential worktree checkout before resolving or materializing a revision",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originalHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const { service } = createGitHubCliWithFakeGh();
+        const provider = yield* GitHubSourceControlProvider.make.pipe(
+          Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+        );
+        const { manager } = yield* makeManager({
+          sourceControlProvider: {
+            ...provider,
+            kind: "phabricator",
+            getChangeRequest: () => Effect.die("Must reject before resolving the revision"),
+            checkoutChangeRequest: () => Effect.die("Must not apply a patch to the main repo"),
+          },
+        });
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "D42",
+          mode: "worktree",
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "GitManagerError",
+          detail:
+            "Differential revisions do not support worktree checkout. Use Local to apply the revision with Arcanist.",
+        });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+        expect((yield* runGit(repoDir, ["branch", "--list"])).stdout.trim()).toBe("* main");
+        expect(
+          (yield* runGit(repoDir, ["worktree", "list", "--porcelain"])).stdout.match(
+            /^worktree /gm,
+          ),
+        ).toHaveLength(1);
+      }),
+  );
+
   it.effect("prepares pull request threads in local mode by checking out the PR branch", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

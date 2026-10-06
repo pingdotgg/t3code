@@ -239,3 +239,36 @@ it("names nothing for a project with no remote to name it by", () => {
   expect(sourceControlRepositorySelector(null)).toBeNull();
   expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
 });
+
+it("recognizes Phabricator and Phorge remotes and presents Differential revisions", () => {
+  for (const remote of [
+    "git@phabricator.example:diffusion/REPO/repo.git",
+    "https://reviews.example/diffusion/REPO/repo.git",
+    "https://phorge.example/source/repo.git",
+    "ssh://git@reviews.example:2222/diffusion/REPO/repo.git",
+    "git@reviews.example:diffusion/REPO/repo.git",
+    "git://reviews.example/diffusion/REPO/repo.git",
+  ]) {
+    expect(detectSourceControlProviderFromRemoteUrl(remote)?.kind).toBe("phabricator");
+  }
+  expect(
+    sourceControlRepositorySelector({
+      provider: "phabricator",
+      displayName: "diffusion/REPO/repo",
+    }),
+  ).toBe("differential");
+  expect(getChangeRequestTerminologyForKind("phabricator")).toEqual({
+    shortLabel: "D",
+    singular: "revision",
+  });
+});
+
+it.each([
+  ["https://github.com/source/repo.git", "github"],
+  ["git@github.com:diffusion/repo.git", "github"],
+  ["ssh://git@gitlab.com/source/repo.git", "gitlab"],
+  ["https://bitbucket.org/source/repo.git", "bitbucket"],
+  ["https://dev.azure.com/source/project/_git/repo", "azure-devops"],
+] as const)("prefers the known host over a Differential-shaped path in %s", (remote, kind) => {
+  expect(detectSourceControlProviderFromRemoteUrl(remote)?.kind).toBe(kind);
+});

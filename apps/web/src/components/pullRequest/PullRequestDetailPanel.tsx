@@ -581,9 +581,6 @@ export function PullRequestDetailPanel({
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
   );
-  const activityQuery = useEnvironmentQuery(
-    pullRequestEnvironment.activity({ environmentId, input: reference }),
-  );
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
@@ -682,6 +679,13 @@ export function PullRequestDetailPanel({
             isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
           },
     [resolvedCoreDetail, sharedSummary],
+  );
+  const supportsActivity =
+    coreDetail?.provider !== "phabricator" &&
+    repositoryIdentity?.provider !== "phabricator" &&
+    reference.repository !== "differential";
+  const activityQuery = useEnvironmentQuery(
+    supportsActivity ? pullRequestEnvironment.activity({ environmentId, input: reference }) : null,
   );
   const activity = activityQuery.data;
   const detail = useMemo(
@@ -1145,7 +1149,7 @@ export function PullRequestDetailPanel({
     // A worktree leaves whatever is open alone, which is why it is the default. Checking out in
     // the repository itself is what you want when the point is to run the thing where you
     // already work — and it moves the branch under everything else that is open there.
-    mode: "worktree" | "local" = "worktree",
+    mode: "worktree" | "local" = handoffSummary?.provider === "phabricator" ? "local" : "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
@@ -1528,7 +1532,10 @@ export function PullRequestDetailPanel({
           <TooltipPopup>Check out this pull request</TooltipPopup>
         </Tooltip>
         <MenuPopup align="end" side="bottom">
-          <MenuItem onClick={() => startCheckout("worktree")}>
+          <MenuItem
+            disabled={handoffSummary?.provider === "phabricator"}
+            onClick={() => startCheckout("worktree")}
+          >
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
               <span>In a separate worktree</span>
@@ -1542,7 +1549,9 @@ export function PullRequestDetailPanel({
             <span className="flex min-w-0 flex-col">
               <span>In this repository</span>
               <span className="text-xs text-muted-foreground">
-                Switches the branch you are working in, like `gh pr checkout`.
+                {handoffSummary?.provider === "phabricator"
+                  ? "Applies the revision in this repository with arc patch."
+                  : "Switches the branch you are working in, like `gh pr checkout`."}
               </span>
             </span>
           </MenuItem>
@@ -2714,7 +2723,12 @@ export function PullRequestDetailPanel({
             ) : null}
             {mountedTabs.has("timeline") ? (
               <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                {activityPending ? (
+                {!supportsActivity ? (
+                  <div className="p-6 text-sm text-muted-foreground">
+                    Differential revision activity is not available in T3 Code. Open the revision on
+                    Phabricator to read its discussion and history.
+                  </div>
+                ) : activityPending ? (
                   <PullRequestTimelineGhost />
                 ) : activityError ? (
                   <PullRequestActivityUnavailableState

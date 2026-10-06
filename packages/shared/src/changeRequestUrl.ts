@@ -48,6 +48,16 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
 
+  const revision = /^\/D([1-9]\d*)(?:\/|$)/u.exec(url.pathname);
+  if (revision && Number.isSafeInteger(Number(revision[1]))) {
+    return {
+      host,
+      repository: "differential",
+      number: Number(revision[1]),
+      authority: url.host.toLowerCase(),
+    };
+  }
+
   // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
   if (isHostOf(host, "github.com", "github")) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
@@ -94,6 +104,20 @@ export function changeRequestUrlFor(
   remoteUrl?: string,
 ): string | null {
   switch (kind) {
+    case "phabricator": {
+      try {
+        const remote = new URL(remoteUrl ?? "");
+        if (
+          (remote.protocol === "http:" || remote.protocol === "https:") &&
+          remote.host.toLowerCase() === host.toLowerCase()
+        ) {
+          return `${remote.origin}/D${number}`;
+        }
+      } catch {
+        // SSH remotes do not specify the review server’s web origin.
+      }
+      return `https://${host}/D${number}`;
+    }
     case "github":
       return `https://${host}/${repository}/pull/${number}`;
     case "forgejo": {
@@ -224,6 +248,12 @@ export function siblingPullRequestUrl(url: string, number: number): string | nul
   const reference = parseChangeRequestUrl(url);
   if (reference === null || !Number.isSafeInteger(number) || number < 1) return null;
   const sibling = new URL(url);
+  if (/^\/D[1-9]\d*(?:\/|$)/u.test(sibling.pathname)) {
+    sibling.pathname = `/D${number}`;
+    sibling.search = "";
+    sibling.hash = "";
+    return sibling.toString();
+  }
   const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/u.exec(
     sibling.pathname.slice(reference.repository.length + 1),
   )?.[1];

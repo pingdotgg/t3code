@@ -460,6 +460,25 @@ describe("findProjectForChangeRequest", () => {
   const project = (identity: Record<string, unknown>) =>
     ({ id: "p1", repositoryIdentity: identity }) as never;
 
+  it("matches host-wide Differential links through an SSH project and preserves the review port", () => {
+    const checkout = project({
+      provider: "phabricator",
+      canonicalKey: "reviews.example/source/repo",
+      webUrl: "http://reviews.example:8080",
+      locator: { remoteUrl: "git@reviews.example:source/repo.git" },
+    });
+    const reference = {
+      host: "reviews.example",
+      authority: "reviews.example:8080",
+      repository: "differential",
+      number: 42,
+    };
+    expect(findProjectForChangeRequest([checkout], reference)).toBe(checkout);
+    expect(
+      findProjectForChangeRequest([checkout], { ...reference, authority: "reviews.example:9090" }),
+    ).toBeUndefined();
+  });
+
   it("matches a nested GitLab group by the whole path below the host", () => {
     // The server identifies a repository by `displayName`, which keeps every group segment; the
     // two-segment owner/name form would look for `t3tools/t3code` and find nothing.

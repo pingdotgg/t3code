@@ -269,7 +269,10 @@ export function BranchToolbarBranchSelector({
     [refs],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
-  const prReference = parsePullRequestReference(trimmedBranchQuery);
+  const prReference = parsePullRequestReference(
+    trimmedBranchQuery,
+    branchStatusQuery.data?.sourceControlProvider?.kind,
+  );
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
   const checkoutPullRequestItemValue =

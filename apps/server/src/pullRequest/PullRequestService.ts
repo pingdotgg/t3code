@@ -800,7 +800,7 @@ export const make = Effect.gen(function* () {
           if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
           let kind = identity?.provider as SourceControlProviderKind | undefined;
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+          let repository = sourceControlRepositorySelector(project.repositoryIdentity);
           if (!identity || kind === undefined || repository === null) continue;
           // Worktrees of one repository are separate projects; reading the remote once keeps
           // the page from repeating every change request per local checkout. The host is part
@@ -814,8 +814,9 @@ export const make = Effect.gen(function* () {
             refinedProvider = provider === null ? null : refinedProviders.get(provider.baseUrl);
             kind = refinedProvider?.kind ?? kind;
           }
+          if (kind === "phabricator") repository = "differential";
           const host =
-            refinedProvider?.kind === "forgejo"
+            refinedProvider?.kind === "forgejo" || refinedProvider?.kind === "phabricator"
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
               : pullRequestHostOf(identity, kind);
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
