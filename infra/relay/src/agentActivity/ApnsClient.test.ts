@@ -17,7 +17,10 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type { ApnsCredentials } from "../Config.ts";
 import * as ApnsClient from "./ApnsClient.ts";
+import { sanitizeApnsNotificationPayload } from "./agentActivityPayloads.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+
+const encodePayloadJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const isApnsJwtSigningError = Schema.is(ApnsClient.ApnsJwtSigningError);
 const isApnsHttpRequestError = Schema.is(ApnsClient.ApnsHttpRequestError);
@@ -196,9 +199,31 @@ describe("ApnsClient", () => {
           sound: "default",
           "thread-id": "env/thread",
         },
-        environmentId: "env",
-        threadId: "thread",
-        deepLink: "/threads/env/thread",
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps long notification routing metadata within the APNs payload limit", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const environmentId = "é".repeat(191);
+      const threadId = "t".repeat(512);
+      const notification = sanitizeApnsNotificationPayload({
+        title: "界".repeat(120),
+        body: "界".repeat(120),
+        environmentId,
+        threadId,
+        deepLink: `/threads/${encodeURIComponent(environmentId)}/${threadId}`,
+      });
+      const request = apns.makePushNotificationRequest({ token: "push-token", notification });
+      const json = yield* encodePayloadJson(request.payload);
+      expect(new TextEncoder().encode(json).byteLength).toBeLessThanOrEqual(4096);
+      expect(request.payload).toMatchObject({
+        body: {
+          environmentId,
+          threadId,
+          deepLink: notification.deepLink,
+        },
       });
     }).pipe(Effect.provide(layerTest)),
   );

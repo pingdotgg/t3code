@@ -192,9 +192,6 @@ function makePushNotificationRequest(input: {
         // not bury the others; a grouped alert for several threads stays alone.
         "thread-id": notificationThreadId(input.notification),
       },
-      environmentId: input.notification.environmentId,
-      threadId: input.notification.threadId,
-      deepLink: input.notification.deepLink,
       // Expo iOS exposes userInfo.body as notification.content.data for remote pushes.
       body: {
         environmentId: input.notification.environmentId,
