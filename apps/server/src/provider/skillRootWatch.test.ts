@@ -39,7 +39,17 @@ const makeWatchFileSystem = (options: {
 
 describe("skillRootWatch", () => {
   it("counts only changes that can alter a skill list", () => {
-    for (const path of ["new-skill", "linked-skill", "new-skill/SKILL.md", "new-skill\\SKILL.md"]) {
+    for (const path of [
+      "new-skill",
+      "linked-skill",
+      "new-skill/SKILL.md",
+      "new-skill\\SKILL.md",
+      // Any directory name can hold a skill.
+      ".hidden-skill",
+      "release.tmp",
+      "release~",
+      "4913",
+    ]) {
       assert.isTrue(isSkillListChange(path), path);
     }
     for (const path of [
@@ -48,13 +58,9 @@ describe("skillRootWatch", () => {
       "new-skill/assets",
       "new-skill/README.md",
       "new-skill/references/SKILL.md",
-      ".system",
       ".system/imagegen/SKILL.md",
-      ".DS_Store",
       "new-skill/.SKILL.md.swp",
-      "SKILL.md~",
-      "4913",
-      "draft.tmp",
+      "new-skill/SKILL.md~",
     ]) {
       assert.isFalse(isSkillListChange(path), path);
     }
@@ -77,7 +83,7 @@ describe("skillRootWatch", () => {
             root,
             [
               { _tag: "Update", path: "existing/scripts/run.sh" },
-              { _tag: "Create", path: ".DS_Store" },
+              { _tag: "Create", path: "existing/.SKILL.md.swp" },
               { _tag: "Update", path: "existing/SKILL.md" },
               { _tag: "Create", path: "new-skill" },
             ],

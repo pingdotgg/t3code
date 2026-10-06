@@ -6,9 +6,11 @@
  * A skill root holds one directory per skill, each with a `SKILL.md`. Only
  * changes that can alter the list count: an entry appearing, disappearing, or
  * being renamed directly under the root (a skill directory or a symlink to
- * one), and a skill's `SKILL.md` changing. Scripts, assets, dotfiles, and
- * editor temp files are ignored. Edits behind a symlinked skill directory are
- * not observed; the explicit refresh still covers those.
+ * one), and a skill's `SKILL.md` changing. Anything deeper in a skill, such
+ * as scripts, assets, or editor temp files, is ignored. Entries directly under
+ * the root are not filtered by name, because any directory name can hold a
+ * skill. Edits behind a symlinked skill directory are not observed; the
+ * explicit refresh still covers those.
  *
  * @module provider/skillRootWatch
  */
@@ -19,14 +21,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
-// Dotfiles (including `.system`, `.DS_Store`, and `.#` / `.swp` editor
-// files), backup files, and Vim's `4913` write probe.
-const IGNORED_ENTRY = /^\.|~$|\.tmp$|^4913$/;
-
 /** Whether a change at `relativePath` (relative to a skill root) can alter its skill list. */
 export function isSkillListChange(relativePath: string): boolean {
   const [entry, file, ...rest] = relativePath.split(/[\\/]/).filter((segment) => segment !== "");
-  if (entry === undefined || rest.length > 0 || IGNORED_ENTRY.test(entry)) return false;
+  if (entry === undefined || rest.length > 0) return false;
   return file === undefined || file === "SKILL.md";
 }
 
