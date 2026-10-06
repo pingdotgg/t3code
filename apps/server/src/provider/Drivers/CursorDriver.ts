@@ -231,7 +231,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.layer),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

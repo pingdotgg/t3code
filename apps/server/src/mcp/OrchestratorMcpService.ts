@@ -5,6 +5,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -19,6 +20,8 @@ import {
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpDeleteScheduledTaskInput,
+  type OrchestratorMcpRequestSecretInput,
+  type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpRuntimeMode,
@@ -60,9 +63,11 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -78,10 +83,21 @@ import {
   type McpThreadInvocationScope,
   requireThreadScope,
 } from "./McpInvocationContext.ts";
+import * as Metrics from "../observability/Metrics.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
-const TASK_POLL_INTERVAL_MS = 50;
+// Events that can make a delegated task terminal: the parent's task record,
+// and the child's runs, nested tasks, and pending provider background work.
+const TASK_WAKE_EVENTS = [
+  { thread: "parent", eventType: "subagent.updated" },
+  { thread: "child", eventType: "run.updated" },
+  { thread: "child", eventType: "subagent.updated" },
+  { thread: "child", eventType: "provider-thread.updated" },
+] as const;
+/** A person answers the card, so a slower poll is plenty. */
+const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -132,6 +148,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
+  /**
+   * Asks the user for a secret through a card in the calling thread and waits
+   * for the answer. The value never reaches the agent: the result is a status.
+   */
+  readonly requestSecret: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRequestSecretInput,
+  ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -212,6 +236,11 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    // A bare path is not a URL anyone can call, so agents never get one to share.
+    ...(task.webhook?.url == null ? {} : { webhookUrl: task.webhook.url }),
+    ...(task.webhook === undefined
+      ? {}
+      : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
   };
 }
 
@@ -716,6 +745,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Forked to thread ${item.targetThreadId}.`;
     case "thread_created":
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
+    case "secret_request":
+      return `Asked the user for ${item.label}: ${item.secretStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -797,6 +828,7 @@ const make = Effect.gen(function* () {
           ),
         )
       : Effect.succeed(project.defaultModelSelection);
+  const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -994,6 +1026,30 @@ const make = Effect.gen(function* () {
    */
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
+
+  /**
+   * Provider snapshots only re-probe while a client is in the foreground, so an
+   * unattended agent can see a provider as unavailable after it was fixed.
+   * Re-probe the requested instance once before refusing it.
+   */
+  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+    const instanceId =
+      input.target?.providerInstanceId ??
+      (input.target?.driverKind === undefined
+        ? input.parent.thread.modelSelection.instanceId
+        : undefined);
+    const resolved = resolveTarget(input);
+    if (instanceId === undefined) return resolved;
+    return resolved.pipe(
+      Effect.catchIf(
+        (error) => error.code === "provider_unavailable",
+        () =>
+          providerRegistry
+            .refreshInstance(instanceId)
+            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+      ),
+    );
+  };
 
   const resolveTarget = (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
@@ -1273,14 +1329,39 @@ const make = Effect.gen(function* () {
       return response;
     });
 
+  // Re-read the task only when an event on the parent or child thread can
+  // change its status, instead of polling the projections every 50 ms.
   const waitForTask = (scope: McpThreadInvocationScope, taskId: NodeId, timeoutMs: number) =>
     Effect.gen(function* () {
-      while (true) {
-        const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
-        yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
-      }
-    }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
+      const streamError = (error: unknown) =>
+        failure(
+          "orchestration_error",
+          `Unable to watch delegated task ${taskId}: ${errorMessage(error)}`,
+        );
+      // Sequences are global, so one cursor taken before the first read
+      // replays anything either thread records after it.
+      const afterSequence = yield* threadManagement
+        .getThreadEventSequence(scope.thread.threadId)
+        .pipe(Effect.mapError(streamError));
+      const initial = yield* readTask(scope, taskId, false, true);
+      if (isTerminalTaskStatus(initial.status)) return Option.some(initial);
+      // One stream per event type, so transcript events never fill a buffer.
+      return yield* Stream.mergeAll(
+        TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
+          threadManagement.streamStoredEventsFrom({
+            threadId: thread === "parent" ? scope.thread.threadId : initial.childThreadId,
+            afterSequence,
+            eventType,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Stream.mapError(streamError),
+        Stream.mapEffect(() => readTask(scope, taskId, false, true)),
+        Stream.filter((result) => isTerminalTaskStatus(result.status)),
+        Stream.runHead,
+      );
+    }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
 
   /**
    * A scheduled task the caller may change: one whose modes are no broader
@@ -1456,6 +1537,140 @@ const make = Effect.gen(function* () {
           );
         return { scheduledTaskId: existing.id, deleted: true };
       }),
+    requestSecret: (scope, input) =>
+      Effect.gen(function* () {
+        // The card is shown in, and answered from, the caller's own thread.
+        const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
+        const threadId = threadScope.thread.threadId;
+        const run = ThreadManagementService.latestActiveRun(parent);
+        if (
+          run === undefined ||
+          run.rootNodeId === null ||
+          run.providerInstanceId !== threadScope.thread.providerInstanceId
+        ) {
+          return yield* failure(
+            "parent_not_active",
+            "Asking for a secret requires an active run owned by this MCP provider session.",
+          );
+        }
+        const runId = run.id;
+        const nodeId = run.rootNodeId;
+        const key = yield* requestKey(input.clientRequestId);
+        // Turn item ids are global; scope the key to this thread. A retry with
+        // the same clientRequestId finds this card, answered or not.
+        const turnItemId = TurnItemId.make(
+          `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
+        );
+        const record = (secretStatus: "pending" | "cancelled") =>
+          threadManagement
+            .dispatch({
+              type: "secret_request.record",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: `secret-${secretStatus}`,
+              }),
+              threadId: threadId,
+              runId,
+              nodeId,
+              turnItemId,
+              label: input.label,
+              reason: input.reason,
+              ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+              secretStatus,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Could not record the secret request: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+        yield* record("pending");
+        // Only this call can hand the agent its ref, so the card must not
+        // outlive it: a timeout, a failed wait or an aborted call closes it as
+        // cancelled. If even that fails, the server still refuses an answer
+        // once the run ends, and an unused value expires.
+        const closeCard = record("cancelled").pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not close a secret request card", { error: error.message }),
+          ),
+        );
+
+        // The user answers the card (secrets.answerRequest), or it ends with
+        // the run; poll it like a delegated task.
+        const answered = yield* Effect.gen(function* () {
+          while (true) {
+            const projection = yield* threadManagement
+              .getThreadRecords(threadId, ["runs", "turnItems"], {
+                turnItemTypes: ["secret_request"],
+                messageRoles: [],
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to read the secret request: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+            const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
+            if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+              return item.secretStatus;
+            }
+            const current = projection.runs.find((candidate) => candidate.id === runId);
+            if (
+              current === undefined ||
+              ThreadManagementService.isTerminalRunStatus(current.status)
+            ) {
+              yield* record("cancelled");
+              return "cancelled" as const;
+            }
+            yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
+          }
+        }).pipe(
+          Effect.timeoutOption(
+            Duration.millis(
+              Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
+            ),
+          ),
+          Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+        );
+        if (Option.isNone(answered)) yield* closeCard;
+        // An answer that raced the timeout still wins: the card is answered once.
+        const status = Option.isSome(answered)
+          ? answered.value
+          : yield* threadManagement
+              .getThreadRecords(threadId, ["turnItems"], {
+                turnItemTypes: ["secret_request"],
+                messageRoles: [],
+              })
+              .pipe(
+                Effect.map((records) => {
+                  const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+                  return item?.type === "secret_request" &&
+                    (item.secretStatus === "saved" || item.secretStatus === "declined")
+                    ? item.secretStatus
+                    : ("timed_out" as const);
+                }),
+                Effect.orElseSucceed(() => "timed_out" as const),
+              );
+        yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
+        yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
+        if (status !== "saved") return { status };
+        // Saved means the value was stored before the card said so; a missing
+        // value is a storage fault, not an answer the agent can act on.
+        const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
+        if (Option.isNone(secretRef)) {
+          return yield* failure(
+            "orchestration_error",
+            "The user saved the secret, but it could not be read. Ask again with a new clientRequestId.",
+          );
+        }
+        return { status, secretRef: secretRef.value };
+      }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
+
     capabilities: (scope) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
@@ -1518,7 +1733,7 @@ const make = Effect.gen(function* () {
           );
         }
         const providers = yield* loadProviders;
-        const target = yield* resolveTarget({
+        const target = yield* resolveTargetRechecking({
           parent,
           target: input.target,
           providers,
@@ -1750,7 +1965,7 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTarget({
+              const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
                 providers,
@@ -2134,4 +2349,5 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | SecretRequests.SecretRequests
 > = Layer.effect(OrchestratorMcpService, make);

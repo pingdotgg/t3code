@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 
-import { CLOUD_REPLAY_MARKER_PREFIXES } from "../cloud/http.ts";
+import { CLOUD_REPLAY_MARKER_PREFIXES } from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
 import { forkParked } from "../serverActivation.ts";
 import { DPOP_REPLAY_MARKER_PREFIX } from "./dpop.ts";

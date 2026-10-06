@@ -12,7 +12,7 @@ import * as ServerConfig from "../../config.ts";
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
-const setup = Layer.effectDiscard(
+const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
@@ -26,15 +26,13 @@ const setup = Layer.effectDiscard(
   }),
 );
 
-export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(function* (
-  dbPath: string,
-) {
+export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
   return Layer.provideMerge(
-    setup,
+    layerSetup,
     NodeSqliteClient.layer({
       filename: dbPath,
       spanAttributes: {
@@ -45,8 +43,8 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   );
 }, Layer.unwrap);
 
-export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
+export const layerMemory = Layer.provideMerge(
+  layerSetup,
   NodeSqliteClient.layer({ filename: ":memory:" }),
 );
 
@@ -54,6 +52,6 @@ export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig.ServerConfig;
     yield* initializeV2Database(dbPath);
-    return makeSqlitePersistenceLive(dbPath);
+    return layerFromPath(dbPath);
   }),
 );

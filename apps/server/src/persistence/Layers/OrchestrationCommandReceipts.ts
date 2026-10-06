@@ -120,7 +120,7 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   } satisfies OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryShape;
 });
 
-export const OrchestrationCommandReceiptRepositoryLive = Layer.effect(
+export const layer = Layer.effect(
   OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository,
   makeOrchestrationCommandReceiptRepository,
 );

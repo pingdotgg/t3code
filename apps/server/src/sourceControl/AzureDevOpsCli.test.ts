@@ -21,13 +21,13 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
-const supportLayer = Layer.mergeAll(
+const layerSupport = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
     run: mockRun,
   }),
   NodeServices.layer,
 );
-const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(supportLayer)), supportLayer);
+const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
 afterEach(() => {
   mockRun.mockReset();

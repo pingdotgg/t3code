@@ -190,7 +190,7 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
 /**
  * IMPLEMENTATIONS
  */
-const baseLayer: Layer.Layer<
+const layerBase: Layer.Layer<
   EventSinkV2,
   never,
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -873,13 +873,13 @@ const baseLayer: Layer.Layer<
  * important because enqueue notifications are in-memory wakeups backed by the
  * durable SQL queue.
  */
-export const layerFromStores = baseLayer;
+export const layerFromStores = layerBase;
 
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
   EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
-> = baseLayer.pipe(
+> = layerBase.pipe(
   Layer.provide(
     Layer.mergeAll(
       CommandReceiptStore.layer,

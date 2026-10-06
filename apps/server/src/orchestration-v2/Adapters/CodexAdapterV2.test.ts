@@ -56,7 +56,7 @@ import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLogger
 import * as IdAllocator from "../IdAllocator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
@@ -67,11 +67,8 @@ import {
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import {
-  makeReplayServerConfig,
-  makeCodexProviderAdapterRegistryReplayLayer,
-  withCodexReplayChildMetadata,
-} from "./CodexAdapterV2.testkit.ts";
+import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -720,7 +717,7 @@ describe("CodexAdapterV2 process spawning", () => {
         );
       });
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
-        Effect.provide(CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer),
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -775,7 +772,7 @@ describe("CodexAdapterV2 process spawning", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
+            CodexAdapterV2.layerAppServerClientFactory,
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-binary-home-" }),
           ),
         ),
@@ -2291,6 +2288,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
         event.type === "message.updated" && event.message.role === "assistant",
     );
+  const assistantTurnItems = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+        ? [event.turnItem]
+        : [],
+    );
 
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
@@ -3427,6 +3430,49 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("streams text on the turn item and sends the message once, when it completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = finalAnswerTranscript("codex-streamed-message-once", [
+          { id: "answer", text: "CODEX_RECOVERY_OK", streamed: true, completionDelayMs: 100 },
+        ]);
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-streamed-message-once"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("50 millis");
+        yield* awaitUntil(
+          () => assistantTurnItems(harness.events).length === 1,
+          "streamed turn item",
+        );
+        assert.deepEqual(
+          assistantTurnItems(harness.events).map(({ text, streaming }) => ({ text, streaming })),
+          [{ text: "CODEX_RECOVERY_OK", streaming: true }],
+        );
+        assert.deepEqual(assistantMessages(harness.events), []);
+
+        yield* TestClock.adjust("50 millis");
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        assert.deepEqual(
+          assistantMessages(harness.events).map(({ message }) => ({
+            text: message.text,
+            streaming: message.streaming,
+          })),
+          [{ text: "CODEX_RECOVERY_OK", streaming: false }],
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("suppresses a later streamed duplicate final answer", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3578,10 +3624,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("50 millis");
         yield* Effect.yieldNow;
 
-        assert.equal(
-          new Set(assistantMessages(harness.events).map((event) => event.message.id)).size,
-          1,
-        );
+        assert.equal(new Set(assistantTurnItems(harness.events).map((item) => item.id)).size, 1);
 
         yield* TestClock.adjust("50 millis");
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
@@ -4192,9 +4235,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({
+              CodexAdapterV2Testkit.layer({
                 transcript: localTranscript,
                 driver: replayDriver,
               }),
@@ -4315,9 +4358,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop-untracked", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({ transcript: localTranscript }),
+              CodexAdapterV2Testkit.layer({ transcript: localTranscript }),
               { runEffectWorker: false },
             ),
           ),

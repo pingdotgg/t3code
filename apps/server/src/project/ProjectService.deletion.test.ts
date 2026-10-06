@@ -27,19 +27,19 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
-const eventPersistenceLayer = EventSink.layer.pipe(
+const layerEventPersistence = EventSink.layer.pipe(
   Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
 );
-const servicesLayer = Layer.mergeAll(
-  LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(eventPersistenceLayer)),
-  ProjectionMaintenance.layer.pipe(Layer.provide(eventPersistenceLayer)),
+const layerServices = Layer.mergeAll(
+  LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(layerEventPersistence)),
+  ProjectionMaintenance.layer.pipe(Layer.provide(layerEventPersistence)),
   ProjectStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
@@ -64,7 +64,7 @@ const servicesLayer = Layer.mergeAll(
     ),
   ),
 );
-const databaseLayer = SqlitePersistenceMemory.pipe(
+const layerDatabase = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-deletion-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -239,8 +239,8 @@ it.effect("retries a partial project deletion without repeating child events or 
           ],
         );
       }
-    }).pipe(Effect.provide(servicesLayer));
-  }).pipe(Effect.provide(databaseLayer)),
+    }).pipe(Effect.provide(layerServices));
+  }).pipe(Effect.provide(layerDatabase)),
 );
 
 it.effect(
@@ -354,8 +354,8 @@ it.effect(
           type: "attachment.cleanup",
           attachmentIds: ["legacy_screenshot"],
         });
-      }).pipe(Effect.provide(servicesLayer));
-    }).pipe(Effect.provide(databaseLayer)),
+      }).pipe(Effect.provide(layerServices));
+    }).pipe(Effect.provide(layerDatabase)),
 );
 
 it.effect("rejects a child deletion command ID already accepted for an unrelated thread", () =>
@@ -404,8 +404,8 @@ it.effect("rejects a child deletion command ID already accepted for an unrelated
         WHERE thread_id = ${threadId}
       `;
       assert.deepEqual(cleanup, []);
-    }).pipe(Effect.provide(servicesLayer));
-  }).pipe(Effect.provide(databaseLayer)),
+    }).pipe(Effect.provide(layerServices));
+  }).pipe(Effect.provide(layerDatabase)),
 );
 
 it.effect("deletes a project without force once its imported threads were deleted in V2", () =>
@@ -481,6 +481,6 @@ it.effect("deletes a project without force once its imported threads were delete
       });
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
-    }).pipe(Effect.provide(servicesLayer));
-  }).pipe(Effect.provide(databaseLayer)),
+    }).pipe(Effect.provide(layerServices));
+  }).pipe(Effect.provide(layerDatabase)),
 );

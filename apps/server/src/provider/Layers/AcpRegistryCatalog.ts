@@ -7,7 +7,7 @@ import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "../acp/AcpRegistryRuntimeCoordinator.ts";
 
 /** Server-lifetime ACP Registry catalog shared by setup, snapshots, and turn launch. */
-export const AcpRegistryCatalogLive = Layer.merge(
+export const layer = Layer.merge(
   Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

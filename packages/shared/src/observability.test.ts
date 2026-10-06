@@ -99,7 +99,7 @@ const readTraceRecords = Effect.fn("readTraceRecords")(function* (tracePath: str
     .map((line) => decodeTraceRecordLine(line));
 });
 
-const makeTestLayer = (tracePath: string) =>
+const layerTest = (tracePath: string) =>
   Layer.mergeAll(
     Layer.effect(
       Tracer.Tracer,
@@ -550,7 +550,7 @@ describe("observability", () => {
                 }).pipe(Effect.withSpan("child-span"));
               }).pipe(Effect.withSpan("parent-span"));
 
-              yield* program.pipe(Effect.provide(makeTestLayer(tracePath)));
+              yield* program.pipe(Effect.provide(layerTest(tracePath)));
             }),
           );
 
@@ -597,7 +597,7 @@ describe("observability", () => {
             Effect.exit(
               Effect.interrupt.pipe(
                 Effect.withSpan("interrupt-span"),
-                Effect.provide(makeTestLayer(tracePath)),
+                Effect.provide(layerTest(tracePath)),
               ),
             ),
           );

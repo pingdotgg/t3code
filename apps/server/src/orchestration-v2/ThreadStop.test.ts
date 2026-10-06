@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -27,7 +27,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -38,17 +38,17 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Runs here never reach a provider"),
 } as ProviderAdapterV2Shape;
-const database = SqlitePersistenceMemory;
+const layerDatabase = SqlitePersistence.layerMemory;
 // No effect worker: runs stay unstarted, so Stop ends them without a provider.
-const testLayer = ThreadManagementService.layer.pipe(
+const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      database,
-      ProjectionStore.layer.pipe(Layer.provide(database)),
-      makeOrchestratorV2ReplayLayerWithRegistry(
+      layerDatabase,
+      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProviderReplayHarness.layerWithRegistry(
         { name: "thread-stop" },
-        ProviderAdapterRegistry.makeLayer([adapter]),
-        { databaseLayer: database, runEffectWorker: false },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { databaseLayer: layerDatabase, runEffectWorker: false },
       ),
     ),
   ),
@@ -156,7 +156,8 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     yield* createWatchingThread(parentThreadId, 1);
     yield* send(parentThreadId, "first", "start_immediately");
     const childThreadId = yield* delegate(parentThreadId, "child task");
-    yield* watch(childThreadId, 2);
+    // The parent owns its pull requests; a delegated task cannot watch one.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
     const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
     yield* send(childThreadId, "child follow-up", "queue_after_active");
 
@@ -174,9 +175,6 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     });
     yield* send(parentThreadId, "second", "start_immediately");
     const secondRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
-    const childWatch = (yield* orchestrator.getThreadProjection(childThreadId)).thread
-      .pullRequests?.[0]?.watch;
-    assert.isDefined(childWatch);
 
     const stopCommandId = CommandId.make("stop-parent");
     yield* orchestrator.dispatch({
@@ -209,29 +207,10 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     });
     assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
 
-    // A watch read that raced the Stop cannot wake the stopped child.
-    const lateWake = yield* Effect.exit(
-      orchestrator.dispatch({
-        type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("late-watch-wake"),
-        threadId: childThreadId,
-        ...pullRequest(2),
-        startedAt: childWatch!.startedAt,
-        watch: null,
-        wake: {
-          messageId: MessageId.make("message:late-watch-wake"),
-          text: "Checks passed.",
-          notification: { source: { kind: "monitor" }, outcome: "completed", summary: "#2" },
-        },
-      }),
-    );
-    assert.isTrue(Exit.isFailure(lateWake));
-    assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
-
     // A retried effect stops nothing twice.
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(
@@ -255,7 +234,7 @@ it.effect(
         threadId,
       });
       assert.lengthOf(again.storedEvents, 0);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a run Stop reached cannot delegate or start a watch, even after it ends", () =>
@@ -340,7 +319,7 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       });
     }
     assert.deepEqual((yield* threadState(threadId)).watched, [4]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("thread.stop keeps a restart continuation of the stopped run from starting", () =>
@@ -393,7 +372,7 @@ it.effect("thread.stop keeps a restart continuation of the stopped run from star
       restartContinuationOfRunId: run.id,
     });
     assert.deepEqual(yield* threadState(threadId), { runs: ["cancelled"], watched: [] });
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
@@ -489,7 +468,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         runs: ["completed", "interrupted", "cancelled"],
         watched: [],
       });
-    }).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(TestClock.layer())))),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
@@ -527,7 +506,7 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
     );
     assert.isTrue(Exit.isFailure(walked));
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted"]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
@@ -555,7 +534,7 @@ it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 10))));
     assert.deepEqual(yield* threadState(threadId), { runs: ["completed"], watched: [] });
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is refused", () =>
@@ -601,5 +580,5 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 12))));
     assert.deepEqual(yield* threadState(threadId), { runs: ["running"], watched: [] });
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );

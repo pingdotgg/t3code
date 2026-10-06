@@ -6,7 +6,7 @@ import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/htt
 import * as PullRequestService from "./PullRequestService.ts";
 
 /** The patch is often the largest PR payload and benefits from HTTP compression and flow control. */
-export const pullRequestHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "pullRequests",
   Effect.fnUntraced(function* (handlers) {

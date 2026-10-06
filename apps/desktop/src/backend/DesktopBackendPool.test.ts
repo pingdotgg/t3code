@@ -41,9 +41,7 @@ function makeStubInstance(
   };
 }
 
-function makePoolLayer(
-  labelRef: Ref.Ref<string>,
-): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
+function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
   return DesktopBackendPool.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -144,7 +142,7 @@ describe("DesktopBackendPool", () => {
       Effect.gen(function* () {
         const labelRef = yield* Ref.make("Windows");
         const pool = yield* DesktopBackendPool.DesktopBackendPool.pipe(
-          Effect.provide(makePoolLayer(labelRef)),
+          Effect.provide(layerPool(labelRef)),
         );
         const primary = yield* pool.primary;
 

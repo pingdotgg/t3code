@@ -25,7 +25,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
-import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -196,7 +196,7 @@ const projectCommandUuid = Crypto.Crypto.pipe(
   ),
 );
 
-const ProjectCliRuntimeLive = ProjectServiceLayerLive.pipe(
+const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(
@@ -416,7 +416,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       );
     }
 
-    const offlineRuntimeLayer = ProjectCliRuntimeLive.pipe(
+    const layerOfflineRuntime = layerProjectCliRuntime.pipe(
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
@@ -430,10 +430,10 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
         mode: "offline",
       });
       yield* Console.log(output);
-    }).pipe(Effect.provide(offlineRuntimeLayer));
+    }).pipe(Effect.provide(layerOfflineRuntime));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePaths.layer).pipe(
+      Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

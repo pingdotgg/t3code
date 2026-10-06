@@ -30,7 +30,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -40,9 +40,9 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 
-const TestLayer = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-  SqlitePersistenceMemory,
+const layerTest = Layer.mergeAll(
+  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  SqlitePersistence.layerMemory,
 );
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -330,7 +330,7 @@ it.effect("memory recovery selection includes unfinished items from missing runs
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
-it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
@@ -3762,6 +3762,21 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         (yield* projectionStore.getThreadProjection(sourceThreadId)).messages,
       );
       const targetAfterRollback = yield* projectionStore.getThreadProjection(targetThreadId);
+      // Both shell reads drop the rolled-back run from the source count, while
+      // the fork keeps the prefix it inherited.
+      const shellSnapshot = yield* projectionStore.getShellSnapshot();
+      for (const shell of [
+        yield* projectionStore.getThreadShell(sourceThreadId),
+        shellSnapshot.threads.find((thread) => thread.id === sourceThreadId),
+      ]) {
+        assert.equal(shell?.itemCount, 2);
+      }
+      for (const shell of [
+        yield* projectionStore.getThreadShell(targetThreadId),
+        shellSnapshot.threads.find((thread) => thread.id === targetThreadId),
+      ]) {
+        assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
+      }
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
         view: "activity",
         limit: 2,
