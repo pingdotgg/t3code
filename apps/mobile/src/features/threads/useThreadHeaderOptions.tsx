@@ -110,6 +110,9 @@ export function useThreadHeaderOptions(props: {
   };
   return {
     options,
+    // Header item factories are stabilized, so the native header only re-reads them when
+    // this version changes. Keying on the items keeps the Git menu status live.
+    optionsVersion: layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
     sidebar: false,
     fallback:
       !layout.usesSplitView && !props.usesNativeHeaderGlass ? (
