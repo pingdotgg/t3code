@@ -12,7 +12,6 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -24,6 +23,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_WEBHOOK_PROMPT } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { createModelSelection } from "@t3tools/shared/model";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
@@ -75,6 +75,8 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -126,10 +128,9 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "main",
   startFromOrigin: true,
   existingWorktreePath: "",
-  modelKey: "",
+  modelSelection: null,
   runtimeMode: "full-access",
   interactionMode: "default",
-  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -159,15 +160,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
@@ -814,15 +806,25 @@ function ScheduledTaskEditorDialog({
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
-  // The real model picker is keyed by a `${instanceId}:${model}` string, which
-  // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
-  const activeSelection = draft.modelKey
-    ? splitModelKey(draft.modelKey)
-    : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const activeSelection =
+    draft.modelSelection ??
+    scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
+  const supportedRuntimeModes = activeEntry?.snapshot.supportedRuntimeModes;
+  const compatibleRuntimeModes =
+    supportedRuntimeModes && supportedRuntimeModes.length > 0
+      ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
+      : runtimeModeOptions;
+  // A mode the selected provider does not offer would run as Supervised, so the
+  // dialog shows and saves the provider's first supported mode instead.
+  const runtimeMode = compatibleRuntimeModes.includes(draft.runtimeMode)
+    ? draft.runtimeMode
+    : (compatibleRuntimeModes[0] ?? draft.runtimeMode);
+  const PermissionIcon = runtimeModeConfig[runtimeMode].icon;
   const modelOptionsByInstance = useMemo(
     () => getCustomModelOptionsByInstance(settings, providers, activeInstanceId, activeModel),
     [settings, providers, activeInstanceId, activeModel],
@@ -886,14 +888,6 @@ function ScheduledTaskEditorDialog({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    // Keep the original selection object (with provider options) when the
-    // picker still points at the same instance+model.
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -913,8 +907,8 @@ function ScheduledTaskEditorDialog({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
-      modelSelection,
-      runtimeMode: draft.runtimeMode,
+      modelSelection: selection,
+      runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };
@@ -965,8 +959,7 @@ function ScheduledTaskEditorDialog({
                   setDraft((current) => ({
                     ...current,
                     projectId: "",
-                    modelKey: "",
-                    baseModelSelection: null,
+                    modelSelection: null,
                     baseRef: "main",
                     startFromOrigin: true,
                     existingWorktreePath: "",
@@ -1106,19 +1099,86 @@ function ScheduledTaskEditorDialog({
             </Field>
 
             <Field label="Model">
-              <ProviderModelPicker
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) => {
+                    // Re-picking the current model keeps its options.
+                    if (
+                      activeSelection?.instanceId === instanceId &&
+                      activeSelection.model === model
+                    )
+                      return;
+                    setDraft((current) => ({
+                      ...current,
+                      modelSelection: createModelSelection(instanceId, model),
+                    }));
+                  }}
+                />
+                {activeSelection && activeEntry ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    instanceId={activeSelection.instanceId}
+                    models={activeEntry.models}
+                    model={activeSelection.model}
+                    prompt={draft.prompt}
+                    onPromptChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
+                    modelOptions={activeSelection.options ?? []}
+                    planModeEnabled={settings.planModeEnabled}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDraft((current) => ({
+                        ...current,
+                        modelSelection: createModelSelection(
+                          activeSelection.instanceId,
+                          activeSelection.model,
+                          options,
+                        ),
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            </Field>
+
+            <Field label="Permissions" htmlFor="scheduled-task-permissions">
+              <Select
+                value={runtimeMode}
+                onValueChange={(mode) => {
+                  if (mode) setDraft((current) => ({ ...current, runtimeMode: mode }));
+                }}
+              >
+                <SelectTrigger size="sm" id="scheduled-task-permissions">
+                  <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <SelectValue>{runtimeModeConfig[runtimeMode].label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {compatibleRuntimeModes.map((mode) => {
+                    const option = runtimeModeConfig[mode];
+                    const Icon = option.icon;
+                    return (
+                      <SelectItem key={mode} value={mode}>
+                        <div className="grid gap-0.5">
+                          <span className="inline-flex items-center gap-1.5 font-medium">
+                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                            {option.label}
+                          </span>
+                          <span className="text-xs leading-4 text-muted-foreground">
+                            {option.description}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
             </Field>
 
             <div className="space-y-3">
