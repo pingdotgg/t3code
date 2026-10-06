@@ -7,12 +7,11 @@ import { toOpenCodeFileParts } from "../provider/opencodeRuntime.ts";
 import * as KiloRuntime from "../provider/kilo/KiloRuntime.ts";
 import * as TextGenerationOperations from "./TextGenerationOperations.ts";
 
-const isKiloRuntimeError = Schema.is(KiloRuntime.KiloRuntimeError);
-
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Only prompt construction is shared. Protocol, credentials and lifetime belong to Kilo. */
-export function make(runtime: KiloRuntime.KiloRuntime["Service"], attachmentsDir?: string) {
+export const make = Effect.fn("KiloTextGeneration.make")(function* (attachmentsDir?: string) {
+  const runtime = yield* KiloRuntime.KiloRuntime;
   const run: TextGenerationOperations.Runner = (input) =>
     Effect.gen(function* () {
       const separator = input.modelSelection.model.indexOf("/");
@@ -60,12 +59,10 @@ export function make(runtime: KiloRuntime.KiloRuntime["Service"], attachmentsDir
           ? cause
           : new TextGenerationError({
               operation: input.operation,
-              detail: isKiloRuntimeError(cause)
-                ? cause.message
-                : "Kilo text generation failed. The request was not retried.",
+              detail: "Kilo text generation failed. The request was not retried.",
               cause,
             }),
       ),
     );
   return TextGenerationOperations.fromRunner("KiloTextGeneration", run);
-}
+});

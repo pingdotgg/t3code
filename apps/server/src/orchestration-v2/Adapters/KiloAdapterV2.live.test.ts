@@ -588,7 +588,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           assert.isFalse(seen.slice(before).some((event) => event.type === "app_thread.created"));
         }
         model.control.mode = "json";
-        const textGeneration = KiloTextGeneration.make(runtime);
+        const textGeneration = yield* KiloTextGeneration.make().pipe(
+          Effect.provideService(KiloRuntime.KiloRuntime, runtime),
+        );
         const generated = yield* textGeneration.generateThreadTitle({
           cwd: root,
           modelSelection,

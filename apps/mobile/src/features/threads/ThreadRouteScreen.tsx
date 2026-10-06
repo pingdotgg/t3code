@@ -124,11 +124,13 @@ function ThreadHeader(
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
-    });
+    if (props.hasWorkspaceRoot) {
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: props.onOpenGitInspector,
+      });
+    }
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -547,7 +549,7 @@ function ThreadRouteContent(
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
   const handleOpenGitInspector = useCallback(() => {
-    if (isCloudThread) return;
+    if (isCloudThread || !localWorkspaceEnabled) return;
     if (!fileInspector.supported) {
       if (selectedThread === null) {
         return;
@@ -563,6 +565,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     isCloudThread,
+    localWorkspaceEnabled,
     navigation,
     routeThreadIdentity,
     selectedThread,

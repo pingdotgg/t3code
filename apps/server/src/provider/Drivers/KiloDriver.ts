@@ -269,7 +269,9 @@ export const KiloDriver: ProviderDriver<KiloSettings, KiloDriverEnv> = {
       }),
     );
     if (input.enabled) yield* refresh.pipe(Effect.forkScoped);
-    const textGeneration = KiloTextGeneration.make(runtime, server.attachmentsDir);
+    const textGeneration = yield* KiloTextGeneration.make(server.attachmentsDir).pipe(
+      Effect.provideService(KiloRuntime.KiloRuntime, runtime),
+    );
     return {
       instanceId: input.instanceId,
       driverKind: kind,
