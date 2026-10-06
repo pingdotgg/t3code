@@ -11,6 +11,7 @@ import {
 } from "./model.ts";
 import {
   connectionCatalogDisplayUrl,
+  environmentMcpUrl,
   connectionStatusText,
   connectionStatusTitle,
   presentEnvironmentConnection,
@@ -69,6 +70,27 @@ describe("connection presentation", () => {
 
   it("preserves profile display information without exposing credentials", () => {
     expect(connectionCatalogDisplayUrl(ENTRY)).toBe("https://environment.example.test");
+  });
+
+  it("offers an MCP address only where an MCP client can sign in", () => {
+    expect(environmentMcpUrl({ entry: ENTRY })).toBe("https://environment.example.test/mcp");
+    const withBase = (httpBaseUrl: string): ConnectionCatalogEntry => ({
+      ...ENTRY,
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: TARGET.connectionId,
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          httpBaseUrl,
+          wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+        }),
+      ),
+    });
+    expect(environmentMcpUrl({ entry: withBase("http://127.0.0.1:3773/") })).toBe(
+      "http://127.0.0.1:3773/mcp",
+    );
+    // A plain-http LAN or tailnet address is refused by MCP clients' token checks.
+    expect(environmentMcpUrl({ entry: withBase("http://100.81.102.68:3773") })).toBeNull();
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {
