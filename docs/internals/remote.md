@@ -12,6 +12,10 @@ An environment keeps its ID across server restarts and endpoint changes. Saved
 connections are local to a client profile; the server's identity and state are
 not. A repository identity can correlate clones across environments, but never
 routes work between them. A project and its threads belong to one environment.
+The canonical key follows the `upstream` remote when one exists, so pull request
+features target the repository a fork tracks. A fork also reports its own
+`origin`, and clients group and label by that, so a fork never collapses into a
+checkout of its upstream.
 
 [Environment ID initialization](../../apps/server/src/environment/ServerEnvironment.ts)
 must publish a complete ID atomically. Repair of an empty ID file retains a
