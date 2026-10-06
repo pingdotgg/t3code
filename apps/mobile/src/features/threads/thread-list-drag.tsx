@@ -52,7 +52,6 @@ const PRESS_SLOP = 10;
 const LIFT_SLOP = 6;
 const AUTO_SCROLL_EDGE = 56;
 // Matches the lists' estimatedItemSize for rows LegendList has not measured.
-const ESTIMATED_ROW_HEIGHT = 72;
 
 interface DragLayout {
   readonly sourceKey: string;
@@ -166,11 +165,12 @@ function createDropPolicy(
 function snapshotRows(
   state: LegendListState,
   items: readonly { readonly type: string; readonly key: string }[],
+  estimatedRowHeight: number,
 ) {
   const geometry = completeThreadDragGeometry(
     items.map((item, index) => state.positionByKey(item.key) ?? state.positionAtIndex(index)),
     items.map((item) => state.sizes.get(item.key)),
-    ESTIMATED_ROW_HEIGHT,
+    estimatedRowHeight,
   );
   const rows: ThreadDragRow[] = [];
   const offsets: Record<string, number> = {};
@@ -203,6 +203,8 @@ export function ThreadListDragSurface(props: {
   readonly listRef: RefObject<LegendListRef | null>;
   readonly items: readonly { readonly type: string; readonly key: string }[];
   readonly workingShelfEnabled: boolean;
+  /** The list's `estimatedItemSize`, used for rows it has not measured yet. */
+  readonly estimatedRowHeight: number;
   /** Content hidden under translucent chrome, kept out of the auto-scroll edges.
    * `scrollInsetTop` is how far above zero the list may scroll; it defaults to
    * `top` for native automatic insets and is 0 when the list pads its content. */
@@ -244,7 +246,7 @@ export function ThreadListDragSurface(props: {
     // LegendList's current layout and the scroll offset it actually applied.
     const measure = (current: Drag, state: LegendListState) => {
       current.scroll = state.scroll;
-      const snapshot = snapshotRows(state, latest.current.items);
+      const snapshot = snapshotRows(state, latest.current.items, latest.current.estimatedRowHeight);
       if (snapshot.version === current.geometryVersion) return false;
       const source = snapshot.rows.find((row) => row.key === current.itemKey);
       current.rows = snapshot.rows;
@@ -345,7 +347,11 @@ export function ThreadListDragSurface(props: {
         const list = latest.current.listRef.current;
         if (list === null || drag.current !== null) return;
         const state = list.getState();
-        const snapshot = snapshotRows(state, latest.current.items);
+        const snapshot = snapshotRows(
+          state,
+          latest.current.items,
+          latest.current.estimatedRowHeight,
+        );
         const source = snapshot.rows.find((row) => row.key === itemKey);
         if (source === undefined || (source.section !== "pinned" && source.section !== "active"))
           return;

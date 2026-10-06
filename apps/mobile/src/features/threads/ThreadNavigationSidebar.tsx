@@ -86,6 +86,7 @@ type SidebarListItem =
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
 
 const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
+const SIDEBAR_ESTIMATED_ROW_HEIGHT = 64;
 
 interface ThreadNavigationSidebarProps {
   readonly width: number;
@@ -937,6 +938,7 @@ function ThreadNavigationSidebarPane(
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <ThreadListDragSurface
               listRef={listRef}
+              estimatedRowHeight={SIDEBAR_ESTIMATED_ROW_HEIGHT}
               items={listItems}
               workingShelfEnabled={workingShelfEnabled}
               edgeInsets={nativeDragEdgeInsets}
@@ -949,7 +951,7 @@ function ThreadNavigationSidebarPane(
                     {...dragListProps}
                     data={listItems}
                     drawDistance={500}
-                    estimatedItemSize={64}
+                    estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                     extraData={listExtraData}
                     getItemType={(item) => item.type}
                     itemsAreEqual={sidebarItemsAreEqual}
@@ -1015,6 +1017,7 @@ function ThreadNavigationSidebarPane(
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <ThreadListDragSurface
               listRef={listRef}
+              estimatedRowHeight={SIDEBAR_ESTIMATED_ROW_HEIGHT}
               items={listItems}
               workingShelfEnabled={workingShelfEnabled}
               // The iOS sticky header overlays the padded list.
@@ -1032,7 +1035,7 @@ function ThreadNavigationSidebarPane(
                     {...dragListProps}
                     data={listItems}
                     drawDistance={500}
-                    estimatedItemSize={64}
+                    estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                     extraData={listExtraData}
                     getItemType={(item) => item.type}
                     itemsAreEqual={sidebarItemsAreEqual}

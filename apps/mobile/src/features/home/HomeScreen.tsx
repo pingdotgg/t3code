@@ -981,6 +981,7 @@ export function HomeScreen(props: HomeScreenProps) {
         <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
           <ThreadListDragSurface
             listRef={listRef}
+            estimatedRowHeight={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
             items={threadListV2Items}
             workingShelfEnabled={workingShelfEnabled}
             edgeInsets={dragEdgeInsets}
