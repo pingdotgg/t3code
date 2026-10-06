@@ -186,11 +186,6 @@ function DiffFileHeaderSuffix({
   );
 }
 
-/** Line counts for one file header; re-renders only when its own file changes. */
-function DiffFileHeaderStat({ additions, deletions }: { additions: number; deletions: number }) {
-  return <DiffStatLabel additions={additions} deletions={deletions} />;
-}
-
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -1175,7 +1170,7 @@ export default function DiffPanel({
                           renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
                             const stat = fileStats.get(resolveFileDiffPath(fileDiff));
                             return stat ? (
-                              <DiffFileHeaderStat
+                              <DiffStatLabel
                                 additions={stat.additions}
                                 deletions={stat.deletions}
                               />

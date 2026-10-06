@@ -8,18 +8,10 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type Ref,
-} from "react";
+import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { fnv1a32 } from "~/lib/diffRendering";
+import { fnv1a32, resolveFileDiffPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -140,10 +132,6 @@ export function AnnotatableCodeView({
   const [draftText, setDraftText] = useState("");
 
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
-  const filesByKeyRef = useRef(filesByKey);
-  useLayoutEffect(() => {
-    filesByKeyRef.current = filesByKey;
-  }, [filesByKey]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
       files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
@@ -229,15 +217,15 @@ export function AnnotatableCodeView({
       if (!range) return;
       const item = context.item;
       if (item.type !== "diff") return;
-      const file = filesByKeyRef.current.get(item.id);
-      if (!file) return;
+      // Read from the item, not the file list, so this callback keeps its identity as
+      // patches arrive; the viewer re-applies its options whenever it changes.
       const id = nextFileCommentId();
       const comment = buildDiffReviewComment({
         id,
         sectionId,
         sectionTitle,
-        filePath: file.filePath,
-        fileDiff: file.fileDiff,
+        filePath: resolveFileDiffPath(item.fileDiff),
+        fileDiff: item.fileDiff,
         range,
         text: "",
       });
