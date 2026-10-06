@@ -164,7 +164,8 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
     const now = clock.currentTimeMillisUnsafe();
     tokens = Math.min(
       PLUGIN_VIEW_MESSAGE_BURST,
-      tokens + ((now - refilledAt) * PLUGIN_VIEW_MESSAGES_PER_SECOND) / 1000,
+      // A wall clock that steps back refills nothing rather than draining the bucket.
+      tokens + (Math.max(0, now - refilledAt) * PLUGIN_VIEW_MESSAGES_PER_SECOND) / 1000,
     );
     refilledAt = now;
     if (tokens < 1) return false;

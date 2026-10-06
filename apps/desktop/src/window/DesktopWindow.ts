@@ -661,8 +661,15 @@ export const make = Effect.gen(function* () {
       )
         return;
       event.preventDefault();
+      // Only where it tried to go: a path or query can carry the view's data.
+      const target = URL.parse(event.url);
       void runPromise(
-        logWindowInfo("refused a plugin view navigation", { url: event.url.slice(0, 120) }),
+        logWindowInfo(
+          "refused a plugin view navigation",
+          target === null
+            ? { protocol: "invalid" }
+            : { protocol: target.protocol, host: target.host },
+        ),
       );
     });
 
