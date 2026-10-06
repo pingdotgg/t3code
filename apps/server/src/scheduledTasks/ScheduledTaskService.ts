@@ -1535,7 +1535,26 @@ export const layer = Layer.effect(
         ),
       );
 
-    yield* Stream.runForEach(threadManagement.streamDomainEvents, (event) =>
+    // The live domain-event stream only tails events committed after it
+    // subscribes, and the forked reactor subscribes some time after this
+    // layer is built. Resume from the sequence read before the sweep so an
+    // archive committed in that gap is replayed rather than missed.
+    const reactorCursor = yield* latestEventSeq.pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not read the event cursor for the archive reactor", {
+          cause,
+        }).pipe(Effect.as(Option.none<number>())),
+      ),
+    );
+    const lifecycleEvents = Option.match(reactorCursor, {
+      onNone: () => threadManagement.streamDomainEvents,
+      onSome: (afterSequence) =>
+        threadManagement
+          .streamStoredEventsFrom({ afterSequence })
+          .pipe(Stream.map((stored) => stored.event)),
+    });
+    yield* Stream.runForEach(lifecycleEvents, (event) =>
       event.type === "thread.archived" || event.type === "thread.deleted"
         ? pauseLogged(event.threadId)
         : Effect.void,

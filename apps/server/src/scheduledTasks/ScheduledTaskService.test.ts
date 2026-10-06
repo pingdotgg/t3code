@@ -12,6 +12,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -381,7 +382,7 @@ const updateTestDeps = Layer.mergeAll(
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    streamDomainEvents: Stream.empty,
+    streamStoredEventsFrom: () => Stream.empty,
   }),
   Layer.mock(SecretRequests.SecretRequests)({}),
 );
@@ -777,7 +778,7 @@ const gatedLaunchTestLayer = ScheduledTaskService.layer.pipe(
           }),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
-        streamDomainEvents: Stream.empty,
+        streamStoredEventsFrom: () => Stream.empty,
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
     ),
@@ -1632,7 +1633,12 @@ let sendBarrier: {
 // test steal this test's events.
 const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    streamDomainEvents: domainEvents,
+    streamStoredEventsFrom: () =>
+      domainEvents.pipe(
+        Stream.map(
+          (event) => ({ sequence: 0, commandId: null, event }) satisfies OrchestrationV2StoredEvent,
+        ),
+      ),
     sendToThread: (input) =>
       Effect.gen(function* () {
         sendToThreadCalls += 1;
@@ -1656,10 +1662,11 @@ const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2Do
   });
 
 const boundThreadTestDeps = Layer.mergeAll(
-  SqlitePersistenceMemory,
+  SqlitePersistence.layerMemory,
   NodeCrypto.layer,
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
   boundThreadManagementMock(Stream.never),
 );
 
@@ -1703,6 +1710,7 @@ const boundThreadTestDepsWithoutSqlite = Layer.mergeAll(
   NodeCrypto.layer,
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
   boundThreadManagementMock(Stream.never),
 );
 
@@ -2346,10 +2354,11 @@ it.effect("an upsert whose write lands after a committed pause restarts fresh", 
         const gateArmed = yield* Ref.make(false);
         const deps = yield* Layer.build(
           Layer.mergeAll(
-            SqlitePersistenceMemory,
+            SqlitePersistence.layerMemory,
             NodeCrypto.layer,
             Scheduler.layer,
             Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
             boundThreadManagementMock(Stream.never),
           ),
         );
@@ -2409,7 +2418,7 @@ it.effect("an upsert whose write lands after a committed pause restarts fresh", 
         }
       }),
     );
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a binding-only update on a voided enablement restarts the interval", () =>
@@ -2517,10 +2526,11 @@ it.effect("an enable racing a committed rebind still validates the new binding",
         // gate regardless of layer-merge precedence.
         const deps = yield* Layer.build(
           Layer.mergeAll(
-            SqlitePersistenceMemory,
+            SqlitePersistence.layerMemory,
             NodeCrypto.layer,
             Scheduler.layer,
             Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
             boundThreadManagementMock(Stream.never),
           ),
         );
@@ -2582,7 +2592,7 @@ it.effect("an enable racing a committed rebind still validates the new binding",
         assert.isFalse(after!.enabled);
       }),
     );
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a binding committed while disabled is still caught when enabling", () =>
@@ -2788,6 +2798,7 @@ it.effect("the domain-event reactor pauses tasks on thread archive and delete", 
                 NodeCrypto.layer,
                 Scheduler.layer,
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
                 boundThreadManagementMock(Stream.fromQueue(domainEvents)),
               ),
             ),
@@ -2845,7 +2856,7 @@ it.effect("the domain-event reactor pauses tasks on thread archive and delete", 
         assert.equal(sendToThreadCalls, 0);
       }),
     );
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("the startup sweep leaves a task alone when its thread shell is not reconciled yet", () =>
@@ -2886,7 +2897,7 @@ it.effect("the startup sweep leaves a task alone when its thread shell is not re
     );
     assert.isTrue(kept?.enabled);
     assert.equal(kept?.nextRunAt, "2027-09-09T12:00:00.000Z");
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("the startup sweep pauses enabled tasks whose thread was archived while down", () =>
@@ -2930,5 +2941,5 @@ it.effect("the startup sweep pauses enabled tasks whose thread was archived whil
     assert.isDefined(swept);
     assert.isFalse(swept!.enabled);
     assert.isNull(swept!.nextRunAt);
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

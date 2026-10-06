@@ -78,6 +78,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
@@ -298,15 +299,16 @@ const layerLegacyImportTest = RuntimeLayer.layer.pipe(
   Layer.provide(layerPlatformTest),
 );
 
-const ScheduledTasksTestLayer = ScheduledTaskService.layer.pipe(
-  Layer.provideMerge(TestLayer),
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
+  Layer.provideMerge(layerTest),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(NodeCrypto.layer),
   Layer.provide(Scheduler.layer),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
 );
 
-it.layer(ScheduledTasksTestLayer)("scheduled tasks with real thread lifecycle commands", (it) => {
+it.layer(layerScheduledTasksTest)("scheduled tasks with real thread lifecycle commands", (it) => {
   it.effect("archive pauses bound tasks; unarchive requires an explicit schedule resume", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

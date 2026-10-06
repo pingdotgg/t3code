@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 
@@ -44,7 +44,7 @@ describe("059_ScheduledTasksEnabledSeq", () => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 56 });
+      yield* runMigrations({ toMigrationInclusive: 58 });
       // A thread archived (and later unarchived) before the upgrade leaves an
       // archive event behind; a NULL enabled_seq would compare as older than
       // it, so the startup sweep would pause a task the user never touched.
@@ -70,7 +70,7 @@ describe("059_ScheduledTasksEnabledSeq", () => {
         SELECT sequence FROM orchestration_events WHERE event_id = 'archive'
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 57 });
+      yield* runMigrations({ toMigrationInclusive: 59 });
       const rows = yield* sql<{ readonly task_id: string; readonly enabled_seq: number | null }>`
         SELECT task_id, enabled_seq FROM scheduled_tasks ORDER BY task_id
       `;
