@@ -44,18 +44,21 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       );
       const unrelated = "unrelated.json";
       yield* fs.writeFileString(`${directory}/${unrelated}`, "{}");
+      // Starts with the store id but is not an entry file.
+      const prefixed = "pr-v2-backup.json";
+      yield* fs.writeFileString(`${directory}/${prefixed}`, "{}");
       const justExpired = Duration.sum(
         PullRequestReadCache.ENTRY_FILE_MAX_AGE,
         Duration.seconds(1),
       );
-      yield* ageFiles(directory, [stale!, revisions!, unrelated], justExpired);
+      yield* ageFiles(directory, [stale!, revisions!, unrelated, prefixed], justExpired);
       yield* ageFiles(directory, [fresh!], PullRequestReadCache.ENTRY_FILE_MAX_AGE);
 
       yield* PullRequestReadCache.pruneExpiredEntryFiles(directory);
 
       assert.deepStrictEqual(
         (yield* fs.readDirectory(directory)).toSorted(),
-        [fresh!, revisions!, unrelated].toSorted(),
+        [fresh!, revisions!, unrelated, prefixed].toSorted(),
       );
     }),
   );

@@ -27,6 +27,8 @@ const CONCURRENT_READS = 512;
 // Persistence prefixes every entry key with the store id, so each entry file
 // name starts with it. The scope `revisions` file does not.
 const STORE_ID = "pr-v2";
+// An entry file is the store id followed by the SHA-256 hex digest of its key.
+const ENTRY_FILE_NAME = new RegExp(`^${STORE_ID}[0-9a-f]{64}$`);
 /**
  * Entries expire a minute after they are written, and a write sets the file's
  * mtime. A file untouched for a day is long expired; the day only leaves slack
@@ -186,7 +188,7 @@ export const pruneExpiredEntryFiles = Effect.fn("PullRequestReadCache.pruneExpir
     const path = yield* Path.Path;
     const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(ENTRY_FILE_MAX_AGE);
     const entries = (yield* fileSystem.readDirectory(directory)).filter((name) =>
-      name.startsWith(STORE_ID),
+      ENTRY_FILE_NAME.test(name),
     );
     // One file at a time, and `partition` visits every file, so one locked file
     // does not stop the sweep.
