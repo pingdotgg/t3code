@@ -353,6 +353,15 @@ describe("buildBreakdownRows", () => {
       "codex\u001fgpt-6-sol",
     ]);
   });
+  it("finds a model used only outside threads", () => {
+    // Cursor's "auto" usage has no thread; its project opens to Not in a thread.
+    const rows = buildBreakdownRows(input({ query: "auto" }));
+    expect(rows.map((row) => (row.kind === "item" ? row.key : row.kind))).toEqual([
+      UNKNOWN_PROJECT,
+      "leaf",
+    ]);
+  });
+
   it("groups by environment and opens each to its own projects", () => {
     const both = buildExplorerData([
       source(),

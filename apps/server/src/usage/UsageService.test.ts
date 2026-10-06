@@ -225,12 +225,21 @@ describe("UsageService", () => {
       const threadId = ThreadId.make("thread-1");
       const orbit = ProjectId.make("project-orbit");
       const atlas = ProjectId.make("project-atlas");
-      const { grouped, plain } = yield* Effect.gen(function* () {
+      const { grouped, plain, relabeled } = yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
-        return {
-          grouped: yield* service.readSummary({ ...WINDOW, groupByThread: true }),
-          plain: yield* service.readSummary(WINDOW),
-        };
+        const grouped = yield* service.readSummary({ ...WINDOW, groupByThread: true });
+        const plain = yield* service.readSummary(WINDOW);
+        // The description is edited while the sub-agent keeps working.
+        yield* Effect.promise(async () => {
+          const agent = NodePath.join(projects, "s-t3", "subagents", "agent-a1");
+          await NodeFSP.writeFile(
+            `${agent}.meta.json`,
+            encodeUnknownJsonString({ agentType: "Explore", description: "Map the REST API" }),
+          );
+          await NodeFSP.appendFile(`${agent}.jsonl`, line("s-t3", "/work/orbit/.wt/feature", 6, 1));
+        });
+        const relabeled = yield* service.readSummary({ ...WINDOW, groupByThread: true });
+        return { grouped, plain, relabeled };
       }).pipe(
         Effect.provide(
           layerService({
@@ -293,6 +302,10 @@ describe("UsageService", () => {
           { projectId: atlas, title: "atlas" },
           { projectId: orbit, title: "orbit" },
         ],
+      );
+      assert.strictEqual(
+        relabeled.threads?.find((thread) => thread.subagent)?.title,
+        "Map the REST API",
       );
       // Without the option the summary keeps its original shape.
       assert.strictEqual(plain.threads, undefined);

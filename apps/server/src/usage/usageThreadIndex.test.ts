@@ -121,6 +121,26 @@ describe("UsageThreadIndex", () => {
     expect(threads[gone.thread!]?.projectId).toBe(ProjectId.make("gone"));
   });
 
+  it("matches Windows folders regardless of letter case and slash", () => {
+    const win = ProjectId.make("win");
+    const index = new UsageThreadIndex({
+      ...EMPTY_ATTRIBUTION,
+      projects: [
+        { projectId: win, title: "app", workspaceRoot: "C:\\Work\\App\\", deleted: false },
+      ],
+    });
+    const group = index.groupFor(source({ sessionId: "w", cwd: "c:/work/app/src" }));
+    const unc = new UsageThreadIndex({
+      ...EMPTY_ATTRIBUTION,
+      projects: [
+        { projectId: win, title: "app", workspaceRoot: "\\\\Server\\Share\\App", deleted: false },
+      ],
+    });
+    const shared = unc.groupFor(source({ sessionId: "u", cwd: "\\\\server\\share\\app\\lib" }));
+    expect(index.finish().threads[group.thread!]?.projectId).toBe(win);
+    expect(unc.finish().threads[shared.thread!]?.projectId).toBe(win);
+  });
+
   it("lets a project rooted at / claim every folder no deeper project does", () => {
     const everything = ProjectId.make("root");
     const index = new UsageThreadIndex({

@@ -542,9 +542,11 @@ export const make = Effect.gen(function* () {
       const records = dedupeWithinFile([...base, ...parsed.records], seen);
       const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
       const cwd = parsed.cwd ?? (parsed.resumed ? (cached?.cwd ?? null) : null);
+      // Re-read with the transcript, so a description written or edited
+      // since the last parse shows up.
       const label =
         provider === "claude" && claudeSubagentId(filePath) !== null
-          ? (cached?.label ?? (yield* readSubagentLabel(filePath)))
+          ? yield* readSubagentLabel(filePath)
           : null;
 
       return {

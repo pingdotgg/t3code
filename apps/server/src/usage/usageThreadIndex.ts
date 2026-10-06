@@ -10,6 +10,7 @@ import type {
   UsageProviderKind,
   UsageThread,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 import type { UsageBucketGroup } from "./usageAggregation.ts";
 
@@ -75,10 +76,6 @@ export function claudeSubagentId(filePath: string): string | null {
   return match?.[1] ?? null;
 }
 
-function trimTrailingSeparators(path: string): string {
-  return path.length > 1 ? path.replace(/[\\/]+$/, "") : path;
-}
-
 export class UsageThreadIndex {
   readonly #attribution: UsageAttributionIndex;
   readonly #threads: UsageThread[] = [];
@@ -96,7 +93,7 @@ export class UsageThreadIndex {
     // project keeps its threads but only claims folders no live project does.
     this.#roots = attribution.projects
       .map((project) => ({
-        root: trimTrailingSeparators(project.workspaceRoot),
+        root: normalizeProjectPathForComparison(project.workspaceRoot),
         projectId: project.projectId,
         deleted: project.deleted,
       }))
@@ -196,7 +193,8 @@ export class UsageThreadIndex {
   }
 
   #projectFor(cwd: string): ProjectId | null {
-    const path = trimTrailingSeparators(cwd);
+    // Windows drive and UNC paths compare case-insensitively, with either slash.
+    const path = normalizeProjectPathForComparison(cwd);
     for (const { root, projectId } of this.#roots) {
       // A root that already ends in a separator (`/`, `C:\`) adds no second one.
       const prefix = /[\\/]$/.test(root) ? root : null;

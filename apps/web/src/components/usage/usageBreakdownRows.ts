@@ -156,6 +156,9 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
     }
   }
   const threadMatches = (key: string) => search === "" || matchedThreads.has(key);
+  // Usage no thread holds can still match by model.
+  const unthreadedMatches = (fact: UsageFact) =>
+    fact.thread === null && matchesQuery(fact.model, search);
 
   // Per-thread totals for a scope, computed once however many rows read them.
   const scopes = new WeakMap<readonly UsageFact[], ScopeThreads>();
@@ -182,7 +185,10 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
       if (keyFor(dim, fact, tree) !== key) return false;
       switch (dim) {
         case "project":
-          return fact.thread !== null && threadMatches(tree.rootOf(fact.thread));
+          return (
+            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread))) ||
+            unthreadedMatches(fact)
+          );
         case "provider":
           return (
             matchesQuery(fact.model, search) ||
@@ -194,7 +200,8 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
         case "environment":
           return (
             matchesQuery(nameOf("project", fact.project), search) ||
-            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread)))
+            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread))) ||
+            unthreadedMatches(fact)
           );
         case "thread":
           return false;
@@ -334,7 +341,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
     parentTotal: number,
     shareOf: string,
   ) => {
-    if (search !== "") return;
+    if (search !== "" && !scope.some(unthreadedMatches)) return;
     const none = foldFacts(scope, (fact) => (fact.thread === null ? "none" : null)).get("none");
     if (none === undefined) return;
     rows.push({

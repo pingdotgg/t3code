@@ -310,7 +310,9 @@ export async function readTranscriptRecords(
         if (record !== null) out.push(record);
         return;
       }
-      if (!mightCarryUsage(line, provider)) return;
+      // Until a Claude session's folder is known, any record naming it is read.
+      const wantsCwd = provider === "claude" && session.cwd === "" && line.includes('"cwd"');
+      if (!mightCarryUsage(line, provider) && !wantsCwd) return;
       if (provider === "grok") {
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
