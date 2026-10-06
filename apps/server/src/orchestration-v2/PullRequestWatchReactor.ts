@@ -91,6 +91,44 @@ interface LastRead {
 
 const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
 
+/**
+ * Why a watch ended. `stopped` is anything outside this reactor: the agent unwatched, the user
+ * pressed Stop, or the thread settled, archived, or was deleted between passes.
+ */
+type WatchEndReason =
+  | "merged"
+  | "closed"
+  | "unreadable"
+  | "comment-limit"
+  | "settled"
+  | "subagent"
+  | "stopped";
+
+/**
+ * What one watch did while this server ran, logged once when it ends so we can see how long
+ * watches stay quiet. Kept in memory: a watch older than the server process only has partial
+ * numbers, and one that ends while the server is down, or starts and ends between two passes,
+ * is not logged.
+ */
+interface WatchLife {
+  readonly threadId: string;
+  readonly pullRequest: string;
+  readonly startedAt: number;
+  /** The head commit the last successful read saw. */
+  readonly headSha: string | null;
+  /** When a pass last saw the head commit move, or the start. */
+  readonly pushedAt: number;
+  /** Longest time between pushes, not counting the time since the last one. */
+  readonly longestQuietMs: number;
+  readonly wakes: number;
+  readonly reads: number;
+}
+
+const lifeKey = ({ thread, link, watch }: WatchTarget) =>
+  `${thread.id} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+
+const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
+
 const snapshotFingerprint = ({ link }: WatchTarget) => {
   const snapshot = link.snapshot;
   return snapshot === null
@@ -136,7 +174,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
  * of a project that watch it, and skips one whose sync snapshot has not moved while nothing is
  * in flight.
  * Settling or archiving a thread ends its watches, and a merged or closed pull request ends
- * its watch.
+ * its watch. Each ended watch is logged once with why it ended and how long it went without
+ * a push, for debugging watches that live too long.
  */
 export class PullRequestWatchReactor extends Context.Service<
   PullRequestWatchReactor,
@@ -153,6 +192,51 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
+  const bootedAt = yield* Clock.currentTimeMillis;
+  const lives = new Map<string, WatchLife>();
+
+  const lifeOf = (target: WatchTarget): WatchLife => {
+    const existing = lives.get(lifeKey(target));
+    if (existing !== undefined) return existing;
+    const startedAt = Date.parse(target.watch.startedAt);
+    const life: WatchLife = {
+      threadId: target.thread.id,
+      pullRequest: threadPullRequestKeyOf(target.link),
+      startedAt,
+      headSha: target.watch.headSha,
+      pushedAt: startedAt,
+      longestQuietMs: 0,
+      wakes: 0,
+      reads: 0,
+    };
+    lives.set(lifeKey(target), life);
+    return life;
+  };
+  const woke = (target: WatchTarget) =>
+    Effect.sync(() => {
+      const life = lifeOf(target);
+      lives.set(lifeKey(target), { ...life, wakes: life.wakes + 1 });
+    });
+
+  const reportEnd = (key: string, life: WatchLife, reason: WatchEndReason) =>
+    Effect.gen(function* () {
+      lives.delete(key);
+      const now = yield* Clock.currentTimeMillis;
+      const quietMs = now - life.pushedAt;
+      yield* Effect.logInfo("pull request watch ended", {
+        threadId: life.threadId,
+        pullRequest: life.pullRequest,
+        reason,
+        minutes: minutes(now - life.startedAt),
+        quietMinutes: minutes(quietMs),
+        longestQuietMinutes: minutes(Math.max(life.longestQuietMs, quietMs)),
+        wakes: life.wakes,
+        reads: life.reads,
+        partial: life.startedAt < bootedAt,
+      });
+    });
+  const ended = (target: WatchTarget, reason: WatchEndReason) =>
+    Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   // Reads in a row that failed, per pull request. Kept in memory: a restart only delays the stop.
   const readFailures = new Map<string, number>();
@@ -205,7 +289,11 @@ export const make = Effect.gen(function* () {
         outcome: "failed",
         summary: `#${target.link.number}: stopped watching, could not read it`,
       },
-    }).pipe(Effect.catch(() => record(target, null)));
+    }).pipe(
+      Effect.tap(() => woke(target)),
+      Effect.catch(() => record(target, null)),
+      Effect.tap(() => ended(target, "unreadable")),
+    );
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
     function* (key: string, reference: PullRequestRef, activity: PullRequestActivity) {
@@ -269,16 +357,22 @@ export const make = Effect.gen(function* () {
         outcome: "updated",
         summary: `#${target.link.number}: closed, stopped watching`,
       },
-    });
+    }).pipe(
+      Effect.tap(() => woke(target)),
+      Effect.tap(() => ended(target, "closed")),
+    );
 
-  /** Watches that end without a host read; the rest are read once per pull request. */
-  const endsWithoutRead = ({ thread, link }: WatchTarget) =>
+  /** Why a watch ends without a host read; the rest are read once per pull request. */
+  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
     // A merged pull request cannot reopen. Settling and archiving end watches, and a subagent
     // cannot start one; a watch left from before those rules ends here.
-    link.snapshot?.state === "merged" ||
-    thread.settledOverride === "settled" ||
-    thread.settledAt !== null ||
-    thread.lineage.relationshipToParent === "subagent";
+    link.snapshot?.state === "merged"
+      ? "merged"
+      : thread.settledOverride === "settled" || thread.settledAt !== null
+        ? "settled"
+        : thread.lineage.relationshipToParent === "subagent"
+          ? "subagent"
+          : undefined;
 
   /**
    * Runs one thread's step for each thread in a group, so one refusal does not skip the rest.
@@ -332,10 +426,26 @@ export const make = Effect.gen(function* () {
     }
     readFailures.delete(group.key);
     const [detail, activity] = read.value;
+    const headSha = detail.headSha ?? null;
+    for (const target of group.targets) {
+      const life = lifeOf(target);
+      // The first read only learns the head, so it is not a push.
+      const pushed = life.headSha !== null && headSha !== life.headSha;
+      lives.set(lifeKey(target), {
+        ...life,
+        headSha,
+        reads: life.reads + 1,
+        ...(pushed
+          ? { pushedAt: now, longestQuietMs: Math.max(life.longestQuietMs, now - life.pushedAt) }
+          : {}),
+      });
+    }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
       return yield* eachTarget(group, (target) =>
-        detail.state === "closed" ? closed(target) : record(target, null),
+        detail.state === "closed"
+          ? closed(target)
+          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
 
@@ -364,6 +474,9 @@ export const make = Effect.gen(function* () {
             headSha: report.next.headSha,
             report,
           }),
+        ).pipe(
+          Effect.tap(() => woke(target)),
+          Effect.tap(() => (report.exhausted ? ended(target, "comment-limit") : Effect.void)),
         );
       }
       return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
@@ -377,11 +490,20 @@ export const make = Effect.gen(function* () {
         link.watch === undefined ? [] : [{ thread, link, watch: link.watch }],
       ),
     );
+    // A watch seen last pass and gone now was ended outside this reactor.
+    const present = new Set(targets.map(lifeKey));
+    yield* Effect.forEach(
+      [...lives].filter(([key]) => !present.has(key)),
+      ([key, life]) => reportEnd(key, life, "stopped"),
+      { discard: true },
+    );
+    for (const target of targets) lifeOf(target);
     const byPullRequest = new Map<string, Array<WatchTarget>>();
-    const ending: Array<WatchTarget> = [];
+    const ending: Array<readonly [WatchTarget, WatchEndReason]> = [];
     for (const target of targets) {
-      if (endsWithoutRead(target)) {
-        ending.push(target);
+      const reason = endsWithoutRead(target);
+      if (reason !== undefined) {
+        ending.push([target, reason]);
         continue;
       }
       // Grouped per project too: each project reads through its own checkout, so one that cannot
@@ -399,8 +521,9 @@ export const make = Effect.gen(function* () {
     }
     yield* Effect.forEach(
       ending,
-      (target) =>
+      ([target, reason]) =>
         record(target, null).pipe(
+          Effect.tap(() => ended(target, reason)),
           Effect.catchCause(
             logFailure("pull request watch stop failed", {
               threadId: target.thread.id,
