@@ -552,10 +552,13 @@ const layerBase: Layer.Layer<
               };
             }
 
+            // The checkpoint capture enqueued below decides how a run that
+            // settles here finalizes, so it must be visible to normalization.
             const normalized = yield* normalizeEvents(
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
                 : input.events,
+              input.effects,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
