@@ -607,7 +607,8 @@ function SnoozeMenuButton(props: {
                 closeOnClick={false}
                 aria-label={`Remove ${preset.label} from favorites`}
                 label={`Remove ${preset.label} from favorites`}
-                className="size-7 justify-center px-0 text-muted-foreground"
+                variant="ghost"
+                className="size-7 min-h-7 w-7 justify-center"
                 onClick={(event) => {
                   event.stopPropagation();
                   updateSnoozeFavorites((favorites) => removeSnoozeFavorite(favorites, favorite));
