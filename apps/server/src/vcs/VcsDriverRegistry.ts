@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as JjVcsDriver from "./JjVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
@@ -38,6 +39,7 @@ export class VcsDriverRegistry extends Context.Service<
       input: VcsDriverResolveInput,
     ) => Effect.Effect<VcsDriverHandle | null, VcsError>;
     readonly resolve: (input: VcsDriverResolveInput) => Effect.Effect<VcsDriverHandle, VcsError>;
+    readonly invalidate: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/vcs/VcsDriverRegistry") {}
 
@@ -70,8 +72,10 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
+  const jj = yield* JjVcsDriver.makeVcsDriver;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
+    jj,
   };
 
   const get: VcsDriverRegistry["Service"]["get"] = (kind) => {
@@ -115,6 +119,11 @@ export const make = Effect.gen(function* () {
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
+    // jj is probed first because a colocated repo answers yes to both probes, and probing git first would write git worktrees into a jj repo.
+    const jjDetected = yield* detectWithDriver("jj", jj, input.cwd);
+    if (jjDetected) {
+      return jjDetected;
+    }
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
@@ -209,6 +218,12 @@ export const make = Effect.gen(function* () {
     get,
     detect,
     resolve,
+    invalidate: (cwd) =>
+      Effect.all([
+        Cache.invalidate(detectionCache, detectionCacheKey({ cwd, requestedKind: "auto" })),
+        Cache.invalidate(detectionCache, detectionCacheKey({ cwd, requestedKind: "git" })),
+        Cache.invalidate(detectionCache, detectionCacheKey({ cwd, requestedKind: "jj" })),
+      ]).pipe(Effect.asVoid),
   });
 });
 

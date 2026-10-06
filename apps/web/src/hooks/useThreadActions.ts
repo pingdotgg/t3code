@@ -4,12 +4,14 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
@@ -433,6 +435,20 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
+      const terminology = resolveVcsTerminology(
+        threadProject
+          ? Option.getOrNull(
+              AsyncResult.value(
+                appAtomRegistry.get(
+                  vcsEnvironment.status({
+                    environmentId: threadRef.environmentId,
+                    input: { cwd: threadProject.workspaceRoot },
+                  }),
+                ),
+              ),
+            )
+          : null,
+      );
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -472,10 +488,10 @@ export function useThreadActions() {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
-              "This thread is the only one linked to this worktree:",
+              `This thread is the only one linked to this ${terminology.workspaceNoun}:`,
               displayWorktreePath ?? orphanedWorktreePath,
               "",
-              "Delete the worktree too?",
+              `Delete the ${terminology.workspaceNoun} too?`,
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -581,8 +597,8 @@ export function useThreadActions() {
           stackedThreadToast({
             type: "error",
             title: removalFailed
-              ? "Failed to delete worktree"
-              : "Worktree deleted, but Git status refresh failed",
+              ? `Failed to delete ${terminology.workspaceNoun}`
+              : `${terminology.workspaceNounTitle} deleted, but ${terminology.systemName} status refresh failed`,
             description: removalFailed
               ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
               : message,

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { CheckIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -57,7 +58,8 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (typeof value === "string") {
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
-      return resolveEnvModeLabel(value);
+      // The inheritance preview is VCS-agnostic: it has no project in hand.
+      return resolveEnvModeLabel(value, DEFAULT_VCS_TERMINOLOGY);
     }
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];

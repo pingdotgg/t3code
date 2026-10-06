@@ -5,6 +5,7 @@ import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { useBranches } from "./queries";
 import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
+import { useVcsTerminology } from "./vcs";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
@@ -30,6 +31,11 @@ export function useSelectedThreadGitState() {
         }),
   );
 
+  const vcsTerminology = useVcsTerminology(
+    selectedThread?.environmentId ?? null,
+    selectedThreadCwd,
+  );
+
   const selectedThreadBranchTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
@@ -49,6 +55,7 @@ export function useSelectedThreadGitState() {
 
   return {
     gitOperationLabel: gitActionState.currentLabel,
+    vcsTerminology,
     sourceControlDiscovery,
     selectedThreadBranches,
     selectedThreadBranchesLoading: selectedThreadBranchState.isPending,

@@ -94,6 +94,10 @@ import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { vcsEnvironment } from "../../state/vcs";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -334,6 +338,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     });
   }, [navigation, props.environmentId, props.selectedThread.id]);
   const insets = useSafeAreaInsets();
+  // Same (environment, cwd) key the git sheets use, so this reads the shared
+  // status atom rather than opening a second stream.
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const vcsStatus = useEnvironmentQuery(
+    selectedThread === null || selectedThreadCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        }),
+  );
+  const vcsTerminology = resolveVcsTerminology(vcsStatus.data);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can swallow the IME hide callbacks when the app is backgrounded
@@ -469,7 +486,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree
+          ? `Setting up ${vcsTerminology.workspaceNoun}…`
+          : "Starting…",
       };
     }
     if (props.creationState?.kind === "failed") {

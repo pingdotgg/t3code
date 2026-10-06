@@ -4,7 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 
 import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
-import { vcsEnvironment } from "../state/vcs";
+import { useVcsTerminology, vcsEnvironment } from "../state/vcs";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { resolveBranchTriggerLabel, sanitizeNewRefName } from "./BranchToolbar.logic";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -32,6 +32,7 @@ export function WorktreeBaseBranchPicker({
   id?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const terminology = useVcsTerminology(environmentId, cwd);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const branches = usePaginatedBranches({
@@ -56,6 +57,7 @@ export function WorktreeBaseBranchPicker({
     resolvedActiveBranch: value || null,
     resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
     startFromOrigin,
+    terminology,
   });
   const branchByName = useMemo(
     () => new Map(branches.refs.map((branch) => [branch.name, branch])),
@@ -78,6 +80,7 @@ export function WorktreeBaseBranchPicker({
   };
   return (
     <BranchPicker
+      terminology={terminology}
       items={items}
       filteredItems={items}
       value={value || null}
