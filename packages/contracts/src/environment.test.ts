@@ -14,18 +14,6 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
-  it.each([undefined, false, true])("preserves subagent interrupt support as %s", (supported) => {
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: {
-          ...descriptor.capabilities,
-          ...(supported === undefined ? {} : { subagentInterrupt: supported }),
-        },
-      }).capabilities.subagentInterrupt,
-    ).toBe(supported);
-  });
-
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {

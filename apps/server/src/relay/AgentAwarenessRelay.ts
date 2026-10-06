@@ -105,7 +105,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "runtime-request.updated":
     case "subagent.updated":
     case "provider-thread.updated":
-    case "subagent.interrupt-requested":
       return true;
     case "thread.settled":
     case "thread.unsettled":

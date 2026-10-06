@@ -591,20 +591,6 @@ export const layer: Layer.Layer<
             .pipe(Effect.mapError(mapWriteError));
           return result.storedEvents;
         }).pipe(
-          (write) => {
-            const event = input.event;
-            const parentThreadId =
-              event.type === "subagent.updated"
-                ? event.subagent.threadId
-                : event.type === "node.updated" && event.node.kind === "subagent"
-                  ? event.node.threadId
-                  : event.type === "turn_item.updated" && event.turnItem.type === "subagent"
-                    ? event.turnItem.threadId
-                    : undefined;
-            return parentThreadId === undefined
-              ? write
-              : threadCommands.withLock(parentThreadId, write);
-          },
           Effect.flatMap((storedEvents) =>
             storedEvents.length === 0 || input.event.type !== "subagent.updated"
               ? Effect.succeed(storedEvents)

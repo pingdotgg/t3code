@@ -1684,7 +1684,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("does not treat read state or subagent interrupt requests as thread activity", () =>
+  it.effect("does not treat visited or marked-unread state as thread activity", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const createdAt = yield* DateTime.now;
@@ -1750,21 +1750,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const markedUnread = yield* projectionStore.getThreadProjection(threadId);
       assert.isNull(markedUnread.thread.lastVisitedAt);
       assert.deepEqual(markedUnread.thread.updatedAt, createdAt);
-
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-read-state:subagent-interrupt"),
-        type: "subagent.interrupt-requested",
-        threadId,
-        occurredAt: DateTime.add(createdAt, { seconds: 3 }),
-        payload: NodeId.make("subagent:projection-read-state"),
-      });
-
-      const interrupted = yield* projectionStore.getThreadProjection(threadId);
-      assert.deepEqual(interrupted.thread.updatedAt, createdAt);
-      const shell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (entry) => entry.id === threadId,
-      );
-      assert.deepEqual(shell?.updatedAt, createdAt);
     }),
   );
 
