@@ -37,54 +37,12 @@ function isToolUpdated(input: ThreadLiveEvent): boolean {
 }
 
 function stableToolCallIdentity(input: ThreadLiveEvent): string | null {
-  return input.event.type === "turn-item.updated" ? input.event.payload.id : null;
+  return input.event.type === "turn-item.updated" && input.event.payload.id
+    ? `${input.event.threadId}\u0000${input.event.runId ?? ""}\u0000${input.event.payload.id}`
+    : null;
 }
 
-/**
- * Retain only the latest in-flight update for each stable tool-call id in a
- * live run. Item IDs distinguish parallel calls with the same label.
- * Survivors remain in sequence order; terminal updates are never discarded.
- */
-export function coalesceLiveToolUpdatedEvents(
-  events: ReadonlyArray<ThreadLiveEvent>,
-): ReadonlyArray<ThreadLiveEvent> {
-  const survivors: Array<ThreadLiveEvent> = [];
-  let pendingUpdates: Array<ThreadLiveEvent> = [];
-
-  const flushUpdates = () => {
-    const seen = new Set<string>();
-    const latestUpdates: Array<ThreadLiveEvent> = [];
-    for (let index = pendingUpdates.length - 1; index >= 0; index -= 1) {
-      const event = pendingUpdates[index]!;
-      const identity = stableToolCallIdentity(event);
-      const key = identity
-        ? `${event.event.threadId}\u0000${event.event.runId ?? ""}\u0000${identity}`
-        : null;
-      if (key && seen.has(key)) {
-        continue;
-      }
-      if (key) {
-        seen.add(key);
-      }
-      latestUpdates.push(event);
-    }
-    latestUpdates.reverse();
-    survivors.push(...latestUpdates);
-    pendingUpdates = [];
-  };
-
-  for (const event of events) {
-    if (isToolUpdated(event)) {
-      pendingUpdates.push(event);
-      continue;
-    }
-    flushUpdates();
-    survivors.push(event);
-  }
-  flushUpdates();
-  return survivors;
-}
-
+/** Retain the newest running tool update per call; lifecycle events flush the window. */
 export const makeThreadLiveEventCoalescer = <E = never>(options?: {
   readonly coalesceWindow?: Duration.Input;
   readonly maxItems?: number;
@@ -100,7 +58,7 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
     >();
     const mutex = yield* Semaphore.make(1);
     const coalesceWindow = options?.coalesceWindow ?? COALESCE_WINDOW;
-    let pendingUpdates: Array<RetainedLiveItem<ThreadLiveEvent>> = [];
+    const pendingUpdates = new Map<string, RetainedLiveItem<ThreadLiveEvent>>();
     let windowGeneration = 0;
     let windowFiber: Fiber.Fiber<void, never> | null = null;
     let closed = false;
@@ -115,14 +73,11 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
     });
 
     const flushPending = Effect.fn("ThreadLiveEventCoalescer.flushPending")(function* () {
-      if (pendingUpdates.length === 0) {
+      if (pendingUpdates.size === 0) {
         return;
       }
-      const items = yield* budget.replace(
-        pendingUpdates,
-        coalesceLiveToolUpdatedEvents(pendingUpdates.map((item) => item.value)),
-      );
-      pendingUpdates = [];
+      const items = Array.from(pendingUpdates.values());
+      pendingUpdates.clear();
       yield* Queue.offerAll(output, items);
     }, Effect.uninterruptible);
 
@@ -140,7 +95,6 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
             }
           }),
         ),
-        Effect.catchTags({ LiveStreamBufferError: () => Effect.void }),
       );
 
     // Keep each source batch together so a synchronization marker cannot pass
@@ -154,18 +108,29 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
           (input) =>
             Effect.gen(function* () {
               yield* budget.check;
-              if (input.kind === "event") {
-                yield* budget.retain(input).pipe(
-                  Effect.tap((item) => Effect.sync(() => pendingUpdates.push(item))),
+              const key =
+                input.kind === "event" && isToolUpdated(input)
+                  ? stableToolCallIdentity(input)
+                  : null;
+              if (input.kind === "event" && key !== null) {
+                const startsWindow = pendingUpdates.size === 0;
+                const previous = pendingUpdates.get(key);
+                // Charge only the newest full update for this call. Waiting until
+                // flush to coalesce can overflow on data we would discard anyway.
+                yield* budget.replace(previous ? [previous] : [], [input]).pipe(
+                  Effect.tap(([item]) =>
+                    Effect.sync(() => {
+                      pendingUpdates.delete(key);
+                      pendingUpdates.set(key, item!);
+                    }),
+                  ),
                   Effect.uninterruptible,
                 );
-              }
-              if (input.kind === "event" && isToolUpdated(input)) {
-                if (pendingUpdates.length === 1) {
+                if (startsWindow) {
                   const generation = ++windowGeneration;
                   windowFiber = yield* Effect.forkIn(flushWindow(generation), coalescerScope);
                 }
-                if (pendingUpdates.length >= MAX_PENDING_UPDATES) {
+                if (pendingUpdates.size >= MAX_PENDING_UPDATES) {
                   yield* cancelWindow();
                   windowGeneration += 1;
                   yield* flushPending();
@@ -178,12 +143,10 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
               // A non-update event closes the run immediately. The coalescer keeps
               // that boundary after the final update from the run.
               yield* flushPending();
-              if (input.kind === "synchronized") {
-                yield* budget.retain({ kind: "synchronized" as const }).pipe(
-                  Effect.flatMap((marker) => Queue.offer(output, marker)),
-                  Effect.uninterruptible,
-                );
-              }
+              yield* budget.retain(input).pipe(
+                Effect.flatMap((item) => Queue.offer(output, item)),
+                Effect.uninterruptible,
+              );
             }),
           { discard: true },
         ),
@@ -199,8 +162,8 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
           closed = true;
           windowGeneration += 1;
           yield* cancelWindow();
-          budget.release(pendingUpdates);
-          pendingUpdates = [];
+          budget.release(pendingUpdates.values());
+          pendingUpdates.clear();
           budget.release(yield* Queue.clear(output).pipe(Effect.orElseSucceed(() => [])));
           if (cause) {
             yield* Queue.failCause(output, cause);
