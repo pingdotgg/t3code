@@ -1,7 +1,7 @@
 /**
  * Pure checks behind T3 Connect link proofs and relay requests: which local
- * origin a link may point at, which scopes a proof claims and accepts, and the
- * one-shot replay guards for signed relay requests.
+ * origin a link may point at, and which scopes and lifetimes a proof claims and
+ * accepts.
  */
 import type {
   RelayEnvironmentLinkProofPayload,
@@ -9,45 +9,11 @@ import type {
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
-import * as Effect from "effect/Effect";
 import type { HttpServerRequest } from "effect/http";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-
-export const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
-export const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
-export const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
-export const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
-/** Secret store name prefixes of cloud replay markers. The server prunes expired ones. */
-export const CLOUD_REPLAY_MARKER_PREFIXES = [
-  CLOUD_MINT_NONCE_PREFIX,
-  CLOUD_MINT_JTI_PREFIX,
-  CLOUD_HEALTH_NONCE_PREFIX,
-  CLOUD_HEALTH_JTI_PREFIX,
-] as const;
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-
-export function consumeCloudReplayGuards(input: {
-  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
-  readonly names: ReadonlyArray<string>;
-  readonly value: Uint8Array;
-}) {
-  return Effect.forEach(
-    input.names,
-    (name) =>
-      input.secrets.create(name, input.value).pipe(
-        Effect.as(true),
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          ServerSecretStore.isSecretAlreadyExistsError(error)
-            ? Effect.succeed(false)
-            : Effect.fail(error),
-        ),
-      ),
-    { concurrency: input.names.length },
-  ).pipe(Effect.map((created) => created.every(Boolean)));
-}
 
 function normalizeHostname(hostname: string): string {
   return hostname
