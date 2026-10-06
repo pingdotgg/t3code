@@ -6,6 +6,7 @@ import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
+  CommandId,
   EnvironmentId,
   ProviderInstanceId,
   RunId,
@@ -19,8 +20,13 @@ import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer, Tool } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorDispatchError,
+  OrchestratorProjectionError,
+} from "../../orchestration-v2/Orchestrator.ts";
+
 import * as ServerConfig from "../../config.ts";
-import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
@@ -30,6 +36,7 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
+import { dispatchFailure } from "../threadAccess.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
@@ -201,6 +208,42 @@ it.effect("returns a bounded public failure without serializing storage causes",
     ),
   ),
 );
+
+it("bounds public command rejections and redacts internal dispatch causes", () => {
+  const command = { commandId: CommandId.make("mcp-core-command"), commandType: "thread.settle" };
+  expect(
+    dispatchFailure(new OrchestratorDispatchError({ ...command, cause: "🙂".repeat(1001) }))
+      .message,
+  ).toBe("🙂".repeat(1000));
+  expect(
+    dispatchFailure(
+      new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
+    ).message,
+  ).toBe("Run is not queued.");
+  for (const cause of [
+    undefined,
+    "",
+    new Error("private-storage-path"),
+    { message: "private-storage-path" },
+  ]) {
+    expect(dispatchFailure(new OrchestratorDispatchError({ ...command, cause }))).toMatchObject({
+      code: "orchestration_error",
+      message: "The operation could not be completed.",
+    });
+    expect(
+      dispatchFailure(new OrchestratorCommandRejectedError({ ...command, cause })),
+    ).toMatchObject({
+      code: "orchestration_error",
+      message: "The operation could not be completed.",
+    });
+  }
+  expect(
+    dispatchFailure(new OrchestratorProjectionError({ threadId, cause: "private-storage-path" })),
+  ).toMatchObject({
+    code: "orchestration_error",
+    message: "The operation could not be completed.",
+  });
+});
 
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
