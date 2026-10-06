@@ -1,3 +1,5 @@
+import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
+
 const motionTiming = { duration: 150, easing: "ease-out" };
 // Rows normally ride their displaced neighbour's travel. Absent a moving
 // neighbour, a row still travels on its own, clamped so a tall card does not
@@ -18,9 +20,28 @@ function progress(animation: Animation) {
     : (animation.effect?.getComputedTiming().progress ?? 0);
 }
 
+// List motion handles ordinary layout changes. Sortable transforms own
+// dragging; replaying their committed DOM order would animate the drop twice.
+export const animateLayoutChangesWhileSorting: AnimateLayoutChanges = (args) =>
+  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
+
 /** Animate rows between their layout positions. The list must be
- * positioned so every direct child's offsetTop has the same origin. */
-export function createSidebarListMotion(parent: HTMLUListElement) {
+ * positioned so every direct child's offsetTop has the same origin.
+ *
+ * Call `update(animate)` from a layout effect after every order change,
+ * `suspend()` when a drag starts, before dnd-kit measures, and `release()`
+ * when it ends, before dnd-kit clears its transforms (dnd-kit's onDragEnd and
+ * onDragCancel run before that commit). Sortables should use
+ * `animateLayoutChangesWhileSorting`. */
+export function createListMotion(
+  parent: HTMLElement,
+  options: {
+    /** Attributes removed from exit-fade clones besides `id` and `data-testid`,
+     * so selectors that find live rows never match a fading copy. */
+    readonly cloneStripAttributes?: ReadonlyArray<string>;
+  } = {},
+) {
+  const strippedAttributes = new Set(["data-testid", ...(options.cloneStripAttributes ?? [])]);
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
   const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
@@ -55,9 +76,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       for (const attribute of Array.from(element.attributes)) {
         if (
           (attribute.name === "id" && element.namespaceURI !== "http://www.w3.org/2000/svg") ||
-          attribute.name === "data-thread-item" ||
-          attribute.name === "data-thread-selection-safe" ||
-          attribute.name === "data-testid"
+          strippedAttributes.has(attribute.name)
         ) {
           element.removeAttribute(attribute.name);
         }

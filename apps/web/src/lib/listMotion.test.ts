@@ -1,6 +1,7 @@
+import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createSidebarListMotion } from "./Sidebar.motion";
+import { animateLayoutChangesWhileSorting, createListMotion } from "./listMotion";
 
 class TestAnimation {
   progress: number | null = 0;
@@ -90,7 +91,9 @@ function fixture(rows: TestRow[]) {
     ];
   }
   layout(rows);
-  const motion = createSidebarListMotion(parent as unknown as HTMLUListElement);
+  const motion = createListMotion(parent as unknown as HTMLElement, {
+    cloneStripAttributes: ["data-thread-item"],
+  });
   return { motion, layout, media, parent };
 }
 
@@ -540,5 +543,31 @@ describe("sidebar list motion", () => {
     motion.update(true);
     expectMove(a, 83);
     expectMove(b, -83);
+  });
+});
+
+describe("animateLayoutChangesWhileSorting", () => {
+  const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
+    active: null,
+    containerId: "pinned-threads",
+    isDragging: false,
+    isSorting: false,
+    id: "thread-a",
+    index: 1,
+    items: ["thread-b", "thread-a"],
+    newIndex: 0,
+    previousItems: ["thread-a", "thread-b"],
+    previousContainerId: "pinned-threads",
+    transition: { duration: 200, easing: "ease" },
+    wasDragging: true,
+  };
+
+  it("does not replay layout movement after the pointer is released", () => {
+    expect(defaultAnimateLayoutChanges(baseArgs)).toBe(true);
+    expect(animateLayoutChangesWhileSorting(baseArgs)).toBe(false);
+  });
+
+  it("keeps layout movement while the user is sorting", () => {
+    expect(animateLayoutChangesWhileSorting({ ...baseArgs, isSorting: true })).toBe(true);
   });
 });

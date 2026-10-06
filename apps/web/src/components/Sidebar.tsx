@@ -172,7 +172,6 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { buildDraftActionMenuItems, buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
-  animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
@@ -224,7 +223,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
-import { createSidebarListMotion } from "./Sidebar.motion";
+import { animateLayoutChangesWhileSorting, createListMotion } from "../lib/listMotion";
 import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
@@ -624,7 +623,7 @@ function SortableThreadRow(props: {
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.id,
     disabled: { draggable: props.disabled },
-    animateLayoutChanges: animateSidebarLayoutChanges,
+    animateLayoutChanges: animateLayoutChangesWhileSorting,
   });
   // dnd-kit memoizes each field but not the bag, so the memoized row would
   // rerender on every shell update without this.
@@ -662,7 +661,7 @@ function SortableSidebarMarker(props: {
   const { setNodeRef, transform, transition } = useSortable({
     id: sidebarMarkerId(props.marker),
     disabled: { draggable: true },
-    animateLayoutChanges: animateSidebarLayoutChanges,
+    animateLayoutChanges: animateLayoutChangesWhileSorting,
   });
   return (
     <li
@@ -3371,11 +3370,16 @@ export default function Sidebar() {
     (args) => restrictBelowSidebarLabel(args, dragLabelOffsetRef.current),
     [],
   );
-  const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
+  const listMotionRef = useRef<ReturnType<typeof createListMotion> | null>(null);
   const attachListMotionRef = useCallback((node: HTMLUListElement | null) => {
     threadListRef.current = node;
     listMotionRef.current?.dispose();
-    listMotionRef.current = node === null ? null : createSidebarListMotion(node);
+    listMotionRef.current =
+      node === null
+        ? null
+        : createListMotion(node, {
+            cloneStripAttributes: ["data-thread-item", "data-thread-selection-safe"],
+          });
     listMotionRef.current?.update(false);
   }, []);
 
