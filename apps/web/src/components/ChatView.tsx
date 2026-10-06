@@ -7766,6 +7766,7 @@ export default function ChatView(props: ChatViewProps) {
       terminalOpen: Boolean(terminalUiState.terminalOpen),
       previewFocus: isPreviewFocused(),
       previewOpen: previewPanelOpen,
+      rightPanelOpen: activeRightPanelSurface !== null,
       editableFocus: isEditableFocused(eventTarget),
       modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
@@ -7774,7 +7775,14 @@ export default function ChatView(props: ChatViewProps) {
       isWeb: !isElectron,
       isDesktop: isElectron,
     }),
-    [composerRef, previewPanelOpen, terminalUiState.terminalOpen, routeKind, phase],
+    [
+      activeRightPanelSurface,
+      composerRef,
+      previewPanelOpen,
+      terminalUiState.terminalOpen,
+      routeKind,
+      phase,
+    ],
   );
 
   useEffect(() => {

@@ -2194,7 +2194,7 @@ function PullRequestsRouteView() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
-        context: getShortcutContext(),
+        context: { ...getShortcutContext(), rightPanelOpen: activePullRequestSurface !== null },
       });
       if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
       if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
@@ -2203,7 +2203,7 @@ function PullRequestsRouteView() {
     // Let panel shortcuts consume Escape before page navigation at window.
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [keybindings]);
+  }, [activePullRequestSurface, keybindings]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
