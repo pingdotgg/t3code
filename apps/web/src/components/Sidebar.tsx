@@ -29,6 +29,8 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
   effectiveSnoozed,
+  removeSnoozeFavorite,
+  snoozeFavoriteId,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
@@ -137,7 +139,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -550,6 +552,7 @@ function SnoozeMenuButton(props: {
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
   const snoozeFavorites = useClientSettings((s) => s.snoozeFavorites);
+  const updateClientSettings = useUpdateClientSettings();
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
@@ -579,18 +582,36 @@ function SnoozeMenuButton(props: {
         <TooltipPopup>Snooze thread</TooltipPopup>
       </Tooltip>
       <MenuPopup side="bottom" align="end">
-        {presets.map((preset) => (
-          <MenuItem
-            key={preset.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSnooze(preset);
-            }}
-          >
-            {preset.label}
-            <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-          </MenuItem>
-        ))}
+        {presets.map((preset) => {
+          const favorite = snoozeFavorites.find((saved) => snoozeFavoriteId(saved) === preset.id);
+          return (
+            <MenuItem
+              key={preset.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSnooze(preset);
+              }}
+            >
+              {preset.label}
+              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+              {favorite && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${preset.label} from favorites`}
+                  className="-me-1 inline-flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void updateClientSettings({
+                      snoozeFavorites: removeSnoozeFavorite(snoozeFavorites, favorite),
+                    });
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              )}
+            </MenuItem>
+          );
+        })}
         <MenuSeparator />
         <MenuItem
           onClick={async (event) => {

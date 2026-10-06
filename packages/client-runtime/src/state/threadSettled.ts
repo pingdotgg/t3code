@@ -317,6 +317,10 @@ function sameSnoozeFavorite(a: SnoozeFavorite, b: SnoozeFavorite): boolean {
   return a.amount === b.amount && a.unit === b.unit;
 }
 
+export function snoozeFavoriteId(favorite: SnoozeFavorite): `favorite:${string}` {
+  return `favorite:${favorite.amount}-${favorite.unit}`;
+}
+
 /** "2 hours", "1 day": the favorite as the user typed it into the dialog. */
 export function snoozeFavoriteLabel(favorite: SnoozeFavorite): string {
   return `${favorite.amount} ${favorite.amount === 1 ? favorite.unit.slice(0, -1) : favorite.unit}`;
@@ -357,7 +361,7 @@ export function resolveSnoozeFavoritePresets(
     if (snoozedUntil === null) return [];
     return [
       {
-        id: `favorite:${favorite.amount}-${favorite.unit}` as const,
+        id: snoozeFavoriteId(favorite),
         label: `In ${snoozeFavoriteLabel(favorite)}`,
         whenLabel: snoozeTimeOfDayLabel(new Date(snoozedUntil)),
         snoozedUntil,
