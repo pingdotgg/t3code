@@ -1,10 +1,11 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { creditRedeemRequestId, makeCliproxyApi } from "./cliproxyApi.ts";
+import { makeCliproxyApi } from "./cliproxyApi.ts";
 
 const config = {
   kind: "cliproxy",
@@ -106,7 +107,10 @@ function fixture(
   );
   return {
     requests,
-    api: makeCliproxyApi.pipe(Effect.provideService(HttpClient.HttpClient, http)),
+    api: makeCliproxyApi.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+      Effect.provide(NodeCrypto.layer),
+    ),
   };
 }
 
@@ -222,7 +226,8 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
       expect(redemptions[0]?.body?.data).toBe(
         encodeJson({
-          redeem_request_id: creditRedeemRequestId("account-b", "credit-b"),
+          // UUIDv5 of "account-b:credit-b"; must stay stable so retries deduplicate.
+          redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
           credit_id: "credit-b",
         }),
       );

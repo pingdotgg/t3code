@@ -35,6 +35,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
@@ -801,183 +802,195 @@ describe("CodexAdapterV2 process spawning", () => {
 });
 
 describe("CodexAdapterV2 dynamic tool projection", () => {
-  it("uses the CUA call title while leaving other MCP titles as tool arguments", () => {
-    const call = {
-      type: "mcpToolCall" as const,
-      id: "inspect",
-      server: "cua_repl",
-      tool: "js",
-      status: "completed" as const,
-      arguments: {
-        code: "await game.getAXStateAndScreenshot();",
-        title: "Inspect Saga music screen",
-      },
-      result: { content: [] },
-    };
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem(call).title,
-      "Inspect Saga music screen",
-    );
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
-      "js",
-    );
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, server: "github" }).title,
-      "js",
-    );
-  });
-
-  it.each(["inProgress", "completed", "failed"] as const)(
-    "presents ordinary MCP calls when %s",
-    (status) => {
-      const projection = CodexAdapterV2.projectCodexDynamicToolItem({
-        type: "mcpToolCall",
-        id: "weather-call",
-        server: "weather",
-        tool: "get_weather",
-        status,
-        arguments: { city: "Berlin" },
-      });
-      assert.equal(projection.title, "get weather");
-      assert.deepEqual(projection.toolSource, {
-        key: "mcp:weather",
-        name: "weather",
-        kind: "integration",
-      });
-      assert.deepEqual(projection.input, { city: "Berlin" });
-    },
+  it.effect("uses the CUA call title while leaving other MCP titles as tool arguments", () =>
+    Effect.gen(function* () {
+      const call = {
+        type: "mcpToolCall" as const,
+        id: "inspect",
+        server: "cua_repl",
+        tool: "js",
+        status: "completed" as const,
+        arguments: {
+          code: "await game.getAXStateAndScreenshot();",
+          title: "Inspect Saga music screen",
+        },
+        result: { content: [] },
+      };
+      assert.equal(
+        (yield* CodexAdapterV2.projectCodexDynamicToolItem(call)).title,
+        "Inspect Saga music screen",
+      );
+      assert.equal(
+        (yield* CodexAdapterV2.projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }))
+          .title,
+        "js",
+      );
+      assert.equal(
+        (yield* CodexAdapterV2.projectCodexDynamicToolItem({ ...call, server: "github" })).title,
+        "js",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it("uses Codex connector names without reading a display title from arguments", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
-      type: "mcpToolCall",
-      id: "connector-call",
-      server: "_apps",
-      tool: "connector_get_weather",
-      status: "completed",
-      arguments: { title: "Argument, not display metadata" },
-      appContext: {
-        connectorId: "weather-app",
-        appName: "Weather",
-        actionName: "Check weather",
-      },
-      result: {
-        content: [],
-        _meta: { source: { logoUrl: "https://example.com/weather.png" } },
-      },
-    });
-    assert.equal(projection.title, "Check weather");
-    assert.equal(projection.toolSource?.name, "Weather");
-    assert.deepEqual(projection.toolIcon, {
-      _tag: "themed-logo",
-      logoUrl: "https://example.com/weather.png",
-    });
-    assert.deepEqual(projection.toolSource?.icon, projection.toolIcon);
-  });
+  it.effect.each(["inProgress", "completed", "failed"] as const)(
+    "presents ordinary MCP calls when %s",
+    (status) =>
+      Effect.gen(function* () {
+        const projection = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+          type: "mcpToolCall",
+          id: "weather-call",
+          server: "weather",
+          tool: "get_weather",
+          status,
+          arguments: { city: "Berlin" },
+        });
+        assert.equal(projection.title, "get weather");
+        assert.deepEqual(projection.toolSource, {
+          key: "mcp:weather",
+          name: "weather",
+          kind: "integration",
+        });
+        assert.deepEqual(projection.input, { city: "Berlin" });
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
-  it("preserves native browser and app icons alongside MCP tool output", () => {
-    const browser = CodexAdapterV2.projectCodexDynamicToolItem({
-      type: "mcpToolCall",
-      id: "browser",
-      server: "browser",
-      tool: "open",
-      status: "completed",
-      arguments: {},
-      result: {
-        content: [],
-        _meta: {
-          "codex/toolSurface": {
-            kind: "browserUse",
-            browserFamily: "Chrome",
-            screenshot: {
-              pageUrl: "https://example.com/docs",
-              faviconUrl: "https://example.com/icon.png",
+  it.effect("uses Codex connector names without reading a display title from arguments", () =>
+    Effect.gen(function* () {
+      const projection = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "mcpToolCall",
+        id: "connector-call",
+        server: "_apps",
+        tool: "connector_get_weather",
+        status: "completed",
+        arguments: { title: "Argument, not display metadata" },
+        appContext: {
+          connectorId: "weather-app",
+          appName: "Weather",
+          actionName: "Check weather",
+        },
+        result: {
+          content: [],
+          _meta: { source: { logoUrl: "https://example.com/weather.png" } },
+        },
+      });
+      assert.equal(projection.title, "Check weather");
+      assert.equal(projection.toolSource?.name, "Weather");
+      assert.deepEqual(projection.toolIcon, {
+        _tag: "themed-logo",
+        logoUrl: "https://example.com/weather.png",
+      });
+      assert.deepEqual(projection.toolSource?.icon, projection.toolIcon);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves native browser and app icons alongside MCP tool output", () =>
+    Effect.gen(function* () {
+      const browser = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "mcpToolCall",
+        id: "browser",
+        server: "browser",
+        tool: "open",
+        status: "completed",
+        arguments: {},
+        result: {
+          content: [],
+          _meta: {
+            "codex/toolSurface": {
+              kind: "browserUse",
+              browserFamily: "Chrome",
+              screenshot: {
+                pageUrl: "https://example.com/docs",
+                faviconUrl: "https://example.com/icon.png",
+              },
             },
           },
         },
-      },
-    });
-    assert.equal(browser.toolSurface, "browser");
-    assert.deepEqual(browser.toolIcon, {
-      _tag: "website",
-      pageUrl: "https://example.com/docs",
-      faviconUrl: "https://example.com/icon.png",
-    });
-    assert.equal(browser.toolSource?.name, "Chrome");
-    const app = CodexAdapterV2.projectCodexDynamicToolItem({
-      type: "mcpToolCall",
-      id: "app",
-      server: "computer",
-      tool: "click",
-      status: "completed",
-      arguments: {},
-      result: {
-        content: [],
-        _meta: {
-          "codex/toolSurface": {
-            kind: "computerUse",
-            app: { kind: "appId", appId: "com.apple.finder" },
+      });
+      assert.equal(browser.toolSurface, "browser");
+      assert.deepEqual(browser.toolIcon, {
+        _tag: "website",
+        pageUrl: "https://example.com/docs",
+        faviconUrl: "https://example.com/icon.png",
+      });
+      assert.equal(browser.toolSource?.name, "Chrome");
+      const app = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "mcpToolCall",
+        id: "app",
+        server: "computer",
+        tool: "click",
+        status: "completed",
+        arguments: {},
+        result: {
+          content: [],
+          _meta: {
+            "codex/toolSurface": {
+              kind: "computerUse",
+              app: { kind: "appId", appId: "com.apple.finder" },
+            },
           },
         },
-      },
-    });
-    assert.deepEqual(app.toolIcon, {
-      _tag: "native-app",
-      app: { _tag: "app-id", appId: "com.apple.finder" },
-    });
-    assert.equal(app.toolSource?.name, "Finder");
-  });
+      });
+      assert.deepEqual(app.toolIcon, {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "com.apple.finder" },
+      });
+      assert.equal(app.toolSource?.name, "Finder");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
-  it("preserves MCP arguments and prefers structured output", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
-      type: "mcpToolCall",
-      id: "call-create-threads",
-      server: "t3-code",
-      tool: "create_threads",
-      status: "completed",
-      arguments: {
-        threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
-      },
-      result: {
-        content: [{ type: "text", text: '{"threads":[{"threadId":"thread:mcp:fixture:0"}]}' }],
-        structuredContent: {
+  it.effect("preserves MCP arguments and prefers structured output", () =>
+    Effect.gen(function* () {
+      const projection = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "mcpToolCall",
+        id: "call-create-threads",
+        server: "t3-code",
+        tool: "create_threads",
+        status: "completed",
+        arguments: {
+          threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
+        },
+        result: {
+          content: [{ type: "text", text: '{"threads":[{"threadId":"thread:mcp:fixture:0"}]}' }],
+          structuredContent: {
+            threads: [{ threadId: "thread:mcp:fixture:0" }],
+          },
+        },
+      });
+
+      assert.deepEqual(projection, {
+        toolName: "t3-code.create_threads",
+        input: {
+          threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
+        },
+        output: {
           threads: [{ threadId: "thread:mcp:fixture:0" }],
         },
-      },
-    });
+        status: "completed",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
-    assert.deepEqual(projection, {
-      toolName: "t3-code.create_threads",
-      input: {
-        threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
-      },
-      output: {
-        threads: [{ threadId: "thread:mcp:fixture:0" }],
-      },
-      status: "completed",
-    });
-  });
+  it.effect("preserves namespaced dynamic tool output", () =>
+    Effect.gen(function* () {
+      const projection = yield* CodexAdapterV2.projectCodexDynamicToolItem({
+        type: "dynamicToolCall",
+        id: "call-dynamic",
+        namespace: "workspace",
+        tool: "inspect",
+        status: "failed",
+        arguments: { path: "package.json" },
+        contentItems: [{ type: "inputText", text: "inspection failed" }],
+        success: false,
+      });
 
-  it("preserves namespaced dynamic tool output", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
-      type: "dynamicToolCall",
-      id: "call-dynamic",
-      namespace: "workspace",
-      tool: "inspect",
-      status: "failed",
-      arguments: { path: "package.json" },
-      contentItems: [{ type: "inputText", text: "inspection failed" }],
-      success: false,
-    });
-
-    assert.deepEqual(projection, {
-      toolName: "workspace.inspect",
-      input: { path: "package.json" },
-      output: [{ type: "inputText", text: "inspection failed" }],
-      status: "failed",
-    });
-  });
+      assert.deepEqual(projection, {
+        toolName: "workspace.inspect",
+        input: { path: "package.json" },
+        output: [{ type: "inputText", text: "inspection failed" }],
+        status: "failed",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
@@ -1703,6 +1716,7 @@ describe("CodexAdapterV2 session initialize", () => {
               ),
             ),
         },
+        crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig: yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
@@ -1899,6 +1913,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        crypto: yield* Crypto.Crypto,
         fileSystem,
         idAllocator,
         serverConfig,

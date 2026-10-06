@@ -16,6 +16,7 @@ import {
   type SecretRequestAnswerInput,
   type ThreadId,
 } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac.
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";

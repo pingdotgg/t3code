@@ -1,6 +1,7 @@
-import * as NodeCrypto from "node:crypto";
-import * as Schema from "effect/Schema";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
+import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -12,15 +13,20 @@ const encodeEndpoint = Schema.encodeEffect(
   ),
 );
 
-const key = (value: string) =>
-  NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 24);
+const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(value))
+    .pipe(Effect.orDie);
+  return Hex.encode(digest).slice(0, 24);
+});
 
 /** A stable file per host lets forwarded endpoints change without retargeting other commands. */
 export const agentDeviceConfigPath = (stateDir: string, hostId: string, path: Path.Path) =>
-  path.join(stateDir, "device", "hosts", `${key(hostId)}.json`);
+  key(hostId).pipe(Effect.map((hash) => path.join(stateDir, "device", "hosts", `${hash}.json`)));
 
 export const agentDeviceSession = (threadId: string, hostId: string, deviceId: string) =>
-  `t3-${key(JSON.stringify([threadId, hostId, deviceId]))}`;
+  key(JSON.stringify([threadId, hostId, deviceId])).pipe(Effect.map((hash) => `t3-${hash}`));
 
 export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")(function* (
   file: string,

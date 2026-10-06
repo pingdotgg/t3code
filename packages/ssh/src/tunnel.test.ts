@@ -233,12 +233,7 @@ describe("ssh tunnel scripts", () => {
   });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
+    const stateKey = "711bc738002d72fd";
     const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
     const devLaunch = SshTunnel.buildRemoteLaunchScript({
       ...NODE_SCRIPT,
@@ -265,28 +260,28 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, "It wrote nothing to %s");
     assert.include(launch, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
     );
-    assert.notInclude(SshTunnel.buildRemotePairingScript(target, ARCHIVE), "server-home");
+    assert.notInclude(SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE), "server-home");
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'kill "$REMOTE_PID" 2>/dev/null || true',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"',
     );
     assert.include(

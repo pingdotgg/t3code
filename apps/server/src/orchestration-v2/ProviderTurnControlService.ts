@@ -7,12 +7,12 @@ import {
   RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as NodeTimersPromises from "node:timers/promises";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -188,17 +188,24 @@ export const layer: Layer.Layer<
           });
           // Give native terminal ingestion time to finish before the Stop
           // follow-up repairs a run whose provider no longer reports on it.
-          const deadline = performance.now() + 2_000;
-          while (loaded.providerTurn.status === "running" && performance.now() < deadline) {
-            const current = yield* projections.getProviderControlContext(input.threadId, input);
-            if (
-              current.providerTurn?.status !== "running" &&
-              current.attempt?.status !== "running"
+          // The wait is real time: ingestion runs on other fibers and never
+          // advances a test clock, so a test clock would hold Stop forever.
+          yield* Effect.gen(function* () {
+            const deadline = (yield* Clock.currentTimeMillis) + 2_000;
+            while (
+              loaded.providerTurn.status === "running" &&
+              (yield* Clock.currentTimeMillis) < deadline
             ) {
-              break;
+              const current = yield* projections.getProviderControlContext(input.threadId, input);
+              if (
+                current.providerTurn?.status !== "running" &&
+                current.attempt?.status !== "running"
+              ) {
+                return;
+              }
+              yield* Effect.sleep("10 millis");
             }
-            yield* Effect.promise(() => NodeTimersPromises.setTimeout(10));
-          }
+          }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)
