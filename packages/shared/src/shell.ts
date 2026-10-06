@@ -492,7 +492,7 @@ function resolveCommandCandidates(
 // just written (e.g. managed binary installs). A "not-found" outcome is also
 // cached for the TTL, so a just-installed binary can stay invisible for up to
 // 30s unless resolved by explicit path.
-// TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
+// TTL expiry uses the monotonic clock (Clock.monotonicTimeNanos) so backward
 // wall-clock adjustments cannot keep expired entries alive.
 const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
@@ -642,7 +642,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
   );
   const cache = yield* CommandResolutionCache;
-  const nowNanos = yield* Clock.currentTimeNanos;
+  const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     if (cached.resolvedPath === null) {

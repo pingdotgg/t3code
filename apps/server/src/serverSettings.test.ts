@@ -303,6 +303,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("retries a failed settings read instead of keeping the failure", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // A directory where the file should be makes the read itself fail.
+      yield* fileSystem.makeDirectory(serverConfig.settingsPath);
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+      assert.deepInclude(error, { _tag: "ServerSettingsError", operation: "read-file" });
+
+      yield* fileSystem.remove(serverConfig.settingsPath, { recursive: true });
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{ "responseStreamingMode": "turn" }`,
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(settings.responseStreamingMode, "turn");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       assert.deepEqual(

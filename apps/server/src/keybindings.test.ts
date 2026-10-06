@@ -601,6 +601,28 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("retries a failed config read instead of keeping the failure", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      // A directory where the file should be makes the read itself fail.
+      yield* fileSystem.makeDirectory(keybindingsConfigPath, { recursive: true });
+
+      const keybindings = yield* Keybindings.Keybindings;
+      const failed = yield* toDetailResult(keybindings.loadConfigState);
+      assertFailure(failed, "failed to read keybindings config");
+
+      yield* fileSystem.remove(keybindingsConfigPath, { recursive: true });
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
+
+      const configState = yield* keybindings.loadConfigState;
+      assert.deepEqual(configState.issues, []);
+      assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("updates cached resolved config after upsert", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
