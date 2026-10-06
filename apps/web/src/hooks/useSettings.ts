@@ -221,6 +221,7 @@ export async function persistClientSettingsUpdate(
     for (;;) {
       const current = getClientSettingsSnapshot();
       const next = update(current);
+      if (next === current) return current;
       await persist(next);
       if (getClientSettingsSnapshot() === current) {
         replaceClientSettingsSnapshot(next);

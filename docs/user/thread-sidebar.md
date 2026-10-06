@@ -223,7 +223,8 @@ finishes; the call's own result shows its status.
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. Tick **Add as favorite** when you snooze for a
-duration to keep it in the Snooze menu for next time. Remove a favorite with the
+duration to keep it in the Snooze menu for next time. You can keep up to five
+favorites; saving a sixth removes the oldest. Remove a favorite with the
 **x** on its row in the snooze menu opened from a thread's clock button. Favorites
 are saved per device and are not yet shown in the mobile app. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.

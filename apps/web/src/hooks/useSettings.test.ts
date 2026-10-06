@@ -62,6 +62,13 @@ describe("client settings hydration", () => {
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
   });
 
+  it("writes nothing when an update returns the current settings", async () => {
+    await expect(persistClientSettingsUpdate((current) => current)).resolves.toBe(
+      DEFAULT_CLIENT_SETTINGS,
+    );
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+
   it("uses defaults only after storage confirms no saved settings exist", async () => {
     const completedSettings = { ...DEFAULT_CLIENT_SETTINGS, onboardingCompletedAt };
 

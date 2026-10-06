@@ -9,10 +9,11 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
-import { getClientSettings, persistClientSettingsUpdate } from "../hooks/useSettings";
+import { persistClientSettingsUpdate } from "../hooks/useSettings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { SnoozeFavorite } from "@t3tools/contracts/settings";
 import { Checkbox } from "./ui/checkbox";
+import { toastManager } from "./ui/toast";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
@@ -44,15 +45,25 @@ const useRequest = create<{ request: Request | null }>(() => ({ request: null })
 /**
  * Edits the saved favorites against the newest settings, after hydration, so
  * an early save or removal cannot overwrite favorites that have not loaded yet.
+ * An update that leaves the favorites unchanged writes nothing. A failed write
+ * shows `failureTitle` as a toast.
  */
 export function updateSnoozeFavorites(
   update: (favorites: ReadonlyArray<SnoozeFavorite>) => ReadonlyArray<SnoozeFavorite>,
+  failureTitle: string,
 ): void {
-  void persistClientSettingsUpdate((settings) => ({
-    ...settings,
-    snoozeFavorites: update(settings.snoozeFavorites),
-  })).catch((error) => {
+  void persistClientSettingsUpdate((settings) => {
+    const snoozeFavorites = update(settings.snoozeFavorites);
+    return snoozeFavorites === settings.snoozeFavorites
+      ? settings
+      : { ...settings, snoozeFavorites };
+  }).catch((error) => {
     console.error("[SNOOZE_FAVORITES] persist failed", safeErrorLogAttributes(error));
+    toastManager.add({
+      type: "error",
+      title: failureTitle,
+      description: "Your snooze favorites could not be saved on this device.",
+    });
   });
 }
 
@@ -109,11 +120,11 @@ function CustomSnoozeDialog() {
             }
             if (input.mode === "duration" && saveAsFavorite) {
               const favorite = { amount: Number(input.amount), unit: input.unit };
-              const saved = getClientSettings().snoozeFavorites;
-              // Saving a duplicate would only rewrite identical settings.
-              if (addSnoozeFavorite(saved, favorite) !== saved) {
-                updateSnoozeFavorites((favorites) => addSnoozeFavorite(favorites, favorite));
-              }
+              // Queued behind any pending removal; a duplicate writes nothing.
+              updateSnoozeFavorites(
+                (favorites) => addSnoozeFavorite(favorites, favorite),
+                "Snoozed, but the favorite was not saved",
+              );
             }
             finish({ snoozedUntil });
           }}

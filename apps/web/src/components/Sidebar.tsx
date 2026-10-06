@@ -611,7 +611,10 @@ function SnoozeMenuButton(props: {
                 className="size-7 min-h-7 w-7 justify-center"
                 onClick={(event) => {
                   event.stopPropagation();
-                  updateSnoozeFavorites((favorites) => removeSnoozeFavorite(favorites, favorite));
+                  updateSnoozeFavorites(
+                    (favorites) => removeSnoozeFavorite(favorites, favorite),
+                    "Could not remove the favorite",
+                  );
                 }}
               >
                 <XIcon className="size-3" />
