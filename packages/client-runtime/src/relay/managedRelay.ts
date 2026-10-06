@@ -1024,9 +1024,7 @@ export const make = Effect.fn("ManagedRelayClient.makeWithBackgroundRelay")(func
     unregisterDevice: background.unregisterDevice,
     registerLiveActivity: background.registerLiveActivity,
     getAgentActivitySnapshot: background.getAgentActivitySnapshot,
-    resetTokenCache: Effect.all([primary.resetTokenCache, background.resetTokenCache], {
-      discard: true,
-    }),
+    resetTokenCache: primary.resetTokenCache.pipe(Effect.ensuring(background.resetTokenCache)),
   });
 });
 

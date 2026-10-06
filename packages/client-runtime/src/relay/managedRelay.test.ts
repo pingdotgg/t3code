@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
@@ -42,9 +43,9 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
-  it.effect(
-    "routes background delivery separately, isolates tokens, and clears both caches",
-    () => {
+  it.effect.each([false, true])(
+    "routes background delivery separately and clears both caches (store clear defects: %s)",
+    (defectOnClear) => {
       const requests: Array<{ url: string; authorization: string | null }> = [];
       let exchanges = 0;
       const fetchFn = ((input, init) => {
@@ -146,11 +147,25 @@ describe("ManagedRelayClient", () => {
         yield* register;
         yield* status;
         expect(exchanges).toBe(cachedExchanges);
-        yield* client.resetTokenCache;
+        const reset = yield* Effect.exit(client.resetTokenCache);
+        expect(Exit.isFailure(reset)).toBe(defectOnClear);
         yield* register;
         yield* status;
         expect(exchanges).toBe(cachedExchanges + 2);
-      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, primaryUrl, undefined, backgroundUrl)));
+      }).pipe(
+        Effect.provide(
+          layerManagedRelayTest(
+            fetchFn,
+            primaryUrl,
+            {
+              load: Effect.succeed([]),
+              save: () => Effect.void,
+              clear: defectOnClear ? Effect.die("store clear defect") : Effect.void,
+            },
+            backgroundUrl,
+          ),
+        ),
+      );
     },
   );
 

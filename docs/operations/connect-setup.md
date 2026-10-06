@@ -46,7 +46,8 @@ configuration, then restart the server:
 
 - `T3CODE_BACKGROUND_RELAY_URL`: the same background relay origin.
 - `T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL`: that relay's environment credential.
-- `T3CODE_BACKGROUND_RELAY_ISSUER`: optional signing issuer origin; defaults to the background URL.
+- `T3CODE_BACKGROUND_RELAY_ISSUER`: optional relay issuer origin used as the publish proof’s `aud`
+  claim; defaults to the background URL. The proof’s `iss` remains `t3-env:<environmentId>`.
 
 The environment's existing agent activity publishing switch still controls sharing. A configured
 background relay replaces the activity destination; it does not publish a second copy to T3 Connect.
