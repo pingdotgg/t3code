@@ -331,6 +331,76 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("recovers runless native workflow members without a subagent turn item", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("runless-workflow-member");
+      const now = yield* DateTime.now;
+      const nodeId = NodeId.make("node:runless-workflow-member");
+      const rootNodeId = NodeId.make("node:runless-workflow-coordinator");
+      assert.notInclude(yield* store.getRecoveryThreadIds("runtime"), threadId);
+      yield* store.apply({
+        id: EventId.make("event:runless-workflow-member:node"),
+        type: "node.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: rootNodeId,
+          rootNodeId,
+          kind: "subagent",
+          status: "running",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:runless-workflow-member:task"),
+        type: "subagent.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: rootNodeId,
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Review",
+          title: "Reviewer",
+          model: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+      assert.include(yield* store.getRecoveryThreadIds("runtime"), threadId);
+      const projection = yield* store.getRuntimeRecoveryProjection(threadId);
+      assert.deepEqual(
+        projection.subagents.map((subagent) => subagent.id),
+        [nodeId],
+      );
+      assert.include(
+        projection.nodes.map((node) => node.id),
+        nodeId,
+      );
+    }),
+  );
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
@@ -827,35 +897,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const now = yield* DateTime.now;
       const nowIso = DateTime.formatIso(now);
       const threadId = ThreadId.make("thread:bounded-sql-history");
-      yield* projectionStore.apply({
-        id: EventId.make("event:bounded-sql-history:thread"),
-        type: "thread.created",
-        threadId,
-        occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId: ProjectId.make("project:bounded-sql-history"),
-          title: "Bounded SQL history",
-          providerInstanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-      });
+      const otherThreadId = ThreadId.make("thread:bounded-sql-history:other");
+      for (const id of [threadId, otherThreadId]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:bounded-sql-history:thread:${id}`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id,
+            projectId: ProjectId.make("project:bounded-sql-history"),
+            title: "Bounded SQL history",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      }
 
       for (let ordinal = 1; ordinal <= 1_000; ordinal += 1) {
         const id = `turn-item:bounded-sql-history:${ordinal}`;
@@ -916,6 +989,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `;
       }
 
+      const requiredSubagentId = NodeId.make("node:bounded-sql-history:workflow:old");
+      const recentSubagentId = NodeId.make("node:bounded-sql-history:workflow:recent");
+      const foreignSubagentId = NodeId.make("node:bounded-sql-history:workflow:foreign");
+      for (const coordinator of [
+        { id: requiredSubagentId, threadId, ordinal: 1 },
+        { id: NodeId.make("node:bounded-sql-history:workflow:other-old"), threadId, ordinal: 2 },
+        { id: recentSubagentId, threadId, ordinal: 1_000 },
+        { id: foreignSubagentId, threadId: otherThreadId, ordinal: 1 },
+      ]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${coordinator.id}`),
+          type: "subagent.updated",
+          threadId: coordinator.threadId,
+          occurredAt: now,
+          payload: {
+            id: coordinator.id,
+            threadId: coordinator.threadId,
+            runId:
+              coordinator.threadId === threadId
+                ? RunId.make(`run:bounded-sql-history:${coordinator.ordinal}`)
+                : null,
+            parentNodeId: NodeId.make(`node:${coordinator.threadId}:${coordinator.ordinal}`),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: ThreadId.make(`child:${coordinator.id}`),
+            nativeTaskRef: null,
+            prompt: "workflow source",
+            title: "Completed workflow",
+            model: null,
+            status: "completed",
+            result: "Workflow result",
+            workflow: {
+              name: "History workflow",
+              phases: [{ index: 0, title: "Review" }],
+              agents: [{ index: 0, label: "Reviewer", state: "completed", result: "Reviewed" }],
+            },
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
@@ -928,6 +1047,25 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.lengthOf(snapshot.projection.visibleTurnItems, 76);
         assert.strictEqual(snapshot.projection.turnItems[0]?.ordinal, 925);
         assert.strictEqual(snapshot.projection.turnItems.at(-1)?.ordinal, 1_000);
+        assert.deepEqual(
+          snapshot.projection.subagents.map((task) => task.id),
+          [recentSubagentId],
+        );
+      }
+      const withCoordinator = yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+        subagentIds: [requiredSubagentId],
+      });
+      assert.deepEqual(Object.keys(withCoordinator).sort(), ["subagents", "thread"]);
+      assert.deepEqual(
+        withCoordinator.subagents.map((task) => task.id),
+        [requiredSubagentId],
+      );
+      assert.strictEqual(withCoordinator.subagents[0]?.workflow?.agents[0]?.result, "Reviewed");
+      for (const subagentId of [foreignSubagentId, NodeId.make("missing")]) {
+        const missing = yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+          subagentIds: [subagentId],
+        });
+        assert.deepEqual(missing.subagents, []);
       }
       const retainedRequestPlan = yield* sql<{ readonly detail: string }>`
         EXPLAIN QUERY PLAN

@@ -54,8 +54,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
-  // Set once this run's root turn ended. A child thread created after that
-  // belongs to the run that is live then, so this one no longer adopts it.
+  // After the root ends, only descendants of already-owned children join this run.
   readonly rootTurnEnded: boolean;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
@@ -378,10 +377,10 @@ export function routeProviderEvent(
         return [true, state];
       }
       const isOwnedSubagent =
-        !state.rootTurnEnded &&
         event.appThread.lineage.relationshipToParent === "subagent" &&
         event.appThread.lineage.parentThreadId !== null &&
-        ownsThread(event.appThread.lineage.parentThreadId);
+        ownsThread(event.appThread.lineage.parentThreadId) &&
+        (!state.rootTurnEnded || ownsChildThread(event.appThread.lineage.parentThreadId));
       if (!isOwnedSubagent) {
         return [false, state];
       }
@@ -1035,11 +1034,11 @@ export const layer: Layer.Layer<
                     return next;
                   });
                 }
-                // Snapshot run-owned subagents for interrupt cascade.
+                // Snapshot run-owned subagents and runless members in owned child threads.
                 // Preserve childThreadId linkage for the root-run lifetime even
                 // after the subagent row terminalizes, so open child-thread
                 // nodes can still be proven linked on a later root interrupt.
-                if (belongsToRootRun) {
+                if (belongsToRootRun || belongsToOwnedChildThread) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const withLink = withLinkedChildThreadId(current, event.subagent.childThreadId);
                     const subagents = new Map(withLink.subagents);

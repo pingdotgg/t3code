@@ -196,6 +196,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getMessageCount: () => Effect.die("unused message count"),
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
+    getSubagent: () => Effect.die("unused subagent read"),
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,

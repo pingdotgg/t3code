@@ -1189,9 +1189,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "terminalizes the linked subagent and node for a stale subagent item on a settled run",
-  () => {
+it.effect.each([false, true])(
+  "terminalizes stale native subagents and nodes with runless workflow member: %s",
+  (runless) => {
     const threadId = ThreadId.make("thread_recovery_subagent");
     const settledRunId = RunId.make("run_recovery_subagent_settled");
     const providerThreadId = ProviderThreadId.make("provider_thread_recovery_subagent");
@@ -1220,13 +1220,14 @@ it.effect(
       runs: [{ id: settledRunId, status: "completed", providerInstanceId: claudeInstanceId }],
       attempts: [],
       nodes: [
-        { id: staleSubagentNodeId, runId: settledRunId, status: "running" },
+        { id: staleSubagentNodeId, runId: runless ? null : settledRunId, status: "running" },
         { id: doneSubagentNodeId, runId: settledRunId, status: "completed" },
       ],
       subagents: [
         {
           id: staleSubagentNodeId,
-          runId: settledRunId,
+          runId: runless ? null : settledRunId,
+          origin: "provider_native",
           driver: ProviderDriverKind.make("claude"),
           providerInstanceId: claudeInstanceId,
           status: "running",
@@ -1263,7 +1264,7 @@ it.effect(
           subagentId: doneSubagentNodeId,
           providerInstanceId: claudeInstanceId,
         },
-      ],
+      ].filter((item) => !runless || item.id !== staleItemId),
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
@@ -1299,9 +1300,9 @@ it.effect(
       const turnItemCancels = events.filter(
         (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
       );
-      assert.equal(turnItemCancels.length, 1);
+      assert.equal(turnItemCancels.length, runless ? 0 : 1);
 
-      // The linked subagent entity is terminalized alongside its turn item.
+      // Native workflow members have no subagent turn item to discover them.
       const subagentCancels = events.filter((event) => event.type === "subagent.updated");
       assert.equal(subagentCancels.length, 1);
       const subagentCancel = subagentCancels[0];

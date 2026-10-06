@@ -1,4 +1,6 @@
-import { ProjectId, ProviderDriverKind } from "@t3tools/contracts";
+import { ProjectId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { projectedSubagentsToRuntime } from "./subagentRuntime.js";
 import type { OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -6,6 +8,82 @@ import {
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "./subagentDisplay.js";
+
+describe("projectedSubagentsToRuntime", () => {
+  it("expands scoped workflow rows with result navigation and terminal fallback, leaving ordinary agents alone", () => {
+    const startedAt = DateTime.makeUnsafe("2026-06-05T10:00:00Z");
+    const completedAt = DateTime.add(startedAt, { seconds: 10 });
+    const ordinary = {
+      id: "ordinary",
+      title: "Auditor",
+      prompt: "Audit",
+      model: null,
+      status: "completed" as const,
+      result: "Finished",
+      startedAt,
+      completedAt,
+      updatedAt: completedAt,
+    };
+    const workflow = {
+      phases: [{ index: 1, title: "Review" }],
+      name: "Audit",
+      totalTokens: 300,
+      agents: [
+        {
+          index: 0,
+          label: "Reader",
+          state: "completed" as const,
+          startedAt: DateTime.toEpochMillis(startedAt),
+          durationMs: 1000,
+          totalTokens: 250,
+          lastToolName: "Bash",
+          result: "Read",
+          childThreadId: ThreadId.make("reader"),
+        },
+        { index: 1, label: "Writer", state: "running" as const, phaseIndex: 1 },
+        {
+          index: 2,
+          label: "Cached",
+          state: "completed" as const,
+          startedAt: DateTime.toEpochMillis(startedAt),
+        },
+      ],
+    };
+    const rows = projectedSubagentsToRuntime([
+      ordinary,
+      { ...ordinary, id: "workflow-a", status: "cancelled", workflow },
+      { ...ordinary, id: "workflow-b", workflow },
+    ]);
+    expect(rows[0]).toMatchObject({
+      id: "ordinary",
+      kind: "subagent",
+      status: "completed",
+      result: "Finished",
+    });
+    expect(rows[1]).toMatchObject({
+      kind: "workflow",
+      workflowName: "Audit",
+      usage: { totalTokens: 300 },
+    });
+    expect(rows[2]).toMatchObject({
+      id: "workflow-a:agent:0",
+      kind: "workflow_agent",
+      lastToolName: "Bash",
+      parentAgentId: "workflow-a",
+      status: "completed",
+      childThreadId: "reader",
+      result: "Read",
+      completedAt: "2026-06-05T10:00:01.000Z",
+    });
+    expect(rows[3]).toMatchObject({
+      status: "cancelled",
+      phaseIndex: 1,
+      completedAt: DateTime.formatIso(completedAt),
+    });
+    expect(rows[4]).toMatchObject({ status: "completed", completedAt: null });
+    expect(rows[6]?.id).toBe("workflow-b:agent:0");
+  });
+});
 
 describe("subagentGroupSummary", () => {
   it.each(["pending", "running", "waiting"] as const)(

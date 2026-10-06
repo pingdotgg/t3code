@@ -12,6 +12,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
@@ -32,7 +33,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { ProviderAdapterEventStreamError } from "./ProviderAdapter.ts";
+import { ProviderAdapterEventStreamError, type ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -155,6 +156,7 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly subagents?: OrchestrationV2ThreadProjection["subagents"];
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -337,7 +339,7 @@ function makeLocalCommandHarness(input: {
     turnItems: [],
     visibleTurnItems: [],
     runtimeRequests: [],
-    subagents: [],
+    subagents: input.subagents ?? [],
     plans: [],
     checkpoints: [],
     updatedAt: now,
@@ -855,3 +857,151 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("routes existing workflow member updates when a later root run resumes it", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const coordinatorThreadId = ThreadId.make("thread:resumed-workflow");
+    const memberThreadId = ThreadId.make("thread:resumed-workflow:member");
+    const unrelatedThreadId = ThreadId.make("thread:unrelated-workflow:member");
+    const coordinator = {
+      id: NodeId.make("node:resumed-workflow"),
+      threadId: ThreadId.make("thread-native-account-command"),
+      runId: RunId.make("run:previous-workflow"),
+      parentNodeId: NodeId.make("node:previous-workflow"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("claude"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      providerThreadId: null,
+      childThreadId: coordinatorThreadId,
+      nativeTaskRef: null,
+      prompt: "Review the project",
+      title: "Review workflow",
+      model: null,
+      status: "completed",
+      result: "Initial review complete",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      workflow: {
+        phases: [],
+        agents: [
+          { index: 0, label: "Reviewer", state: "completed", childThreadId: memberThreadId },
+        ],
+      },
+    } satisfies OrchestrationV2ThreadProjection["subagents"][number];
+    const harness = makeLocalCommandHarness({
+      text: "Resume the review",
+      failReadsAfterRunning: true,
+      subagents: [
+        coordinator,
+        {
+          ...coordinator,
+          id: NodeId.make("node:unrelated-workflow"),
+          childThreadId: ThreadId.make("thread:unrelated-workflow"),
+          status: "running",
+          workflow: {
+            phases: [],
+            agents: [
+              {
+                index: 0,
+                label: "Other reviewer",
+                state: "running",
+                childThreadId: unrelatedThreadId,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    yield* harness.start;
+    const started = harness.startRootRun.mock.calls[0]?.[0];
+    expect(started).toBeDefined();
+    if (started === undefined) return;
+    const identity = {
+      threadId: started.appThread.id,
+      runId: started.run.id,
+      attemptId: started.attemptId,
+      providerThreadId: started.providerThread.id,
+    };
+    const routing = RunExecutionService.makeProviderEventRoutingState({
+      identity,
+      providerTurnId: null,
+      relatedThreadIds: started.relatedThreadIds ?? [],
+    });
+    const memberRootId = NodeId.make("node:resumed-workflow:member-root");
+    const events = (threadId: ThreadId): ReadonlyArray<ProviderAdapterV2Event> => [
+      {
+        type: "node.updated",
+        driver: coordinator.driver,
+        node: {
+          id: memberRootId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: memberRootId,
+          kind: "root_turn",
+          status: "running",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      },
+      {
+        type: "message.updated",
+        driver: coordinator.driver,
+        message: {
+          id: MessageId.make("message:resumed-workflow:result"),
+          threadId,
+          runId: null,
+          nodeId: memberRootId,
+          role: "assistant",
+          text: "Updated review",
+          attachments: [],
+          streaming: false,
+          createdBy: "agent",
+          creationSource: "provider",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      {
+        type: "turn_item.updated",
+        driver: coordinator.driver,
+        turnItem: {
+          id: TurnItemId.make("turn-item:resumed-workflow:result"),
+          threadId,
+          runId: null,
+          nodeId: memberRootId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          title: null,
+          streaming: false,
+          ordinal: 200,
+          type: "assistant_message",
+          messageId: MessageId.make("message:resumed-workflow:result"),
+          text: "Updated review",
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      },
+    ];
+    // The adapter emits no app_thread.created when a retained member resumes.
+    for (const event of events(memberThreadId)) {
+      expect(RunExecutionService.routeProviderEvent(event, identity, routing)[0]).toBe(true);
+    }
+    for (const event of events(unrelatedThreadId)) {
+      expect(RunExecutionService.routeProviderEvent(event, identity, routing)[0]).toBe(false);
+    }
+  }),
+);

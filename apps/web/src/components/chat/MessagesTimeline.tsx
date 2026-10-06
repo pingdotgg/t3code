@@ -23,6 +23,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Subagent,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProvider,
@@ -33,7 +34,7 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
-import { environmentThreadDetails } from "../../state/threads";
+import { environmentThreadDetails, useOwningSubagent } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -171,7 +172,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
-import { useProject, useThreadShell } from "../../state/entities";
+import { useProject, useThreadProjection, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -278,6 +279,7 @@ import {
 } from "./V2LifecycleRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { WorkflowCard } from "./WorkflowCard";
 
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
@@ -1951,6 +1953,45 @@ function MessageAuthorHeading({ children }: { children: string }) {
 }
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  return row.message.createdBy === "agent" && row.message.creationSource === "provider" ? (
+    <ProviderUserTimelineRow row={row} />
+  ) : (
+    <UserMessageTimelineRow row={row} />
+  );
+}
+
+function ProviderUserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const shell = useThreadShell(ctx.threadRef);
+  const lineage = shell?.source.lineage;
+  const parentRef =
+    lineage?.relationshipToParent === "subagent" && lineage.parentThreadId
+      ? scopeThreadRef(ctx.activeThreadEnvironmentId, lineage.parentThreadId)
+      : null;
+  const parent = useThreadProjection(parentRef);
+  const liveAgent = parent?.projection.subagents.find(
+    (agent) => agent.childThreadId === ctx.threadRef?.threadId,
+  );
+  const retainedAgent = useOwningSubagent(
+    liveAgent ? null : parentRef,
+    shell?.source.forkedFrom?.type === "node" ? shell.source.forkedFrom.nodeId : null,
+  );
+  const agent = liveAgent ?? retainedAgent;
+  return agent?.workflow &&
+    agent.childThreadId === ctx.threadRef?.threadId &&
+    agent.workflow.launchMessageId === row.message.id ? (
+    <WorkflowCard
+      agent={agent}
+      childThread={shell?.source}
+      onOpenThread={ctx.onOpenThread}
+      inWorkflowThread
+    />
+  ) : (
+    <UserMessageTimelineRow row={row} />
+  );
+}
+
+function UserMessageTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
@@ -2806,8 +2847,8 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
-  if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
-    return <V2SubagentGroup key={row.id} row={row} />;
+  if (item.type === "subagent") {
+    return <V2SubagentTimelineRow key={row.id} row={row} />;
   }
   if (item.type === "secret_request") {
     return (
@@ -3026,6 +3067,60 @@ function subagentGroupTiming(
     startedAt: startMs === null ? null : new Date(startMs).toISOString(),
     completedAt: live || endUnknown || endMs === null ? null : new Date(endMs).toISOString(),
   };
+}
+
+function V2SubagentTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const agents = useAtomValue(
+    environmentThreadDetails.threadAtom(
+      scopeThreadRef(ctx.activeThreadEnvironmentId, row.projectedItem.item.threadId),
+    ),
+    (thread) => thread?.projection.subagents,
+  );
+  const members = row.subagents ?? [row.projectedItem];
+  const workflows = members.flatMap(({ item }) => {
+    const agent =
+      item.type === "subagent" ? agents?.find((agent) => agent.id === item.subagentId) : undefined;
+    return agent?.workflow ? [agent] : [];
+  });
+  const ordinary = members.filter(
+    ({ item }) =>
+      item.type !== "subagent" || !workflows.some((agent) => agent.id === item.subagentId),
+  );
+  const item = ordinary[0]?.item;
+  return (
+    <>
+      {workflows.map((agent) => (
+        <V2WorkflowTimelineCard key={agent.id} agent={agent} />
+      ))}
+      {ordinary.length > 1 ? (
+        <V2SubagentGroup row={{ ...row, projectedItem: ordinary[0]!, subagents: ordinary }} />
+      ) : item && isV2LifecycleItem(item) ? (
+        <V2LifecycleRow
+          environmentId={ctx.activeThreadEnvironmentId}
+          item={item}
+          resourceSummary={row.resourceSummary}
+          createdAt={row.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          providerStatuses={ctx.providerStatuses}
+          runs={ctx.runs}
+          onOpenThread={ctx.onOpenThread}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function V2WorkflowTimelineCard({ agent }: { agent: OrchestrationV2Subagent }) {
+  const ctx = use(TimelineRowCtx);
+  const childThread = useThreadShell(
+    agent.childThreadId === null
+      ? null
+      : scopeThreadRef(ctx.activeThreadEnvironmentId, agent.childThreadId),
+  );
+  return (
+    <WorkflowCard agent={agent} childThread={childThread?.source} onOpenThread={ctx.onOpenThread} />
+  );
 }
 
 const V2SubagentGroup = memo(function V2SubagentGroup({

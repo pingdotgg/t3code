@@ -220,6 +220,26 @@ export const layer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "threadSubagent",
+        Effect.fn("environment.orchestration.threadSubagent")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* threadManagement.getSubagent(args.params).pipe(
+            Effect.catch(
+              Effect.fnUntraced(function* (error) {
+                if (isThreadNotFound(error)) {
+                  return yield* failEnvironmentNotFound("thread_not_found");
+                }
+                return yield* failEnvironmentInternal(
+                  "orchestration_thread_subagent_failed",
+                  error,
+                );
+              }),
+            ),
+          );
+        }),
+      )
+      .handle(
         "threadHistoryPage",
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

@@ -528,6 +528,43 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      const cancelledSubagentIds = new Set(
+        events.flatMap((event) => (event.type === "subagent.updated" ? [event.payload.id] : [])),
+      );
+      for (const subagent of projection.subagents ?? []) {
+        if (
+          subagent.runId !== null ||
+          subagent.origin !== "provider_native" ||
+          !isNonterminalSubagentStatus(subagent.status) ||
+          cancelledSubagentIds.has(subagent.id)
+        )
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "subagent.updated",
+          threadId: projection.thread.id,
+          nodeId: subagent.id,
+          driver: subagent.driver,
+          providerInstanceId: subagent.providerInstanceId,
+          occurredAt: now,
+          payload: { ...subagent, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+        const node = projection.nodes.find(
+          (candidate) => candidate.id === subagent.id && isNonterminalNodeStatus(candidate.status),
+        );
+        if (node !== undefined && !cancelledStaleNodeIds.has(node.id)) {
+          cancelledStaleNodeIds.add(node.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            nodeId: node.id,
+            providerInstanceId: subagent.providerInstanceId,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        }
+      }
       // A provider-native subagent thread has no runs: its work is a runless
       // root turn, plus items under it (Claude's live progress item), that
       // only the dead provider process could settle. Left running, the child

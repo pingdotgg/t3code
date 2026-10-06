@@ -1219,9 +1219,13 @@ export const layer: Layer.Layer<
         attempt: runningAttempt,
         attemptId: attempt.id,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        relatedThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.childThreadId === null ? [] : [subagent.childThreadId],
-        ),
+        // A resumed workflow retains its member threads and does not recreate them.
+        relatedThreadIds: routableSubagents.flatMap((subagent) => [
+          ...(subagent.childThreadId === null ? [] : [subagent.childThreadId]),
+          ...(subagent.workflow?.agents.flatMap((member) =>
+            member.childThreadId === undefined ? [] : [member.childThreadId],
+          ) ?? []),
+        ]),
         relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
         ),

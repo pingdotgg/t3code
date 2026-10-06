@@ -5,6 +5,12 @@ import {
   CheckpointRef,
   EnvironmentId,
   MessageId,
+  NodeId,
+  ProviderInstanceId,
+  ProviderDriverKind,
+  TurnItemId,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   RunId,
   ThreadId,
@@ -2001,6 +2007,160 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Ran 2 commands and received 1 update");
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
+  });
+
+  it("updates a parent conversation workflow from its child shell during follow-ups", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    activityTestState.expandedRuns = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const { RegistryContext } = await import("@effect/atom-react");
+    const { Atom, AtomRegistry } = await import("effect/reactivity");
+    const DateTime = await import("effect/DateTime");
+    const { environmentThreadDetails, environmentThreadShells } =
+      await import("../../state/threads");
+    const { makeThreadFixture, makeThreadProjectionFixture } = await import("../../test-fixtures");
+    const environmentId = ACTIVE_THREAD_ENVIRONMENT_ID;
+    const threadId = ThreadId.make("thread-1");
+    const childThreadId = ThreadId.make("workflow-child");
+    const startedAt = DateTime.makeUnsafe("2026-09-16T12:00:00Z");
+    const completedAt = DateTime.makeUnsafe("2026-09-16T12:03:00Z");
+    const followUpStartedAt = DateTime.makeUnsafe("2026-09-16T12:05:00Z");
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-16T12:05:12Z"));
+    const agent = {
+      id: NodeId.make("workflow-node"),
+      threadId,
+      runId: RunId.make("run-1"),
+      parentNodeId: NodeId.make("parent-node"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      title: "Review workflow",
+      prompt: "original script",
+      model: null,
+      status: "completed",
+      result: "Old result",
+      startedAt,
+      completedAt,
+      updatedAt: completedAt,
+      workflow: { name: "Release review", phases: [], agents: [] },
+    } satisfies OrchestrationV2Subagent;
+    const projection = makeThreadProjectionFixture();
+    const parentAtom = Atom.make({
+      environmentId,
+      projection: {
+        ...projection,
+        thread: { ...projection.thread, id: threadId },
+        subagents: [agent],
+      },
+    });
+    const child = makeThreadFixture({ id: childThreadId, environmentId });
+    const childAtom = Atom.make(child);
+    const otherEnvironmentChildAtom = Atom.make({
+      ...child,
+      environmentId: EnvironmentId.make("other"),
+    });
+    const emptyAtom = Atom.make(null);
+    const detailSpy = vi
+      .spyOn(environmentThreadDetails, "threadAtom")
+      .mockImplementation((ref) =>
+        ref.environmentId === environmentId && ref.threadId === threadId ? parentAtom : emptyAtom,
+      );
+    const shellSpy = vi
+      .spyOn(environmentThreadShells, "threadShellAtom")
+      .mockImplementation((ref) =>
+        ref.threadId !== childThreadId
+          ? emptyAtom
+          : ref.environmentId === environmentId
+            ? childAtom
+            : otherEnvironmentChildAtom,
+      );
+    const registry = AtomRegistry.make();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const card = () => container.querySelector('[aria-label="Workflow: Release review"]')!;
+    const updateChild = (activityRunStatus: OrchestrationV2ThreadShell["activityRunStatus"]) => ({
+      ...child,
+      source: {
+        ...child.source,
+        activityRunStatus,
+        activityRunStartedAt: activityRunStatus ? followUpStartedAt : null,
+      },
+    });
+    try {
+      await act(async () =>
+        root.render(
+          <RegistryContext.Provider value={registry}>
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={[
+                {
+                  id: "workflow-item",
+                  kind: "event",
+                  createdAt: DateTime.formatIso(startedAt),
+                  projectedItem: {
+                    position: 0,
+                    visibility: "local",
+                    sourceThreadId: threadId,
+                    sourceItemId: TurnItemId.make("workflow-item"),
+                    item: {
+                      ...agent,
+                      id: TurnItemId.make("workflow-item"),
+                      type: "subagent",
+                      nodeId: agent.id,
+                      subagentId: agent.id,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                    },
+                  },
+                },
+              ]}
+            />
+          </RegistryContext.Provider>,
+        ),
+      );
+      expect(card().textContent).toContain("Completed");
+      expect(card().textContent).toContain("3m 00s");
+      await act(async () =>
+        registry.set(otherEnvironmentChildAtom, {
+          ...updateChild("running"),
+          environmentId: EnvironmentId.make("other"),
+        }),
+      );
+      expect(card().textContent).toContain("Completed");
+      for (const status of ["running", "waiting", null] as const) {
+        await act(async () => registry.set(childAtom, updateChild(status)));
+        expect(card().textContent).toContain(
+          status === "running" ? "Running" : status === "waiting" ? "Waiting" : "Completed",
+        );
+        expect(card().textContent).toContain(status ? "12s" : "3m 00s");
+        if (status) {
+          expect(card().textContent).not.toContain("Completed");
+          expect(card().textContent).not.toContain("3m 00s");
+        }
+      }
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      registry.dispose();
+      detailSpy.mockRestore();
+      shellSpy.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it.each(

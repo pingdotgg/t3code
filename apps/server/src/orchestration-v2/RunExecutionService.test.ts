@@ -178,14 +178,17 @@ it("leaves a child thread created after the root turn ended to the run that is l
     attemptId: RunAttemptId.make("attempt:late-child"),
     providerThreadId: ProviderThreadId.make("provider-thread:late-child"),
   };
-  const childCreated = (childThreadId: ThreadId): ProviderAdapterV2Event =>
+  const childCreated = (
+    childThreadId: ThreadId,
+    parentThreadId = threadId,
+  ): ProviderAdapterV2Event =>
     ({
       type: "app_thread.created",
       driver,
       appThread: {
         id: childThreadId,
         lineage: {
-          parentThreadId: threadId,
+          parentThreadId,
           relationshipToParent: "subagent",
           rootThreadId: threadId,
         },
@@ -228,6 +231,21 @@ it("leaves a child thread created after the root turn ended to the run that is l
   );
   assert.isFalse(lateAccepted);
   assert.isFalse(afterLate.ownedThreadIds.has(lateChild));
+
+  const memberId = ThreadId.make("thread:late-child:workflow-member");
+  const [memberAccepted, afterMember] = RunExecutionService.routeProviderEvent(
+    childCreated(memberId, earlyChild),
+    identity,
+    ended,
+  );
+  assert.isTrue(memberAccepted);
+  assert.isTrue(afterMember.ownedThreadIds.has(memberId));
+  const [unrelatedAccepted] = RunExecutionService.routeProviderEvent(
+    childCreated(ThreadId.make("thread:late-child:unrelated-member"), lateChild),
+    identity,
+    ended,
+  );
+  assert.isFalse(unrelatedAccepted);
 });
 
 it("does not route a superseded attempt through a reused provider thread", () => {
@@ -2393,6 +2411,21 @@ it.effect(
         ids,
         status: "running",
       });
+      const memberThreadId = ThreadId.make("thread:subagent-interrupt-cascade:member");
+      const runningMember = {
+        ...runningSubagent,
+        id: NodeId.make("node:subagent-interrupt-cascade:member"),
+        threadId: childThreadId,
+        runId: null,
+        parentNodeId: runningChildNode.id,
+        childThreadId: memberThreadId,
+      };
+      const runningMemberRoot = {
+        ...runningChildNode,
+        id: NodeId.make("node:subagent-interrupt-cascade:member-root"),
+        threadId: memberThreadId,
+        rootNodeId: NodeId.make("node:subagent-interrupt-cascade:member-root"),
+      };
       const runningChildTurnItem = makeLinkedChildTurnItemFixture({
         ids,
         driver,
@@ -2471,6 +2504,8 @@ it.effect(
                   driver,
                   turnItem: unrelatedChildTurnItem,
                 },
+                { type: "subagent.updated", driver, subagent: runningMember },
+                { type: "node.updated", driver, node: runningMemberRoot },
                 rootTerminalEvent(ids, "interrupted"),
                 // Late provider completion after interrupt must not be ingested.
                 {
@@ -2537,7 +2572,7 @@ it.effect(
             providerTurnId: ids.rootProviderTurnId,
           } as OrchestrationV2RunAttempt,
           attemptId: ids.attemptId,
-          relatedThreadIds: [unrelatedChildThreadId],
+          relatedThreadIds: [unrelatedChildThreadId, memberThreadId],
           providerTurnOrdinal: 1,
           message: {
             messageId: MessageId.make("message:subagent-interrupt-cascade:user"),
@@ -2589,8 +2624,23 @@ it.effect(
       const runUpdatedIndex = events.findIndex((event) => event.type === "run.updated");
       assert.isAtLeast(runUpdatedIndex, 0, "root run.updated must be written");
 
-      assert.lengthOf(subagentEvents, 1);
-      const terminalSubagent = subagentEvents[0];
+      assert.lengthOf(subagentEvents, 2);
+      const terminalSubagent = subagentEvents.find(
+        (event) => event.payload.id === runningSubagent.id,
+      );
+      const terminalMember = subagentEvents.find((event) => event.payload.id === runningMember.id);
+      assert.isDefined(terminalMember);
+      assert.equal(terminalMember.payload.status, "interrupted");
+      assert.equal(terminalMember.payload.runId, null);
+      assert.equal(terminalMember.payload.childThreadId, memberThreadId);
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.payload.id === runningMemberRoot.id &&
+            event.payload.status === "interrupted",
+        ),
+      );
       assert.isDefined(terminalSubagent);
       assert.equal(terminalSubagent.payload.status, "interrupted");
       assert.equal(terminalSubagent.payload.childThreadId, childThreadId);

@@ -7,6 +7,8 @@ import {
   type ChatAttachment,
   CommandId,
   MessageId,
+  type NodeId,
+  type OrchestrationV2Subagent,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
@@ -287,6 +289,10 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
+  readonly getSubagent: (input: {
+    readonly threadId: ThreadId;
+    readonly subagentId: NodeId;
+  }) => Effect.Effect<OrchestrationV2Subagent | null, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -806,6 +812,15 @@ const make = Effect.gen(function* () {
       ensureProjectionTranscript(input.threadId).pipe(
         Effect.andThen(orchestrator.getTurnItem(input)),
         Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
+      ),
+    getSubagent: (input) =>
+      ensureProjectionTranscript(input.threadId).pipe(
+        Effect.andThen(
+          orchestrator.getThreadRecords(input.threadId, ["subagents"], {
+            subagentIds: [input.subagentId],
+          }),
+        ),
+        Effect.map((records) => records.subagents[0] ?? null),
       ),
     getThreadRecords: (threadId, fields, filter) =>
       ensureProjectionTranscript(threadId).pipe(

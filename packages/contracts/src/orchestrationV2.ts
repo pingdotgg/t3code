@@ -660,6 +660,62 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+// Bound retained provider telemetry before it enters the event log and WebSocket stream.
+export const WORKFLOW_MAX_PHASES = 64;
+export const WORKFLOW_MAX_AGENTS = 200;
+const WorkflowText = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
+const WorkflowExcerpt = Schema.String.check(Schema.isMaxLength(1_024));
+
+export const OrchestrationV2WorkflowPhase = Schema.Struct({
+  index: NonNegativeInt,
+  title: WorkflowText,
+});
+export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
+
+/** Provider progress excerpts, not the member's complete transcript. Nested times are epoch ms. */
+export const OrchestrationV2WorkflowAgent = Schema.Struct({
+  index: NonNegativeInt,
+  label: WorkflowText,
+  agentId: Schema.optional(WorkflowText),
+  childThreadId: Schema.optional(ThreadId),
+  state: Schema.Literals(["queued", "running", "completed", "failed"]),
+  phaseIndex: Schema.optional(NonNegativeInt),
+  phaseTitle: Schema.optional(WorkflowText),
+  model: Schema.optional(WorkflowText),
+  lastToolName: Schema.optional(WorkflowText),
+  attempt: Schema.optional(NonNegativeInt),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+  queuedAt: Schema.optional(NonNegativeInt),
+  startedAt: Schema.optional(NonNegativeInt),
+  prompt: Schema.optional(WorkflowExcerpt),
+  result: Schema.optional(WorkflowExcerpt),
+});
+export type OrchestrationV2WorkflowAgent = typeof OrchestrationV2WorkflowAgent.Type;
+
+export const OrchestrationV2WorkflowRunHandles = Schema.Struct({
+  runId: Schema.optional(WorkflowText),
+  transcriptDir: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+  scriptPath: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+});
+export type OrchestrationV2WorkflowRunHandles = typeof OrchestrationV2WorkflowRunHandles.Type;
+
+/** Retained on the coordinator; members also have projected child threads for navigation. */
+export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  /** The immutable launch message, distinct from later resume prompts. */
+  launchMessageId: Schema.optional(MessageId),
+  name: Schema.optional(WorkflowText),
+  runHandles: Schema.optional(OrchestrationV2WorkflowRunHandles),
+  phases: Schema.Array(OrchestrationV2WorkflowPhase).check(Schema.isMaxLength(WORKFLOW_MAX_PHASES)),
+  agents: Schema.Array(OrchestrationV2WorkflowAgent).check(Schema.isMaxLength(WORKFLOW_MAX_AGENTS)),
+  truncated: Schema.optional(Schema.Boolean),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -693,6 +749,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "interrupted",
   ]),
   progress: Schema.optional(Schema.String),
+  workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),

@@ -1,9 +1,15 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { NodeId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
+import { Atom } from "effect/reactivity";
+
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -44,6 +50,62 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
       }),
   });
 });
+
+/** Fetch only the owning subagent's metadata, including workflow progress. */
+export const fetchEnvironmentThreadSubagent = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadSubagent",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly subagentId: NodeId;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
+  readonly timeoutMs?: number;
+}) {
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    group: "orchestration",
+    method: "GET",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(
+        httpBaseUrl,
+        `/api/orchestration/threads/${encodeURIComponent(input.threadId)}/subagents/${encodeURIComponent(input.subagentId)}`,
+      ),
+    timeoutMs: input.timeoutMs ?? DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.threadSubagent({
+        params: { threadId: input.threadId, subagentId: input.subagentId },
+        headers: withOrchestrationProtocolHeader(headers),
+      }),
+  });
+});
+
+/** Resolve a child's owning subagent without expanding the parent's timeline window. */
+export function createEnvironmentSubagentQuery<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+) {
+  return createEnvironmentQueryAtomFamily(runtime, {
+    label: "environment-data:thread:owning-subagent",
+    execute: (input: { threadId: ThreadId; subagentId: NodeId }) =>
+      Effect.gen(function* () {
+        const supervisor = yield* EnvironmentSupervisor;
+        const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+        if (Option.isNone(prepared)) return null;
+        const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+        const remoteAuthorization = yield* Effect.serviceOption(
+          RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+        );
+        return yield* fetchEnvironmentThreadSubagent({
+          ...input,
+          prepared: prepared.value,
+          signer,
+          remoteAuthorization,
+        });
+      }),
+  });
+}
 
 /**
  * Shared ThreadSnapshotLoader for clients that render progressive history.

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
+  BoundedThreadSnapshotLoader,
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
   createEnvironmentThreadStateAtoms,
@@ -9,7 +10,13 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  NodeId,
+  OrchestrationV2ThreadShell,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -29,6 +36,22 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
+
+const owningSubagentQuery =
+  BoundedThreadSnapshotLoader.createEnvironmentSubagentQuery(connectionAtomRuntime);
+const EMPTY_SUBAGENT_QUERY = Atom.make(AsyncResult.success(null));
+
+export function useOwningSubagent(ref: ScopedThreadRef | null, nodeId: NodeId | null) {
+  const result = useAtomValue(
+    ref && nodeId
+      ? owningSubagentQuery({
+          environmentId: ref.environmentId,
+          input: { threadId: ref.threadId, subagentId: nodeId },
+        })
+      : EMPTY_SUBAGENT_QUERY,
+  );
+  return Option.getOrNull(AsyncResult.value(result));
+}
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),

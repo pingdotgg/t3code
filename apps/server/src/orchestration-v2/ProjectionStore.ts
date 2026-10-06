@@ -283,6 +283,7 @@ export interface ProjectionRecordFilter {
   readonly messageRunIds?: ReadonlyArray<RunId>;
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly runIds?: ReadonlyArray<RunId>;
+  readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
 }
@@ -529,6 +530,12 @@ function needsRecovery(
           (run) =>
             ["preparing", "starting", "running", "waiting"].includes(run.status) ||
             (run.status === "queued" && run.queueHeld !== true),
+        ) ||
+        projection.subagents.some(
+          (subagent) =>
+            subagent.runId === null &&
+            subagent.origin === "provider_native" &&
+            ["pending", "running", "waiting"].includes(subagent.status),
         ) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.providerSessions.some(
@@ -2929,6 +2936,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_subagents
             WHERE thread_id = ${threadId}
+              ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
               : sql<PayloadRow>`
@@ -3567,6 +3575,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND type IN ('command_execution', 'dynamic_tool', 'subagent')
                   AND status IN ('pending', 'running', 'waiting')
                 UNION
+                SELECT thread_id FROM orchestration_v2_projection_subagents
+                WHERE run_id IS NULL AND origin = 'provider_native'
+                  AND status IN ('pending', 'running', 'waiting')
+                UNION
                 SELECT thread_id FROM orchestration_v2_effect_outbox
                 WHERE status IN ('pending', 'running')
               `;
@@ -3962,6 +3974,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  OR node.node_id IN (
+                    SELECT subagent_id FROM orchestration_v2_projection_subagents
+                    WHERE thread_id = ${threadId} AND run_id IS NULL
+                      AND origin = 'provider_native'
+                      AND status IN ('pending', 'running', 'waiting')
+                  )
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
             `,
@@ -3981,6 +3999,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  OR (subagent.run_id IS NULL AND subagent.origin = 'provider_native')
                 )
               ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
             `,
@@ -5974,6 +5993,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           const selected = {
             ...projection,
+            subagents: projection.subagents.filter(
+              (row) => filter?.subagentIds === undefined || filter.subagentIds.includes(row.id),
+            ),
             messages: projection.messages.filter(
               (row) =>
                 (filter?.messageRunIds === undefined ||

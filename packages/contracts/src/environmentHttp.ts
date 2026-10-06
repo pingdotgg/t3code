@@ -33,11 +33,13 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  NodeId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -110,6 +112,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_thread_snapshot_failed",
   "orchestration_thread_bounded_snapshot_failed",
   "orchestration_thread_history_failed",
+  "orchestration_thread_subagent_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -552,6 +555,18 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       success: OrchestrationV2ThreadBoundedSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "threadSubagent",
+      "/api/orchestration/threads/:threadId/subagents/:subagentId",
+      {
+        headers: OrchestrationProtocolHeaders,
+        params: Schema.Struct({ threadId: ThreadId, subagentId: NodeId }),
+        success: Schema.NullOr(OrchestrationV2Subagent),
+        error: EnvironmentOrchestrationThreadSnapshotErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.get("threadHistoryPage", "/api/orchestration/threads/:threadId/history", {
