@@ -145,7 +145,13 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
         // `Schema.is` and `make` still reject an array that does. Aborts, so a
         // later check on the array never sees a hole.
         Schema.makeFilter(
-          (values) => values.every((value) => value !== undefined),
+          (values) => {
+            // Every index, not `every`, which skips the holes of a sparse array.
+            for (let index = 0; index < values.length; index++) {
+              if (values[index] === undefined) return false;
+            }
+            return true;
+          },
           { expected: "an array without holes" },
           true,
         ),

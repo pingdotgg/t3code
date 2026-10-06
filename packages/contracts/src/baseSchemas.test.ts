@@ -81,6 +81,11 @@ describe("ForwardCompatibleArray", () => {
 
   it("does not accept holes as a decoded value", () => {
     expect(Schema.is(Named)([undefined])).toBe(false);
+    // A sparse array's missing index is a hole too.
+    const sparse: Array<{ name: string }> = [{ name: "a" }];
+    sparse.length = 2;
+    expect(Schema.is(Named)(sparse)).toBe(false);
+    expect(() => Named.make(sparse)).toThrow();
     expect(Schema.is(Named)([{ name: "a" }])).toBe(true);
   });
 });
