@@ -48,12 +48,12 @@ const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationSco
 });
 
 const clientCaller = (
-  runtimeModeCeiling: RuntimeMode,
+  access: McpInvocationContext.McpClientCaller["access"],
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment"),
   requestNamespace: "client:session",
   thread: undefined,
-  client: { sessionId: "session", label: "Claude Code", runtimeModeCeiling },
+  client: { sessionId: "session", label: "Claude Code", access },
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
 });
@@ -193,6 +193,7 @@ const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
+const readOnlyClient = clientCaller("read-only");
 // A live full-access thread whose credential may use its browser but not control threads.
 const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
 
@@ -200,6 +201,13 @@ it.effect.each([
   // Reads are open to every caller, even one whose turn ended.
   ["reads", ended, {}, "ran"],
   ["reads", supervisedClient, {}, "ran"],
+  ["reads", readOnlyClient, {}, "ran"],
+
+  // A client approved for read-only access changes nothing.
+  ["writes", readOnlyClient, {}, "capability_denied"],
+  ["writes_threads", readOnlyClient, { threadId: supervisedThreadId }, "capability_denied"],
+  ["starts_threads", readOnlyClient, {}, "capability_denied"],
+  ["writes_environment", readOnlyClient, {}, "capability_denied"],
 
   // What belongs to the calling thread needs one; changing it needs its live turn.
   ["reads_as_caller", ended, {}, "ran"],

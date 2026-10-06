@@ -97,15 +97,36 @@ export class Declaration<out Handler> {
   }
 }
 
+/** A client approved for read-only access changes nothing. */
+const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
+  Effect.flatMap((scope) =>
+    scope.client?.access === "read-only"
+      ? Effect.fail(
+          new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message:
+              "This tool changes the environment, and this MCP client was approved for read-only access.",
+          }),
+        )
+      : Effect.void,
+  ),
+);
+
 /**
  * The caller of a tool that changes something. Tools that act for a
  * capability of their own (preview, device, worktree, pull requests) check it
  * themselves.
  */
-const writingCaller = loadCaller().pipe(Effect.tap(assertLiveCaller));
+const writingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(loadCaller()),
+  Effect.tap(assertLiveCaller),
+);
 
 /** The same, for tools whose only capability is controlling threads. */
-const orchestratingCaller = readCaller().pipe(Effect.tap(assertLiveCaller));
+const orchestratingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(readCaller()),
+  Effect.tap(assertLiveCaller),
+);
 
 const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),

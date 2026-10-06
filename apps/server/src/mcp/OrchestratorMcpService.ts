@@ -84,6 +84,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
+  clientRuntimeModeCeiling,
   type McpInvocationScope,
   type McpThreadInvocationScope,
   requireThreadScope,
@@ -908,7 +909,7 @@ const make = Effect.gen(function* () {
         return {
           parent: undefined,
           limits: {
-            runtimeMode: scope.client?.runtimeModeCeiling ?? "approval-required",
+            runtimeMode: clientRuntimeModeCeiling(scope.client),
             interactionMode: "default",
           } satisfies { runtimeMode: RuntimeMode; interactionMode: ProviderInteractionMode },
         } as const;
@@ -1400,8 +1401,9 @@ const make = Effect.gen(function* () {
 
   /**
    * A task as the caller may see it. Its webhook URL starts runs, so only a
-   * caller that may start one sees it: a thread caller with a live turn, at
-   * modes covering every mode the task runs at.
+   * caller that may start one sees it: never a client approved for read-only
+   * access, and a thread caller only with a live turn, at modes covering every
+   * mode the task runs at.
    */
   const summarizeScheduledTask = (
     scope: McpInvocationScope,
@@ -1416,8 +1418,9 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const live =
-        caller.parent === undefined ||
-        Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent)));
+        caller.parent === undefined
+          ? scope.client?.access !== "read-only"
+          : Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent)));
       // This runs after a save, so a failed lookup of the bound thread hides
       // the webhook URL instead of reporting a saved task as an error.
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);

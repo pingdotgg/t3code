@@ -21,8 +21,35 @@ authority.
 Browser cookies, bearer tokens, and DPoP tokens adapt the same scoped session
 model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
-vocabulary gives these grants a familiar meaning, but the environment does not
-implement a general-purpose OAuth authorization server.
+vocabulary gives these grants a familiar meaning.
+
+### MCP clients are a separate audience
+
+Agents T3 Code did not launch sign in to `/mcp` through a narrow OAuth
+authorization-code server ([McpOAuth](../../apps/server/src/auth/McpOAuth.ts)).
+It accepts only loopback redirect URIs: an HTTPS redirect would let anyone send
+the owner an approval link that delivers the code to their own server. Client
+registration is stateless, so an unauthenticated caller cannot grow server
+state. Approval spends a one-time pairing code, or uses a browser session with
+`access:write`; proof-bound T3 Connect codes are refused without being spent.
+
+The user grants either read-only access or a runtime-mode ceiling, not a
+scope list: MCP tools are all orchestration, and `orchestration:operate`
+alone would let an agent start a thread in full access and act through it.
+The result is an ordinary session with subject `mcp-client`. A read-only
+grant holds `orchestration:read` alone. On `/mcp` it passes only tools
+declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
+where every tool must declare who may call it to compile. Any other grant adds
+`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
+path rejects that subject, because the RPC surface would let the agent act
+above its ceiling. Inside MCP the credential sets the limits and tool
+parameters only pick targets; see
+[threadAccess](../../apps/server/src/mcp/threadAccess.ts).
+
+Issuer and resource URLs come from the request's Host and
+`X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
+T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header
+breaks sign-in.
 
 Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
 HTTP so long-lived tokens stay out of socket URLs. Browser sessions can

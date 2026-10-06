@@ -66,7 +66,7 @@ const supervisedClient: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("environment"),
   requestNamespace: "client:race",
   thread: undefined,
-  client: { sessionId: "race", label: "Claude Code", runtimeModeCeiling: "approval-required" },
+  client: { sessionId: "race", label: "Claude Code", access: "approval-required" },
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
 };

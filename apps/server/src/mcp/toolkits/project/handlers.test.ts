@@ -313,7 +313,7 @@ const clientLaunchHarness = (input: {
       client: {
         sessionId: "session-1",
         label: "Claude Code",
-        runtimeModeCeiling: input.runtimeModeCeiling,
+        access: input.runtimeModeCeiling,
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
