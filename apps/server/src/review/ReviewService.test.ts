@@ -122,11 +122,15 @@ describe("ReviewService", () => {
       );
       assert.strictEqual(result.cwd, previous);
 
-      const error = yield* Effect.gen(function* () {
-        const review = yield* ReviewService.ReviewService;
-        return yield* review.getDiffPreview({ cwd: outsideRoot }).pipe(Effect.flip);
-      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, worktreesDirectory: "/" })));
-      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      const rootLink = `${baseDir}/root-link`;
+      yield* fs.symlink("/", rootLink);
+      for (const worktreesDirectory of ["/", rootLink]) {
+        const error = yield* Effect.gen(function* () {
+          const review = yield* ReviewService.ReviewService;
+          return yield* review.getDiffPreview({ cwd: outsideRoot }).pipe(Effect.flip);
+        }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, worktreesDirectory })));
+        assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

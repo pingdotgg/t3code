@@ -35,7 +35,7 @@ import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementSer
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import { managedWorktreesDirectories } from "./worktreesDirectory.ts";
+import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 
@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
         Effect.orElseSucceed(() => null),
       );
-      if (root !== null) roots.push(root);
+      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
     if (roots.length === 0) return;
     const hasDeleteRule = anyWorktreePolicy(serverSettings, (rules) => rules.worktreeOnDelete);

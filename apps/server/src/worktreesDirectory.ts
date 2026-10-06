@@ -18,7 +18,12 @@ export function resolveWorktreesDirectory(
   const expanded = expandHomePathWith(setting, path);
   if (!path.isAbsolute(expanded)) return null;
   const resolved = path.resolve(expanded);
-  return path.dirname(resolved) === resolved ? null : resolved;
+  return isFilesystemRoot(resolved, path) ? null : resolved;
+}
+
+/** Callers re-check after resolving symlinks: a link can point at a root. */
+export function isFilesystemRoot(directory: string, path: Path.Path): boolean {
+  return path.dirname(directory) === directory;
 }
 
 /** Every directory that holds T3-managed worktrees on this machine. */
