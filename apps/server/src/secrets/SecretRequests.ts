@@ -105,11 +105,7 @@ const make = Effect.gen(function* () {
           turnItemTypes: ["secret_request"],
           messageRoles: [],
         })
-        .pipe(
-          Effect.mapError(
-            (cause) => new SecretRequestError({ reason: "load_failed", cause: cause }),
-          ),
-        );
+        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
       const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
       if (item?.type !== "secret_request" || item.runId === null || item.nodeId === null) {
         return yield* new SecretRequestError({ reason: "not_found" });
@@ -160,9 +156,7 @@ const make = Effect.gen(function* () {
           secretStatus,
         })
         .pipe(
-          Effect.mapError(
-            (cause) => new SecretRequestError({ reason: "record_failed", cause: cause }),
-          ),
+          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
           // The card still says pending, so the user can save again; the value
           // stored above would make that retry look already answered.
           Effect.tapError(() =>
@@ -181,9 +175,7 @@ const make = Effect.gen(function* () {
           messageRoles: [],
         })
         .pipe(
-          Effect.mapError(
-            (cause) => new SecretRequestError({ reason: "record_failed", cause: cause }),
-          ),
+          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
         );
       const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
       if (card?.type === "secret_request" && card.secretStatus !== "saved") {
@@ -229,11 +221,7 @@ const make = Effect.gen(function* () {
         return yield* new SecretRequestError({ reason: "invalid_ref" });
       const stored = yield* store
         .get(storeName(input.ref))
-        .pipe(
-          Effect.mapError(
-            (cause) => new SecretRequestError({ reason: "read_failed", cause: cause }),
-          ),
-        );
+        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "read_failed", cause })));
       const decoded = Option.flatMap(stored, (bytes) =>
         decodeStored(new TextDecoder().decode(bytes)),
       );
