@@ -5,6 +5,11 @@ import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import {
+  DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
+  currentDesktopBootstrapToken,
+} from "@t3tools/shared/desktopBootstrapToken";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./DesktopLocalEnvironmentAuth.ts";
@@ -76,5 +81,67 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(second, "desktop-bearer-token");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
     }),
+  );
+
+  it.effect(
+    "exchanges the current window's token when the backend was launched with a secret",
+    () =>
+      Effect.gen(function* () {
+        const presented = yield* Ref.make<string | null>(null);
+        const httpClientLayer = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const body =
+              request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+            return Ref.set(presented, new URLSearchParams(body).get("subject_token")).pipe(
+              Effect.as(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      access_token: "desktop-bearer-token",
+                      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                      token_type: "Bearer",
+                      expires_in: 3600,
+                      scope: "orchestration:read",
+                    }),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+        const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+          list: Effect.succeed([
+            {
+              id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+              label: Effect.succeed("Windows"),
+              currentConfig: Effect.succeedSome({
+                ...config,
+                bootstrap: { ...config.bootstrap, desktopBootstrapSecret: "desktop-secret" },
+              }),
+            },
+          ]),
+        } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+
+        // The first exchange happens a day after launch, past the launch token's windows.
+        yield* TestClock.setTime(DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS * 2 + 1);
+        yield* Effect.gen(function* () {
+          const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+          return yield* auth.getBearerToken;
+        }).pipe(
+          Effect.provide(
+            DesktopLocalEnvironmentAuth.layer.pipe(
+              Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer)),
+            ),
+          ),
+        );
+
+        assert.strictEqual(
+          yield* Ref.get(presented),
+          currentDesktopBootstrapToken("desktop-secret", DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS * 2 + 1),
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 });

@@ -12,6 +12,11 @@ export const DesktopBackendBootstrap = Schema.Struct({
   t3Home: Schema.optional(Schema.String),
   host: Schema.String,
   desktopBootstrapToken: Schema.String,
+  // Present when the desktop rotates the renderer's bootstrap token: the
+  // backend derives the accepted tokens from this secret instead of trusting
+  // `desktopBootstrapToken` for its whole run. See
+  // `@t3tools/shared/desktopBootstrapToken`.
+  desktopBootstrapSecret: Schema.optionalKey(Schema.String),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,
   otlpTracesUrl: Schema.optional(Schema.String),
