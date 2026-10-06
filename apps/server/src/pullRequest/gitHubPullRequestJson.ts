@@ -2002,12 +2002,14 @@ const WATCH_FINGERPRINT_CHECK_COUNTS =
  * requests, where the detail and activity reads it gates cost sixteen for one. Counts and the
  * newest edit cover new comments, reviews (a reply in a review thread is a review), threads, and
  * a bot rewriting its summary; check counts by state move whenever a check starts or finishes.
- * Edits to comments inside review threads are not covered: asking for those costs a point for
- * each pull request.
+ * Comments come most recently updated first, since an edit moves `updatedAt`, so an edit to an
+ * old comment on a long pull request is still in the page. Reviews have no such order: an edit
+ * to a review older than the last hundred waits for the watch's periodic full read, as do edits
+ * to comments inside review threads, which cost a point per pull request to ask for.
  */
 const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
   "state mergeable headRefOid " +
-  `comments(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
+  `comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { ${WATCH_FINGERPRINT_EDITS} } ` +
   `reviews(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
   "reviewThreads { totalCount } " +
   `commits(last: 1) { nodes { commit { statusCheckRollup { contexts { ${WATCH_FINGERPRINT_CHECK_COUNTS} } } } } }`;
