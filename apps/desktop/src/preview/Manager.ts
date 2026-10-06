@@ -2138,7 +2138,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler((details) => {
           if (previewWindowOpenAction(details) === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            // An owned window stays above T3 when a later click refocuses the
+            // preview. Without an owner, OAuth can appear to do nothing while
+            // its existing account chooser is hidden behind the main window.
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: {
+                ...POPUP_WINDOW_OPTIONS,
+                ...(currentMainWindow && !currentMainWindow.isDestroyed()
+                  ? { parent: currentMainWindow }
+                  : {}),
+              },
+            };
           }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
