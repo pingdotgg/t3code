@@ -412,16 +412,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       history: patch(current.history),
     }));
 
-  const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
-    yield* Ref.set(awaitingCompletion, false);
-    yield* SubscriptionRef.set(state, {
-      data: Option.none(),
-      status: "deleted",
-      error: Option.none(),
-      history: EMPTY_THREAD_HISTORY_META,
-    });
-    yield* remember;
-    if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+  const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* (options?: {
+    readonly missing?: boolean;
+  }) {
+    const ownsCache = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* Ref.set(awaitingCompletion, false);
+        yield* SubscriptionRef.set(state, {
+          data: Option.none(),
+          status: "deleted",
+          error: Option.none(),
+          history: EMPTY_THREAD_HISTORY_META,
+        });
+        yield* remember;
+        if (resumeCache !== undefined && resumeCache.owner !== owner) return false;
+        // An HTTP miss can race creation. Recheck on reopen, even if leaving the
+        // screen interrupts disk cleanup; retain actual thread.deleted events.
+        if (options?.missing && resumeCache !== undefined) resumeCache.snapshot = undefined;
+        return true;
+      }),
+    );
+    if (!ownsCache) return;
     yield* cache.removeThread(environmentId, threadId).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not remove the cached thread.").pipe(
@@ -894,7 +905,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             case "missing": {
               // Definitive HTTP 404: clear any stale cache and do not open or
               // retry a socket subscription for this attempt.
-              yield* setDeleted();
+              yield* setDeleted({ missing: true });
               return yield* Effect.never;
             }
             case "unavailable": {

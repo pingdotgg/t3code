@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -110,6 +111,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
+  readonly removeThread?: Persistence.EnvironmentCacheStore["Service"]["removeThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
 }) {
@@ -205,8 +207,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Ref.update(savedThreads, (current) => [...current, thread]).pipe(
         Effect.andThen(options?.saveThread?.(environmentId, thread) ?? Effect.void),
       ),
-    removeThread: (_environmentId, threadId) =>
-      Ref.update(removedThreads, (current) => [...current, threadId]),
+    removeThread: (environmentId, threadId) =>
+      Ref.update(removedThreads, (current) => [...current, threadId]).pipe(
+        Effect.andThen(options?.removeThread?.(environmentId, threadId) ?? Effect.void),
+      ),
     loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
     loadVcsRefs: () => Effect.succeedNone,
@@ -1567,6 +1571,54 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect.each(["http", "socket"] as const)(
+    "rechecks a pre-creation HTTP miss on reopen and recovers through %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const first = yield* makeHarness({
+              httpSnapshot: { _tag: "missing" },
+              resumeCache,
+              // Leaving can interrupt disk cleanup after the UI sees the miss.
+              removeThread: () => Effect.never,
+            });
+            const missing = yield* awaitThreadState(
+              first.observed,
+              (value) => value.status === "deleted",
+            );
+            expect(Option.isNone(missing.data)).toBe(true);
+            expect(yield* Ref.get(first.subscriptionCount)).toBe(0);
+          }),
+        );
+        const resumed = yield* makeHarness({
+          resumeCache,
+          httpSnapshot:
+            recovery === "http"
+              ? { _tag: "present", snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION } }
+              : { _tag: "unavailable" },
+        });
+        if (recovery === "socket") {
+          yield* Queue.offer(resumed.inputs, {
+            kind: "snapshot",
+            snapshotSequence: 7,
+            projection: BASE_PROJECTION,
+          });
+        }
+        const restored = yield* awaitThreadState(
+          resumed.observed,
+          (value) => value.status === "live" || value.status === "deleted",
+        );
+        expect(restored.status).toBe("live");
+        expect(Option.getOrNull(restored.data)).toEqual(BASE_PROJECTION);
+        expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+      }),
+  );
+
   it.effect("falls back to the socket when the HTTP snapshot is only unavailable", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -1935,3 +1987,63 @@ describe("EnvironmentThreads", () => {
     }),
   );
 });
+
+it.effect(
+  "a pre-creation miss is not retained when the scope closes right after it is remembered",
+  () =>
+    Effect.gen(function* () {
+      const rememberedDeleted = yield* Deferred.make<void>();
+      let rememberingFiber: Fiber.Fiber<unknown, unknown> | undefined;
+      let retained: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>["snapshot"];
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        owner: undefined,
+        get snapshot() {
+          return retained;
+        },
+        set snapshot(value) {
+          retained = value;
+          if (value?.state.status === "deleted") {
+            rememberingFiber = Fiber.getCurrent();
+            Deferred.doneUnsafe(rememberedDeleted, Effect.void);
+          }
+        },
+      };
+      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      let yieldedAfterRemember = false;
+      const scheduler = new Scheduler.MixedScheduler();
+      const baseShouldYield = scheduler.shouldYield.bind(scheduler);
+      scheduler.shouldYield = (fiber) => {
+        if (
+          fiber === rememberingFiber &&
+          !yieldedAfterRemember &&
+          retained?.state.status === "deleted"
+        ) {
+          yieldedAfterRemember = true;
+          return true;
+        }
+        return baseShouldYield(fiber);
+      };
+      yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache }).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+      );
+      yield* Deferred.await(rememberedDeleted);
+      yield* Scope.close(scope, Exit.void);
+      expect(yieldedAfterRemember).toBe(true);
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+        },
+      });
+      const restored = yield* awaitThreadState(
+        resumed.observed,
+        (value) => value.status === "live" || value.status === "deleted",
+      );
+      expect(restored.status).toBe("live");
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+    }),
+);
