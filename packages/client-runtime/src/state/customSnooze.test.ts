@@ -90,6 +90,21 @@ describe("snooze favorites", () => {
     });
   });
 
+  it("skips favorites whose wake time overflows instead of throwing", () => {
+    expect(
+      resolveSnoozeFavoritePresets(
+        [
+          { amount: 1e300, unit: "hours" },
+          { amount: 2, unit: "hours" },
+        ],
+        now,
+      ).map((preset) => preset.id),
+    ).toEqual(["favorite:2-hours"]);
+    const maxDate = new Date(8.64e15);
+    const justBefore = new Date(maxDate.getTime() - 60_000);
+    expect(resolveSnoozeFavoritePresets([{ amount: 2, unit: "minutes" }], justBefore)).toEqual([]);
+  });
+
   it("ignores duplicates, drops the oldest past the cap, and removes by value", () => {
     const two = { amount: 2, unit: "hours" } as const;
     const list = addSnoozeFavorite([], two);

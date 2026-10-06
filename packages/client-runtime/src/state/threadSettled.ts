@@ -347,14 +347,22 @@ export function resolveSnoozeFavoritePresets(
   favorites: ReadonlyArray<SnoozeFavorite>,
   now: Date,
 ): ReadonlyArray<SnoozePreset> {
-  return favorites.map((favorite) => {
-    const wake = new Date(now.getTime() + favorite.amount * SNOOZE_UNIT_MS[favorite.unit]);
-    return {
-      id: `favorite:${favorite.amount}-${favorite.unit}`,
-      label: `In ${snoozeFavoriteLabel(favorite)}`,
-      whenLabel: snoozeTimeOfDayLabel(wake),
-      snoozedUntil: wake.toISOString(),
-    };
+  return favorites.flatMap((favorite) => {
+    // A saved duration that no longer resolves (overflowing date) is skipped
+    // so it cannot break the menus the user would remove it from.
+    const snoozedUntil = resolveCustomSnooze(
+      { mode: "duration", amount: String(favorite.amount), unit: favorite.unit },
+      now,
+    );
+    if (snoozedUntil === null) return [];
+    return [
+      {
+        id: `favorite:${favorite.amount}-${favorite.unit}` as const,
+        label: `In ${snoozeFavoriteLabel(favorite)}`,
+        whenLabel: snoozeTimeOfDayLabel(new Date(snoozedUntil)),
+        snoozedUntil,
+      },
+    ];
   });
 }
 
