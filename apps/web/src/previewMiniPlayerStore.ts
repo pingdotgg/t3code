@@ -12,7 +12,10 @@ export interface PreviewMiniPlayerSize {
   readonly height: number;
 }
 
-/** What the floating player mirrors: a browser tab or a device stream. */
+/**
+ * What the floating player mirrors: a browser tab, a device stream, or the
+ * window an agent is driving on the host computer.
+ */
 export type PreviewMiniPlayerSource =
   | { readonly kind: "browser"; readonly tabId: string }
   | {
@@ -21,7 +24,8 @@ export type PreviewMiniPlayerSource =
       readonly deviceId: string;
       readonly platform: DevicePlatform;
       readonly name: string;
-    };
+    }
+  | { readonly kind: "computer" };
 
 export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
@@ -51,10 +55,17 @@ interface PreviewMiniPlayerStoreState {
 }
 
 export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
-  return source.kind === "browser"
-    ? `browser:${source.tabId}`
-    : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+  switch (source.kind) {
+    case "browser":
+      return `browser:${source.tabId}`;
+    case "device":
+      return `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+    case "computer":
+      return "computer";
+  }
 }
+
+export const COMPUTER_MINI_PLAYER_SOURCE: PreviewMiniPlayerSource = { kind: "computer" };
 
 export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({
   kind: "browser",

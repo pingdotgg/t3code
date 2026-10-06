@@ -183,6 +183,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as CuaDriver from "./cua/CuaDriver.ts";
+import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -3583,6 +3584,20 @@ const layerWsRpc = (
             WS_METHODS.subscribeDeviceState,
             DeviceService.stateStream(deviceService),
             { "rpc.aggregate": "device" },
+          ),
+        [WS_METHODS.subscribeCuaWindowPreview]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeCuaWindowPreview,
+            Stream.unwrap(
+              Effect.serviceOption(CuaWindowPreview.CuaWindowPreview).pipe(
+                Effect.map((preview) =>
+                  Option.isSome(preview)
+                    ? preview.value.stream(input.threadId)
+                    : Stream.make({ status: "idle" as const }),
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           observeRpcStream(

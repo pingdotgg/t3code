@@ -1,6 +1,10 @@
 "use client";
 
-import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  type CuaWindowPreviewFrame,
+  FILL_PREVIEW_VIEWPORT,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -8,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -43,11 +48,14 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useCuaWindowPreview } from "~/state/cua";
 import { useDeviceState } from "~/state/device";
+import { useAssetUrlState } from "~/assets/assetUrls";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
+import type { ComputerUsePreview } from "./computerUsePreview";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
@@ -96,23 +104,111 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/** Floats the thread's browser tab or device stream over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
+/** Floats the thread's browser tab, device stream, or driven computer window over chat. */
+export function ThreadPreviewMiniPlayer({
+  threadRef,
+  miniPlayer,
+  computerUse = null,
+}: Props & { readonly computerUse?: ComputerUsePreview | null }) {
   const { source } = miniPlayer;
-  return source.kind === "browser" ? (
-    <BrowserMiniPlayer
-      key={source.tabId}
+  switch (source.kind) {
+    case "browser":
+      return (
+        <BrowserMiniPlayer
+          key={source.tabId}
+          threadRef={threadRef}
+          tabId={source.tabId}
+          miniPlayer={miniPlayer}
+        />
+      );
+    case "device":
+      return (
+        <DeviceMiniPlayer
+          key={previewMiniPlayerSourceKey(source)}
+          threadRef={threadRef}
+          source={source}
+          miniPlayer={miniPlayer}
+        />
+      );
+    case "computer":
+      return (
+        <ComputerMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} preview={computerUse} />
+      );
+  }
+}
+
+/**
+ * The window an agent drives on the host computer. While a computer use turn
+ * runs, the server captures that window every second and a half and streams
+ * it here; the capture runs only while this card is mounted. Between turns the
+ * card keeps the last frame instead of going blank.
+ */
+function ComputerMiniPlayer({
+  threadRef,
+  miniPlayer,
+  preview,
+}: Props & { readonly preview: ComputerUsePreview | null }) {
+  const live = useCuaWindowPreview(threadRef);
+  const [lastFrame, setLastFrame] = useState<CuaWindowPreviewFrame | null>(null);
+  const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
+  if (liveFrame !== null && liveFrame !== lastFrame) setLastFrame(liveFrame);
+  const frame = liveFrame ?? lastFrame;
+  const src = useMemo(
+    () => (frame ? `data:${frame.mimeType};base64,${frame.dataBase64}` : null),
+    [frame],
+  );
+  const sourceSize =
+    frame && frame.width > 0 && frame.height > 0
+      ? { width: frame.width, height: frame.height }
+      : { width: 1280, height: 800 };
+  const label = frame?.appName ?? preview?.appName ?? "Computer";
+  const caption =
+    frame?.windowTitle && frame.windowTitle !== label ? `${label} · ${frame.windowTitle}` : label;
+  const appIcon = useAssetUrlState(
+    threadRef.environmentId,
+    preview?.app ? { _tag: "native-app-icon", app: preview.app } : null,
+  );
+
+  return (
+    <MiniPlayerShell
       threadRef={threadRef}
-      tabId={source.tabId}
       miniPlayer={miniPlayer}
-    />
-  ) : (
-    <DeviceMiniPlayer
-      key={previewMiniPlayerSourceKey(source)}
-      threadRef={threadRef}
-      source={source}
-      miniPlayer={miniPlayer}
-    />
+      sourceSize={sourceSize}
+      label="Floating computer use preview"
+      recording={live.status === "live" || preview?.inProgress === true}
+    >
+      {() => (
+        <div
+          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] bg-muted"
+          style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+        >
+          {src ? (
+            <img
+              src={src}
+              alt={caption}
+              decoding="async"
+              draggable={false}
+              className="size-full select-none object-contain"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+              {live.status === "unavailable" ? "Preview unavailable" : "Waiting for the agent…"}
+            </div>
+          )}
+          {live.status === "unavailable" && live.detail ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 truncate bg-background/80 px-2.5 py-1 text-2xs text-muted-foreground">
+              {live.detail}
+            </div>
+          ) : null}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-background/85 to-background/0 px-2.5 pt-5 pb-2 text-2xs text-foreground">
+            {appIcon._tag === "Success" ? (
+              <img src={appIcon.url} alt="" aria-hidden className="size-3.5 shrink-0" />
+            ) : null}
+            <span className="truncate">{caption}</span>
+          </div>
+        </div>
+      )}
+    </MiniPlayerShell>
   );
 }
 
@@ -331,7 +427,8 @@ function MiniPlayerShell({
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
   readonly label: string;
-  readonly onOpenInPanel: () => void;
+  /** Omitted for sources that have no panel, such as the computer card. */
+  readonly onOpenInPanel?: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
   /** The clip radius for a given frame; the pill stays inside the curve. */
@@ -504,22 +601,24 @@ function MiniPlayerShell({
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
                 </span>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Open preview in right panel"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={onOpenInPanel}
-                    />
-                  }
-                >
-                  <PanelRightIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">Open in right panel</TooltipPopup>
-              </Tooltip>
+              {onOpenInPanel ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Open preview in right panel"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={onOpenInPanel}
+                      />
+                    }
+                  >
+                    <PanelRightIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Open in right panel</TooltipPopup>
+                </Tooltip>
+              ) : null}
               {pillActions}
               <Tooltip>
                 <TooltipTrigger
