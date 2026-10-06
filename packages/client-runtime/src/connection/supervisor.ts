@@ -802,7 +802,30 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
-    return failureFromExit(target, connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
+    const outcome = failureFromExit(
+      target,
+      connectedExit,
+      true,
+      connectedForMs >= BACKOFF_RESET_AFTER_MS,
+    );
+    if (outcome._tag === "Failure") {
+      // A live session ending is otherwise invisible in the client trace, so
+      // record why, and how long it lasted, as its own root span.
+      yield* Effect.void.pipe(
+        Effect.withSpan("EnvironmentSupervisor.connectionLost", {
+          root: true,
+          attributes: {
+            "environment.id": target.environmentId,
+            "environment.label": target.label,
+            "environment.target.kind": target._tag,
+            "connection.connected_ms": connectedForMs,
+            "connection.failure.reason": outcome.failure.error.reason,
+            "connection.failure.detail": outcome.failure.error.detail,
+          },
+        }),
+      );
+    }
+    return outcome;
   }, Effect.ensuring(clearLease));
 
   const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {

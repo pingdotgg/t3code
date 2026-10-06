@@ -362,6 +362,7 @@ function toReactions(
 
 const RawCommentSchema = Schema.Struct({
   id: Schema.String,
+  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   body: Schema.optional(Schema.String),
   createdAt: Schema.String,
@@ -372,6 +373,7 @@ const RawCommentSchema = Schema.Struct({
 
 const RawReviewSchema = Schema.Struct({
   id: Schema.String,
+  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   body: Schema.optional(Schema.String),
   state: Schema.optional(Schema.NullOr(Schema.String)),
@@ -490,6 +492,7 @@ const RawReviewThreadsSchema = Schema.Struct({
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
                   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+                  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -507,6 +510,7 @@ const RawReviewThreadsSchema = Schema.Struct({
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
                   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+                  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -885,7 +889,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
@@ -894,9 +898,9 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
       author { __typename login avatarUrl }
       ${REACTION_GROUPS_FIELDS}
       comments(first: ${GRAPHQL_PAGE_SIZE}) {
-        nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
+        nodes { id lastEditedAt author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
       }
-      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
+      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id lastEditedAt author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -942,7 +946,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -1542,6 +1546,7 @@ function toComments(raw: {
     author: toActor(comment.author),
     body: comment.body ?? "",
     createdAt: comment.createdAt,
+    editedAt: comment.lastEditedAt ?? null,
     url: trimmed(comment.url),
     path: null,
     reviewState: null,
@@ -1566,6 +1571,7 @@ function toComments(raw: {
         author: toActor(review.author),
         body: review.body ?? "",
         createdAt: submittedAt,
+        editedAt: review.lastEditedAt ?? null,
         url: trimmed(review.url),
         path: null,
         reviewState,
@@ -1987,6 +1993,139 @@ export function decodePullRequestSummariesJson(
   return Result.succeed(summaries);
 }
 
+const WATCH_FINGERPRINT_EDITS = "totalCount nodes { lastEditedAt }";
+const WATCH_FINGERPRINT_CHECK_COUNTS =
+  "checkRunCountsByState { state count } statusContextCountsByState { state count }";
+
+/**
+ * What a pull request watch needs to notice, priced by GitHub at one point for twenty-five pull
+ * requests, where the detail and activity reads it gates cost sixteen for one. Counts and the
+ * newest edit cover new comments, reviews (a reply in a review thread is a review), threads, and
+ * a bot rewriting its summary; check counts by state move whenever a check starts or finishes.
+ * Comments come most recently updated first, since an edit moves `updatedAt`, so an edit to an
+ * old comment on a long pull request is still in the page. Reviews have no such order: an edit
+ * to a review older than the last hundred waits for the watch's periodic full read, as do edits
+ * to comments inside review threads, which cost a point per pull request to ask for.
+ */
+const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
+  "state mergeable headRefOid " +
+  `comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { ${WATCH_FINGERPRINT_EDITS} } ` +
+  `reviews(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
+  "reviewThreads { totalCount } " +
+  `commits(last: 1) { nodes { commit { statusCheckRollup { contexts { ${WATCH_FINGERPRINT_CHECK_COUNTS} } } } } }`;
+
+/** Watch fingerprints for pull requests on one host, one aliased lookup each; null when unsafe. */
+export function buildPullRequestWatchFingerprintsGraphQlQuery(
+  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+): string | null {
+  if (changeRequests.length === 0) return null;
+  const selections: string[] = [];
+  for (const [index, changeRequest] of changeRequests.entries()) {
+    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
+    if (rest.length > 0 || owner === undefined || name === undefined) return null;
+    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
+    selections.push(
+      `  w${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_WATCH_FINGERPRINT_SELECTION} } }`,
+    );
+  }
+  return `query PullRequestWatchFingerprints {\n${selections.join("\n")}\n}`;
+}
+
+/**
+ * Two parts, so a watch reads only what moved: `status` (state, mergeability, head, and checks)
+ * needs the detail read, and `remarks` also needs the far costlier activity read.
+ */
+export interface GitHubPullRequestWatchFingerprint {
+  readonly status: string;
+  readonly remarks: string;
+}
+
+const RawEditedSchema = Schema.Struct({
+  totalCount: Schema.Int,
+  nodes: Schema.Array(Schema.NullOr(Schema.Struct({ lastEditedAt: Schema.NullOr(Schema.String) }))),
+});
+const RawStateCountsSchema = Schema.NullOr(
+  Schema.Array(Schema.Struct({ state: Schema.String, count: Schema.Int })),
+);
+const decodeWatchFingerprintEntry = Schema.decodeUnknownExit(
+  Schema.Struct({
+    state: Schema.String,
+    mergeable: Schema.NullOr(Schema.String),
+    headRefOid: Schema.String,
+    comments: RawEditedSchema,
+    reviews: RawEditedSchema,
+    reviewThreads: Schema.Struct({ totalCount: Schema.Int }),
+    commits: Schema.Struct({
+      nodes: Schema.Array(
+        Schema.NullOr(
+          Schema.Struct({
+            commit: Schema.Struct({
+              statusCheckRollup: Schema.NullOr(
+                Schema.Struct({
+                  contexts: Schema.Struct({
+                    checkRunCountsByState: RawStateCountsSchema,
+                    statusContextCountsByState: RawStateCountsSchema,
+                  }),
+                }),
+              ),
+            }),
+          }),
+        ),
+      ),
+    }),
+  }),
+);
+
+// An edit only ever moves `lastEditedAt` forward, so the newest one stands for them all.
+const newestEdit = (connection: typeof RawEditedSchema.Type) =>
+  connection.nodes.reduce(
+    (newest, node) =>
+      node?.lastEditedAt != null && node.lastEditedAt > newest ? node.lastEditedAt : newest,
+    "",
+  );
+
+const stateCounts = (counts: typeof RawStateCountsSchema.Type) =>
+  (counts ?? [])
+    .filter(({ count }) => count > 0)
+    .map(({ state, count }) => `${state}:${count}`)
+    .toSorted()
+    .join(",");
+
+/** Fingerprints by alias index; a pull request GitHub returned nothing for is left out. */
+export function decodePullRequestWatchFingerprintsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, GitHubPullRequestWatchFingerprint>, DecodeFailure> {
+  const decoded = decodeSummaries(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const fingerprints = new Map<number, GitHubPullRequestWatchFingerprint>();
+  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
+    const index = /^w(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const entry = decodeWatchFingerprintEntry(value.pullRequest);
+    if (!Exit.isSuccess(entry)) continue;
+    const pr = entry.value;
+    const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+    fingerprints.set(Number(index), {
+      status: [
+        pr.state,
+        pr.mergeable ?? "",
+        pr.headRefOid,
+        stateCounts(contexts?.checkRunCountsByState ?? null),
+        stateCounts(contexts?.statusContextCountsByState ?? null),
+      ].join(" "),
+      remarks: [
+        pr.comments.totalCount,
+        newestEdit(pr.comments),
+        pr.reviews.totalCount,
+        newestEdit(pr.reviews),
+        pr.reviewThreads.totalCount,
+      ].join(" "),
+    });
+  }
+  return Result.succeed(fingerprints);
+}
+
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -2098,6 +2237,7 @@ export interface GitHubReviewThreadComments {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   /** Reactions by node id, for the comments and reviews the `gh` JSON read carries no reaction on. */
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtById: ReadonlyMap<string, string>;
   /**
    * Everyone on the review: those still asked and those who have already answered. Whoever has
    * reviewed is no longer an outstanding request, so asking only for requests reports nobody on
@@ -2147,6 +2287,7 @@ export interface GitHubReviewThreadPage {
    * for without any. Only ids with a reaction are here; the rest carry none.
    */
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtById: ReadonlyMap<string, string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
@@ -2177,6 +2318,7 @@ export function reviewThreadConversation(
       author: comment.author,
       body: comment.body,
       createdAt: comment.createdAt,
+      editedAt: comment.editedAt ?? null,
       url: comment.url,
       path: thread.path,
       reviewState: null,
@@ -2276,6 +2418,7 @@ export function decodeReviewThreadsJson(
             author: toActor(comment.author),
             body: comment.body ?? "",
             createdAt: comment.createdAt,
+            editedAt: comment.lastEditedAt ?? null,
             url: trimmed(comment.url),
             reactions: toReactions(comment.reactionGroups, viewer),
           })),
@@ -2342,12 +2485,15 @@ export function decodeReviewThreadsJson(
     });
   }
   const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  const editedAtById = new Map<string, string>();
   for (const node of [
     ...(pullRequest.comments?.nodes ?? []),
     ...(pullRequest.reviews?.nodes ?? []),
   ]) {
     const id = trimmed(node.id);
     if (id === null) continue;
+    const editedAt = trimmed(node.lastEditedAt);
+    if (editedAt !== null) editedAtById.set(id, editedAt);
     const reactions = toReactions(node.reactionGroups, viewer);
     if (reactions.length > 0) reactionsById.set(id, reactions);
   }
@@ -2356,6 +2502,7 @@ export function decodeReviewThreadsJson(
     nextCursor: nextCursorOf(threads.pageInfo),
     reactions: toReactions(pullRequest.reactionGroups, viewer),
     reactionsById,
+    editedAtById,
     reviewers: [...reviewers.values()],
     avatarsByLogin,
     botLogins,
@@ -2392,6 +2539,7 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
       author: toActor(comment.author),
       body: comment.body ?? "",
       createdAt: comment.createdAt,
+      editedAt: comment.lastEditedAt ?? null,
       url: trimmed(comment.url),
       reactions: toReactions(comment.reactionGroups, viewer),
     })),

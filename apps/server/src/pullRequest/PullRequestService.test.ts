@@ -19,10 +19,13 @@ import type {
   PullRequestReviewerCapabilities,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import type { ServerSettings } from "@t3tools/contracts";
+import * as ServerSettingsService from "../serverSettings.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
 import * as ProjectService from "../project/ProjectService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -233,11 +236,74 @@ it.effect("reuses only unexpired detail for previews", () =>
     yield* service.detail(ref);
     assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
     assert.strictEqual(previewReads, 0);
-    yield* TestClock.adjust("16 seconds");
+    yield* TestClock.adjust("61 seconds");
     const preview = yield* service.preview(ref);
     assert.strictEqual(preview.title, "Updated title");
     assert.strictEqual(preview.state, "closed");
     assert.strictEqual(previewReads, 1);
+  }),
+);
+
+it.effect("shares detail and activity for a minute, and for ten once merged", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`detail #${number}`);
+              return {
+                ...hostedChangeRequest("Description"),
+                number,
+                state:
+                  number === 1
+                    ? ("open" as const)
+                    : number === 2
+                      ? ("merged" as const)
+                      : ("closed" as const),
+              };
+            }),
+          getChangeRequestActivity: ({ number }) =>
+            Effect.sync(() => {
+              reads.push(`activity #${number}`);
+              return {
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              };
+            }),
+        }),
+      ],
+    });
+    // What every client does on focus or a refresh signal for each panel it shows.
+    // #1 is open, #2 merged, and #3 closed, which can reopen and so is held no longer than #1.
+    const reread = Effect.forEach([1, 2, 3], (number) => {
+      const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number };
+      return Effect.andThen(service.detail(ref), service.activity(ref));
+    }).pipe(
+      Effect.andThen(Effect.yieldNow),
+      Effect.andThen(Effect.sync(() => reads.splice(0).toSorted())),
+    );
+
+    const everything = [
+      "activity #1",
+      "activity #2",
+      "activity #3",
+      "detail #1",
+      "detail #2",
+      "detail #3",
+    ];
+    assert.deepStrictEqual(yield* reread, everything);
+    yield* TestClock.adjust("59 seconds");
+    assert.deepStrictEqual(yield* reread, []);
+    yield* TestClock.adjust("2 seconds");
+    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #3", "detail #1", "detail #3"]);
+    yield* TestClock.adjust("9 minutes");
+    assert.deepStrictEqual(yield* reread, everything);
   }),
 );
 
@@ -402,6 +468,7 @@ function fakeProvider(
 }
 
 function makeService(input: {
+  readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -412,6 +479,9 @@ function makeService(input: {
   return Effect.flatMap(
     Layer.build(
       Layer.mergeAll(
+        Layer.mock(ServerSettingsService.ServerSettingsService)({
+          getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+        }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,
           PullRequestProviderRegistry.fromProviders(input.providers),
@@ -435,7 +505,7 @@ function makeService(input: {
         SourceControlRateLimit.layer,
         // The real store over a database of its own, so the environment-kept marks are exercised
         // through the SQL that holds them rather than through a stand-in that agrees with itself.
-        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
           Layer.provide(KeyValueStore.layerMemory),
           Layer.provide(NodeServices.layer),
@@ -1858,7 +1928,7 @@ for (const [provider, host] of [
           service[read](reference);
         yield* Effect.all([request, request], { concurrency: 2 });
         assert.strictEqual(calls, 1);
-        yield* TestClock.adjust("45 seconds");
+        yield* TestClock.adjust("61 seconds");
         limited = true;
         assert.strictEqual((yield* Effect.exit(request))._tag, "Failure");
         assert.strictEqual(calls, 2);
@@ -4307,7 +4377,7 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
     assert.strictEqual((yield* service.diff(reference)).patch, "old patch");
     revision = "2026-07-02T00:01:00Z";
     patch = "new patch";
-    yield* TestClock.adjust("16 seconds");
+    yield* TestClock.adjust("61 seconds");
     yield* service.detail(reference);
     yield* Effect.yieldNow;
     assert.strictEqual((yield* service.detail(reference)).updatedAt, revision);
@@ -4691,7 +4761,7 @@ it.effect("answers a known pull request immediately while the host refreshes", (
     assert.strictEqual(first.body, "cached body");
     assert.strictEqual(first.additions, 4);
 
-    yield* TestClock.adjust("16 seconds");
+    yield* TestClock.adjust("61 seconds");
     const second = yield* service.detail(reference);
     assert.strictEqual(second.body, "cached body");
     assert.strictEqual(second.additions, 4);
@@ -4955,7 +5025,7 @@ it.effect("keeps recent detail on a transient refresh failure but not after inva
     });
 
     yield* service.detail(reference);
-    yield* TestClock.adjust("16 seconds");
+    yield* TestClock.adjust("61 seconds");
     failing = true;
     const strict = yield* Effect.flip(service.detail({ ...reference, allowStale: false }));
     assert.strictEqual(strict._tag, "PullRequestOperationError");
@@ -7113,4 +7183,63 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
     yield* service.list({ state: "open", cursors: { [key]: first.nextCursors[key]! } });
     assert.deepStrictEqual(seen, ["/org-b"]);
   }),
+);
+
+it.effect.each([
+  { action: "merge", environmentValue: true, projectValue: false, expected: false },
+  { action: "merge", environmentValue: false, projectValue: true, expected: true },
+  { action: "merge", environmentValue: true, projectValue: undefined, expected: true },
+  { action: "merge", environmentValue: false, projectValue: undefined, expected: false },
+  { action: "enable-auto-merge", environmentValue: true, projectValue: false, expected: false },
+  { action: "enable-auto-merge", environmentValue: false, projectValue: true, expected: true },
+  { action: "enable-auto-merge", environmentValue: true, projectValue: undefined, expected: true },
+] as const)(
+  "resolves agent credits for $action with environment=$environmentValue and project=$projectValue",
+  ({ action, environmentValue, projectValue, expected }) =>
+    Effect.gen(function* () {
+      const calls: boolean[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        ],
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          removeAgentCreditsOnMerge: environmentValue,
+          projectSettingsOverrides:
+            projectValue === undefined
+              ? {}
+              : {
+                  ["p1" as ProjectId]: { removeAgentCreditsOnMerge: projectValue },
+                },
+        },
+        providers: [
+          fakeProvider("github", {
+            capabilities: {
+              ...fakeProvider("github").capabilities,
+              actions: ["merge", "enable-auto-merge"],
+            },
+            getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+            getViewerPermissions: () =>
+              Effect.succeed({
+                actions: ["merge", "enable-auto-merge"],
+                comment: true,
+                resolve: true,
+                verdicts: ["comment"],
+                requestReviewers: false,
+              }),
+            runAction: (input) =>
+              Effect.sync(() => {
+                calls.push(input.removeAgentCreditsOnMerge === true);
+              }),
+          }),
+        ],
+      });
+      yield* service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action,
+      });
+      assert.deepStrictEqual(calls, [expected]);
+    }),
 );

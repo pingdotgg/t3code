@@ -437,7 +437,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     });
   }).pipe(
     Effect.provide(
-      EnvironmentAuth.runtimeLayer.pipe(
+      EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(input.config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
       ),

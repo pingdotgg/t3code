@@ -9,7 +9,7 @@ import { SourceControlProviderError } from "@t3tools/contracts";
 import { resolveThreadTitleLinks } from "./ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 
-const registry = Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry);
+const layerRegistry = Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry);
 const encodeSubject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String, body: Schema.String })),
 );
@@ -26,7 +26,7 @@ it.effect(
           "https://docs.test/guide [https://forge.test/change/1] https://forge.test/change/1#discussion https://forge.test/change/1?view=full `https://forge.test/change/2` https://forge.test/change/2. https://forge.test/change/3",
       }).pipe(
         Effect.provide(
-          registry({
+          layerRegistry({
             resolveLink: ({ url, cwd }) =>
               url.host === "forge.test"
                 ? Effect.sync(() => {
@@ -58,7 +58,7 @@ it.effect("returns unavailable when a lookup times out while retaining successfu
       message: "https://forge.test/change/1 https://forge.test/change/2",
     }).pipe(
       Effect.provide(
-        registry({
+        layerRegistry({
           resolveLink: ({ url }) =>
             url.pathname.endsWith("1")
               ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
@@ -83,7 +83,7 @@ it.effect("keeps lookup failure out of generation and skips unlinked messages", 
     ).toContain("unavailable");
   }).pipe(
     Effect.provide(
-      registry({
+      layerRegistry({
         resolveLink: () =>
           Effect.fail(
             new SourceControlProviderError({

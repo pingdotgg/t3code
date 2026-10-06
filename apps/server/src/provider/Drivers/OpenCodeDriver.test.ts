@@ -18,7 +18,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import * as ProviderMaintenance from "../providerMaintenance.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import {
@@ -211,7 +211,7 @@ const changingRuntime = {
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
-const updateLayer = Layer.mergeAll(
+const layerUpdate = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-driver-update-" }),
   IdAllocator.layer,
   ServerSettings.layerTest(),
@@ -223,7 +223,7 @@ const updateLayer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
-it.layer(updateLayer)("OpenCodeDriver updates", (it) => {
+it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
   it.effect("never runs the binary for a disabled instance's update check", () =>
     Effect.gen(function* () {
       versionProbes.length = 0;

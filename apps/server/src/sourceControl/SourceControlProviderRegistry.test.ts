@@ -60,7 +60,7 @@ function makeRegistry(input: {
       }),
   } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
 
-  const registryLayer = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+  const layerRegistry = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
     get: () => Effect.succeed(driver as unknown as VcsDriver.VcsDriver["Service"]),
     resolve:
       input.resolve ??
@@ -81,7 +81,7 @@ function makeRegistry(input: {
         })),
   });
 
-  const processLayer = Layer.mock(VcsProcess.VcsProcess)({
+  const layerProcess = Layer.mock(VcsProcess.VcsProcess)({
     run: () => Effect.succeed(processOutput("")),
     ...input.process,
   });
@@ -90,8 +90,8 @@ function makeRegistry(input: {
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        registryLayer,
-        processLayer,
+        layerRegistry,
+        layerProcess,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),

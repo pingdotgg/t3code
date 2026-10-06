@@ -149,7 +149,7 @@ export class VcsAutoPullPolicy extends Context.Reference<{
   defaultValue: () => ({ isEnabled: () => Effect.succeed(false) }),
 }) {}
 
-export const autoPullPolicyLayer = Layer.effect(
+export const layerAutoPullPolicy = Layer.effect(
   VcsAutoPullPolicy,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;

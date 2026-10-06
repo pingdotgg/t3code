@@ -461,7 +461,7 @@ export const make = Effect.gen(function* () {
     const hostedAppUrl = yield* hostedAppUrlConfig;
     const { verifier, challenge, state } = yield* makePkceRequest;
     const callback = yield* Deferred.make<string>();
-    const callbackRoute = HttpRouter.add(
+    const layerCallbackRoute = HttpRouter.add(
       "GET",
       "/callback",
       Effect.gen(function* () {
@@ -477,7 +477,7 @@ export const make = Effect.gen(function* () {
         return HttpServerResponse.html(renderLoopbackAuthorizationCompleteHtml());
       }),
     );
-    yield* HttpRouter.serve(callbackRoute, {
+    yield* HttpRouter.serve(layerCallbackRoute, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(

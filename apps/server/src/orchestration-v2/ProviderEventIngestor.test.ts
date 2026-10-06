@@ -27,7 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -42,25 +42,25 @@ import {
   selectInheritedBackgroundTurnItems,
 } from "./RunExecutionService.ts";
 
-const TestDatabaseLayer = SqlitePersistenceMemory;
-const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(TestDatabaseLayer),
+const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provide(layerTestDatabase),
 );
 
-const TestEventSinkLayer = EventSink.layer.pipe(
-  Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
+const layerTestEventSink = EventSink.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
 
-const TestLayer = Layer.mergeAll(
-  TestStoresLayer,
-  TestEventSinkLayer,
+const layerTest = Layer.mergeAll(
+  layerTestStores,
+  layerTestEventSink,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestStoresLayer,
-        TestEventSinkLayer,
+        layerTestStores,
+        layerTestEventSink,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
       ),
@@ -133,11 +133,11 @@ function threadCreatedEvent(
   });
 }
 
-const layer = it.layer(TestLayer);
+const layer = it.layer(layerTest);
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const analytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
     record: (properties: Readonly<Record<string, unknown>>) =>
       Effect.sync(() => {
         recorded.push(properties);
@@ -232,7 +232,7 @@ it.effect("records accepted billed turn usage once without billing the context w
       interactionMode: "default",
       durationMs: 120,
     });
-  }).pipe(Effect.provide(TestLayer.pipe(Layer.provide(analytics))));
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
 layer("ProviderEventIngestorV2", (it) => {

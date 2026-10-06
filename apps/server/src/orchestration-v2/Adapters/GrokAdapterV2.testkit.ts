@@ -33,16 +33,16 @@ import { GROK_DEFAULT_INSTANCE_ID, GROK_PROVIDER, makeGrokAdapterV2 } from "./Gr
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
 
-function makeGrokProviderAdapterRegistryReplayLayer(
+function layerGrokProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(`grok-${transcript.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
 
-  return ProviderAdapterRegistry.makeLayerEffect(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -102,7 +102,7 @@ function makeGrokProviderAdapterRegistryReplayLayer(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(
@@ -118,5 +118,5 @@ export const GrokOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
 > = {
   driver: GROK_PROVIDER,
   decodeTranscript: (transcript) => decodeAcpReplayTranscript(transcript, GROK_PROVIDER),
-  makeProviderAdapterRegistryLayer: makeGrokProviderAdapterRegistryReplayLayer,
+  makeProviderAdapterRegistryLayer: layerGrokProviderAdapterRegistryReplay,
 };

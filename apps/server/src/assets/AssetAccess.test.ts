@@ -3,10 +3,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetAccessError,
+  AssetPreviewTypeValidationError,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -20,6 +26,7 @@ import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -41,19 +48,81 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: vi.fn(actual.homedir) };
 });
 
-const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
-const testLayer = Layer.mergeAll(
+// A PNG header is enough for the dimension read: signature, then IHDR width and height.
+const screenshotPng = new Uint8Array(24);
+screenshotPng.set([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+]);
+new DataView(screenshotPng.buffer).setUint32(16, 390);
+new DataView(screenshotPng.buffer).setUint32(20, 844);
+const screenshotItem = {
+  id: TurnItemId.make("tool-screenshot"),
+  type: "dynamic_tool" as const,
+  threadId: ThreadId.make("thread-1"),
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "completed" as const,
+  title: null,
+  toolName: "mcp__t3-code__device_screenshot",
+  input: { deviceId: "phone" },
+  output: {
+    content: [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: Buffer.from(screenshotPng).toString("base64"),
+        },
+      },
+    ],
+  },
+  startedAt: DateTime.makeUnsafe("2026-10-05T00:00:00.000Z"),
+  completedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
+};
+
+const oversizedScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-oversized"),
+  output: {
+    content: [
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "A".repeat(14 * 1024 * 1024) },
+      },
+    ],
+  },
+};
+
+const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
-  configLayer,
+  Layer.mock(Orchestrator.OrchestratorV2)({
+    getTurnItem: ({ itemId }) =>
+      Effect.succeed(
+        itemId === screenshotItem.id
+          ? screenshotItem
+          : itemId === oversizedScreenshotItem.id
+            ? oversizedScreenshotItem
+            : null,
+      ),
+  }),
+  layerConfig,
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
-  NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
-  ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+  NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
+  ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
@@ -103,6 +172,35 @@ describe("AssetAccess", () => {
     );
   });
 
+  it.effect("serves an image a tool returned inline from the stored item", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "tool-output-image" as const,
+        threadId: screenshotItem.threadId,
+        itemId: screenshotItem.id,
+        index: 0,
+      };
+      const result = yield* issueAssetUrl({ resource });
+      expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
+        kind: "bytes",
+        mimeType: "image/png",
+        bytes: Buffer.from(screenshotPng),
+      });
+      const missing = yield* issueAssetUrl({ resource: { ...resource, index: 1 } }).pipe(
+        Effect.flip,
+      );
+      expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      // Larger than a provider turn accepts, so it is never decoded.
+      const oversized = yield* issueAssetUrl({
+        resource: { ...resource, itemId: oversizedScreenshotItem.id },
+      }).pipe(Effect.flip);
+      expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -136,7 +234,7 @@ describe("AssetAccess", () => {
         expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
       }
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("reports pixel dimensions from an image header and nothing for other files", () =>
@@ -160,7 +258,7 @@ describe("AssetAccess", () => {
       expect((yield* issue("shot.png")).imageDimensions).toEqual({ width: 1600, height: 900 });
       expect((yield* issue("clip.mp4")).imageDimensions).toBeUndefined();
       expect((yield* issue("broken.png")).imageDimensions).toBeUndefined();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("resolves relative media paths from the thread workspace, including outside it", () =>
@@ -186,7 +284,7 @@ describe("AssetAccess", () => {
           path: yield* fs.realPath(filePath),
         });
       }
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("resolves home-relative media paths independently of the workspace", () =>
@@ -235,7 +333,7 @@ describe("AssetAccess", () => {
       } finally {
         homeSpy.mockRestore();
       }
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -273,7 +371,7 @@ describe("AssetAccess", () => {
           },
         }).pipe(Effect.flip);
         expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -305,7 +403,7 @@ describe("AssetAccess", () => {
         yield* fs.remove(filePath);
         yield* fs.symlink(replacementPath, filePath);
         expect(yield* resolveAsset(token, name)).toBeNull();
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -344,7 +442,7 @@ describe("AssetAccess", () => {
           yield* fs.remove(filePath);
           yield* fs.rename(savedPath, filePath);
         }
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -380,7 +478,7 @@ describe("AssetAccess", () => {
             Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
           ),
         ).toBeNull();
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -414,7 +512,7 @@ describe("AssetAccess", () => {
         expect(yield* openMediaFile(canonicalPath)).toBeNull();
         expect(opened).toBeDefined();
         expect(opened?.fd).toBe(-1);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -472,7 +570,7 @@ describe("AssetAccess", () => {
             Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
           ),
         ).toBeNull();
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
@@ -522,7 +620,7 @@ describe("AssetAccess", () => {
           renewedSuffix.slice(renewedSeparator + 1),
         ),
       ).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
@@ -563,7 +661,7 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("rejects workspace files outside the authorized root", () =>
@@ -597,7 +695,7 @@ describe("AssetAccess", () => {
         },
       });
       expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues draft workspace URLs without a thread", () =>
@@ -631,7 +729,7 @@ describe("AssetAccess", () => {
         path: canonicalCssPath,
       });
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves absolute draft media files exactly, wherever they live", () =>
@@ -662,7 +760,7 @@ describe("AssetAccess", () => {
         mimeType: "video/mp4",
       });
       expect(yield* resolveAsset(token, "other.mp4")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("falls back to the resource cwd for relative draft paths", () =>
@@ -687,7 +785,7 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalHtmlPath,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves non-missing canonical path failures when issuing asset URLs", () =>
@@ -729,7 +827,7 @@ describe("AssetAccess", () => {
         },
       });
       expect(error.cause).toBe(cause);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues exact workspace URLs for image previews", () =>
@@ -765,7 +863,7 @@ describe("AssetAccess", () => {
       });
       expect(yield* resolveAsset(token, "other.png")).toBeNull();
       expect(yield* resolveAsset(token, "../icon.png")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("previews workspace files with literal fragment characters in their paths", () =>
@@ -808,7 +906,7 @@ describe("AssetAccess", () => {
         workspaceRoot: root,
       }).pipe(Effect.flip);
       expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues exact attachment capabilities by attachment id", () =>
@@ -832,7 +930,7 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves video attachments inline", () =>
@@ -864,7 +962,7 @@ describe("AssetAccess", () => {
         fileName: "demo.mp4",
         mimeType: "video/mp4",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
   it.effect("issues signed native application icon capabilities", () =>
     Effect.gen(function* () {
@@ -879,7 +977,7 @@ describe("AssetAccess", () => {
         new RegExp(`^${ASSET_ROUTE_PREFIX}/[^/]+/native-app-icon\\.png$`, "u"),
       );
       expect(result.expiresAt).toBeGreaterThan(0);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves document attachments inline when a viewer requests it", () =>
@@ -912,7 +1010,7 @@ describe("AssetAccess", () => {
         fileName: "report.pdf",
         mimeType: "application/pdf",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves audio previews with their stored format and keeps saving explicit", () =>
@@ -946,7 +1044,7 @@ describe("AssetAccess", () => {
           ...(disposition === "attachment" ? { download: true } : {}),
         });
       }
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps inline requests for other attachment types as downloads", () =>
@@ -974,7 +1072,7 @@ describe("AssetAccess", () => {
       expect(
         yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
       ).toMatchObject({ kind: "file", path: attachmentPath, download: true });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
   it.effect("issues project favicon capabilities with a signed fallback", () =>
     Effect.gen(function* () {
@@ -1031,7 +1129,7 @@ describe("AssetAccess", () => {
           fallbackSuffix.slice(fallbackSeparatorIndex + 1),
         ),
       ).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues project favicon capabilities for a saved override", () =>
@@ -1052,7 +1150,7 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe(path.join("brand", "custom.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.svg$/);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("issues an exact capability for a saved favicon outside the workspace", () =>
@@ -1090,7 +1188,7 @@ describe("AssetAccess", () => {
       );
       expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
       expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("ignores a client favicon path hint", () =>
@@ -1111,7 +1209,7 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe(path.join("brand", "saved.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-saved\.svg$/);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps automatic favicon resolution separate from a saved override", () =>
@@ -1131,7 +1229,7 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe("favicon.svg");
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-favicon\.svg$/);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("rejects a resolved project favicon with a non-image extension", () =>
@@ -1149,7 +1247,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("buckets project favicon expiry after content hashing", () =>
@@ -1174,7 +1272,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provideService(Crypto.Crypto, crossingCrypto));
 
       expect(result.expiresAt).toBe(3 * bucketMs);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves structured project favicon resolution causes", () =>
@@ -1208,7 +1306,7 @@ describe("AssetAccess", () => {
       expect(error.message).toBe("Failed to resolve project favicon.");
       expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves GitHub-hosted pull request media through the repository's credential", () =>
@@ -1264,6 +1362,6 @@ describe("AssetAccess", () => {
         const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
         expect(encoded).not.toContain(url);
       }
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });
