@@ -2,7 +2,9 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -304,6 +306,55 @@ describe("DesktopServerExposure", () => {
       layerSettings,
     );
   });
+
+  it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>
+    Effect.gen(function* () {
+      const modeWriteStarted = yield* Deferred.make<void>();
+      const releaseModeWrite = yield* Deferred.make<void>();
+      const settingsLayer = Layer.effect(
+        DesktopAppSettings.DesktopAppSettings,
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          return DesktopAppSettings.DesktopAppSettings.of({
+            ...settings,
+            // Hold the mode write the way a slow disk would.
+            setServerExposureMode: (mode) =>
+              Deferred.succeed(modeWriteStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseModeWrite)),
+                Effect.andThen(settings.setServerExposureMode(mode)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(DesktopAppSettings.layerTest()));
+
+      return yield* withHarness(
+        lanNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+
+          const modeChange = yield* serverExposure
+            .setMode("network-accessible")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(modeWriteStarted);
+          const tailscaleChange = yield* serverExposure
+            .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(releaseModeWrite, undefined);
+          yield* Fiber.join(modeChange);
+          yield* Fiber.join(tailscaleChange);
+
+          const state = yield* serverExposure.getState;
+          assert.equal(state.mode, "network-accessible");
+          assert.equal(state.tailscaleServeEnabled, true);
+          assert.equal(state.tailscaleServePort, 8443);
+        }),
+        {},
+        undefined,
+        settingsLayer,
+      );
+    }),
+  );
 
   it.effect("keeps LAN and Tailscale endpoints distinct when Tailscale is enumerated first", () =>
     withHarness(
