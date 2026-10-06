@@ -37,6 +37,7 @@ import {
   appendBrowsePathSegment,
   inferProjectTitleFromPath,
   isWindowsPlatform,
+  normalizeProjectPathForComparison,
 } from "@t3tools/client-runtime/state/projects";
 import {
   CommandId,
@@ -60,6 +61,7 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { serverEnvironment } from "../../state/server";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
@@ -1164,6 +1166,60 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings);
+  const [isSavingDefault, setIsSavingDefault] = useState(false);
+  const [savedDefault, setSavedDefault] = useState<{
+    environmentId: EnvironmentId;
+    path: string;
+    resolvedPath: string;
+    previous: string;
+  } | null>(null);
+  const browsePath = getFilesystemBrowsePath(pathInput, environment?.platform ?? "");
+  const defaultPath = getAddProjectInitialQuery(environment?.baseDirectory ?? null);
+  const isSavedDefault =
+    savedDefault !== null &&
+    savedDefault.environmentId === environment?.environmentId &&
+    normalizeProjectPathForComparison(savedDefault.path) ===
+      normalizeProjectPathForComparison(browsePath.directoryPath) &&
+    normalizeProjectPathForComparison(savedDefault.resolvedPath) ===
+      normalizeProjectPathForComparison(environment?.baseDirectory ?? "");
+  const defaultBrowseQuery = useEnvironmentQuery(
+    environment && browsePath.isBrowsing
+      ? filesystemEnvironment.browse({
+          environmentId: environment.environmentId,
+          input: { partialPath: browsePath.directoryPath },
+        })
+      : null,
+  );
+  const showMakeDefault =
+    browsePath.isBrowsing &&
+    (isSavedDefault ||
+      (normalizeProjectPathForComparison(browsePath.directoryPath) !==
+        normalizeProjectPathForComparison(defaultPath) &&
+        normalizeProjectPathForComparison(environment?.baseDirectory ?? "") !==
+          normalizeProjectPathForComparison(
+            defaultBrowseQuery.data?.parentPath ?? browsePath.directoryPath,
+          )));
+  const toggleDefault = async () => {
+    if (!environment || isSavingDefault || !defaultBrowseQuery.data) return;
+    const environmentId = environment.environmentId;
+    const path = browsePath.directoryPath;
+    const resolvedPath = defaultBrowseQuery.data.parentPath;
+    const previous = isSavedDefault ? savedDefault.previous : (environment.baseDirectory ?? "");
+    setIsSavingDefault(true);
+    const result = await updateSettings({
+      environmentId,
+      input: {
+        patch: {
+          addProjectBaseDirectory: isSavedDefault ? previous : defaultBrowseQuery.data.parentPath,
+        },
+      },
+    });
+    if (AsyncResult.isSuccess(result)) {
+      setSavedDefault(isSavedDefault ? null : { environmentId, path, resolvedPath, previous });
+    }
+    setIsSavingDefault(false);
+  };
 
   const submitPath = useCallback(async () => {
     if (!environment || isBrowseNavigating || isSubmitting) return;
@@ -1196,6 +1252,35 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onChangeText={setPathInput}
             onSubmit={() => void submitPath()}
           />
+          {showMakeDefault ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel="Make default"
+              accessibilityState={{
+                checked: isSavedDefault,
+                disabled:
+                  isSavingDefault ||
+                  defaultBrowseQuery.isPending ||
+                  !defaultBrowseQuery.data ||
+                  !!defaultBrowseQuery.error,
+              }}
+              disabled={
+                isSavingDefault ||
+                defaultBrowseQuery.isPending ||
+                !defaultBrowseQuery.data ||
+                !!defaultBrowseQuery.error
+              }
+              onPress={() => void toggleDefault()}
+              className="flex-row items-center gap-2 px-1 py-2"
+            >
+              <View className="size-5 items-center justify-center rounded border border-foreground-muted">
+                {isSavedDefault ? (
+                  <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
+                ) : null}
+              </View>
+              <Text className="text-sm">Make default</Text>
+            </Pressable>
+          ) : null}
           <PrimaryActionButton
             label="Add project"
             disabled={isBrowseNavigating || isSubmitting}
