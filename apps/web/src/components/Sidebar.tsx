@@ -607,6 +607,7 @@ function SnoozeMenuButton(props: {
               <MenuItem
                 closeOnClick={false}
                 aria-label={`Remove ${preset.label} from favorites`}
+                label={`Remove ${preset.label} from favorites`}
                 className="size-7 justify-center px-0 text-muted-foreground"
                 onClick={(event) => {
                   event.stopPropagation();
