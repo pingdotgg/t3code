@@ -19,6 +19,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Etag from "effect/http/Etag";
+import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -171,15 +172,21 @@ function makeHarness(options: Harness = {}) {
       RelayHttpApi.layerCors,
     ),
   ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
+  // Goes through Effect's request handler, which applies pre-response handlers
+  // (such as CORS) to the response it sends, as the Workers runtime does.
   const send = (request: Request) =>
     Effect.gen(function* () {
       const handler = yield* httpEffect;
-      return yield* handler.pipe(
+      const sent = yield* Deferred.make<HttpServerResponse.HttpServerResponse>();
+      yield* HttpEffect.toHandled(handler, (_request, response) =>
+        Deferred.succeed(sent, response),
+      ).pipe(
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(request),
         ),
       );
+      return yield* Deferred.await(sent);
     });
   return { sent, rateLimitKeys, held, send, httpEffect };
 }

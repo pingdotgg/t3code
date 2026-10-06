@@ -88,28 +88,6 @@ export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
-const relayCorsAllowedHeaders = [
-  "authorization",
-  "b3",
-  "traceparent",
-  "content-type",
-  "dpop",
-] as const;
-const relayCorsExposedHeaders = ["traceparent", "www-authenticate"] as const;
-
-const relayCorsHeaders = {
-  "access-control-allow-origin": "*",
-  "access-control-expose-headers": relayCorsExposedHeaders.join(","),
-} as const;
-
-const relayCorsPreflightHeaders = {
-  ...relayCorsHeaders,
-  "access-control-allow-methods": relayCorsAllowedMethods.join(","),
-  "access-control-allow-headers": relayCorsAllowedHeaders.join(","),
-  "access-control-max-age": "86400",
-} as const;
-
 const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
   RelayManagedEndpointRecoveryProofPayload,
 );
@@ -146,6 +124,16 @@ const appendRelayTraceContextResponseHeader = Effect.gen(function* () {
   );
 }).pipe(Effect.ignore);
 
+const relayCorsMiddleware = HttpMiddleware.cors({
+  allowedMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["authorization", "b3", "traceparent", "content-type", "dpop"],
+  exposedHeaders: ["traceparent", "www-authenticate"],
+  maxAge: 86_400,
+});
+
+// The CORS headers come from a pre-response handler, so they reach every response
+// the request sends: handler failures and defects, and the deadline 504 that
+// `traceRelayHttpRequest` produces outside the router.
 export const layerCors = HttpRouter.middleware(
   Effect.fnUntraced(function* <E, R>(
     httpEffect: Effect.Effect<
@@ -159,14 +147,7 @@ export const layerCors = HttpRouter.middleware(
     if (isRelayHookPath(request.url)) {
       return yield* httpEffect;
     }
-    if (request.method === "OPTIONS") {
-      return HttpServerResponse.empty({
-        status: 204,
-        headers: relayCorsPreflightHeaders,
-      });
-    }
-    const response = yield* httpEffect;
-    return HttpServerResponse.setHeaders(response, relayCorsHeaders);
+    return yield* relayCorsMiddleware(httpEffect);
   }),
   { global: true },
 );
