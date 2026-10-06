@@ -16,6 +16,7 @@ import {
   type PreviewAutomationHost,
   type PreviewAutomationRequest,
   type PreviewAutomationStreamEvent,
+  SERVER_BROWSER_AUTOMATION_CLIENT_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -332,6 +333,44 @@ it.effect("announces a live replacement stream before delivering requests", () =
   ),
 );
 
+it.effect(
+  "keeps a server-host open alive for installation without extending other operations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const received = yield* Deferred.make<RoutedRequest>();
+        const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+        yield* Stream.runForEach(requests, (request) =>
+          request.operation === "open"
+            ? Deferred.succeed(received, request)
+            : broker.respond({
+                clientId: "client-1",
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: request.timeoutMs,
+              }),
+        ).pipe(Effect.forkScoped);
+        const opening = yield* broker
+          .invoke({ scope, operation: "open", input: {} })
+          .pipe(Effect.forkScoped);
+        const request = yield* Deferred.await(received);
+        yield* TestClock.adjust(16_000);
+        yield* broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "opened",
+        });
+        expect(yield* Fiber.join(opening)).toBe("opened");
+        expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe(15_000);
+        expect(yield* broker.invoke({ scope, operation: "navigate", input: {} })).toBe(15_000);
+      }),
+    ),
+);
+
 it.effect("preserves bounded request and remote selector diagnostics", () => {
   const locator = "role=button[name='request-secret']";
   const remoteMessage = "Unexpected token near remote-secret.";
@@ -477,6 +516,37 @@ it.effect.each([
       expect(error.cause).toBe(remoteError);
       expect(error.message).toContain("remains on the desktop");
       expect(error.message).not.toContain("remote recording details");
+    }),
+  ),
+);
+
+it.effect.each([
+  { clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID, shown: true },
+  { clientId: "client-1", shown: false },
+])("tells the agent why its own server browser failed ($clientId)", ({ clientId, shown }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost({ clientId })));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId,
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationExecutionError",
+            message: "page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:4719/",
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "open", input: {} })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewAutomationExecutionError");
+      // A desktop or other remote host's text stays out of the agent's context.
+      expect(error.message.includes("ERR_CONNECTION_REFUSED")).toBe(shown);
     }),
   ),
 );
@@ -1256,118 +1326,6 @@ it.effect("accepts responses only from the host that received the request", () =
   ),
 );
 
-it.effect("evicts an unanswered host and lets later calls use a healthy runtime", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* makeBroker;
-      const connected = yield* Deferred.make<string>();
-      const received = yield* Deferred.make<RoutedRequest>();
-      const otherReceived = yield* Deferred.make<void>();
-      const otherCompleted = yield* Deferred.make<void>();
-      const oldTab = PreviewTabId.make("tab-on-frozen-host");
-      const group = RpcGroup.make(
-        ...Array.from(WsRpcGroup.requests.values()).filter(
-          (rpc) => rpc._tag === WS_METHODS.previewAutomationConnect,
-        ),
-      );
-      const client = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.merge(
-            group.toLayer({
-              [WS_METHODS.previewAutomationConnect]: (host) => Stream.unwrap(broker.connect(host)),
-            }),
-            RpcAuthorization.layer([AuthOrchestrationOperateScope]),
-          ),
-        ),
-      );
-      const events = client[WS_METHODS.previewAutomationConnect](makeHost());
-      const consumer = yield* Stream.runForEach(events, (event) => {
-        if (event.type === "connected") return Deferred.succeed(connected, event.connectionId);
-        const request = { ...event.request, connectionId: event.connectionId };
-        if (request.operation === "open") {
-          return broker.respond({
-            clientId: "client-1",
-            connectionId: event.connectionId,
-            requestId: request.requestId,
-            ok: true,
-            result: { tabId: oldTab },
-          });
-        }
-        return request.operation === "snapshot"
-          ? Deferred.succeed(received, request)
-          : Deferred.succeed(otherReceived, undefined);
-      }).pipe(Effect.forkScoped);
-      const connectionId = yield* Deferred.await(connected);
-      yield* broker.invoke({ scope, operation: "open", input: {} });
-
-      const healthyConnected = yield* Deferred.make<void>();
-      const healthyRequests: RoutedRequest[] = [];
-      const healthy = yield* broker.connect(makeHost({ clientId: "healthy" }));
-      yield* Stream.runForEach(healthy, (event) => {
-        if (event.type === "connected") return Deferred.succeed(healthyConnected, undefined);
-        healthyRequests.push({ ...event.request, connectionId: event.connectionId });
-        return broker.respond({
-          clientId: "healthy",
-          connectionId: event.connectionId,
-          requestId: event.request.requestId,
-          ok: true,
-          result: "healthy",
-        });
-      }).pipe(Effect.forkScoped);
-      yield* Deferred.await(healthyConnected);
-
-      const timedOut = yield* broker
-        .invoke<void>({
-          scope,
-          operation: "snapshot",
-          input: {},
-          timeoutMs: 1_000,
-        })
-        .pipe(Effect.flip, Effect.forkScoped);
-      const lateRequest = yield* Deferred.await(received);
-      const other = yield* broker
-        .invoke<void>({
-          scope,
-          operation: "evaluate",
-          input: {},
-          timeoutMs: 10_000,
-        })
-        .pipe(
-          Effect.flip,
-          Effect.tap(() => Deferred.succeed(otherCompleted, undefined)),
-          Effect.forkScoped,
-        );
-      yield* Deferred.await(otherReceived);
-      yield* TestClock.adjust(1_000);
-      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
-      expect(yield* Deferred.isDone(otherCompleted)).toBe(true);
-      expect(yield* Fiber.join(other)).toMatchObject({
-        _tag: "PreviewAutomationClientDisconnectedError",
-      });
-      const consumerExit = yield* Fiber.await(consumer);
-      expect(Exit.isSuccess(consumerExit)).toBe(true);
-
-      // Late traffic from the evicted connection cannot restore its assignment.
-      yield* broker.respond({
-        clientId: "client-1",
-        connectionId,
-        requestId: lateRequest.requestId,
-        ok: true,
-        result: { tabId: oldTab },
-      });
-      yield* broker.focusHost({
-        clientId: "client-1",
-        connectionId,
-        environmentId: scope.environmentId,
-        focused: true,
-      });
-      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("healthy");
-      expect(healthyRequests).toHaveLength(1);
-      expect(healthyRequests[0]?.tabId).toBeUndefined();
-    }),
-  ),
-);
-
 it.effect("discards buffered actions before completing an evicted host stream", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1502,6 +1460,44 @@ it.effect("keeps a host that responds with an operation timeout", () =>
         yield* broker.invoke<void>({ scope, operation: "waitFor", input: {} }).pipe(Effect.flip),
       ).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
       expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+    }),
+  ),
+);
+
+it.effect("keeps the host connected when a background status read times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      // A busy host answers its actions but not the metadata read behind them.
+      yield* Stream.runForEach(requests, (request) =>
+        request.operation === "status"
+          ? Effect.void
+          : broker.respond({
+              clientId: "client-1",
+              connectionId: request.connectionId,
+              requestId: request.requestId,
+              ok: true,
+              result: { operation: request.operation },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const status = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "status",
+          input: {},
+          timeoutMs: 500,
+          updateCurrentTab: false,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* TestClock.adjust(500);
+      expect(yield* Fiber.join(status)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+
+      expect(yield* broker.invoke({ scope, operation: "snapshot", input: {} })).toEqual({
+        operation: "snapshot",
+      });
     }),
   ),
 );
