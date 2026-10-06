@@ -211,6 +211,17 @@ returns to your inbox.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+## Issues
+
+On web and desktop, clicking a GitHub issue link in a thread opens the issue beside the
+conversation, with its description, labels, assignees, and most recent comments. The view is
+read-only: click the issue number to comment or make changes on GitHub. A link that turns out to be a
+pull request opens the pull request instead. Like cross-repository pull requests, the issue is read
+through a project on the same host.
+
+Issues on other hosts, issue links on the Pull Requests page, and issue links in the mobile app open
+in your browser.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a

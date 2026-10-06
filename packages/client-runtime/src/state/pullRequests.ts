@@ -197,6 +197,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
   );
+  const issue = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:issue",
+      tag: WS_METHODS.issuesDetail,
+      execute: (input) => routedRequest(WS_METHODS.issuesDetail, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
   const labelCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
@@ -243,6 +252,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     detail,
     preview,
+    issue,
     checks: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:checks",
       tag: WS_METHODS.pullRequestsChecks,
@@ -567,6 +577,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           if (input.reference !== undefined) {
             registry.refresh(preview({ environmentId, input: input.reference }));
+            registry.refresh(issue({ environmentId, input: input.reference }));
           }
         }),
       scheduler: commandScheduler,

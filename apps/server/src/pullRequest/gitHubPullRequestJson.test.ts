@@ -12,6 +12,7 @@ import {
   buildReviewerRequestJson,
   buildSetFilesViewedGraphQlMutation,
   decodeBaseComparisonJson,
+  decodeIssueJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
@@ -52,6 +53,102 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
   if (!Result.isSuccess(result)) throw new Error("expected a successful decode");
   return result.success;
 }
+
+describe("issue decoding", () => {
+  const issueJson = (node: Record<string, unknown>, viewer = "octocat"): string =>
+    JSON.stringify({
+      data: { viewer: { login: viewer }, repository: { issueOrPullRequest: node } },
+    });
+  const issue = (fields: Record<string, unknown> = {}) => ({
+    __typename: "Issue",
+    number: 13630,
+    title: "Auto Settle",
+    body: "Settle it when it is done.",
+    url: "https://github.com/pingdotgg/t3code/issues/13630",
+    state: "OPEN",
+    stateReason: null,
+    createdAt: "2026-09-25T00:00:00Z",
+    updatedAt: "2026-10-06T00:00:00Z",
+    closedAt: null,
+    author: { __typename: "User", login: "Pawel-Kica", avatarUrl: "https://avatars/p.png" },
+    ...fields,
+  });
+
+  it("answers a pull request behind an issue number with its own URL", () => {
+    const result = expectSuccess(
+      decodeIssueJson(
+        issueJson({
+          __typename: "PullRequest",
+          url: "https://github.com/pingdotgg/t3code/pull/15648",
+        }),
+      ),
+    );
+
+    expect(result).toEqual({
+      _tag: "pull-request",
+      url: "https://github.com/pingdotgg/t3code/pull/15648",
+    });
+  });
+
+  it("says why a closed issue closed, and drops the reason an open one was reopened with", () => {
+    const closed = expectSuccess(
+      decodeIssueJson(
+        issueJson(
+          issue({ state: "CLOSED", stateReason: "NOT_PLANNED", closedAt: "2026-10-06T00:00:00Z" }),
+        ),
+      ),
+    );
+    const reopened = expectSuccess(decodeIssueJson(issueJson(issue({ stateReason: "REOPENED" }))));
+
+    expect(closed._tag === "issue" && [closed.issue.state, closed.issue.stateReason]).toEqual([
+      "closed",
+      "not-planned",
+    ]);
+    expect(reopened._tag === "issue" && [reopened.issue.state, reopened.issue.stateReason]).toEqual(
+      ["open", null],
+    );
+  });
+
+  it("counts comments the read left on the host, and names the viewer's reaction as theirs", () => {
+    const result = expectSuccess(
+      decodeIssueJson(
+        issueJson(
+          issue({
+            comments: {
+              totalCount: 150,
+              nodes: [
+                null,
+                {
+                  id: "IC_1",
+                  author: { login: "juliusmarminge", avatarUrl: "https://avatars/j.png" },
+                  body: "Accepted.",
+                  createdAt: "2026-09-25T01:00:00Z",
+                  lastEditedAt: null,
+                  url: "https://github.com/pingdotgg/t3code/issues/13630#issuecomment-1",
+                  reactionGroups: [
+                    {
+                      content: "THUMBS_UP",
+                      viewerHasReacted: true,
+                      reactors: { totalCount: 2, nodes: [{ login: "octocat" }, { login: "theo" }] },
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ),
+      ),
+    );
+
+    if (result._tag !== "issue") throw new Error("expected an issue");
+    expect(result.issue.commentCount).toBe(150);
+    expect(result.issue.commentsTruncated).toBe(true);
+    expect(result.issue.comments.map((comment) => comment.id)).toEqual(["IC_1"]);
+    expect(result.issue.comments[0]?.reactions).toEqual([
+      { content: "thumbs-up", count: 2, actors: ["theo"], viewerHasReacted: true },
+    ]);
+  });
+});
 
 describe("pull request list decoding", () => {
   it("treats a merge timestamp as merged even when the state still says closed", () => {

@@ -60,6 +60,8 @@ import {
   type GitHubPullRequestWatchFingerprint,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
+  decodeIssueJson,
+  ISSUE_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
   decodePullRequestFilesViewedJson,
   decodePullRequestHeadsJson,
@@ -124,7 +126,11 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
-import type { ProviderChangeRequestSummary, ProviderListCursor } from "./PullRequestProvider.ts";
+import type {
+  ProviderChangeRequestSummary,
+  ProviderIssueRead,
+  ProviderListCursor,
+} from "./PullRequestProvider.ts";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from
@@ -587,6 +593,13 @@ export class GitHubPullRequestCli extends Context.Service<
       Omit<PullRequestPreview, "projectId" | "repository">,
       GitHubPullRequestCliError
     >;
+
+    readonly getIssue: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderIssueRead, GitHubPullRequestCliError>;
 
     readonly listWorkflowRunsRequiringApproval: (input: {
       readonly cwd: string;
@@ -2224,6 +2237,21 @@ export const make = Effect.gen(function* () {
         ],
         query: PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
         decode: decodePullRequestPreviewJson,
+      });
+    },
+    getIssue: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getIssue",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: ISSUE_GRAPHQL_QUERY,
+        decode: decodeIssueJson,
       });
     },
     listWorkflowRunsRequiringApproval,

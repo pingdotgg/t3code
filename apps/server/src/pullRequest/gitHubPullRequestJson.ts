@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  IssueStateReason,
   PullRequestStackMembership,
   PullRequestActor,
   PullRequestPreview,
@@ -36,6 +37,7 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { dedupeChecks } from "./pullRequestChecks.ts";
+import type { ProviderIssueRead } from "./PullRequestProvider.ts";
 
 /**
  * Enum-ish GitHub CLI fields are decoded as plain strings and normalized here: a `gh`
@@ -789,6 +791,149 @@ export function decodePullRequestPreviewJson(
     author: toActor(data.repository.pullRequest.author),
     state: toState(data.repository.pullRequest),
   }));
+}
+
+const ISSUE_COMMENTS_READ = 100;
+
+/**
+ * `issueOrPullRequest` because `/issues/{n}` links also name pull requests; one request answers
+ * which it is. Comments are the newest page, which is what a reader catching up wants.
+ */
+export const ISSUE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on PullRequest { url }
+      ... on Issue {
+        number title body url state stateReason createdAt updatedAt closedAt
+        author { __typename login avatarUrl ... on User { name } }
+        labels(first: 100) { nodes { name color } }
+        assignees(first: 20) { nodes { login avatarUrl name } }
+        ${REACTION_GROUPS_FIELDS}
+        comments(last: ${ISSUE_COMMENTS_READ}) {
+          totalCount
+          nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+        }
+      }
+    }
+  }
+}`;
+
+const decodeIssue = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      viewer: Schema.optional(
+        Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.NullOr(Schema.String)) })),
+      ),
+      repository: Schema.Struct({
+        issueOrPullRequest: Schema.Union([
+          Schema.Struct({ __typename: Schema.Literal("PullRequest"), url: Schema.String }),
+          Schema.Struct({
+            __typename: Schema.Literal("Issue"),
+            number: Schema.Int,
+            title: Schema.String,
+            body: Schema.optional(Schema.NullOr(Schema.String)),
+            url: Schema.String,
+            state: Schema.String,
+            stateReason: Schema.optional(Schema.NullOr(Schema.String)),
+            createdAt: Schema.String,
+            updatedAt: Schema.String,
+            closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+            author: Schema.optional(Schema.NullOr(RawActorSchema)),
+            labels: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  nodes: Schema.optional(
+                    Schema.NullOr(Schema.Array(Schema.NullOr(RawLabelSchema))),
+                  ),
+                }),
+              ),
+            ),
+            assignees: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  nodes: Schema.optional(
+                    Schema.NullOr(Schema.Array(Schema.NullOr(RawActorSchema))),
+                  ),
+                }),
+              ),
+            ),
+            reactionGroups: RawReactionGroupsSchema,
+            comments: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  totalCount: Schema.optional(Schema.Int),
+                  nodes: Schema.optional(
+                    Schema.NullOr(Schema.Array(Schema.NullOr(RawCommentSchema))),
+                  ),
+                }),
+              ),
+            ),
+          }),
+        ]),
+      }),
+    }),
+  }),
+);
+
+function toIssueStateReason(value: string | null | undefined): IssueStateReason | null {
+  switch (value?.trim().toUpperCase()) {
+    case "COMPLETED":
+      return "completed";
+    case "NOT_PLANNED":
+      return "not-planned";
+    case "DUPLICATE":
+      return "duplicate";
+    default:
+      return null;
+  }
+}
+
+export function decodeIssueJson(raw: string): Result.Result<ProviderIssueRead, DecodeFailure> {
+  return Result.map(decodeIssue(raw), ({ data }): ProviderIssueRead => {
+    const node = data.repository.issueOrPullRequest;
+    if (node.__typename === "PullRequest") return { _tag: "pull-request", url: node.url };
+    const viewer = trimmed(data.viewer?.login);
+    const comments = (node.comments?.nodes ?? []).flatMap((comment) =>
+      comment === null
+        ? []
+        : [
+            {
+              id: comment.id,
+              author: toActor(comment.author),
+              body: comment.body ?? "",
+              createdAt: comment.createdAt,
+              editedAt: trimmed(comment.lastEditedAt),
+              url: trimmed(comment.url),
+              reactions: toReactions(comment.reactionGroups, viewer),
+            },
+          ],
+    );
+    const commentCount = Math.max(node.comments?.totalCount ?? comments.length, comments.length);
+    const state = node.state.trim().toUpperCase() === "CLOSED" ? "closed" : "open";
+    return {
+      _tag: "issue",
+      issue: {
+        number: node.number,
+        title: node.title,
+        body: node.body ?? "",
+        url: node.url,
+        author: toActor(node.author),
+        state,
+        stateReason: state === "closed" ? toIssueStateReason(node.stateReason) : null,
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+        closedAt: trimmed(node.closedAt),
+        labels: toLabels((node.labels?.nodes ?? []).flatMap((label) => label ?? [])),
+        assignees: (node.assignees?.nodes ?? []).flatMap((actor) => toActor(actor) ?? []),
+        reactions: toReactions(node.reactionGroups, viewer),
+        comments,
+        commentCount,
+        commentsTruncated: commentCount > comments.length,
+      },
+    };
+  });
 }
 
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";

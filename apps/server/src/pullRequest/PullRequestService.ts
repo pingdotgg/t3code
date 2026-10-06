@@ -34,6 +34,7 @@ import {
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
   type PullRequestPreview,
+  type IssueReadResult,
   type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
   type PullRequestDiffFileContentsResult,
@@ -231,6 +232,7 @@ export class PullRequestService extends Context.Service<
     readonly preview: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestPreview, PullRequestError>;
+    readonly issue: (input: PullRequestRef) => Effect.Effect<IssueReadResult, PullRequestError>;
     readonly checks: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestChecks | null, PullRequestError>;
@@ -596,6 +598,7 @@ function withRateLimitBackoff(
     ...(api.getChangeRequestChecks === undefined
       ? {}
       : { getChangeRequestChecks: wrap("getChangeRequestChecks", api.getChangeRequestChecks) }),
+    ...(api.getIssue === undefined ? {} : { getIssue: wrap("getIssue", api.getIssue) }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -1797,6 +1800,43 @@ export const make = Effect.gen(function* () {
             }),
           ),
         ),
+      ),
+    );
+
+  const issueUncached: PullRequestService["Service"]["issue"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) =>
+        project.api.getIssue === undefined
+          ? Effect.fail(
+              new PullRequestUnavailableError({
+                reason: "provider-unsupported",
+                provider: project.api.kind,
+              }),
+            )
+          : project.api
+              .getIssue({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                number: input.number,
+              })
+              .pipe(
+                Effect.mapError(toPullRequestError("issue")),
+                Effect.map((read): IssueReadResult =>
+                  read._tag === "pull-request"
+                    ? read
+                    : {
+                        _tag: "issue",
+                        issue: {
+                          ...read.issue,
+                          provider: project.api.kind,
+                          projectId: project.project.id,
+                          workspaceRoot: project.project.workspaceRoot,
+                          repository: project.repository,
+                        },
+                      },
+                ),
+              ),
       ),
     );
 
@@ -3120,6 +3160,12 @@ export const make = Effect.gen(function* () {
     const key = refCacheKey(input);
     return Cache.get(activityCache, key);
   };
+  const issueCache = yield* Cache.makeWith((key: string) => issueUncached(refOfCacheKey(key)), {
+    capacity: DETAIL_CACHE_CAPACITY,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+  });
+  const issue: PullRequestService["Service"]["issue"] = (input) =>
+    Cache.get(issueCache, refCacheKey(input));
 
   const diffCache = yield* Cache.makeWith(
     (key: string) => {
@@ -3385,6 +3431,7 @@ export const make = Effect.gen(function* () {
     ),
     activity: credentialCached(activity),
     preview: credentialCached(preview),
+    issue: credentialCached(issue),
     threadComments,
     diff: credentialCached(diff),
     diffFileContents,

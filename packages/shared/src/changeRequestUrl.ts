@@ -77,6 +77,20 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   return null;
 }
 
+/** A GitHub issue link. GitHub serves pull requests at the same path, so the read decides which. */
+export function parseIssueUrl(targetUrl: string): ChangeRequestLink | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.toLowerCase();
+  if (!isHostOf(host, "github.com", "github")) return null;
+  return claim(host, /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname));
+}
+
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
   const repository = match?.[1];
   const number = Number(match?.[2]);

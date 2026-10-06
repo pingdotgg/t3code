@@ -16,6 +16,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Smartphone,
   ChevronDown,
+  CircleDotIcon,
   ChevronLeft,
   ChevronRight,
   FileDiff,
@@ -39,7 +40,7 @@ import {
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
-import type { RightPanelSurface } from "~/rightPanelStore";
+import type { IssueSurface, RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
@@ -77,6 +78,7 @@ import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { resolveIssueState } from "./issue/issuePresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 interface RightPanelTabsProps {
@@ -596,6 +598,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "issue":
+      return `#${surface.number}`;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -679,6 +683,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "issue":
+      return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -785,6 +791,36 @@ function PullRequestSurfaceIcon({
     state: status.state,
     isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
   });
+  return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
+}
+
+function IssueSurfaceIcon({
+  surface,
+  environmentId,
+}: {
+  surface: IssueSurface;
+  environmentId: EnvironmentId | null;
+}) {
+  const configs = useServerConfigs();
+  const supported =
+    environmentId !== null && configs.get(environmentId)?.environment.capabilities.issues === true;
+  const result = useEnvironmentQuery(
+    !supported || environmentId === null
+      ? null
+      : pullRequestEnvironment.issue({
+          environmentId,
+          input: {
+            projectId: surface.projectId as ProjectId,
+            ...(surface.host === undefined ? {} : { host: surface.host }),
+            repository: surface.repository,
+            number: surface.number,
+          },
+        }),
+  ).data;
+  if (result?._tag !== "issue") {
+    return <CircleDotIcon className="size-3 shrink-0 text-muted-foreground" />;
+  }
+  const presentation = resolveIssueState(result.issue);
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 

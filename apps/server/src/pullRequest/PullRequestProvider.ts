@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
+  IssueDetail,
   PullRequestStackMembership,
   PullRequestAction,
   PullRequestStackHead,
@@ -310,6 +311,13 @@ export interface ProviderFileRevisions {
   readonly complete?: boolean;
 }
 
+export type ProviderIssueRead =
+  | {
+      readonly _tag: "issue";
+      readonly issue: Omit<IssueDetail, "provider" | "projectId" | "workspaceRoot" | "repository">;
+    }
+  | { readonly _tag: "pull-request"; readonly url: string };
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   /** Provider-native repository identity, e.g. `owner/repo` or `group/subgroup/project`. */
@@ -428,6 +436,11 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /** Optional: issue links from hosts without it open on the host. */
+  readonly getIssue?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderIssueRead, PullRequestProviderError>;
 
   /** Hosts without a narrow read use their existing detail response for hover cards. */
   readonly getChangeRequestPreview?: (

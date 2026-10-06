@@ -25,6 +25,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
+  "issue",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -80,7 +81,18 @@ export type RightPanelSurface =
       url?: string;
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
-  | { id: "pull-requests"; kind: "pull-requests" };
+  | { id: "pull-requests"; kind: "pull-requests" }
+  /** An issue opened from a link, addressed like a `pull-request` surface. */
+  | {
+      id: `issue:${string}`;
+      kind: "issue";
+      environmentId?: string;
+      projectId: string;
+      host?: string;
+      repository: string;
+      number: number;
+      url?: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -131,7 +143,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -149,6 +161,7 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
+  openIssue: (ref: ScopedThreadRef, target: SurfaceReferenceTarget & { url?: string }) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -174,7 +187,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -197,7 +210,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "issue">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -246,20 +259,40 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
+export type IssueSurface = Extract<RightPanelSurface, { kind: "issue" }>;
 
-export function pullRequestSurfaceId(target: {
+interface SurfaceReferenceTarget {
   environmentId?: string;
   projectId: string;
   host?: string;
   repository: string;
   number: number;
-}): PullRequestSurface["id"] {
+}
+
+function surfaceReferenceKey(target: SurfaceReferenceTarget): string {
   // The environment leads the id where there is one, so the same change request read from two
   // servers is two tabs rather than one tab that changes its mind about which server it is on.
   const scope =
     target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
   const host = target.host === undefined ? "" : `${encodeURIComponent(target.host.toLowerCase())}:`;
-  return `pull-request:${scope}${encodeURIComponent(target.projectId)}:${host}${encodeURIComponent(target.repository)}:${target.number}`;
+  return `${scope}${encodeURIComponent(target.projectId)}:${host}${encodeURIComponent(target.repository)}:${target.number}`;
+}
+
+export function pullRequestSurfaceId(target: SurfaceReferenceTarget): PullRequestSurface["id"] {
+  return `pull-request:${surfaceReferenceKey(target)}`;
+}
+
+export function issueSurface(target: SurfaceReferenceTarget & { url?: string }): IssueSurface {
+  return {
+    id: `issue:${surfaceReferenceKey(target)}`,
+    kind: "issue",
+    ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
+    projectId: target.projectId,
+    ...(typeof target.host === "string" ? { host: target.host.toLowerCase() } : {}),
+    repository: target.repository,
+    number: target.number,
+    ...(typeof target.url === "string" ? { url: target.url } : {}),
+  };
 }
 
 export function pullRequestSurface(target: {
@@ -664,6 +697,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 }
               : next;
           }),
+        ),
+      openIssue: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, issueSurface(target)),
+          ),
         ),
       openFile: (ref, requestedPath, line) =>
         set((state) =>

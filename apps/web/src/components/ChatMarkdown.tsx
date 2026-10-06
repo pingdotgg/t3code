@@ -188,6 +188,7 @@ import {
   resolvePullRequestPreviewTarget,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -2606,8 +2607,23 @@ function useChatMarkdownState({
         : payload.html,
     );
   }, []);
-  const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
-  const openDeferredMarkdownLink = useOpenLink(threadRef);
+  const openPullRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const issueLinks = useOpenIssueLink(threadRef);
+  const openChangeRequestLink = useCallback<typeof openPullRequestLink>(
+    (event, targetUrl, targetThreadRef, targetEnvironmentId) =>
+      openPullRequestLink(event, targetUrl, targetThreadRef, targetEnvironmentId) ||
+      issueLinks.open(event, targetUrl),
+    [issueLinks, openPullRequestLink],
+  );
+  const openLink = useOpenLink(threadRef);
+  // A `#123` reference GitHub could not read as a pull request may still be an issue.
+  const openDeferredMarkdownLink = useCallback(
+    async (targetUrl: string) => {
+      if (await issueLinks.openIfIssue(targetUrl)) return;
+      await openLink(targetUrl);
+    },
+    [issueLinks, openLink],
+  );
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.

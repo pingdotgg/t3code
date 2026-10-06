@@ -461,3 +461,31 @@ export function PullRequestConversationGhost({ rows = 3 }: { rows?: number }) {
     </div>
   );
 }
+
+/** An issue opening beside a thread: its title, a meta line, then the description and comments. */
+export function IssueDetailGhost() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading issue"
+      className="motion-safe:animate-skeleton flex h-full min-h-0 flex-col"
+    >
+      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 px-4">
+        <GhostBar className="w-24" />
+        <GhostBar className="w-10" />
+      </div>
+      <div className="space-y-3 px-4 py-4">
+        <GhostBar className="h-4 w-3/5" />
+        <GhostBar className="w-2/5" />
+        <div className="space-y-1.5 pt-3">
+          <GhostBar className="w-full" />
+          <GhostBar className="w-11/12" />
+          <GhostBar className="w-2/3" />
+        </div>
+      </div>
+      <div className="px-4">
+        <PullRequestConversationGhost />
+      </div>
+    </div>
+  );
+}

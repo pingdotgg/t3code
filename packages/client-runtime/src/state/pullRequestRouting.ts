@@ -35,6 +35,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsStack,
   WS_METHODS.pullRequestsDetail,
   WS_METHODS.pullRequestsPreview,
+  WS_METHODS.issuesDetail,
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,

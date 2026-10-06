@@ -274,6 +274,7 @@ import {
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
+import { ThreadIssueSurface } from "./issue/ThreadIssueSurface";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -10688,6 +10689,14 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
+    ) : renderedRightPanelSurface?.kind === "issue" && activeThreadRef !== null ? (
+      <ThreadIssueSurface
+        key={renderedRightPanelSurface.id}
+        environmentId={activeThread.environmentId}
+        threadRef={activeThreadRef}
+        surface={renderedRightPanelSurface}
+        supported={serverConfig?.environment.capabilities.issues === true}
+      />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (

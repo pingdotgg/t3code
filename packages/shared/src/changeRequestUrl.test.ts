@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   changeRequestUrlFor,
   parseChangeRequestUrl,
+  parseIssueUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   siblingPullRequestUrl,
 } from "./changeRequestUrl.ts";
@@ -95,6 +96,20 @@ describe("parseChangeRequestUrl", () => {
     ]) {
       expect(parseChangeRequestUrl(link), link).toBeNull();
     }
+  });
+});
+
+describe("parseIssueUrl", () => {
+  it("reads a GitHub issue, including a comment anchor below it", () => {
+    expect(
+      parseIssueUrl("https://github.com/PingDotGG/T3Code/issues/13630#issuecomment-1"),
+    ).toEqual({ host: "github.com", repository: "pingdotgg/t3code", number: 13630 });
+  });
+
+  it("leaves Forgejo, GitLab and pull request links alone", () => {
+    expect(parseIssueUrl("https://codeberg.org/team/repo/issues/7")).toBeNull();
+    expect(parseIssueUrl("https://gitlab.com/group/repo/-/issues/7")).toBeNull();
+    expect(parseIssueUrl("https://github.com/pingdotgg/t3code/pull/7")).toBeNull();
   });
 });
 
