@@ -10,7 +10,7 @@ import {
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
-import { isVideoAttachment } from "../../types";
+import { isVideoAttachment, videoMimeType } from "../../types";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -62,9 +62,54 @@ export function normalizeComposerImageFileMimeType(file: File): File {
   });
 }
 
+/**
+ * Conventional (not IANA-registered) MIME for DNG. Browsers seldom report it, so the
+ * file name is the usual evidence; this value is what the draft and wire records carry.
+ */
+export const DNG_FILE_MIME_TYPE = "image/x-adobe-dng";
+
+function baseMimeType(type: string): string {
+  return type.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * A DNG original is a raw camera file, not a picture the provider send path can
+ * carry: compressing or converting it would destroy exactly the data the agent
+ * is asked to inspect, so it always travels as a generic file (#16023). Browsers
+ * label `.dng` inconsistently (TIFF, empty, octet-stream, even PNG or JPEG), so
+ * the extension decides; the DNG MIME types cover extension-less clipboard
+ * payloads. Deliberately only DNG, not every RAW format.
+ */
+export function isDngFile(file: Pick<File, "name" | "type">): boolean {
+  if (file.name.toLowerCase().endsWith(".dng")) {
+    return true;
+  }
+  const mimeType = baseMimeType(file.type);
+  return mimeType === "image/dng" || mimeType === "image/x-dng" || mimeType === DNG_FILE_MIME_TYPE;
+}
+
+/**
+ * MIME recorded on a generic file's draft and wire record. A DNG never keeps a
+ * browser-reported supported-image type: `isImageAttachment` and the provider
+ * image byte budget read the record's MIME, so `image/png` on a `.dng` would
+ * turn it back into a picture downstream.
+ */
+export function composerFileAttachmentMimeType(file: Pick<File, "name" | "type">): string {
+  if (isDngFile(file)) {
+    return DNG_FILE_MIME_TYPE;
+  }
+  return (
+    videoMimeType({ name: file.name, mimeType: file.type }) ??
+    (file.type || "application/octet-stream")
+  );
+}
+
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
+  if (isDngFile(file)) {
+    return "file";
+  }
   if (isHeicImageFile(file)) {
     return "image";
   }
@@ -162,6 +207,11 @@ export function shouldHandleComposerAttachmentPaste(input: {
 }): boolean {
   if (
     input.files.some((file) => {
+      // A captioned DNG paste is a photo paste from the user's point of view; letting it
+      // fall through to the text paste would silently drop the file.
+      if (isDngFile(file)) {
+        return true;
+      }
       const classification = classifyComposerAttachmentFile(file);
       return classification === "image" || classification === "unsupported-image";
     })

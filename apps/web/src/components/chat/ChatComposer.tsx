@@ -159,6 +159,7 @@ import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
   classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   isPreviewableComposerVideo,
@@ -1099,7 +1100,6 @@ import {
   type SessionPhase,
   type Thread,
   type ThreadShell,
-  videoMimeType,
 } from "../../types";
 import {
   buildComposerPromptHistoryEntries,
@@ -5725,10 +5725,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
       const fileMimeType =
-        attachmentKind === "file"
-          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
-            (file.type || "application/octet-stream"))
-          : file.type;
+        attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
         attachmentKind === "file"
           ? reattachMarkers.find(
