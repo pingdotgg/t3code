@@ -1,6 +1,7 @@
 import * as Layer from "effect/Layer";
 
 import * as ClaudeAdapterV2 from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import * as ClaudePluginUi from "../ClaudePluginUi.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -19,7 +20,9 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * Effect layer memoization yields one shared queue.
  */
 export const ProviderOrchestrationAdapterInfrastructureLive = Layer.mergeAll(
-  ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer,
+  // Same `ClaudePluginUi.layer` reference the server provides, so memoization
+  // hands the runner and the websocket routes one shared instance.
+  ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer.pipe(Layer.provide(ClaudePluginUi.layer)),
   CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
   CursorAgentSdk.cursorAgentSdkRunnerLiveLayer,
   IdAllocator.layer,

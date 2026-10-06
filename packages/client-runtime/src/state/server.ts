@@ -1057,6 +1057,15 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    claudePluginUi: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:provider:claude-plugin-ui",
+      tag: WS_METHODS.claudePluginUiSubscribe,
+      idleTtlMs: 0,
+    }),
+    pressClaudePluginUi: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:claude-plugin-ui-press",
+      tag: WS_METHODS.claudePluginUiPress,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

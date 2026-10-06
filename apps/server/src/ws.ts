@@ -174,6 +174,7 @@ import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as ClaudePluginUi from "./provider/ClaudePluginUi.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1275,6 +1276,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
+      const claudePluginUi = yield* ClaudePluginUi.ClaudePluginUi;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -2507,6 +2509,16 @@ const makeWsRpcLayer = (
             providerInstallation.subscribe(input),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.claudePluginUiSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.claudePluginUiSubscribe,
+            claudePluginUi.subscribe(input.threadId),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.claudePluginUiPress]: (input) =>
+          observeRpcEffect(WS_METHODS.claudePluginUiPress, claudePluginUi.press(input), {
+            "rpc.aggregate": "provider",
+          }),
         [WS_METHODS.providerInstallRemove]: (input) =>
           observeRpcEffect(WS_METHODS.providerInstallRemove, providerInstallation.remove(input), {
             "rpc.aggregate": "provider",
