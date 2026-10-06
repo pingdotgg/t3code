@@ -1342,3 +1342,22 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: true,
   });
 }
+
+/**
+ * Whether the draft a pull request checkout landed on had already been sent. That send read the
+ * draft before the checkout recorded its pull request, so the link is made once the thread
+ * exists rather than at send. A foreground send leaves no mark on the draft until it is
+ * finalized, so the caller tracks the draft threads whose send already read the draft.
+ */
+export function checkoutLandedOnSentDraft(input: {
+  readonly threadId: ThreadId;
+  readonly sentDraftThreadIds: ReadonlySet<ThreadId>;
+  readonly draft: Pick<DraftThreadState, "promotedTo"> | null;
+  readonly threadShellExists: boolean;
+}): boolean {
+  return (
+    input.sentDraftThreadIds.has(input.threadId) ||
+    input.draft?.promotedTo != null ||
+    input.threadShellExists
+  );
+}

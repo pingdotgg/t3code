@@ -214,7 +214,18 @@ beforeEach(() => {
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
   prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
-    value: { branch: "feature", worktreePath: "/workspace/pr" },
+    value: {
+      pullRequest: {
+        number: 7,
+        title: "Feature",
+        url: "https://github.com/acme/widgets/pull/7",
+        baseBranch: "main",
+        headBranch: "feature",
+        state: "open",
+      },
+      branch: "feature",
+      worktreePath: "/workspace/pr",
+    },
   });
 });
 afterEach(() => {

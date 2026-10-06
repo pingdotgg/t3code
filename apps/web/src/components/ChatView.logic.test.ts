@@ -36,6 +36,7 @@ import type { Thread, TurnDiffSummary } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   agentControlledBrowserCloseConfirmation,
+  checkoutLandedOnSentDraft,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
   resolveBackgroundDraftWorkspaceOptions,
@@ -2158,5 +2159,35 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("checkoutLandedOnSentDraft", () => {
+  const threadId = ThreadId.make("thread-checkout");
+  const decide = (
+    overrides: Partial<Parameters<typeof checkoutLandedOnSentDraft>[0]> = {},
+  ): boolean =>
+    checkoutLandedOnSentDraft({
+      threadId,
+      sentDraftThreadIds: new Set(),
+      draft: { promotedTo: null },
+      threadShellExists: false,
+      ...overrides,
+    });
+
+  it("defers to the first send while the draft is unsent", () => {
+    expect(decide()).toBe(false);
+    expect(decide({ sentDraftThreadIds: new Set([ThreadId.make("another-draft")]) })).toBe(false);
+  });
+
+  it("links now when the draft's send already read it, before its thread shell arrives", () => {
+    expect(decide({ sentDraftThreadIds: new Set([threadId]) })).toBe(true);
+  });
+
+  it("links now when the draft was promoted or its thread already exists", () => {
+    expect(
+      decide({ draft: { promotedTo: { environmentId: EnvironmentId.make("env"), threadId } } }),
+    ).toBe(true);
+    expect(decide({ draft: null, threadShellExists: true })).toBe(true);
   });
 });

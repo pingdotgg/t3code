@@ -409,10 +409,10 @@ export function usePullRequestHandoffs({
       worktreePath: prepared.value.worktreePath,
       envMode: prepared.value.worktreePath === null ? "local" : "worktree",
     }).then(
-      (session) => session !== null,
-      () => false,
+      (session) => session,
+      () => null,
     );
-    if (!pointed) {
+    if (pointed === null) {
       setHandoff(null);
       // The checkout is on disk; only the thread failed to move onto it. Writing the task now
       // would send the agent at whatever the thread was already open on — which is the one
@@ -424,6 +424,13 @@ export function usePullRequestHandoffs({
       });
       return;
     }
+    // The draft carries the pull request until its first send makes it a thread, which links it.
+    useComposerDraftStore.getState().setDraftThreadContext(pointed.draftId, {
+      checkoutPullRequest: {
+        url: prepared.value.pullRequest.url,
+        branch: prepared.value.branch,
+      },
+    });
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
