@@ -1,5 +1,6 @@
 import {
   McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
   PositiveInt,
   PullRequestState,
   ThreadPullRequestLinkSource,
@@ -12,10 +13,12 @@ import * as Toolkit from "effect/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,
 ];
@@ -96,15 +99,6 @@ export class PullRequestThreadRequiredError extends Schema.TaggedError<PullReque
   }
 }
 
-export class PullRequestThreadAboveLimitsError extends Schema.TaggedError<PullRequestThreadAboveLimitsError>()(
-  "PullRequestThreadAboveLimitsError",
-  { threadId: Schema.String },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} cannot be changed from here: it runs with broader permissions than this caller, or the calling thread has no active run.`;
-  }
-}
-
 export class PullRequestThreadNotFoundError extends Schema.TaggedError<PullRequestThreadNotFoundError>()(
   "PullRequestThreadNotFoundError",
   { threadId: Schema.String },
@@ -169,12 +163,12 @@ export class PullRequestListFailedError extends Schema.TaggedError<PullRequestLi
 }
 
 export const PullRequestToolError = Schema.Union([
+  OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
   PullRequestUrlInvalidError,
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestThreadRequiredError,
-  PullRequestThreadAboveLimitsError,
   PullRequestThreadNotFoundError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,

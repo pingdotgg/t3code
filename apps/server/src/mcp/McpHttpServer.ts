@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { AiError, McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool, type Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OrchestratorMcpFailure, PreviewAutomationError } from "@t3tools/contracts";
 
@@ -19,7 +19,9 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -396,6 +398,7 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
   // The MCP tool runner only supplies the client, so hand the save path its services here.
   const saveServices = yield* Effect.context<
     ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | Crypto.Crypto
@@ -430,6 +433,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Stream.run(Sink.last()),
           Effect.flatMap(Effect.fromOption),
           Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.flatMap(({ encodedResult }) =>
             Effect.gen(function* () {
@@ -655,6 +659,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
 
 const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
   const devices = yield* DeviceService.DeviceService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
   const built = yield* DeviceScreenshotToolkit;
   yield* registerImageTool(
     DeviceScreenshotTool,
@@ -662,7 +667,11 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
       built
         .handle("device_screenshot", payload)
         .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
-    (effect) => effect.pipe(Effect.provideService(DeviceService.DeviceService, devices)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(DeviceService.DeviceService, devices),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+      ),
     "screenshot",
     "Device screenshot failed.",
   );
@@ -672,6 +681,7 @@ const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
   const htmlRender = yield* HtmlRender.HtmlRender;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
   const built = yield* HtmlPreviewToolkit;
   yield* registerImageTool(
     HtmlPreviewTool,
@@ -679,7 +689,11 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
       built
         .handle("html_preview", payload)
         .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
-    (effect) => effect.pipe(Effect.provideService(HtmlRender.HtmlRender, htmlRender)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(HtmlRender.HtmlRender, htmlRender),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+      ),
     "preview",
     // Parameter errors and HTML render errors are both written by the server for the agent.
     (error) =>
@@ -689,17 +703,34 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
+/**
+ * `McpServer.toolkit` for handlers that declared their access (see
+ * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
+ */
+export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+) => McpServer.toolkit(toolkit).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+
+/** A hand-registered tool, also only with handlers that declared their access. */
+const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
+  register: Effect.Effect<A, E, R>,
+  handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+) => Layer.effectDiscard(register).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+
 export const layerHtmlToolkit = Layer.mergeAll(
-  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlHandlers.layerRender)),
-  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlHandlers.layerPreview)),
+  toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
+  imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
 ).pipe(Layer.provide(HtmlRender.layer));
 
-const layerPreviewStandardToolkitRegistration = McpServer.toolkit(PreviewStandardToolkit).pipe(
-  Layer.provide(PreviewHandlers.layerStandard),
+const layerPreviewStandardToolkitRegistration = toolkitRegistration(
+  PreviewStandardToolkit,
+  PreviewHandlers.layerStandard,
 );
 
-const layerPreviewSnapshotRegistration = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
-  Layer.provide(PreviewHandlers.layerSnapshot),
+const layerPreviewSnapshotRegistration = imageToolRegistration(
+  registerPreviewSnapshot(),
+  PreviewHandlers.layerSnapshot,
 );
 
 export const layerPreviewToolkit = Layer.mergeAll(
@@ -707,47 +738,48 @@ export const layerPreviewToolkit = Layer.mergeAll(
   layerPreviewSnapshotRegistration,
 );
 
-export const layerOrchestratorToolkit = McpServer.toolkit(OrchestratorToolkit).pipe(
-  Layer.provide(OrchestratorHandlers.layer),
-  Layer.provide(OrchestratorMcpService.layer),
-  Layer.provide(ThreadMetadataMcpService.layer),
+export const layerOrchestratorToolkit = toolkitRegistration(
+  OrchestratorToolkit,
+  OrchestratorHandlers.layer,
+).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ThreadMetadataMcpService.layer));
+
+export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
+
+const layerWorktreeToolkitRegistration = toolkitRegistration(
+  WorktreeToolkit,
+  WorktreeHandlers.layer,
+).pipe(Layer.provide(WorktreeMcpService.layer));
+
+const layerPreviewControlsRegistration = toolkitRegistration(
+  PreviewControlsToolkit,
+  PreviewControlsHandlers.layer,
 );
 
-export const layerThreadToolkit = McpServer.toolkit(ThreadToolkit).pipe(
-  Layer.provide(ThreadHandlers.layer),
+const layerEnvironmentRegistration = toolkitRegistration(
+  EnvironmentToolkit,
+  EnvironmentHandlers.layer,
 );
 
-const layerWorktreeToolkitRegistration = McpServer.toolkit(WorktreeToolkit).pipe(
-  Layer.provide(WorktreeHandlers.layer),
-  Layer.provide(WorktreeMcpService.layer),
+const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+
+const layerAttachmentRegistration = toolkitRegistration(
+  AttachmentToolkit,
+  AttachmentHandlers.layer,
 );
 
-const layerPreviewControlsRegistration = McpServer.toolkit(PreviewControlsToolkit).pipe(
-  Layer.provide(PreviewControlsHandlers.layer),
+export const layerPullRequestsToolkit = toolkitRegistration(
+  PullRequestsToolkit,
+  PullRequestsHandlers.layer,
 );
 
-const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
-  Layer.provide(EnvironmentHandlers.layer),
+const layerDeviceStandardToolkitRegistration = toolkitRegistration(
+  DeviceStandardToolkit,
+  DeviceHandlers.layerStandard,
 );
 
-const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
-  Layer.provide(ProjectHandlers.layer),
-);
-
-const layerAttachmentRegistration = McpServer.toolkit(AttachmentToolkit).pipe(
-  Layer.provide(AttachmentHandlers.layer),
-);
-
-export const layerPullRequestsToolkit = McpServer.toolkit(PullRequestsToolkit).pipe(
-  Layer.provide(PullRequestsHandlers.layer),
-);
-
-const layerDeviceStandardToolkitRegistration = McpServer.toolkit(DeviceStandardToolkit).pipe(
-  Layer.provide(DeviceHandlers.layerStandard),
-);
-
-const layerDeviceScreenshotRegistration = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
-  Layer.provide(DeviceHandlers.layerScreenshot),
+const layerDeviceScreenshotRegistration = imageToolRegistration(
+  registerDeviceScreenshot(),
+  DeviceHandlers.layerScreenshot,
 );
 
 export const layerDeviceToolkit = Layer.mergeAll(

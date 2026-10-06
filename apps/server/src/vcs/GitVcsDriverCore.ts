@@ -3954,6 +3954,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
+  const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
+    runGitStdout("GitVcsDriver.listWorktreePaths", cwd, [
+      "worktree",
+      "list",
+      "--porcelain",
+      "-z",
+    ]).pipe(
+      // One record per worktree, each ended by an empty field. A `prunable`
+      // record's directory is gone, and another checkout may now sit there.
+      Effect.map((stdout) =>
+        stdout.split("\0\0").flatMap((record) => {
+          const fields = record.split("\0");
+          const worktree = fields.find((field) => field.startsWith("worktree "));
+          return worktree === undefined || fields.some((field) => field.startsWith("prunable"))
+            ? []
+            : [path.resolve(cwd, worktree.slice("worktree ".length))];
+        }),
+      ),
+    );
+
   const withListRefsInvalidation = <A, E>(
     cwd: string,
     effect: Effect.Effect<A, E>,
@@ -4024,5 +4044,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,
+    listWorktreePaths,
   });
 });
