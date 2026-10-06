@@ -2,6 +2,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
+  type ProjectSettingsOverrides,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +20,7 @@ import {
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  type ScopedSettingsPatch,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -617,6 +620,88 @@ describe("partial object patches at project scope", () => {
           },
         },
       },
+    });
+  });
+});
+
+describe("model selection patches at project scope", () => {
+  const environmentId = EnvironmentId.make("laptop");
+  const projectId = ProjectId.make("fleet");
+  const codex = ProviderInstanceId.make("codex");
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const planWith = (override: ProjectSettingsOverrides, patch: ScopedSettingsPatch) =>
+    planScopedSettingsPatch(
+      {
+        kind: "project",
+        group: {} as never,
+        environmentId: null,
+        label: "fleet",
+        members: [{ id: projectId, environmentId } as never],
+        environmentIds: [environmentId],
+      },
+      [
+        {
+          environmentId,
+          label: "Laptop",
+          connection: { phase: "connected" },
+          serverConfig: {
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              projectSettingsOverrides: { [projectId]: override },
+            },
+            environment: { capabilities: { projectSettingsOverrides: true } },
+          },
+        },
+      ],
+      patch,
+    ).serverWrites[0]?.patch.projectSettingsOverrides?.[projectId];
+
+  it("drops the previous model's options when the model changes", () => {
+    const entry = planWith(
+      {
+        defaultModelSelection: {
+          instanceId: codex,
+          model: "gpt-5.6",
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      },
+      { defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" } },
+    );
+    expect(entry?.defaultModelSelection).toEqual({ instanceId: claude, model: "claude-opus-4-8" });
+  });
+
+  it("keeps the saved instance when a patch names only the model", () => {
+    const entry = planWith(
+      {
+        textGenerationModelSelection: {
+          instanceId: codex,
+          model: "gpt-5.6",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+      { textGenerationModelSelection: { model: "gpt-5.6-mini" } },
+    );
+    expect(entry?.textGenerationModelSelection).toEqual({
+      instanceId: codex,
+      model: "gpt-5.6-mini",
+    });
+  });
+
+  it("still completes an options-only patch from the saved selection", () => {
+    const entry = planWith(
+      {
+        textGenerationModelSelection: {
+          instanceId: codex,
+          model: "gpt-5.6",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+      { textGenerationModelSelection: { options: [{ id: "reasoningEffort", value: "low" }] } },
+    );
+    expect(entry?.textGenerationModelSelection).toEqual({
+      instanceId: codex,
+      model: "gpt-5.6",
+      options: [{ id: "reasoningEffort", value: "low" }],
     });
   });
 });

@@ -48,6 +48,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const MODEL_SELECTION_KEYS = new Set<string>([
+  "defaultModelSelection",
+  "sourceControlWriterModelSelection",
+  "textGenerationModelSelection",
+] satisfies ProjectScopedServerSettingKey[]);
+
+/** Like the server, a selection naming its instance or model replaces the whole value. */
+function isModelSelectionReplacement(key: string, value: unknown): boolean {
+  return (
+    MODEL_SELECTION_KEYS.has(key) &&
+    isPlainObject(value) &&
+    (value.instanceId !== undefined || value.model !== undefined)
+  );
+}
+
 /** The representative supplies display values, never the set of write targets. */
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
@@ -258,7 +273,15 @@ export function planScopedSettingsPatch(
                   delete next[key];
                   continue;
                 }
-                const base = effective[key as keyof ServerSettings];
+                const base: unknown = effective[key as keyof ServerSettings];
+                // Merging would carry the previous model's options to the new one.
+                // Like the server, a partial selection keeps the saved instance or model.
+                if (isModelSelectionReplacement(key, value)) {
+                  next[key] = isPlainObject(base)
+                    ? { instanceId: base.instanceId, model: base.model, ...(value as object) }
+                    : value;
+                  continue;
+                }
                 next[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }
