@@ -37,6 +37,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -547,6 +548,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const hostPlatform = yield* HostProcessPlatform;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const context = yield* Effect.context<never>();
