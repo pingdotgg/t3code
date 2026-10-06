@@ -126,7 +126,7 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
  * Nightly versions carry their build date (`1.2.4-nightly.20260709.766`), the only
  * release timestamp the renderer has. Stable versions have none.
  */
-export function getDesktopUpdateReleaseDate(version: string): Date | null {
+function getDesktopUpdateReleaseDate(version: string): Date | null {
   const match = /-nightly\.(\d{4})(\d{2})(\d{2})(?:\.|$)/.exec(version);
   if (!match) return null;
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
