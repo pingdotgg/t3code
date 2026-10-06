@@ -257,7 +257,12 @@ it.effect("shares detail and activity for a minute, and for ten once merged", ()
               return {
                 ...hostedChangeRequest("Description"),
                 number,
-                state: number === 1 ? ("open" as const) : ("merged" as const),
+                state:
+                  number === 1
+                    ? ("open" as const)
+                    : number === 2
+                      ? ("merged" as const)
+                      : ("closed" as const),
               };
             }),
           getChangeRequestActivity: ({ number }) =>
@@ -275,7 +280,8 @@ it.effect("shares detail and activity for a minute, and for ten once merged", ()
       ],
     });
     // What every client does on focus or a refresh signal for each panel it shows.
-    const reread = Effect.forEach([1, 2], (number) => {
+    // #1 is open, #2 merged, and #3 closed, which can reopen and so is held no longer than #1.
+    const reread = Effect.forEach([1, 2, 3], (number) => {
       const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number };
       return Effect.andThen(service.detail(ref), service.activity(ref));
     }).pipe(
@@ -283,13 +289,21 @@ it.effect("shares detail and activity for a minute, and for ten once merged", ()
       Effect.andThen(Effect.sync(() => reads.splice(0).toSorted())),
     );
 
-    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #2", "detail #1", "detail #2"]);
+    const everything = [
+      "activity #1",
+      "activity #2",
+      "activity #3",
+      "detail #1",
+      "detail #2",
+      "detail #3",
+    ];
+    assert.deepStrictEqual(yield* reread, everything);
     yield* TestClock.adjust("59 seconds");
     assert.deepStrictEqual(yield* reread, []);
     yield* TestClock.adjust("2 seconds");
-    assert.deepStrictEqual(yield* reread, ["activity #1", "detail #1"]);
+    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #3", "detail #1", "detail #3"]);
     yield* TestClock.adjust("9 minutes");
-    assert.deepStrictEqual(yield* reread, ["activity #1", "activity #2", "detail #1", "detail #2"]);
+    assert.deepStrictEqual(yield* reread, everything);
   }),
 );
 
@@ -1914,7 +1928,7 @@ for (const [provider, host] of [
           service[read](reference);
         yield* Effect.all([request, request], { concurrency: 2 });
         assert.strictEqual(calls, 1);
-        yield* TestClock.adjust("45 seconds");
+        yield* TestClock.adjust("61 seconds");
         limited = true;
         assert.strictEqual((yield* Effect.exit(request))._tag, "Failure");
         assert.strictEqual(calls, 2);

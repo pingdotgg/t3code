@@ -138,12 +138,13 @@ const LIST_CACHE_TTL = Duration.seconds(30);
 /**
  * Each connected client re-reads the pull request it shows on focus, on a timer, and after every
  * turn, so detail, activity, and preview answers are shared for the clients' own minute of
- * staleness. A merged or closed change request stops moving on its own and is held for ten.
+ * staleness. A merged change request cannot change again and is held for ten. A closed one is
+ * not: it can reopen, and a watch started on it reads it to learn whether it did.
  */
 const DETAIL_CACHE_TTL = Duration.seconds(60);
-const SETTLED_DETAIL_CACHE_TTL = Duration.minutes(10);
+const MERGED_DETAIL_CACHE_TTL = Duration.minutes(10);
 const detailTimeToLive = (state: PullRequestState | undefined) =>
-  state === "merged" || state === "closed" ? SETTLED_DETAIL_CACHE_TTL : DETAIL_CACHE_TTL;
+  state === "merged" ? MERGED_DETAIL_CACHE_TTL : DETAIL_CACHE_TTL;
 const DIFF_CACHE_TTL = Duration.seconds(60);
 /** A commit is content-addressed, so its own diff cannot change under its key. */
 const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
