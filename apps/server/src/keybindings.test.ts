@@ -620,7 +620,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const configState = yield* keybindings.loadConfigState;
       assert.deepEqual(configState.issues, []);
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
-    }).pipe(Effect.provide(makeKeybindingsLayer())),
+    }).pipe(Effect.provide(layerKeybindings())),
   );
 
   it.effect("updates cached resolved config after upsert", () =>
