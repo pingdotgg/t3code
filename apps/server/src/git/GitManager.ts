@@ -1398,17 +1398,25 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // Returns [head remote, origin]. Most branches track origin, so read it once.
+  const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
+    remoteName === "origin"
+      ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
+          Effect.map((origin) => [origin, origin] as const),
+        )
+      : Effect.all(
+          [
+            resolveRemoteRepositoryContext(cwd, remoteName),
+            resolveRemoteRepositoryContext(cwd, "origin"),
+          ],
+          { concurrency: "unbounded" },
+        );
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
-      const [headRemote, targetRemote] = yield* Effect.all(
-        [
-          resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
-        ],
-        { concurrency: "unbounded" },
-      );
+      const [headRemote, targetRemote] = yield* resolveHeadAndOriginContexts(cwd, remoteName);
       return {
         remoteName,
         headRemoteUrlKey:
@@ -1432,12 +1440,9 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
-      [
-        resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
-      ],
-      { concurrency: "unbounded" },
+    const [remoteRepository, originRepository] = yield* resolveHeadAndOriginContexts(
+      cwd,
+      remoteName,
     );
 
     const isCrossRepository =

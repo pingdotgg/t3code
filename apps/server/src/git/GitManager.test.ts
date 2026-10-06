@@ -1071,6 +1071,49 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a branch tracking origin reads origin's URL once per PR lookup", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/origin-once"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/origin-once"]);
+
+      const gitConfigReads: string[] = [];
+      const { manager } = yield* makeManager({
+        gitConfigReads,
+        ghScenario: {
+          prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 217,
+                title: "Origin once PR",
+                url: "https://github.com/pingdotgg/t3code/pull/217",
+                baseRefName: "main",
+                headRefName: "feature/origin-once",
+                state: "OPEN",
+                updatedAt: "2026-04-03T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-once" });
+      gitConfigReads.length = 0;
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/origin-once",
+      });
+
+      expect(pullRequest?.number).toBe(217);
+      expect(gitConfigReads.filter((key) => key === "remote.origin.url")).toHaveLength(1);
+    }),
+  );
+
   it.effect("turn-end refresh finds a new PR and keeps known PRs cached", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
