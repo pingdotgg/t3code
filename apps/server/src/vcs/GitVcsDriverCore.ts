@@ -3030,6 +3030,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
       const localBranches = snapshot.localBranches.map((ref) => ({
         ...ref,
+        // A separate git dir is filtered out of the worktree list, which leaves the
+        // current branch without a path; fall back to the folder the user opened.
+        worktreePath:
+          ref.worktreePath ??
+          (!ref.isRemote && ref.name === repositoryPaths.currentBranch
+            ? repositoryPaths.worktreeRoot
+            : null),
         current: hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
           : ref.name === repositoryPaths.currentBranch,

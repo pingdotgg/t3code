@@ -718,6 +718,7 @@ it.effect("does not report a separate git dir as the worktree of its branch", ()
       const current = refs.refs.find((ref) => ref.current);
       assert.isDefined(current);
       assert.notEqual(current?.worktreePath, gitDir);
+      assert.equal(current?.worktreePath, NodeFS.realpathSync(cwd));
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
