@@ -35,4 +35,16 @@ describe("splitProposedPlanBlock", () => {
     expect(result.plan).toBeNull();
     expect(result.prose).toBe("Use the <proposed_plan> tag like so");
   });
+
+  it("only closes on a standalone closing tag", () => {
+    const result = splitProposedPlanBlock(
+      "<proposed_plan>\nUse `</proposed_plan>` to end it.\n# Rest\n</proposed_plan>\nDone",
+    );
+    expect(result.plan).toBe("Use `</proposed_plan>` to end it.\n# Rest");
+    expect(result.prose).toBe("Done");
+  });
+
+  it("keeps text without a plan block untouched", () => {
+    expect(splitProposedPlanBlock("    indented code\n").prose).toBe("    indented code\n");
+  });
 });

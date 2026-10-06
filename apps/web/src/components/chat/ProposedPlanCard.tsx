@@ -1,4 +1,4 @@
-import { memo, useState, useId } from "react";
+import { memo, useEffect, useState, useId } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -48,8 +48,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot: string | undefined;
   forceExpanded?: boolean;
 }) {
-  const [expandedState, setExpanded] = useState(false);
-  const expanded = expandedState || forceExpanded;
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (forceExpanded) setExpanded(true);
+  }, [forceExpanded]);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);

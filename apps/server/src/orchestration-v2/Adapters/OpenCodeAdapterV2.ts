@@ -300,6 +300,7 @@ interface ActiveOpenCodeTurn {
   interrupted: boolean;
   finalized: boolean;
   planId: PlanId | null;
+  readonly planMode: boolean;
   readonly proposedPlanIdsByPart: Map<string, PlanId>;
   admissionGeneration: number;
   admissionReconciliationGeneration: number | null;
@@ -1210,6 +1211,7 @@ export function makeOpenCodeAdapterV2(
             readonly part: { readonly id: string };
             readonly markdown: string;
             readonly completed: boolean;
+            readonly abandoned?: boolean;
             readonly startedAt: DateTime.Utc;
             readonly emittedAt: DateTime.Utc;
           },
@@ -1232,8 +1234,8 @@ export function makeOpenCodeAdapterV2(
             driver: OPENCODE_PROVIDER,
             nativeItemId,
           });
-          const status = input.completed ? "completed" : "running";
-          const completedAt = input.completed ? input.emittedAt : null;
+          const status = input.completed || input.abandoned ? "completed" : "running";
+          const completedAt = status === "completed" ? input.emittedAt : null;
           const nativeItemRef = providerRef(nativeItemId, "weak");
           const plan: OrchestrationV2PlanArtifact = {
             id: planId,
@@ -1241,18 +1243,23 @@ export function makeOpenCodeAdapterV2(
             runId: turn.runId,
             nodeId,
             kind: "proposed_plan",
-            status: "active",
+            status: input.abandoned ? "superseded" : "active",
             markdown: input.markdown,
           };
           const previous = state.latestProposedPlan;
-          if (previous !== null && previous.id !== plan.id && previous.status !== "completed") {
+          if (
+            !input.abandoned &&
+            previous !== null &&
+            previous.id !== plan.id &&
+            previous.status !== "completed"
+          ) {
             yield* emitProviderEvent({
               type: "plan.updated",
               driver: OPENCODE_PROVIDER,
               plan: { ...previous, status: "superseded" },
             });
           }
-          state.latestProposedPlan = plan;
+          if (!input.abandoned) state.latestProposedPlan = plan;
           yield* emitProviderEvent({
             type: "node.updated",
             driver: OPENCODE_PROVIDER,
@@ -1296,7 +1303,7 @@ export function makeOpenCodeAdapterV2(
               type: "proposed_plan",
               planId,
               markdown: input.markdown,
-              streaming: !input.completed,
+              streaming: status !== "completed",
             },
           });
         });
@@ -1305,13 +1312,14 @@ export function makeOpenCodeAdapterV2(
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
           part: Extract<OpenCodePart, { type: "text" | "reasoning" }>,
-          forceCompleted = false,
+          terminal: TerminalTurnStatus | null = null,
         ) {
           if (part.type === "text" && (part.ignored === true || part.synthetic === true)) return;
           if (part.text.length === 0) return;
-          const split = part.type === "text" ? splitProposedPlanBlock(part.text) : null;
+          const split =
+            part.type === "text" && turn.planMode ? splitProposedPlanBlock(part.text) : null;
           const emittedAt = yield* DateTime.now;
-          const isCompleted = forceCompleted || part.time?.end !== undefined;
+          const isCompleted = terminal !== null || part.time?.end !== undefined;
           const startedAt = dateTimeFromEpoch(part.time?.start, emittedAt);
           const completedAt = isCompleted ? dateTimeFromEpoch(part.time?.end, emittedAt) : null;
           const nativeItemRef = providerRef(part.id);
@@ -1327,7 +1335,8 @@ export function makeOpenCodeAdapterV2(
             yield* emitProposedPlan(state, turn, {
               part,
               markdown: split.plan,
-              completed: split.planComplete || isCompleted,
+              completed: split.planComplete || terminal === "completed",
+              abandoned: !split.planComplete && terminal !== null && terminal !== "completed",
               startedAt,
               emittedAt,
             });
@@ -2178,7 +2187,7 @@ export function makeOpenCodeAdapterV2(
           const completedAt = yield* DateTime.now;
           for (const part of turn.parts.values()) {
             if (part.type === "text" || part.type === "reasoning") {
-              yield* emitTextPart(state, turn, part, true);
+              yield* emitTextPart(state, turn, part, status);
             }
           }
           for (const pending of Array.from(pendingRequests.values())) {
@@ -2389,6 +2398,7 @@ export function makeOpenCodeAdapterV2(
             interrupted: false,
             finalized: false,
             planId: null,
+            planMode: false,
             proposedPlanIdsByPart: new Map(),
             admissionGeneration: 0,
             admissionReconciliationGeneration: null,
@@ -2663,7 +2673,7 @@ export function makeOpenCodeAdapterV2(
           for (const partId of turn.partIdsByMessage.get(message.id) ?? []) {
             const part = turn.parts.get(partId);
             if (part?.type === "text" || part?.type === "reasoning") {
-              yield* emitTextPart(state, turn, part, true);
+              yield* emitTextPart(state, turn, part, "completed");
             }
           }
         });
@@ -3300,6 +3310,9 @@ export function makeOpenCodeAdapterV2(
                   `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
                 );
               }
+              const agent =
+                getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
+                (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
               const turn: ActiveOpenCodeTurn = {
                 isRoot: true,
                 threadId: turnInput.threadId,
@@ -3325,6 +3338,7 @@ export function makeOpenCodeAdapterV2(
                 interrupted: false,
                 finalized: false,
                 planId: null,
+                planMode: agent === "plan",
                 proposedPlanIdsByPart: new Map(),
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,
@@ -3376,9 +3390,6 @@ export function makeOpenCodeAdapterV2(
                 );
                 return;
               }
-              const agent =
-                getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
-                (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
               const systemPrompt = [
                 orchestrationSystemPrompt,
                 buildRuntimeInstructions({
