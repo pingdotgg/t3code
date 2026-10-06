@@ -7,10 +7,17 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+} from "@t3tools/client-runtime/connection";
 
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  isRejectedBootstrapCredentialError,
+  isRejectedSecondaryBootstrap,
+  nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
@@ -199,6 +206,69 @@ describe("desktop-local bearer cache", () => {
         10_000,
       ),
     ).toEqual(new Map());
+  });
+});
+
+describe("rejected desktop-local bootstrap tokens", () => {
+  it("backs off on a rejected signature and retries it on a growing, capped delay", () => {
+    const signature = "http://a|ws://a|old-token";
+    const first = nextRejectedSecondaryBootstrap(undefined, signature, 0);
+
+    expect(isRejectedSecondaryBootstrap(first, signature, 59_999)).toBe(true);
+    // A backend restarted on the same port accepts the same token again, so it is retried.
+    expect(isRejectedSecondaryBootstrap(first, signature, 60_000)).toBe(false);
+
+    const second = nextRejectedSecondaryBootstrap(first, signature, 60_000);
+    expect(second.retryAtEpochMs).toBe(180_000);
+
+    let backoff = second;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      backoff = nextRejectedSecondaryBootstrap(backoff, signature, 0);
+    }
+    expect(backoff.delayMs).toBe(30 * 60_000);
+  });
+
+  it("retries at once when the token or endpoint changes", () => {
+    const rejected = nextRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 0);
+
+    expect(isRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(rejected, "http://b|ws://b|old-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 1)).toBe(false);
+    expect(nextRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1).delayMs).toBe(
+      60_000,
+    );
+  });
+
+  it("treats only authentication rejections as a dead credential", () => {
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionBlockedError({ reason: "authentication", detail: "invalid" }),
+      ),
+    ).toBe(true);
+    expect(
+      isRejectedBootstrapCredentialError(
+        new ConnectionTransientError({ reason: "endpoint-unavailable", detail: "booting" }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("desktop-local bearer cache across token changes", () => {
+  it("keeps a live bearer when only the bootstrap token rotates", () => {
+    // Cached by endpoint: a rotated token reuses the bearer instead of
+    // dropping the environment (and its drafts) when the new token is rejected.
+    const cached = {
+      signature: "http://a|ws://a",
+      registration: {} as never,
+      expiresAtEpochMs: 20_000,
+      refreshAtEpochMs: 15_000,
+    };
+
+    expect(canReuseCachedPlatformRegistration(cached, "http://a|ws://a", 10_000)).toBe(true);
+    expect(
+      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, "http://a|ws://a", 16_000),
+    ).toBe(true);
+    expect(canReuseCachedPlatformRegistration(cached, "http://b|ws://b", 10_000)).toBe(false);
   });
 });
 
