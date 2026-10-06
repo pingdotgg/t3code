@@ -1,4 +1,5 @@
 import { cloudExecutionLabel } from "@t3tools/client-runtime/cloudExecutionLabels";
+import { formatChatTimestampTooltip } from "../timestampFormat";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -11067,8 +11068,11 @@ export default function ChatView(props: ChatViewProps) {
                   </p>
                   {cloudExecution ? (
                     <p>
-                      Last observation: {cloudExecution.observedAt ?? "unavailable"}. Task:{" "}
-                      {cloudExecutionLabel(cloudExecution.task)}.{" "}
+                      Last observation:{" "}
+                      {cloudExecution.observedAt
+                        ? formatChatTimestampTooltip(cloudExecution.observedAt, timestampFormat)
+                        : "unavailable"}
+                      . Task: {cloudExecutionLabel(cloudExecution.task)}.{" "}
                       {cloudExecution.result
                         ? `Result: ${cloudExecutionLabel(cloudExecution.result)}. `
                         : ""}

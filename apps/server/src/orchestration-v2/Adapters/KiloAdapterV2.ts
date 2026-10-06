@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Subagent,
   type ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ConversationMessage,
@@ -448,7 +449,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
       const connection = yield* wire(options.runtime.open(directory));
       const client = connection.client;
       const now = yield* DateTime.now;
-      const session = {
+      let session: OrchestrationV2ProviderSession = {
         id: input.providerSessionId,
         driver: KILO_PROVIDER,
         providerInstanceId: options.instanceId,
@@ -465,6 +466,7 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
       const items = new Map<string, OrchestrationV2TurnItem>();
       const emit = (event: Adapter.ProviderAdapterV2Event) =>
         Effect.suspend(() => {
+          if (event.type === "provider_session.updated") session = event.providerSession;
           if (event.type === "node.updated") nodes.set(event.node.id, event.node);
           if (event.type === "turn_item.updated") items.set(event.turnItem.id, event.turnItem);
           return Queue.offer(events, event).pipe(Effect.asVoid);
@@ -601,6 +603,17 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
           });
         }
         active = undefined;
+        if (session.status !== "ready" && status !== "interrupted" && (yield* connection.isRunning))
+          yield* emit({
+            type: "provider_session.updated",
+            driver: KILO_PROVIDER,
+            providerSession: {
+              ...session,
+              status: "ready",
+              lastError: null,
+              updatedAt: completedAt,
+            },
+          });
         yield* emit({
           type: "provider_turn.updated",
           driver: KILO_PROVIDER,
@@ -1276,6 +1289,26 @@ export const make = Effect.fn("KiloAdapterV2.make")(function* (options: {
                           )
                         : Effect.void,
                     ),
+                  ),
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      if (
+                        session.status === "ready" ||
+                        (session.status === "waiting" && active && !active.admitted) ||
+                        !(yield* connection.isRunning)
+                      )
+                        return;
+                      yield* emit({
+                        type: "provider_session.updated",
+                        driver: KILO_PROVIDER,
+                        providerSession: {
+                          ...session,
+                          status: "ready",
+                          lastError: null,
+                          updatedAt: yield* DateTime.now,
+                        },
+                      });
+                    }),
                   ),
                 ),
                 true,

@@ -13,6 +13,7 @@ it.live("separates credential rejection, account support and temporary profile f
   Effect.gen(function* () {
     let responseStatus = 503;
     let personal = true;
+    let requests = 0;
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-account-" });
     yield* fs.makeDirectory(`${root}/data/kilo`, { recursive: true });
@@ -22,6 +23,7 @@ it.live("separates credential rejection, account support and temporary profile f
     const server = yield* Effect.acquireRelease(
       Effect.promise(async () => {
         const server = NodeHttp.createServer((req, res) => {
+          requests += 1;
           res.writeHead(responseStatus, { "content-type": "application/json" });
           res.end(
             encode({
@@ -45,7 +47,9 @@ it.live("separates credential rejection, account support and temporary profile f
     );
     const address = server.address();
     if (!address || typeof address === "string") return yield* Effect.die("No fixture address");
-    const account = yield* Account.make(root, `http://127.0.0.1:${address.port}`);
+    const origin = `http://127.0.0.1:${address.port}`;
+    const identityPath = `${root}/state/account.json`;
+    const account = yield* Account.make(root, origin, identityPath);
     assert.equal((yield* account.load.pipe(Effect.flip)).reason, "invalid_response");
     responseStatus = 401;
     assert.equal((yield* account.load.pipe(Effect.flip)).reason, "rejected");
@@ -54,9 +58,27 @@ it.live("separates credential rejection, account support and temporary profile f
     assert.equal((yield* account.load.pipe(Effect.flip)).reason, "unsupported");
     personal = true;
     assert.equal((yield* account.load).accountId, "a");
+    const savedIdentity = yield* fs.readFileString(identityPath);
+    assert.isFalse(savedIdentity.includes("synthetic-a"));
+    responseStatus = 503;
+    const restarted = yield* Account.make(root, origin, identityPath);
+    const requestCount = requests;
+    const restored = yield* restarted.restore;
+    assert.equal(restored.accountId, "a");
+    assert.isFalse(restored.verified);
+    assert.equal(requests, requestCount);
+    assert.equal((yield* restarted.load.pipe(Effect.flip)).reason, "invalid_response");
+    responseStatus = 401;
+    assert.equal((yield* restarted.load.pipe(Effect.flip)).reason, "rejected");
+    responseStatus = 200;
+    assert.equal((yield* restarted.load).accountId, "a");
     yield* write("synthetic-b");
+    responseStatus = 503;
+    assert.equal((yield* restarted.restore.pipe(Effect.flip)).reason, "invalid_response");
+    responseStatus = 200;
     assert.equal((yield* account.load).accountId, "b");
     yield* fs.writeFileString(`${root}/data/kilo/auth.json`, "malformed");
     assert.equal((yield* account.load.pipe(Effect.flip)).reason, "rejected");
+    assert.equal((yield* restarted.restore.pipe(Effect.flip)).reason, "rejected");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

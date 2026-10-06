@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
+import { Hex } from "effect/encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
@@ -21,18 +23,26 @@ const Profile = Schema.Struct({
 
 const decodeAuth = Schema.decodeUnknownEffect(Schema.fromJsonString(Auth));
 const decodeProfile = Schema.decodeUnknownEffect(Profile);
+const Identity = Schema.Struct({
+  accountId: Schema.NonEmptyString,
+  tokenHash: Schema.NonEmptyString,
+});
+const decodeIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(Identity));
+const encodeIdentity = Schema.encodeSync(Schema.fromJsonString(Identity));
 
 /** Reads only the selected official CLI profile. Login and token refresh remain Kilo's job. */
 export const make = Effect.fn("KiloCloudAccount.make")(function* (
   profileDirectory: string,
   origin = "https://app.kilo.ai",
+  identityPath?: string,
 ) {
   if (origin !== "https://app.kilo.ai" && !/^http:\/\/127\.0\.0\.1:\d+$/.test(origin))
     return yield* new KiloCloudError({ operation: "authentication", reason: "rejected" });
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   let cached: { token: Redacted.Redacted<string>; accountId: string } | undefined;
-  const load = Effect.gen(function* () {
+  const readToken = Effect.gen(function* () {
     const saved = yield* decodeAuth(
       yield* fs
         .readFileString(path.join(profileDirectory, "data", "kilo", "auth.json"))
@@ -45,6 +55,12 @@ export const make = Effect.fn("KiloCloudAccount.make")(function* (
       Effect.mapError(() => new KiloCloudError({ operation: "credentials", reason: "rejected" })),
     );
     const token = saved.kilo.type === "oauth" ? saved.kilo.access : saved.kilo.key;
+    return token;
+  });
+  const tokenHash = (token: string) =>
+    crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(Effect.map(Hex.encode));
+  const load = Effect.gen(function* () {
+    const token = yield* readToken;
     if (cached && Redacted.value(cached.token) === token) return cached;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -62,6 +78,15 @@ export const make = Effect.fn("KiloCloudAccount.make")(function* (
     if (!profile.hasPersonalAccount)
       return yield* new KiloCloudError({ operation: "personal-account", reason: "unsupported" });
     cached = { accountId: profile.user.id, token: Redacted.make(token) };
+    if (identityPath) {
+      const identity = encodeIdentity({
+        accountId: cached.accountId,
+        tokenHash: yield* tokenHash(token),
+      });
+      yield* fs
+        .makeDirectory(path.dirname(identityPath), { recursive: true })
+        .pipe(Effect.andThen(fs.writeFileString(identityPath, identity)), Effect.ignore);
+    }
     return cached;
   }).pipe(
     Effect.scoped,
@@ -74,5 +99,23 @@ export const make = Effect.fn("KiloCloudAccount.make")(function* (
         : new KiloCloudError({ operation: "authentication", reason: "invalid_response" }),
     ),
   );
-  return { load };
+  // This restores only the immutable binding. Requests still verify through load.
+  const restore = Effect.gen(function* () {
+    if (identityPath) {
+      const token = yield* readToken;
+      const prior = yield* fs
+        .readFileString(identityPath)
+        .pipe(Effect.flatMap(decodeIdentity), Effect.option);
+      if (prior._tag === "Some" && prior.value.tokenHash === (yield* tokenHash(token)))
+        return { accountId: prior.value.accountId, token: Redacted.make(token), verified: false };
+    }
+    return { ...(yield* load), verified: true };
+  }).pipe(
+    Effect.mapError((cause) =>
+      isKiloCloudError(cause)
+        ? cause
+        : new KiloCloudError({ operation: "authentication", reason: "invalid_response" }),
+    ),
+  );
+  return { load, restore };
 });

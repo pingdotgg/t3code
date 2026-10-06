@@ -29,6 +29,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
+import type * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -171,6 +172,7 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  readonly reattachStartFailure?: "starting" | "interrupted";
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -356,6 +358,7 @@ function makeLocalCommandHarness(input: {
     };
   }
   const events: Array<OrchestrationV2DomainEvent> = [];
+  const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
   const interruptRun = () => {
     projection = {
       ...projection,
@@ -414,7 +417,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.reattachStartFailure !== undefined
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -434,11 +437,34 @@ function makeLocalCommandHarness(input: {
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
-    (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
-  >(() =>
-    input.failReadsAfterRunning === true
-      ? Effect.void
-      : Effect.die("A local command must not start a native turn."),
+    (
+      input: RunExecutionService.RunExecutionServiceV2StartRootRunInput,
+    ) => Effect.Effect<void, RunExecutionService.RunExecutionStartError>
+  >((startInput) =>
+    input.reattachStartFailure !== undefined
+      ? Effect.sync(() => {
+          projection = {
+            ...projection,
+            runs: projection.runs.map((candidate) =>
+              candidate.id === runId
+                ? { ...candidate, status: input.reattachStartFailure! }
+                : candidate,
+            ),
+          };
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new RunExecutionService.RunExecutionStartError({
+                commandId: startInput.commandId,
+                runId,
+                cause: "remote journal unavailable",
+              }),
+            ),
+          ),
+        )
+      : input.failReadsAfterRunning === true
+        ? Effect.void
+        : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
@@ -459,29 +485,36 @@ function makeLocalCommandHarness(input: {
           }),
         ),
   );
-  const writeIfRunCurrent = vi.fn(({ events: incoming, activeAttemptId, expectedStatus }) =>
-    "writeFailure" in input
-      ? Effect.fail(
-          new EventSink.EventSinkWriteError({
-            eventCount: incoming.length,
-            cause: input.writeFailure,
-          }),
-        )
-      : Effect.sync(() => {
-          const current = projection.runs.find((candidate) => candidate.id === runId);
-          const committed =
-            current !== undefined &&
-            current.activeAttemptId === activeAttemptId &&
-            current.status === expectedStatus;
-          if (committed) {
-            for (const event of incoming) {
-              expect(isDomainEvent(event)).toBe(true);
-              events.push(event);
-              projection = ProjectionStore.applyToProjection(projection, event);
+  const writeIfRunCurrent = vi.fn(
+    ({
+      events: incoming,
+      effects: pending = [],
+      activeAttemptId,
+      expectedStatus,
+    }: Parameters<EventSink.EventSinkV2Shape["writeIfRunCurrent"]>[0]) =>
+      "writeFailure" in input
+        ? Effect.fail(
+            new EventSink.EventSinkWriteError({
+              eventCount: incoming.length,
+              cause: input.writeFailure,
+            }),
+          )
+        : Effect.sync(() => {
+            const current = projection.runs.find((candidate) => candidate.id === runId);
+            const committed =
+              current !== undefined &&
+              current.activeAttemptId === activeAttemptId &&
+              current.status === expectedStatus;
+            if (committed) {
+              effects.push(...pending);
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
             }
-          }
-          return { committed, storedEvents: [] };
-        }),
+            return { committed, storedEvents: [] };
+          }),
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
@@ -536,6 +569,8 @@ function makeLocalCommandHarness(input: {
     startRootRun,
     tryHandlePromptCommand,
     events,
+    effects,
+    interruptRun,
     oldInstanceId,
     newInstanceId,
     attemptId,
@@ -543,6 +578,15 @@ function makeLocalCommandHarness(input: {
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
+    reattach: (willRetry = false) =>
+      Effect.gen(function* () {
+        yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+          threadId,
+          runId,
+          reattach: true,
+          willRetry,
+        });
+      }).pipe(Effect.provide(layer)),
     startWithRetry: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
         threadId,
@@ -853,5 +897,67 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
           },
         ]);
       }),
+  );
+}
+
+for (const failure of ["openFailure", "ensureThreadFailure"] as const) {
+  effectIt.effect(`reschedules an exhausted cloud reattach after ${failure}`, () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        [failure]: new Error("offline"),
+      });
+      const now = yield* DateTime.now;
+      yield* harness.reattach(true).pipe(Effect.flip);
+      expect(harness.effects).toEqual([]);
+      yield* harness.reattach();
+      yield* harness.reattach();
+      expect(harness.effects).toHaveLength(2);
+      expect(harness.effects[0]?.id).not.toBe(harness.effects[1]?.id);
+      for (const effect of harness.effects) {
+        expect(effect.request).toEqual({
+          type: "provider-turn.reattach",
+          runId: harness.projection().runs.at(-1)?.id,
+        });
+        expect(effect.commandId).toBe(
+          `command:cloud-reattach:${harness.projection().runs.at(-1)?.id}:${harness.attemptId}`,
+        );
+        expect(DateTime.toEpochMillis(effect.availableAt!)).toBe(
+          DateTime.toEpochMillis(now) + 30_000,
+        );
+      }
+      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      harness.interruptRun();
+      yield* harness.reattach();
+      expect(harness.effects).toHaveLength(2);
+    }),
+  );
+}
+
+effectIt.effect("returns a persistence failure when a cloud reattach cannot be rescheduled", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("offline"),
+      writeFailure: new Error("database unavailable"),
+    });
+    const failure = yield* harness.reattach().pipe(Effect.flip);
+    expect(failure._tag).toBe("ProviderTurnStartError");
+    expect(harness.effects).toEqual([]);
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+for (const status of ["starting", "interrupted"] as const) {
+  effectIt.effect(`guards exhausted reattach execution failure in ${status}`, () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue", reattachStartFailure: status });
+      yield* harness.reattach();
+      expect(harness.startRootRun).toHaveBeenCalledOnce();
+      expect(harness.startRootRun.mock.calls[0]?.[0].reattach).toBe(true);
+      expect(harness.projection().runs.at(-1)?.status).toBe(status);
+      expect(harness.effects).toHaveLength(status === "starting" ? 1 : 0);
+    }),
   );
 }

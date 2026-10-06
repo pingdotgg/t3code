@@ -542,6 +542,26 @@ export const layer: Layer.Layer<
         inheritedBackgroundTurnItems,
       });
       const { isCurrentAttemptInStatus } = runControls;
+      const rescheduleReattach = Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const commandId = CommandId.make(`command:cloud-reattach:${run.id}:${attempt.id}`);
+        yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
+          events: [],
+          effects: [
+            {
+              id: `effect:cloud-reattach:${yield* idAllocator.allocate.event({ threadId: projection.thread.id, commandId })}`,
+              commandId,
+              threadId: projection.thread.id,
+              request: { type: "provider-turn.reattach", runId: run.id },
+              availableAt: DateTime.add(now, { seconds: 30 }),
+            },
+          ],
+        });
+      });
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -604,8 +624,8 @@ export const layer: Layer.Layer<
           });
         });
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true || input.reattach === true)
-          return yield* sessionResult.failure;
+        if (input.willRetry === true) return yield* sessionResult.failure;
+        if (input.reattach === true) return yield* rescheduleReattach;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
@@ -622,7 +642,11 @@ export const layer: Layer.Layer<
         Effect.gen(function* () {
           const loaded = yield* Effect.result(load);
           if (loaded._tag === "Success") return loaded.success;
-          if (input.willRetry === true || input.reattach === true) return yield* loaded.failure;
+          if (input.willRetry === true) return yield* loaded.failure;
+          if (input.reattach === true) {
+            yield* rescheduleReattach;
+            return undefined;
+          }
           yield* settleStartFailure({
             signal: "provider-thread-load-failure",
             title: "Provider turn failed to start",
@@ -1235,7 +1259,7 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
-      yield* runExecution.startRootRun({
+      const execution = runExecution.startRootRun({
         ...(input.reattach ? { reattach: true } : {}),
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -1287,6 +1311,12 @@ export const layer: Layer.Layer<
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
       });
+      yield* execution.pipe(
+        Effect.catchIf(
+          () => input.reattach === true && input.willRetry !== true,
+          () => rescheduleReattach,
+        ),
+      );
     });
 
     return ProviderTurnStartServiceV2.of({

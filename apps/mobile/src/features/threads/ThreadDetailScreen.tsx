@@ -1312,8 +1312,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       Kilo Cloud · {cloudExecution.repository} · {cloudExecution.branch}
                     </AppText>
                     <AppText>
-                      Last observation: {cloudExecution.observedAt ?? "unavailable"}. Task:{" "}
-                      {cloudExecutionLabel(cloudExecution.task)}.{" "}
+                      Last observation:{" "}
+                      {cloudExecution.observedAt
+                        ? new Date(cloudExecution.observedAt).toLocaleString()
+                        : "unavailable"}
+                      . Task: {cloudExecutionLabel(cloudExecution.task)}.{" "}
                       {cloudExecution.result
                         ? `Result: ${cloudExecutionLabel(cloudExecution.result)}. `
                         : ""}

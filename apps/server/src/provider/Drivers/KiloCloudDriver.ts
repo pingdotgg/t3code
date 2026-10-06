@@ -36,8 +36,20 @@ export const KiloCloudDriver: ProviderDriver<KiloCloudSettings, KiloCloudDriverE
       const server = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const crypto = yield* Crypto.Crypto;
-      const account = yield* Account.make(input.config.profileDirectory);
-      const credentials = yield* account.load;
+      const profileKey = Hex.encode(
+        yield* crypto.digest(
+          "SHA-256",
+          new TextEncoder().encode(
+            [input.instanceId, path.resolve(input.config.profileDirectory)].join("\0"),
+          ),
+        ),
+      );
+      const account = yield* Account.make(
+        input.config.profileDirectory,
+        undefined,
+        path.join(server.stateDir, "providers", "kilo-cloud", "accounts", `${profileKey}.json`),
+      );
+      const credentials = yield* account.restore;
       const identity = [
         input.instanceId,
         path.resolve(input.config.profileDirectory),
@@ -115,6 +127,14 @@ export const KiloCloudDriver: ProviderDriver<KiloCloudSettings, KiloCloudDriverE
         continuation: { groupKey: continuationKey },
       };
       const authenticatedSnapshot = snapshot;
+      if (!credentials.verified)
+        snapshot = {
+          ...snapshot,
+          status: "warning",
+          auth: { status: "unknown" },
+          message:
+            "Kilo account verification is pending. Existing remote tasks will be reattached after verification succeeds.",
+        };
       const unavailable = (
         operation: "commit-message" | "pr-content" | "branch-name" | "thread-title",
       ) =>

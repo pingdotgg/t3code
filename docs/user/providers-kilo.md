@@ -30,6 +30,10 @@ Add **Kilo Cloud** with a profile directory signed in through the official Kilo
 CLI, a GitHub repository Kilo can access, its branch, and a model. Then turn on
 **Allow paid cloud execution**. Personal accounts are supported.
 
+First setup and changed login credentials require online account verification.
+If that check is unavailable during setup, retry by reconfiguring the provider
+or restarting T3 Code once Kilo is reachable.
+
 Prompts and the selected repository go to Kilo. T3 Code never uploads local files
 or uncommitted changes, and each cloud thread works in its own remote worktree.
 Start cloud threads at the project root. Local attachments, terminals, Git
