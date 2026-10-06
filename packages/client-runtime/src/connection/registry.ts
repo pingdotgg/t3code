@@ -15,6 +15,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
+  type ConnectionCredential,
   type ConnectionProfile,
   type ConnectionRegistration,
   type ConnectionRoute,
@@ -654,7 +655,13 @@ export const make = Effect.gen(function* () {
           // on their own loopback origin, so they authenticate with a bearer
           // token instead of the primary's same-origin cookie. Stash it where
           // the resolver's bearer broker looks it up.
+          let bearerReplaced = false;
           if (registration._tag === "BearerConnectionRegistration") {
+            const stored = yield* credentials
+              .get(registration.target.connectionId)
+              .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+            bearerReplaced =
+              Option.isSome(stored) && !Equal.equals(stored.value, registration.credential);
             yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
               Effect.catch((error) =>
                 Effect.logWarning("Could not store the platform bearer credential.", {
@@ -687,6 +694,24 @@ export const make = Effect.gen(function* () {
           }
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+
+          // The catalog entry carries no credential, so a fresh bearer keeps
+          // the equivalent runtime. A supervisor that stopped on the old
+          // bearer's authentication failure would otherwise wait for a manual
+          // retry, so wake it with the new one.
+          if (bearerReplaced) {
+            const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
+            if (scope !== undefined) {
+              const state = yield* SubscriptionRef.get(scope.supervisor.state);
+              if (
+                state.phase === "blocked" &&
+                state.lastFailure?._tag === "ConnectionBlockedError" &&
+                state.lastFailure.reason === "authentication"
+              ) {
+                yield* scope.supervisor.retryNow;
+              }
+            }
+          }
         }),
       );
     },

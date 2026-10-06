@@ -1270,6 +1270,50 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("a replaced platform bearer wakes a supervisor blocked on the old one", () =>
+    Effect.gen(function* () {
+      let storedCredentials: Ref.Ref<Map<string, ConnectionCredential>> | undefined;
+      const harness = yield* makeHarness([], [], [], {
+        // Authentication fails while the old bearer is stored, as the server
+        // would answer once that session was revoked.
+        prepareRoute: (target) => {
+          if (target._tag !== "BearerConnectionTarget" || storedCredentials === undefined) {
+            return undefined;
+          }
+          const current = Effect.runSync(Ref.get(storedCredentials)).get(target.connectionId);
+          return current?.token === "old-bearer"
+            ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
+            : undefined;
+        },
+      });
+      storedCredentials = harness.storedCredentials;
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        yield* registry.reconcilePlatform([registration("old-bearer")]);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "blocked",
+        );
+
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("starts a newly paired bearer environment without re-reading its profile", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([]);

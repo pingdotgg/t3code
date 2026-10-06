@@ -448,6 +448,8 @@ interface CachedPlatformRegistration {
   readonly registration: PlatformConnectionRegistration;
   readonly expiresAtEpochMs?: number;
   readonly refreshAtEpochMs?: number;
+  /** The bootstrap token a desktop-local bearer was exchanged for. */
+  readonly bootstrapToken?: string;
 }
 
 export type PrimaryEnvironmentTargetRead =
@@ -646,8 +648,12 @@ const layerPlatformConnectionSource = Layer.effect(
           const endpointSignature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}`;
           const signature = `${endpointSignature}|${bootstrap.bootstrapToken ?? ""}`;
           const cached = previous.get(bootstrap.id);
+          // A new token from the desktop means something changed (rotation, a
+          // restarted backend): exchange it rather than reusing a bearer that
+          // may be dead. The old bearer stays registered if that exchange fails.
           if (
             cached !== undefined &&
+            cached.bootstrapToken === bootstrap.bootstrapToken &&
             canReuseCachedPlatformRegistration(cached, endpointSignature, nowEpochMs)
           ) {
             next.set(bootstrap.id, cached);
@@ -691,7 +697,13 @@ const layerPlatformConnectionSource = Layer.effect(
             Effect.option,
           );
           if (Option.isSome(built)) {
-            const cacheEntry = { signature: endpointSignature, ...built.value };
+            const cacheEntry = {
+              signature: endpointSignature,
+              ...(bootstrap.bootstrapToken === undefined
+                ? {}
+                : { bootstrapToken: bootstrap.bootstrapToken }),
+              ...built.value,
+            };
             next.set(bootstrap.id, cacheEntry);
             registrations.push(built.value.registration);
           } else if (
