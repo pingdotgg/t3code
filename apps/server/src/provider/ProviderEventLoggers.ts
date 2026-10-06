@@ -65,7 +65,12 @@ export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
  * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.gen(function* () {
-  const { providerEventLogPath } = yield* ServerConfig.ServerConfig;
+  const { providerEventLogPath, providerEventLogs } = yield* ServerConfig.ServerConfig;
+  // Opted out (`--no-provider-event-logs` / T3CODE_PROVIDER_EVENT_LOGS=false): never create the store,
+  // so no file under logs/provider/ is opened, written or rotated.
+  if (providerEventLogs === false) {
+    return ProviderEventLoggers.of(NoOpProviderEventLoggers);
+  }
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const store = yield* EventNdjsonLogger.makeEventNdjsonLogStore(providerEventLogPath, {
     attribution,

@@ -143,6 +143,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         bootstrapFd: Option.none<number>(),
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
         logWebSocketEvents: Option.none<boolean>(),
+        providerEventLogs: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
       };
@@ -187,6 +188,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         bootstrapFd: Option.none<number>(),
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
         logWebSocketEvents: Option.none<boolean>(),
+        providerEventLogs: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
       };
@@ -234,6 +236,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -280,6 +283,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -307,6 +311,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.some(true),
           logWebSocketEvents: Option.some(true),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
         },
@@ -350,6 +355,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
+        providerEventLogs: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });
@@ -385,6 +391,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.some(false),
           logWebSocketEvents: Option.some(false),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -423,6 +430,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: "desktop-bootstrap-token",
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -465,6 +473,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -506,6 +515,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resourceMonitorPath: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -534,6 +544,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -595,6 +606,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -635,6 +647,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: "desktop-token",
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -672,6 +685,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -707,6 +721,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -744,6 +759,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -794,6 +810,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -834,6 +851,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -873,6 +891,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
+        providerEventLogs: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
@@ -896,6 +915,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -939,6 +959,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -984,6 +1005,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -1024,6 +1046,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          providerEventLogs: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
         },
@@ -1056,9 +1079,48 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     bootstrapFd: Option.none<number>(),
     autoBootstrapProjectFromCwd: Option.none<boolean>(),
     logWebSocketEvents: Option.none<boolean>(),
+    providerEventLogs: Option.none<boolean>(),
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
   });
+
+  it.effect(
+    "resolves provider event logs from the flag, then T3CODE_PROVIDER_EVENT_LOGS, defaulting on",
+    () =>
+      Effect.gen(function* () {
+        const { join } = yield* Path.Path;
+        const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-provider-event-logs-base");
+        const resolveWith = (
+          providerEventLogs: Option.Option<boolean>,
+          env: Record<string, string>,
+        ) =>
+          resolveServerConfig(
+            { ...minimalWebFlags(baseDir), providerEventLogs },
+            Option.none(),
+          ).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+                NetService.layer,
+              ),
+            ),
+          );
+
+        expect((yield* resolveWith(Option.none(), {})).providerEventLogs).toBe(true);
+        expect(
+          (yield* resolveWith(Option.none(), { T3CODE_PROVIDER_EVENT_LOGS: "false" }))
+            .providerEventLogs,
+        ).toBe(false);
+        expect(
+          (yield* resolveWith(Option.some(false), { T3CODE_PROVIDER_EVENT_LOGS: "true" }))
+            .providerEventLogs,
+        ).toBe(false);
+        expect(
+          (yield* resolveWith(Option.some(true), { T3CODE_PROVIDER_EVENT_LOGS: "false" }))
+            .providerEventLogs,
+        ).toBe(true);
+      }),
+  );
 
   it.effect(
     "resolves each signal's endpoint through T3CODE_OTLP_*_URL, an OTEL endpoint, the bootstrap envelope, and persisted Settings, in that order",

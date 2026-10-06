@@ -122,6 +122,7 @@ waiting. Read CPU together with page faults:
 ### Related Artifacts
 
 Provider event NDJSON files still exist for provider runtime streams. Those are separate from the main server trace file.
+They record decoded provider messages, including prompts and tool output, under `<home>/userdata/logs/provider/`; start the server with `--no-provider-event-logs` or `T3CODE_PROVIDER_EVENT_LOGS=false` to stop writing them (the thread database, client caches, and each provider's own transcripts are unaffected).
 
 ## Run The Server In Instrumented Mode
 

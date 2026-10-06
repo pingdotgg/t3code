@@ -100,6 +100,8 @@ export class ServerConfig extends Context.Service<
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
+    /** Write provider event logs under `logs/provider/`. Absent means enabled. */
+    readonly providerEventLogs?: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
   }

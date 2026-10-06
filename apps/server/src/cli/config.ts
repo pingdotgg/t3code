@@ -72,6 +72,12 @@ const logWebSocketEventsFlag = Flag.Boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const providerEventLogsFlag = Flag.Boolean("provider-event-logs").pipe(
+  Flag.withDescription(
+    "Write provider event logs under logs/provider/ (default on; --no-provider-event-logs disables; equivalent to T3CODE_PROVIDER_EVENT_LOGS).",
+  ),
+  Flag.optional,
+);
 const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
   Flag.withDescription(
     "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
@@ -156,6 +162,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  providerEventLogs: Config.Boolean("T3CODE_PROVIDER_EVENT_LOGS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   tailscaleServeEnabled: Config.Boolean("T3CODE_TAILSCALE_SERVE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -197,6 +207,7 @@ export interface CliServerFlags {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly providerEventLogs: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
 }
@@ -231,6 +242,7 @@ export const sharedServerCommandFlags = {
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  providerEventLogs: providerEventLogsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
 } as const;
@@ -275,6 +287,7 @@ export const resolveServerConfig = (
       bootstrapFd: flags.bootstrapFd ?? Option.none(),
       autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
+      providerEventLogs: flags.providerEventLogs ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     } satisfies CliServerFlags;
@@ -379,6 +392,13 @@ export const resolveServerConfig = (
       ),
       () => Boolean(devUrl),
     );
+    const providerEventLogs = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.providerEventLogs,
+        Option.fromUndefinedOr(env.providerEventLogs),
+      ),
+      () => true,
+    );
     const tailscaleServeEnabled = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.tailscaleServeEnabled,
@@ -471,6 +491,7 @@ export const resolveServerConfig = (
       resourceMonitorPath,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
+      providerEventLogs,
       tailscaleServeEnabled,
       tailscaleServePort,
     };
@@ -494,6 +515,7 @@ export const resolveCliAuthConfig = (
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
       logWebSocketEvents: Option.none(),
+      providerEventLogs: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
     },
