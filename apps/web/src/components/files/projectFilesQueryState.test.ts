@@ -1,12 +1,12 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const registryTasks = vi.hoisted(() => new Set<() => void>());
 
 vi.mock("~/rpc/atomRegistry", async () => {
-  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  const { AtomRegistry } = await import("effect/reactivity");
   return {
     appAtomRegistry: AtomRegistry.make({
       scheduleTask: (task) => {

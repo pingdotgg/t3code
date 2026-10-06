@@ -323,7 +323,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
               return { relativeUrl: "/api/assets/file", expiresAt: 1 };
             }),
           ),
-          rpcScopeAuthorizationLayer([AuthOrchestrationReadScope]),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
         ),
       ),
     );
