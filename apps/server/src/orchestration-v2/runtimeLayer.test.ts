@@ -32,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -65,7 +66,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -2503,7 +2503,6 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
-            AnalyticsService.AnalyticsService.layerTest,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.die("host unreachable"),
               activity: () => Effect.die("host unreachable"),
@@ -2583,7 +2582,6 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
-              AnalyticsService.AnalyticsService.layerTest,
               Layer.mock(PullRequestService.PullRequestService)({
                 detail: () =>
                   Effect.suspend(() => {
@@ -2711,19 +2709,15 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watching(true, "start");
 
       let headSha = "aaaaaaa";
-      const events: Array<{ readonly event: string; readonly properties: unknown }> = [];
+      const ended: Array<unknown> = [];
+      const capture = Logger.make(({ message }) => {
+        const [text, fields] = Array.isArray(message) ? message : [message];
+        if (text === "pull request watch ended") ended.push(fields);
+      });
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
-            Layer.succeed(
-              AnalyticsService.AnalyticsService,
-              AnalyticsService.AnalyticsService.of({
-                record: (event, properties) =>
-                  Effect.sync(() => events.push({ event, properties })),
-                flush: Effect.void,
-              }),
-            ),
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () =>
                 Effect.sync(() => ({
@@ -2743,31 +2737,31 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           ),
         ),
       );
+      const sweep = reactor.sweep.pipe(Effect.provide(Logger.layer([capture])));
 
       // The first read learns the head. A push 6 hours later, then 2 quiet hours.
-      yield* reactor.sweep;
+      yield* sweep;
       yield* TestClock.adjust("6 hours");
       headSha = "bbbbbbb";
-      yield* reactor.sweep;
+      yield* sweep;
       yield* TestClock.adjust("2 hours");
-      yield* reactor.sweep;
+      yield* sweep;
       yield* watching(false, "stop");
       // The end is reported once.
-      yield* reactor.sweep;
-      yield* reactor.sweep;
+      yield* sweep;
+      yield* sweep;
 
-      assert.deepEqual(events, [
+      assert.deepEqual(ended, [
         {
-          event: "pull_request.watch.ended",
-          properties: {
-            reason: "stopped",
-            minutes: 480,
-            quietMinutes: 120,
-            longestQuietMinutes: 360,
-            wakes: 0,
-            reads: 3,
-            partial: false,
-          },
+          threadId,
+          pullRequest: "github.com/pingdotgg/t3code#11",
+          reason: "stopped",
+          minutes: 480,
+          quietMinutes: 120,
+          longestQuietMinutes: 360,
+          wakes: 0,
+          reads: 3,
+          partial: false,
         },
       ]);
     }),
@@ -2862,7 +2856,6 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
-            AnalyticsService.AnalyticsService.layerTest,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.succeed(detail),
               activity: () =>

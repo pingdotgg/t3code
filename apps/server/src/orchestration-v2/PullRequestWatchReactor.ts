@@ -29,7 +29,6 @@ import type * as Scope from "effect/Scope";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
@@ -106,12 +105,14 @@ type WatchEndReason =
   | "stopped";
 
 /**
- * What one watch did while this server ran, reported once when it ends so we can see how long
+ * What one watch did while this server ran, logged once when it ends so we can see how long
  * watches stay quiet. Kept in memory: a watch older than the server process only has partial
  * numbers, and one that ends while the server is down, or starts and ends between two passes,
- * is not reported.
+ * is not logged.
  */
 interface WatchLife {
+  readonly threadId: string;
+  readonly pullRequest: string;
   readonly startedAt: number;
   /** The head commit the last successful read saw. */
   readonly headSha: string | null;
@@ -173,8 +174,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
  * of a project that watch it, and skips one whose sync snapshot has not moved while nothing is
  * in flight.
  * Settling or archiving a thread ends its watches, and a merged or closed pull request ends
- * its watch. Each ended watch is reported once as the anonymous `pull_request.watch.ended`
- * event, with why it ended and how long it went without a push.
+ * its watch. Each ended watch is logged once with why it ended and how long it went without
+ * a push, for debugging watches that live too long.
  */
 export class PullRequestWatchReactor extends Context.Service<
   PullRequestWatchReactor,
@@ -191,7 +192,6 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
-  const analytics = yield* AnalyticsService.AnalyticsService;
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
 
@@ -200,6 +200,8 @@ export const make = Effect.gen(function* () {
     if (existing !== undefined) return existing;
     const startedAt = Date.parse(target.watch.startedAt);
     const life: WatchLife = {
+      threadId: target.thread.id,
+      pullRequest: threadPullRequestKeyOf(target.link),
       startedAt,
       headSha: target.watch.headSha,
       pushedAt: startedAt,
@@ -221,8 +223,9 @@ export const make = Effect.gen(function* () {
       lives.delete(key);
       const now = yield* Clock.currentTimeMillis;
       const quietMs = now - life.pushedAt;
-      // Counts and durations only: no thread, repository, or pull request identity.
-      const properties = {
+      yield* Effect.logInfo("pull request watch ended", {
+        threadId: life.threadId,
+        pullRequest: life.pullRequest,
         reason,
         minutes: minutes(now - life.startedAt),
         quietMinutes: minutes(quietMs),
@@ -230,9 +233,7 @@ export const make = Effect.gen(function* () {
         wakes: life.wakes,
         reads: life.reads,
         partial: life.startedAt < bootedAt,
-      };
-      yield* Effect.logInfo("pull request watch ended", properties);
-      yield* analytics.record("pull_request.watch.ended", properties);
+      });
     });
   const ended = (target: WatchTarget, reason: WatchEndReason) =>
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
