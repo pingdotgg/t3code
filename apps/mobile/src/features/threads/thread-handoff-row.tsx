@@ -106,7 +106,11 @@ function HandoffEndpoint(props: {
   // carry each ACP instance's agent, which tells its glyph apart.
   const badgeEntry = (candidate: ServerProvider) => {
     const config = props.providerInstances?.[candidate.instanceId]?.config;
-    const agentId = typeof config === "object" && config ? Reflect.get(config, "agentId") : null;
+    // A local ACP command has no registry agent, as on web.
+    const agentId =
+      typeof config === "object" && config && Reflect.get(config, "source") !== "local"
+        ? Reflect.get(config, "agentId")
+        : null;
     return {
       driverKind: candidate.driver,
       ...(typeof agentId === "string" && agentId.trim()
