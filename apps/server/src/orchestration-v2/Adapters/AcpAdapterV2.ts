@@ -3205,12 +3205,15 @@ export function makeAcpAdapterV2(
           }
           if (projectedStatus === undefined) {
             const emission = context.toolEmissions.get(toolCall.toolCallId);
-            const decision = decideToolCallUpdateEmission({
-              previous,
-              next: toolCall,
-              lastEmittedDetailLength: emission?.lastEmittedDetailLength,
-              skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
-            });
+            const decision =
+              merged.status === "completed" || merged.status === "failed"
+                ? { emit: true, skippedSinceEmit: 0 }
+                : decideToolCallUpdateEmission({
+                    previous,
+                    next: toolCall,
+                    lastEmittedDetailLength: emission?.lastEmittedDetailLength,
+                    skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
+                  });
             context.toolEmissions.set(toolCall.toolCallId, {
               lastEmittedDetailLength: decision.emit
                 ? toolCallProgressLength(toolCall)
