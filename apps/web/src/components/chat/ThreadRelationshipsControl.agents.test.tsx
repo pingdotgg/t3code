@@ -111,6 +111,7 @@ it.each(["codex", "claudeAgent"])(
     expect(state.navigate).not.toHaveBeenCalled();
 
     for (const status of ["starting", "running", "waiting"] as const) {
+      state.command.mockClear();
       state.shells = [
         {
           environmentId: "test",
@@ -132,6 +133,7 @@ it.each(["codex", "claudeAgent"])(
       state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
       await act(async () => renderer.update(cloneElement(panel)));
       await act(async () => stopButton().props.onClick());
+      expect(state.command).toHaveBeenCalledTimes(1);
       expect(state.command).toHaveBeenLastCalledWith({
         environmentId: "test",
         input: { threadId: "child" },
