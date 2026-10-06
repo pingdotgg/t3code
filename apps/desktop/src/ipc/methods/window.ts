@@ -146,7 +146,9 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
         // A backend launched with the desktop secret accepts whichever token
         // the secret derives for the current window, so hand out that one
-        // rather than the token frozen into its launch config.
+        // rather than the token frozen into its launch config. Every backend
+        // the desktop launches (primary, staged or mounted WSL runtime) is the
+        // server build bundled with this desktop, so it understands the secret.
         ...(bootstrap.desktopBootstrapSecret
           ? { bootstrapToken: yield* configuration.currentBootstrapToken }
           : bootstrap.desktopBootstrapToken
