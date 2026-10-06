@@ -12,6 +12,8 @@
  *
  * @module provider/skillRootWatch
  */
+import * as NodeOS from "node:os";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -29,11 +31,14 @@ export function isSkillListChange(relativePath: string): boolean {
 }
 
 /**
- * Emits whenever `root` may have changed its skill list. A missing root is
- * watched through its parent and picked up once created; when the parent is
- * missing too the root is not watched, because the nearest existing ancestor
- * is often a home directory or repository whose whole tree the OS would
- * report. Watch failures end the stream for that root.
+ * Emits whenever `root` may have changed its skill list.
+ *
+ * An existing root is watched recursively, and its parent non-recursively so
+ * a removed or replaced root is picked up again. A missing root is watched
+ * through its nearest existing ancestor, non-recursively, one path segment at
+ * a time until it exists. A home directory or filesystem root is never
+ * watched, so a root whose nearest existing ancestor is one of those stays
+ * unwatched. Watch failures end the stream for that root.
  */
 export const watchSkillRoot = (
   root: string,
@@ -44,21 +49,51 @@ export const watchSkillRoot = (
       const path = yield* Path.Path;
       const exists = (target: string) =>
         fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
+      // Start over only after the event that changed the root's state, never
+      // because a watch ended on its own, which would spin.
+      let rootStateChanged = false;
+      const markRootStateChanged = Effect.sync(() => {
+        rootStateChanged = true;
+      });
+      const watchAgainIfChanged = Stream.suspend(() =>
+        rootStateChanged ? watchSkillRoot(root) : Stream.empty,
+      );
+
       if (yield* exists(root)) {
-        return fileSystem.watch(root, { recursive: true }).pipe(
+        const parent = path.dirname(root);
+        const changes = fileSystem.watch(root, { recursive: true }).pipe(
           Stream.filter((event) =>
             isSkillListChange(path.relative(root, path.resolve(root, event.path))),
           ),
+          Stream.as(false),
+        );
+        const replaced = fileSystem.watch(parent).pipe(
+          Stream.filter((event) => path.resolve(parent, event.path) === root),
+          Stream.as(true),
+        );
+        return Stream.merge(changes, replaced).pipe(
+          Stream.takeUntil((rootReplaced) => rootReplaced),
+          Stream.tap((rootReplaced) => (rootReplaced ? markRootStateChanged : Effect.void)),
           Stream.as(undefined),
+          Stream.concat(watchAgainIfChanged),
         );
       }
-      const parent = path.dirname(root);
-      if (parent === root || !(yield* exists(parent))) return Stream.empty;
-      return fileSystem.watch(parent).pipe(
-        Stream.filter((event) => path.resolve(parent, event.path) === root),
+
+      let ancestor = path.dirname(root);
+      while (!(yield* exists(ancestor))) {
+        if (path.dirname(ancestor) === ancestor) return Stream.empty;
+        ancestor = path.dirname(ancestor);
+      }
+      if (path.dirname(ancestor) === ancestor || ancestor === path.resolve(NodeOS.homedir())) {
+        return Stream.empty;
+      }
+      const next = path.join(ancestor, path.relative(ancestor, root).split(path.sep)[0] ?? "");
+      return fileSystem.watch(ancestor).pipe(
+        Stream.filter((event) => path.resolve(ancestor, event.path) === next),
         Stream.take(1),
+        Stream.tap(() => markRootStateChanged),
         Stream.as(undefined),
-        Stream.concat(Stream.suspend(() => watchSkillRoot(root))),
+        Stream.concat(watchAgainIfChanged),
       );
     }),
   ).pipe(Stream.ignoreCause({ log: "Debug" }));

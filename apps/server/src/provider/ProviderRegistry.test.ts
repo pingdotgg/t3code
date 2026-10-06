@@ -3381,140 +3381,248 @@ it.layer(
 // Kept outside the it.layer block above because only the top-level `it`
 // exposes `live`.
 describe("ProviderRegistry skill root watching", () => {
+  type Skill = ServerProvider["skills"][number];
+  // Scans return the planned skills in call order (the last plan repeats). A
+  // planned gate holds that scan until released.
+  type PlannedScan = {
+    readonly skills: ReadonlyArray<Skill>;
+    readonly gate?: {
+      readonly started: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    };
+  };
+
+  const makeSkillRootRegistry = Effect.fn("makeSkillRootRegistry")(function* (
+    initialSkills: ReadonlyArray<Skill>,
+  ) {
+    const realFileSystem = yield* FileSystem.FileSystem;
+    const skillRoot = yield* realFileSystem.makeTempDirectoryScoped({
+      prefix: "t3-provider-registry-skill-root-",
+    });
+    const driver = ProviderDriverKind.make("codex");
+    const instanceId = ProviderInstanceId.make("codex");
+    const machineProvider = {
+      instanceId,
+      driver,
+      status: "ready",
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      version: "1.0.0",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } as const satisfies ServerProvider;
+    const plans = yield* Ref.make<ReadonlyArray<PlannedScan>>([{ skills: initialSkills }]);
+    const snapshotCalls = yield* Ref.make(0);
+    const cacheInvalidations = yield* Ref.make(0);
+    const watchStarted = yield* Deferred.make<void>();
+    const watchEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+    const instance: ProviderInstance = {
+      instanceId,
+      driverKind: driver,
+      continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+      displayName: undefined,
+      enabled: true,
+      snapshot: {
+        resolveMaintenance: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
+          ),
+        getSnapshot: Effect.succeed(machineProvider),
+        refresh: Effect.succeed(machineProvider),
+        streamChanges: Stream.empty,
+        applyUsageLimits: () => Effect.void,
+      },
+      snapshotForCwd: () =>
+        Effect.gen(function* () {
+          const call = yield* Ref.updateAndGet(snapshotCalls, (count) => count + 1);
+          const planned = yield* Ref.get(plans);
+          const plan = planned[Math.min(call, planned.length) - 1]!;
+          if (plan.gate) {
+            yield* Deferred.succeed(plan.gate.started, undefined);
+            yield* Deferred.await(plan.gate.release);
+          }
+          return { ...machineProvider, skills: [...plan.skills] };
+        }),
+      skillRoots: () => Effect.succeed([skillRoot]),
+      invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
+      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+      textGeneration: {} as ProviderInstance["textGeneration"],
+    };
+    // Real filesystem, except the skill root's watch replays queued events.
+    const fileSystem: FileSystem.FileSystem = {
+      ...realFileSystem,
+      watch: (watchedPath, options) =>
+        watchedPath === skillRoot
+          ? Stream.unwrap(
+              Deferred.succeed(watchStarted, undefined).pipe(
+                Effect.as(Stream.fromQueue(watchEvents)),
+              ),
+            )
+          : realFileSystem.watch(watchedPath, options),
+    };
+    const registryChanges = yield* PubSub.unbounded<void>();
+    const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+      getInstance: (requestedId) =>
+        Effect.succeed(requestedId === instanceId ? instance : undefined),
+      listInstances: Effect.succeed([instance]),
+      listUnavailable: Effect.succeed([]),
+      streamChanges: Stream.fromPubSub(registryChanges),
+      subscribeChanges: PubSub.subscribe(registryChanges),
+    });
+    const runtimeServices = yield* Layer.build(
+      ProviderRegistryLive.pipe(
+        Layer.provideMerge(instanceRegistryLayer),
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-registry-skill-root-watch-",
+          }),
+        ),
+      ),
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+    const makeGate = Effect.gen(function* () {
+      return { started: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+    });
+    const workspaceSkills = (registry: ProviderRegistry.ProviderRegistry["Service"]) =>
+      registry.getProviders.pipe(
+        Effect.map((providers) => providers[0]?.workspaceSnapshots?.[0]?.skills),
+      );
+    const awaitWorkspaceSkills = (
+      registry: ProviderRegistry.ProviderRegistry["Service"],
+      skills: ReadonlyArray<Skill>,
+    ) =>
+      registry.streamChanges.pipe(
+        Stream.filter(
+          (providers) =>
+            providers[0]?.workspaceSnapshots?.[0]?.skills.map((entry) => entry.name).join() ===
+            skills.map((entry) => entry.name).join(),
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+    return {
+      instanceId,
+      skillRoot,
+      plans,
+      snapshotCalls,
+      cacheInvalidations,
+      watchStarted,
+      watchEvents,
+      runtimeServices,
+      makeGate,
+      workspaceSkills,
+      awaitWorkspaceSkills,
+    };
+  });
+
+  const skill = (root: string, name: string): Skill => ({
+    name,
+    path: `${root}/${name}/SKILL.md`,
+    enabled: true,
+  });
+  const testLayer = Layer.mergeAll(
+    TestNodeServices,
+    ServerSettingsModule.layerTest(),
+    TestHttpClientLive,
+  );
+
   it.live("rescans a held workspace snapshot when its skill root changes", () =>
     Effect.gen(function* () {
-      const realFileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const skillRoot = yield* realFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-provider-registry-skill-root-",
-      });
-      const driver = ProviderDriverKind.make("codex");
-      const instanceId = ProviderInstanceId.make("codex");
-      const machineProvider = {
-        instanceId,
-        driver,
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        checkedAt: "2026-06-10T00:00:00.000Z",
-        version: "1.0.0",
-        models: [],
-        slashCommands: [],
-        skills: [],
-      } as const satisfies ServerProvider;
-      const existingSkill = {
-        name: "existing",
-        path: path.join(skillRoot, "existing", "SKILL.md"),
-        enabled: true,
-      };
-      const addedSkill = {
-        name: "added",
-        path: path.join(skillRoot, "added", "SKILL.md"),
-        enabled: true,
-      };
-      const workspaceSkills = yield* Ref.make([existingSkill]);
-      const snapshotCalls = yield* Ref.make(0);
-      const cacheInvalidations = yield* Ref.make(0);
-      const watchStarted = yield* Deferred.make<void>();
-      const watchEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
-      const instance: ProviderInstance = {
-        instanceId,
-        driverKind: driver,
-        continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
-        displayName: undefined,
-        enabled: true,
-        snapshot: {
-          resolveMaintenance: () =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({
-                provider: driver,
-                packageName: null,
-              }),
-            ),
-          getSnapshot: Effect.succeed(machineProvider),
-          refresh: Effect.succeed(machineProvider),
-          streamChanges: Stream.empty,
-          applyUsageLimits: () => Effect.void,
-        },
-        snapshotForCwd: () =>
-          Ref.update(snapshotCalls, (count) => count + 1).pipe(
-            Effect.andThen(Ref.get(workspaceSkills)),
-            Effect.map((skills) => ({ ...machineProvider, skills })),
-          ),
-        skillRoots: () => Effect.succeed([skillRoot]),
-        invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
-        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        textGeneration: {} as ProviderInstance["textGeneration"],
-      };
-      // Real filesystem, except the skill root's watch replays queued events.
-      const fileSystem: FileSystem.FileSystem = {
-        ...realFileSystem,
-        watch: (watchedPath, options) =>
-          watchedPath === skillRoot
-            ? Stream.unwrap(
-                Deferred.succeed(watchStarted, undefined).pipe(
-                  Effect.as(Stream.fromQueue(watchEvents)),
-                ),
-              )
-            : realFileSystem.watch(watchedPath, options),
-      };
-      const registryChanges = yield* PubSub.unbounded<void>();
-      const instanceRegistryLayer = Layer.succeed(
-        ProviderInstanceRegistry.ProviderInstanceRegistry,
-        {
-          getInstance: (requestedId) =>
-            Effect.succeed(requestedId === instanceId ? instance : undefined),
-          listInstances: Effect.succeed([instance]),
-          listUnavailable: Effect.succeed([]),
-          streamChanges: Stream.fromPubSub(registryChanges),
-          subscribeChanges: PubSub.subscribe(registryChanges),
-        },
-      );
-      const runtimeServices = yield* Layer.build(
-        ProviderRegistryLive.pipe(
-          Layer.provideMerge(instanceRegistryLayer),
-          Layer.provideMerge(
-            ServerConfig.layerTest(process.cwd(), {
-              prefix: "t3-provider-registry-skill-root-watch-",
-            }),
-          ),
-        ),
-      ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+      const harness = yield* makeSkillRootRegistry([]);
+      const existing = skill(harness.skillRoot, "existing");
+      const added = skill(harness.skillRoot, "added");
+      yield* Ref.set(harness.plans, [{ skills: [existing] }, { skills: [existing, added] }]);
 
       yield* Effect.gen(function* () {
         const registry = yield* ProviderRegistry.ProviderRegistry;
-        yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
-        yield* Deferred.await(watchStarted);
-        const rescanned = yield* registry.streamChanges.pipe(
-          Stream.filter((providers) => providers[0]?.workspaceSnapshots?.[0]?.skills.length === 2),
-          Stream.runHead,
-          Effect.forkChild,
-        );
+        yield* registry.refreshWorkspaceSnapshot({
+          instanceId: harness.instanceId,
+          cwd: "/workspace",
+        });
+        yield* Deferred.await(harness.watchStarted);
+        const rescanned = yield* harness.awaitWorkspaceSkills(registry, [existing, added]);
         yield* Effect.yieldNow;
 
-        yield* Ref.set(workspaceSkills, [existingSkill, addedSkill]);
-        yield* Queue.offerAll(watchEvents, [
+        yield* Queue.offerAll(harness.watchEvents, [
           { _tag: "Update", path: "existing/scripts/run.sh" },
           { _tag: "Create", path: "added" },
           { _tag: "Update", path: "added/SKILL.md" },
         ]);
 
-        const published = yield* Fiber.join(rescanned);
-        assert.strictEqual(published._tag, "Some");
-        assert.deepStrictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.skills, [
-          existingSkill,
-          addedSkill,
-        ]);
+        assert.strictEqual((yield* Fiber.join(rescanned))._tag, "Some");
         // One scan to hold the snapshot, one rescan for the coalesced events,
         // and no cache invalidation: that stays with explicit refreshes.
-        assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
-        assert.strictEqual(yield* Ref.get(cacheInvalidations), 0);
-      }).pipe(Effect.provide(runtimeServices), Effect.timeout("30 seconds"));
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive),
-      ),
-    ),
+        assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 2);
+        assert.strictEqual(yield* Ref.get(harness.cacheInvalidations), 0);
+      }).pipe(Effect.provide(harness.runtimeServices), Effect.timeout("30 seconds"));
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps the newest skills when a rescan races an explicit refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeSkillRootRegistry([]);
+      const [a, b, c, d] = ["a", "b", "c", "d"].map((name) => skill(harness.skillRoot, name));
+      yield* Ref.set(harness.plans, [{ skills: [a!] }]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* ProviderRegistry.ProviderRegistry;
+        const refresh = (fresh: boolean) =>
+          registry
+            .refreshWorkspaceSnapshot({ instanceId: harness.instanceId, cwd: "/workspace", fresh })
+            .pipe(Effect.forkChild);
+        yield* registry.refreshWorkspaceSnapshot({
+          instanceId: harness.instanceId,
+          cwd: "/workspace",
+        });
+        yield* Deferred.await(harness.watchStarted);
+
+        // An explicit refresh reads B before the skill root changes to C, and
+        // its write lands first. The rescan that read C must not be dropped.
+        const freshGate = yield* harness.makeGate;
+        const rescanGate = yield* harness.makeGate;
+        yield* Ref.update(harness.plans, (plans) => [
+          ...plans,
+          { skills: [a!, b!], gate: freshGate },
+          { skills: [a!, b!, c!], gate: rescanGate },
+          { skills: [a!, b!, c!] },
+        ]);
+        const freshRefresh = yield* refresh(true);
+        yield* Deferred.await(freshGate.started);
+        yield* Queue.offer(harness.watchEvents, { _tag: "Create", path: "c" });
+        yield* Deferred.await(rescanGate.started);
+        const settled = yield* harness.awaitWorkspaceSkills(registry, [a!, b!, c!]);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(freshGate.release, undefined);
+        yield* Fiber.join(freshRefresh);
+        assert.deepStrictEqual(yield* harness.workspaceSkills(registry), [a!, b!]);
+        yield* Deferred.succeed(rescanGate.release, undefined);
+        assert.strictEqual((yield* Fiber.join(settled))._tag, "Some");
+        assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 4);
+
+        // The other order: the rescan lands first and the older explicit
+        // refresh is discarded.
+        const slowFreshGate = yield* harness.makeGate;
+        const fastRescanGate = yield* harness.makeGate;
+        yield* Ref.update(harness.plans, (plans) => [
+          ...plans,
+          { skills: [a!], gate: slowFreshGate },
+          { skills: [a!, b!, c!, d!], gate: fastRescanGate },
+        ]);
+        const slowRefresh = yield* refresh(true);
+        yield* Deferred.await(slowFreshGate.started);
+        yield* Queue.offer(harness.watchEvents, { _tag: "Create", path: "d" });
+        yield* Deferred.await(fastRescanGate.started);
+        const withD = yield* harness.awaitWorkspaceSkills(registry, [a!, b!, c!, d!]);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(fastRescanGate.release, undefined);
+        assert.strictEqual((yield* Fiber.join(withD))._tag, "Some");
+        yield* Deferred.succeed(slowFreshGate.release, undefined);
+        yield* Fiber.join(slowRefresh);
+        assert.deepStrictEqual(yield* harness.workspaceSkills(registry), [a!, b!, c!, d!]);
+        assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 6);
+      }).pipe(Effect.provide(harness.runtimeServices), Effect.timeout("30 seconds"));
+    }).pipe(Effect.provide(testLayer)),
   );
 });

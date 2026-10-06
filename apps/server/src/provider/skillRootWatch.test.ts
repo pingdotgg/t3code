@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -58,6 +60,12 @@ describe("skillRootWatch", () => {
     }
   });
 
+  const watchCount = (
+    watched: ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>,
+    path: string,
+    recursive: boolean,
+  ) => watched.filter((entry) => entry.path === path && entry.recursive === recursive).length;
+
   it.effect("watches an existing root recursively and drops unrelated events", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -83,58 +91,97 @@ describe("skillRootWatch", () => {
       );
 
       assert.strictEqual(emitted.length, 2);
-      assert.deepStrictEqual(watched, [{ path: root, recursive: true }]);
+      // A watch that ends on its own is not started again.
+      assert.strictEqual(watchCount(watched, root, true), 1);
+      assert.strictEqual(watchCount(watched, path.dirname(root), false), 1);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("watches a missing root through its parent until it is created", () =>
+  it.effect("watches a replaced root again", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const parent = path.resolve("/home/user/.agents");
+      const parent = path.resolve("/home/user/.claude");
       const root = path.join(parent, "skills");
-      let rootChecks = 0;
       const { fileSystem, watched } = yield* makeWatchFileSystem({
-        // Missing on the first check, present once the parent reports it.
-        exists: (candidate) => candidate === parent || (candidate === root && rootChecks++ > 0),
+        exists: (candidate) => candidate === root,
+        events: new Map([[parent, [{ _tag: "Remove", path: "skills" }]]]),
+      });
+
+      yield* watchSkillRoot(root).pipe(
+        Stream.runCollect,
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      assert.strictEqual(watchCount(watched, root, true), 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("follows a missing root down from its nearest existing ancestor", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const repository = path.resolve("/repo");
+      const claudeDirectory = path.join(repository, ".claude");
+      const root = path.join(claudeDirectory, "skills");
+      // Each watched directory gains the entry its queued event reports.
+      const existing = new Set([repository]);
+      const { fileSystem: base, watched } = yield* makeWatchFileSystem({
+        exists: (candidate) => existing.has(candidate),
         events: new Map([
           [
-            parent,
+            repository,
             [
-              { _tag: "Create", path: "other" },
-              { _tag: "Create", path: "skills" },
+              { _tag: "Create", path: "README.md" },
+              { _tag: "Create", path: ".claude" },
             ],
           ],
-          [root, [{ _tag: "Create", path: "new-skill" }]],
+          [claudeDirectory, [{ _tag: "Create", path: "skills" }]],
+          [root, [{ _tag: "Create", path: "first-skill" }]],
         ]),
       });
+      const created = new Map([
+        [repository, claudeDirectory],
+        [claudeDirectory, root],
+      ]);
+      const fileSystem: FileSystem.FileSystem = {
+        ...base,
+        watch: (target, options) => {
+          const entry = created.get(target);
+          if (entry !== undefined) existing.add(entry);
+          return base.watch(target, options);
+        },
+      };
 
       const emitted = yield* watchSkillRoot(root).pipe(
         Stream.runCollect,
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       );
 
-      assert.strictEqual(emitted.length, 2);
-      assert.deepStrictEqual(watched, [
-        { path: parent, recursive: false },
-        { path: root, recursive: true },
-      ]);
+      // `.claude` appeared, `skills` appeared, then the first skill.
+      assert.strictEqual(emitted.length, 3);
+      assert.strictEqual(watchCount(watched, repository, false), 1);
+      assert.strictEqual(watchCount(watched, root, true), 1);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not watch above a missing parent", () =>
+  it.effect("never watches a home directory or filesystem root", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
+      const home = path.resolve(NodeOS.homedir());
       const { fileSystem, watched } = yield* makeWatchFileSystem({
-        exists: () => false,
+        exists: (candidate) => candidate === home || path.dirname(candidate) === candidate,
         events: new Map(),
       });
 
-      const emitted = yield* watchSkillRoot(path.resolve("/repo/.claude/skills")).pipe(
-        Stream.runCollect,
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-      );
-
-      assert.strictEqual(emitted.length, 0);
+      for (const root of [
+        path.join(home, ".agents-missing", "skills"),
+        path.resolve("/missing-top-level/.claude/skills"),
+      ]) {
+        const emitted = yield* watchSkillRoot(root).pipe(
+          Stream.runCollect,
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+        assert.strictEqual(emitted.length, 0);
+      }
       assert.deepStrictEqual(watched, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

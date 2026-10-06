@@ -204,6 +204,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(restored.runtimePaths?.shadowHomePath).toContain(
           `providers/codex/${instanceId}/shadow`,
         );
+        // The managed runtime's shadow home links `skills` to the shared home.
+        const skillRoots = yield* instance.skillRoots!(serverConfig.stateDir);
+        expect(skillRoots[0]).toBe(NodePath.join(sharedHome, "skills"));
         yield* Deferred.await(observedAccount);
         // Sessions launch the T3-installed Codex with the account's token, not ambient credentials.
         const threadId = ThreadId.make("managed-account-thread");

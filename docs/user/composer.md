@@ -183,12 +183,14 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 
-Skills you add, remove, or edit in Claude and Codex skill folders appear in
-these menus without a restart. Edits inside a skill folder that is a link to
-another location are the exception. After you change skills, plugins, or MCP
-servers, use **Restart agent session** in the command palette on web and
-desktop so the agent itself loads them. The conversation continues, and your
-next message starts the agent again with the new setup.
+New, removed, and edited skills in Claude and Codex skill folders appear in
+these menus without a restart. Two cases still need **Restart agent session**
+in the command palette on web and desktop: edits inside a skill folder that
+links to another location, and a first user skill folder whose parent, such as
+`~/.agents`, did not exist yet. Other providers' skills, plugins, and MCP
+servers also need it, and so does the agent itself to load new skills. The
+conversation continues, and your next message starts the agent again with the
+new setup.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.

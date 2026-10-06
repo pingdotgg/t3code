@@ -1,5 +1,7 @@
 import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -18,6 +20,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { type ProviderDriverCreateInput, type ProviderInstance } from "../ProviderDriver.ts";
 import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
+import { codexSkillRoots } from "./CodexSkillRoots.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
@@ -28,6 +31,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const { instanceId, enabled, displayName, accentColor, config } = input;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const settings = yield* ServerSettingsService;
   const runtime = yield* makeCodexManagedRuntime({
     instanceId,
@@ -289,5 +294,23 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             Effect.catch(() => snapshot.getSnapshot),
           )
         : snapshot.getSnapshot,
+    skillRoots: (cwd: string) =>
+      resolveRuntime.pipe(
+        Effect.flatMap((effective) =>
+          codexSkillRoots({
+            // A shadow home links `skills` to the shared home, so watch that.
+            homePath:
+              runtime.homeLayout.mode === "authOverlay"
+                ? runtime.homeLayout.sharedHomePath
+                : effective.config.homePath,
+            environment: effective.environment,
+            cwd,
+          }),
+        ),
+        Effect.scoped,
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      ),
   } satisfies ProviderInstance;
 });
