@@ -108,6 +108,8 @@ interface FakePi {
   readonly vetoNextNewSession: () => void;
   /** Make the next `fork` ack report an extension veto. */
   readonly vetoNextFork: () => void;
+  /** Make the next `fork` fail with `success: false`, leaving Pi on its session. */
+  readonly rejectNextFork: () => void;
   /** Every request received by the fake process. */
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   /** Data returned by the next `get_session_stats` acks, consumed in order. */
@@ -158,6 +160,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let vetoSwitch = false;
   let vetoNewSession = false;
   let vetoFork = false;
+  let rejectFork = false;
   let deferredLifecycle: string | undefined;
   let deferredLifecycleRequest: PiRpcRecord | undefined;
   let sessionFile = FAKE_SESSION_FILE;
@@ -207,6 +210,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
       case "fork": {
+        if (rejectFork) {
+          rejectFork = false;
+          return { ...base, success: false, error: "fork refused" };
+        }
         const cancelled = vetoFork;
         vetoFork = false;
         return { ...base, data: { text: "Hello pi", cancelled } };
@@ -322,6 +329,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     vetoNextNewSession: () => {
       vetoNewSession = true;
+    },
+    rejectNextFork: () => {
+      rejectFork = true;
     },
     vetoNextFork: () => {
       vetoFork = true;
@@ -1665,6 +1675,61 @@ describe("PiAdapterV2", () => {
       yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.length === 2);
 
       fake.vetoNextFork();
+      fake.deferNextLifecycle("fork");
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [turn],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* fake.takeRequest("fork");
+      // The session Pi stays on keeps writing while its hook decides.
+      yield* emitStatus(fake, "plan", "off");
+      yield* fake.resolveDeferredLifecycle;
+      const error = yield* Fiber.join(rollback);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      yield* emitStatus(fake, "zz", "receipt");
+
+      // "zz" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("zz=receipt"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=build", "plan=off", "zz=receipt"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("puts back the session's statuses when Pi refuses a rollback fork", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "build");
+      yield* emitStatus(fake, "plan", "on");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.length === 2);
+
+      fake.rejectNextFork();
       fake.deferNextLifecycle("fork");
       const turn: OrchestrationV2ProviderTurn = {
         id: ProviderTurnId.make("turn-1"),

@@ -3022,8 +3022,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     Effect.onExit((exit) =>
                       Queue.offer(connection.events, {
                         type: "t3.status_settle",
-                        restore:
-                          Exit.isSuccess(exit) && recordField(exit.value, "cancelled") === true,
+                        // Pi stays on its session when an extension cancels the fork or
+                        // Pi refuses it; a timeout, interruption or dead transport says nothing.
+                        restore: Exit.isSuccess(exit)
+                          ? recordField(exit.value, "cancelled") === true
+                          : !Cause.hasInterrupts(exit.cause) &&
+                            Option.exists(
+                              Cause.findErrorOption(exit.cause),
+                              (error) =>
+                                error._tag === "PiRpcError" &&
+                                (error.operation === "fork" || error.operation === "request"),
+                            ),
                       }),
                     ),
                   );
