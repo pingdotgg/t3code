@@ -82,7 +82,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertTenantDeleted(tenant.tenantName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -113,7 +113,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertTenantDeleted("alchemy-test-tenant-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // Second adoption-gate proof, on a different taggable resource than the
@@ -172,5 +172,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertTenantDeleted(FOREIGN_TENANT);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

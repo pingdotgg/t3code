@@ -21,6 +21,7 @@ test.provider(
       );
       expect(error._tag).toBe("ParameterGroupNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:dax", "live"] },
 );
 
 const readParameterValue = (groupName: string, parameterName: string) =>
@@ -101,5 +102,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(group.parameterGroupName);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:dax", "live"], timeout: 240_000 },
 );

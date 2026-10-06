@@ -13,8 +13,6 @@ import type {
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
   Columns2Icon,
   FolderTreeIcon,
   InfoIcon,
@@ -24,6 +22,7 @@ import {
   TextWrapIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -64,6 +63,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -791,11 +791,7 @@ function PullRequestCodeTab({
             toggleFile(item.id);
           }}
         >
-          {collapsed ? (
-            <ChevronRightIcon className="size-4" />
-          ) : (
-            <ChevronDownIcon className="size-4" />
-          )}
+          <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
         </Button>
       );
     },
@@ -1249,11 +1245,10 @@ function PullRequestCodeTab({
                 />
               }
             >
-              {allFilesCollapsed ? (
-                <ChevronsUpDownIcon className="size-3.5" />
-              ) : (
-                <ChevronsDownUpIcon className="size-3.5" />
-              )}
+              <MorphIcon
+                className="size-3.5"
+                icon={allFilesCollapsed ? ChevronsUpDown : ChevronsDownUp}
+              />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {allFilesCollapsed ? "Expand all files" : "Collapse all files"}

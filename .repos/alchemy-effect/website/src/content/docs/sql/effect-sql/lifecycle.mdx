@@ -1,103 +1,78 @@
 ---
 title: Connection lifecycle
-description: SQL clients build lazily on first query, memoize per execution, and tear down when the event settles — why, and what that means on workerd and Lambda.
+description: SQL and Drizzle clients build lazily, reuse a client within the current execution scope, and release resources when that scope closes.
 ---
 
-Every alchemy SQL client — `SQL.Postgres`, `SQL.MySQL`, `SQL.D1`,
-`Drizzle.Postgres`, `Drizzle.MySQL`, `Drizzle.D1` — follows one
-lifecycle contract.
-This page is the canonical statement of that contract; the runtime
-pages link here.
+`SQL.Postgres`, `SQL.MySQL`, `SQL.D1`, and their `Drizzle` counterparts share the same scope-based lifecycle. Postgres and MySQL work across runtimes; D1 requires a Cloudflare binding.
 
 ## Construction runs once, events run many times
 
-A Worker's constructor runs once per isolate, then serves many
-events. A Lambda instance initializes once, then handles many
-invocations. Resolving a client in the constructor is therefore an
-isolate-lifetime decision — and disposable resources must not live
-that long, because the instance scope may never close:
-
 ```typescript
-Effect.gen(function* () {
-  const sql = yield* SQL.Postgres({ url });
-  // ✓ resolves a *recipe* in the constructor — no connection yet
+import * as SQL from "alchemy/SQL/Postgres";
+import * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
 
-  return {
-    fetch: Effect.gen(function* () {
-      const users = yield* sql`SELECT * FROM users`;
-      // ✓ the pool is created here, on the first query of the event
-    }),
-  };
-});
+export const makeQueries = (url: Redacted.Redacted<string>) =>
+  Effect.gen(function* () {
+    const sql = yield* SQL.Postgres({ url });
+    return {
+      listUsers: () => sql`SELECT * FROM users`,
+    };
+  });
 ```
 
-`yield* SQL.Postgres(...)` in the constructor does not connect. It returns a
-chainable proxy over a memoized build — a recipe for a client, not a
-client.
+Construct the query service once during application initialization and call `listUsers()` from a handler; construction returns a lazy proxy, not a connected pool. This keeps disposable connections out of Worker isolate and Lambda instance initialization.
 
 ## One client per execution
 
-The first query of an execution — a `fetch`/`queue`/`scheduled`
-event, a Durable Object call, a Workflow run, a Lambda invocation —
-builds the real client and memoizes it on that execution's scope.
-Every later query in the same execution reuses it. When the event
-settles, the scope closes and the client's finalizer runs: the pool
-ends, the statement cache drops.
+```typescript
+const users = yield* sql`SELECT * FROM users`;
+const posts = yield* sql`SELECT * FROM posts`;
+```
 
-Deploy and plan evaluate the same constructor code, and because nothing
-connects until a query runs inside an event, they never open a
-connection.
+For each constructed client, queries in the same scope reuse one underlying client; distinct client constructions do not share pools. The first query builds it and scope closure runs its finalizers. Merely constructing a client during plan or deploy does not connect; migration resources connect separately when applying migrations.
 
 ## Why not a global pool
 
-On workerd, sockets and other I/O objects are pinned to the request
-that created them (the `IoContext`). A pool created during one
-request and reused by the next is a runtime error — so a
-per-execution pool is the only correct shape, and the per-execution
-memo makes it cost one build per event instead of one per query.
-Cross-request pooling is Hyperdrive's job: it holds the warm
-connections at the edge, and the Worker opens a cheap local
-connection to it each event. See
-[Hyperdrive](/cloudflare/data/hyperdrive).
+```typescript
+// Resolve the proxy during initialization; execute queries in the handler.
+const sql = yield* SQL.Postgres({ url: connectionString });
 
-D1 is a native binding rather than a socket, but its client carries a
-prepared-statement cache with the same per-request constraint — same
-contract, same memo.
+return {
+  fetch: Effect.gen(function* () {
+    const users = yield* sql`SELECT * FROM users`;
+    return yield* HttpServerResponse.json(users);
+  }),
+};
+```
+
+On workerd, sockets belong to the creating request's I/O context, so a pool cannot be reused across events; [Hyperdrive](/cloudflare/data/hyperdrive) provides cross-request pooling instead. D1 has no socket pool, but its client and prepared-statement cache follow the same scope-based memoization.
 
 ## Narrowing with Effect.scoped
 
-The memo keys on the current scope, so wrapping queries in a nested
-`Effect.scoped` narrows both the memo and the client's lifetime to
-that block:
-
 ```typescript
-fetch: Effect.gen(function* () {
-  yield* Effect.scoped(
-    Effect.gen(function* () {
-      yield* sql`...`; // client built here…
-    }),
-  ); // …and released here, before the response
-}),
+yield* Effect.scoped(
+  Effect.gen(function* () {
+    yield* sql`SELECT * FROM users`;
+    yield* sql`SELECT * FROM posts`;
+  }),
+);
 ```
 
-Memo key and finalizer target are always the same scope object, so
-they cannot disagree.
+A nested `Effect.scoped` gives these queries their own memo and cleanup boundary, releasing the client before the outer request ends. The memo key and finalizer target are the same scope object.
 
 ## Lambda and servers
 
-The contract is identical off Cloudflare: each Lambda invocation and
-each server request gets a fresh execution scope, clients build on
-first query and release on settle.
-[Runtime](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope)
-covers the instance-scope rules — what the constructor may do, when instance
-finalizers run, and the Lambda SIGTERM window.
+```typescript
+const listUsers = sql`SELECT * FROM users`.pipe(Effect.scoped);
+```
+
+Alchemy's runtime bridges supply execution scopes; when writing a standalone script or custom server integration, provide an explicit scope around each unit of work. `Effect.scoped` above creates a fresh lifetime each time `listUsers` runs; see [Runtime](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope) for instance and request boundaries.
+
+## Provider setup
+
+Choose a database and follow its connection and deployment guide in [SQL databases](/sql/databases). These choices do not change the client's scope-based lifecycle.
 
 ## Where next
 
-- [Postgres](/sql/effect-sql/postgres) /
-  [MySQL](/sql/effect-sql/mysql) / [D1](/sql/effect-sql/d1) — the
-  clients this contract governs.
-- [Workers: isolate scope vs request scope](/cloudflare/compute/workers#background-work-and-scopes)
-  — the same rules from the Worker's point of view.
-- [Runtime](/infrastructure-as-effects/runtime)
-  — the cross-cloud runtime model.
+Use [Postgres](/sql/effect-sql/postgres), [MySQL](/sql/effect-sql/mysql), or [D1](/sql/effect-sql/d1) for the client API. [Workers: background work and scopes](/cloudflare/compute/workers#background-work-and-scopes) covers Worker-specific request handling.

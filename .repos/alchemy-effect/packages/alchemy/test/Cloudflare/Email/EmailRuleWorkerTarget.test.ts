@@ -44,6 +44,15 @@ const enableRouting = (zoneId: string) =>
 
 describe.sequential.skipIf(!emailRoutingScoped)(
   "Email.Rule -> Worker in one apply",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:email",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
   () => {
     // Coverage for the shape reported in #1348: a Worker plus a routing
     // resource whose `{ type: "worker", value: [scriptName] }` action names

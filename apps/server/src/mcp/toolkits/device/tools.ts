@@ -10,8 +10,8 @@ import {
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ServerConfig } from "../../../config.ts";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import * as ServerConfig from "../../../config.ts";
+import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -51,7 +51,7 @@ const DeviceOpenTool = Tool.make("device_open", {
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
   failure: DeviceToolError,
-  dependencies: [...dependencies, FileSystem.FileSystem, Path.Path, ServerConfig],
+  dependencies: [...dependencies, FileSystem.FileSystem, Path.Path, ServerConfig.ServerConfig],
 })
   .annotate(Tool.Title, "Open device")
   .annotate(Tool.Readonly, false)

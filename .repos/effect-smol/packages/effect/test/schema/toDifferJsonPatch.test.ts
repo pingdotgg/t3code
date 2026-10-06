@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
+import * as Arbitrary from "effect/Arbitrary"
 import * as DateTime from "effect/DateTime"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { assertSchemaIssueError, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
 /**

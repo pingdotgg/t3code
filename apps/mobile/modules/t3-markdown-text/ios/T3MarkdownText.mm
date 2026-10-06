@@ -10,7 +10,7 @@
 #import <react/renderer/components/T3MarkdownTextSpec/EventEmitters.h>
 #import <react/renderer/components/T3MarkdownTextSpec/Props.h>
 #import <react/renderer/components/T3MarkdownTextSpec/RCTComponentViewHelpers.h>
-#import "RCTFabricComponentsPlugins.h"
+#import <React/RCTFabricComponentsPlugins.h>
 
 using namespace facebook::react;
 
@@ -311,6 +311,12 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
     _textView.editable = false;
     _textView.textContainerInset = UIEdgeInsetsZero;
     _textView.textContainer.lineFragmentPadding = 0;
+    // The shadow node already sized this view to fit every line. A container
+    // that tracks the frame can come out a fraction of a point shorter after
+    // pixel rounding, and TextKit then drops the last line. Size it by hand
+    // with unbounded height and let the view's bounds clip.
+    _textView.textContainer.widthTracksTextView = NO;
+    _textView.textContainer.heightTracksTextView = NO;
     _textView.delegate = self;
     // Chat text supports selection and contextual actions, but not drag-and-drop.
     _textView.textDragInteraction.enabled = NO;
@@ -477,6 +483,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   }
   if (frameChanged) {
     _textView.frame = _view.frame;
+    _textView.textContainer.size = CGSizeMake(CGRectGetWidth(_view.frame), CGFLOAT_MAX);
   }
 
   // Text attachments have no native link element. Expose their existing runs

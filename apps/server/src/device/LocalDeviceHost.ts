@@ -19,7 +19,11 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessUserId,
+} from "@t3tools/shared/hostProcess";
 import {
   resolveNodeExecutable,
   type NodeRuntimeUnavailableError,
@@ -32,17 +36,18 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
@@ -199,6 +204,28 @@ const deviceHostEnvironment = (
     : environment;
 };
 
+const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
+  const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
+  const platform = yield* HostProcessPlatform;
+  const uid = yield* HostProcessUserId;
+  if (platform === "linux" && env.XDG_RUNTIME_DIR === undefined && uid !== undefined) {
+    // SSH sessions may omit the directory where the emulator publishes its gRPC token.
+    const runtimeDir = `/run/user/${uid}`;
+    const fs = yield* FileSystem.FileSystem;
+    const stat = yield* fs.stat(runtimeDir).pipe(Effect.option);
+    if (
+      stat._tag === "Some" &&
+      stat.value.type === "Directory" &&
+      Option.contains(stat.value.uid, uid)
+    ) {
+      env.XDG_RUNTIME_DIR = runtimeDir;
+    }
+  }
+  return env;
+});
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -267,12 +294,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     };
   });
 
-  const hubEnvironment = (): NodeJS.ProcessEnv => ({
-    ...hostEnvironment,
-    FORCE_COLOR: "0",
-    NO_COLOR: "1",
-  });
-
   const stopHub = (hub: HubProcess | undefined) =>
     hub ? Scope.close(hub.scope, Exit.void).pipe(Effect.ignore) : Effect.void;
 
@@ -334,7 +355,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       port: Number(new URL(hub.origin).port),
       entryPath: hubTool.entryPath,
     }).pipe(
-      Effect.flatMap((json) => fs.writeFileString(hubStatePath(), json)),
+      Effect.flatMap((contents) =>
+        writeFileStringAtomically({ filePath: hubStatePath(), contents }),
+      ),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
       Effect.ignore,
     );
 
@@ -376,7 +401,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             shell: false,
             stdout: "pipe",
             stderr: "pipe",
-            env: hubEnvironment(),
+            env: yield* hubEnvironment(hostEnvironment).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(HostProcessPlatform, hostPlatform),
+            ),
           },
         ),
       )
@@ -766,4 +794,5 @@ export const __testing = {
   androidSdk,
   platformReason,
   deviceHostEnvironment,
+  hubEnvironment,
 };

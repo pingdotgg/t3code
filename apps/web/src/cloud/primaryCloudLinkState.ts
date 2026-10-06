@@ -5,14 +5,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { HttpClient } from "effect/unstable/http";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { HttpClient } from "effect/http";
 import { useCallback, useMemo } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
+import { hasCloudPublicConfig } from "./publicConfig";
 
 const primaryCloudLinkAtomRuntime = Atom.runtime(
   Layer.effect(
@@ -62,9 +63,11 @@ export function usePrimaryCloudLinkState() {
         : null,
     [primary],
   );
-  const atom = target
-    ? primaryCloudLinkStateAtom(targetKey(target))
-    : EMPTY_PRIMARY_CLOUD_LINK_STATE_ATOM;
+  // Builds without T3 Connect have no link to read; skip the request.
+  const atom =
+    target && hasCloudPublicConfig()
+      ? primaryCloudLinkStateAtom(targetKey(target))
+      : EMPTY_PRIMARY_CLOUD_LINK_STATE_ATOM;
   const result = useAtomValue(atom);
   const refresh = useCallback(() => {
     refreshPrimaryCloudLinkState(target);

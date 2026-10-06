@@ -3,8 +3,8 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Valkey from "iovalkey";
 import * as net from "node:net";
 import { getProvisionedNetwork } from "./ProvisionedFixture.ts";
@@ -120,14 +120,14 @@ const ProvisionedCacheDataPlaneLive = ProvisionedCacheDataPlaneFunction.make(
     const valkeyConnection = yield* AWS.ElastiCache.ConnectReplicationGroup(
       valkey,
       {
-        subnetIds: net.privateSubnetIds,
+        subnetIds: net.subnetIds,
         securityGroupIds: [lambdaSecurityGroup.groupId],
       },
     );
     const memcachedConnection = yield* AWS.ElastiCache.ConnectCacheCluster(
       memcached,
       {
-        subnetIds: net.privateSubnetIds,
+        subnetIds: net.subnetIds,
         securityGroupIds: [lambdaSecurityGroup.groupId],
       },
     );

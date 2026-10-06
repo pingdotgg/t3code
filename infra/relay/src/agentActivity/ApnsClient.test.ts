@@ -11,9 +11,9 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type { ApnsCredentials } from "../Config.ts";
 import * as ApnsClient from "./ApnsClient.ts";
@@ -22,7 +22,7 @@ import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 const isApnsJwtSigningError = Schema.is(ApnsClient.ApnsJwtSigningError);
 const isApnsHttpRequestError = Schema.is(ApnsClient.ApnsHttpRequestError);
 
-const TestLayer = ApnsClient.layer.pipe(
+const layerTest = ApnsClient.layer.pipe(
   Layer.provide(ApnsProviderTokens.layer),
   Layer.provide(
     Layer.succeed(
@@ -76,7 +76,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a low-priority update payload", () =>
@@ -99,7 +99,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a high-priority alerting update payload when an alert is attached", () =>
@@ -125,7 +125,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds an end payload with a dismissal date", () =>
@@ -162,7 +162,7 @@ describe("ApnsClient", () => {
           "dismissal-date": 15,
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a standard APNs alert payload with routing metadata", () =>
@@ -187,12 +187,13 @@ describe("ApnsClient", () => {
             body: "Input: Project",
           },
           sound: "default",
+          "thread-id": "env/thread",
         },
         environmentId: "env",
         threadId: "thread",
         deepLink: "/threads/env/thread",
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves JWT signing context and the crypto cause", () =>
@@ -236,7 +237,7 @@ describe("ApnsClient", () => {
         cause: expect.any(Error),
         message: "Failed to sign APNs JWT for key key-1.",
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves APNs request context and the HTTP cause", () => {
@@ -365,79 +366,79 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  for (const requestKind of ["live-activity", "push-notification"] as const) {
-    for (const stage of ["send", "read-response"] as const) {
-      it.effect(`aborts a stalled ${requestKind} ${stage} after ten seconds`, () =>
-        Effect.gen(function* () {
-          const started = yield* Deferred.make<void>();
-          const signals: AbortSignal[] = [];
-          const stalledHttpClient = HttpClient.make((request, _url, signal) => {
-            signals.push(signal);
-            const stall = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
-            if (stage === "send") return stall;
-            const response = HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
-            Object.defineProperty(response, "text", { value: stall });
-            return Effect.succeed(response);
-          });
-          const layer = ApnsClient.layer.pipe(
-            Layer.provide(Layer.succeed(HttpClient.HttpClient, stalledHttpClient)),
-            Layer.provide(
-              Layer.succeed(ApnsProviderTokens.ApnsProviderTokens, {
-                getJwt: () => Effect.succeed("test-jwt"),
-              }),
-            ),
-          );
-          const apns = yield* ApnsClient.ApnsClient.pipe(Effect.provide(layer));
-          const credentials = {
-            teamId: "team-timeout",
-            keyId: "key-timeout",
-            privateKey: Redacted.make("unused-test-key"),
-            bundleId: "com.t3tools.test",
-            environment: "sandbox",
-          } satisfies ApnsCredentials;
-          const send =
-            requestKind === "live-activity"
-              ? apns.sendLiveActivityRequest({
-                  credentials,
-                  issuedAtUnixSeconds: 123,
-                  request: apns.makeLiveActivityRequest({
-                    event: "update",
-                    token: "long-push-token",
-                    state,
-                    nowEpochSeconds: 123,
-                    nowIso: DateTime.formatIso(now),
-                  }),
-                })
-              : apns.sendPushNotificationRequest({
-                  credentials,
-                  issuedAtUnixSeconds: 123,
-                  request: apns.makePushNotificationRequest({
-                    token: "long-push-token",
-                    notification: {
-                      title: "Thread",
-                      body: "Done",
-                      environmentId: "env",
-                      threadId: "thread",
-                      deepLink: "/",
-                    },
-                  }),
-                });
-          const fiber = yield* send.pipe(Effect.flip, Effect.forkChild);
-          yield* Deferred.await(started);
-          yield* TestClock.adjust("10 seconds");
-          expect(signals[0]?.aborted).toBe(true);
-          const error = yield* Fiber.join(fiber);
-          expect(error).toMatchObject({
-            _tag: "ApnsHttpRequestError",
-            requestKind,
-            event: requestKind === "live-activity" ? "update" : null,
-            stage,
-            status: stage === "read-response" ? 200 : null,
-            tokenSuffix: "sh-token",
-            cause: { _tag: "TimeoutError" },
-          });
-        }),
+  it.effect.each(
+    (["live-activity", "push-notification"] as const).flatMap((requestKind) =>
+      (["send", "read-response"] as const).map((stage) => ({ requestKind, stage })),
+    ),
+  )("aborts a stalled $requestKind $stage after ten seconds", ({ requestKind, stage }) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const signals: AbortSignal[] = [];
+      const stalledHttpClient = HttpClient.make((request, _url, signal) => {
+        signals.push(signal);
+        const stall = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
+        if (stage === "send") return stall;
+        const response = HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        Object.defineProperty(response, "text", { value: stall });
+        return Effect.succeed(response);
+      });
+      const layer = ApnsClient.layer.pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, stalledHttpClient)),
+        Layer.provide(
+          Layer.succeed(ApnsProviderTokens.ApnsProviderTokens, {
+            getJwt: () => Effect.succeed("test-jwt"),
+          }),
+        ),
       );
-    }
-  }
+      const apns = yield* ApnsClient.ApnsClient.pipe(Effect.provide(layer));
+      const credentials = {
+        teamId: "team-timeout",
+        keyId: "key-timeout",
+        privateKey: Redacted.make("unused-test-key"),
+        bundleId: "com.t3tools.test",
+        environment: "sandbox",
+      } satisfies ApnsCredentials;
+      const send =
+        requestKind === "live-activity"
+          ? apns.sendLiveActivityRequest({
+              credentials,
+              issuedAtUnixSeconds: 123,
+              request: apns.makeLiveActivityRequest({
+                event: "update",
+                token: "long-push-token",
+                state,
+                nowEpochSeconds: 123,
+                nowIso: DateTime.formatIso(now),
+              }),
+            })
+          : apns.sendPushNotificationRequest({
+              credentials,
+              issuedAtUnixSeconds: 123,
+              request: apns.makePushNotificationRequest({
+                token: "long-push-token",
+                notification: {
+                  title: "Thread",
+                  body: "Done",
+                  environmentId: "env",
+                  threadId: "thread",
+                  deepLink: "/",
+                },
+              }),
+            });
+      const fiber = yield* send.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("10 seconds");
+      expect(signals[0]?.aborted).toBe(true);
+      const error = yield* Fiber.join(fiber);
+      expect(error).toMatchObject({
+        _tag: "ApnsHttpRequestError",
+        requestKind,
+        event: requestKind === "live-activity" ? "update" : null,
+        stage,
+        status: stage === "read-response" ? 200 : null,
+        tokenSuffix: "sh-token",
+        cause: { _tag: "TimeoutError" },
+      });
+    }),
+  );
 });

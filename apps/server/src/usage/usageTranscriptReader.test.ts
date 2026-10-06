@@ -76,6 +76,14 @@ function codexModelLine(model: string): string {
   })}\n`;
 }
 
+function codexTierLine(serviceTier: string): string {
+  return `${JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-08-01T10:00:01Z",
+    payload: { type: "thread_settings_applied", thread_settings: { service_tier: serviceTier } },
+  })}\n`;
+}
+
 function codexUsageLine(outputTokens: number, secondsOffset: number): string {
   return `${JSON.stringify({
     type: "event_msg",
@@ -111,19 +119,24 @@ describe("readTranscriptRecords resume", () => {
 
   it("carries the Codex reducer state across the resume boundary", async () => {
     const path = NodePath.join(dir, "rollout.jsonl");
-    await NodeFSP.writeFile(path, codexMetaLine() + codexModelLine("gpt-5.2-codex"));
+    await NodeFSP.writeFile(
+      path,
+      codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexTierLine("ultrafast"),
+    );
     const first = await readTranscriptRecords(path, "codex");
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 0);
 
-    // The appended usage event has no turn_context or session_meta of its own;
-    // model and session must come from the state captured before the boundary.
+    // The appended usage event has no turn_context, thread settings, or
+    // session_meta of its own; model, tier, and session must come from the
+    // state captured before the boundary.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5));
     const second = await readTranscriptRecords(path, "codex", first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+    assert.strictEqual(second.records[0]?.speed, "ultrafast");
     assert.strictEqual(second.records[0]?.sessionId, "codex-session-1");
   });
 

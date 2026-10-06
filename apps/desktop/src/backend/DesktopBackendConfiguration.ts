@@ -1,10 +1,12 @@
 import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,6 +63,10 @@ export class DesktopBackendConfiguration extends Context.Service<
     // fall-back to Windows), so the env switcher can't show "WSL" for a
     // backend that actually resolved to Windows.
     readonly resolvePrimaryLabel: Effect.Effect<string>;
+    // The bootstrap token the renderer should present right now. It rotates
+    // every window (derived from the secret every backend was launched with),
+    // so the renderer never holds one long-lived admin credential.
+    readonly currentBootstrapToken: Effect.Effect<string, PlatformError.PlatformError>;
   }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
@@ -258,6 +264,7 @@ const readBackendObservabilitySettings = Effect.gen(function* () {
 
 interface SharedBootstrapInput {
   readonly bootstrapToken: string;
+  readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
 }
 
@@ -556,6 +563,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       t3Home: environment.baseDir,
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
+      desktopBootstrapSecret: input.bootstrapSecret,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
       desktopTelemetryFd: 4,
@@ -635,6 +643,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // the SQLite file with the primary).
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
+    desktopBootstrapSecret: input.bootstrapSecret,
     // PortSchema rejects 0, so when tailscale serve is disabled we still
     // need a valid number in this slot. The backend reads tailscaleServePort
     // only when tailscaleServeEnabled is true, so the actual value here is
@@ -644,7 +653,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // The packaged sidecar is a Windows executable and cannot run inside the
     // Linux WSL backend. Keep the field absent instead of passing an unusable
     // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
-    // See docs/architecture/resource-telemetry.md.
+    // See docs/internals/resource-telemetry.md.
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
@@ -831,19 +840,19 @@ export const make = Effect.gen(function* () {
   // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
   // crypto.randomBytes is a yield point, and resolvePrimary + resolveWsl can
   // resolve concurrently; with a plain Ref both could observe None, generate
-  // distinct tokens, and one would overwrite the other — leaving the two
-  // backends holding mismatched tokens and breaking the shared-token
+  // distinct secrets, and one would overwrite the other — leaving the two
+  // backends deriving mismatched tokens and breaking the shared-token
   // invariant the renderer relies on. modifyEffect serializes the whole
-  // get-or-create so the first caller wins and the rest reuse its token.
-  const tokenRef = yield* SynchronizedRef.make(Option.none<string>());
-  const getOrCreateBootstrapToken = SynchronizedRef.modifyEffect(tokenRef, (current) =>
+  // get-or-create so the first caller wins and the rest reuse its secret.
+  const secretRef = yield* SynchronizedRef.make(Option.none<string>());
+  const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
-      onSome: (token) => Effect.succeed([token, current] as const),
+      onSome: (secret) => Effect.succeed([secret, current] as const),
       onNone: () =>
-        crypto.randomBytes(24).pipe(
+        crypto.randomBytes(32).pipe(
           Effect.map((bytes) => {
-            const token = Encoding.encodeHex(bytes);
-            return [token, Option.some(token)] as const;
+            const secret = Hex.encode(bytes);
+            return [secret, Option.some(secret)] as const;
           }),
         ),
     }),
@@ -855,12 +864,20 @@ export const make = Effect.gen(function* () {
   // hot-swap of the server-settings file is picked up on the next
   // restart cycle without having to bounce the desktop process.
   const sharedInputs = Effect.gen(function* () {
-    const bootstrapToken = yield* getOrCreateBootstrapToken;
+    const bootstrapSecret = yield* getOrCreateBootstrapSecret;
+    const bootstrapToken = currentDesktopBootstrapToken(
+      bootstrapSecret,
+      yield* Clock.currentTimeMillis,
+    );
     const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return { bootstrapToken, observabilitySettings } satisfies SharedBootstrapInput;
+    return {
+      bootstrapToken,
+      bootstrapSecret,
+      observabilitySettings,
+    } satisfies SharedBootstrapInput;
   });
 
   const buildWslPrimaryConfig = Effect.gen(function* () {
@@ -918,7 +935,13 @@ export const make = Effect.gen(function* () {
     return { useWsl, wslRequested, distro: persistedSettings.wslDistro };
   });
 
+  const currentBootstrapToken = Effect.gen(function* () {
+    const secret = yield* getOrCreateBootstrapSecret;
+    return currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+  });
+
   return DesktopBackendConfiguration.of({
+    currentBootstrapToken,
     resolvePrimary: Effect.gen(function* () {
       const { useWsl, wslRequested } = yield* describePrimary;
       if (useWsl) {

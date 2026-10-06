@@ -70,6 +70,9 @@ Explain their relationship when it is not obvious. An adjacent cleanup, refactor
 its own PR unless it is necessary to solve the same problem. A large diff alone does not establish that
 the PR contains unrelated work.
 
+This rule is for outside contributions. Maintainers, the logins in
+[.github/TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td), may batch related fixes in one PR.
+
 Follow the [documentation rules](AGENTS.md#documentation). Keep internal docs for decisions and
 hard-to-discover constraints. Update user guides when how to use a feature changes; skip descriptions
 of obvious controls and cosmetic changes.
@@ -128,6 +131,11 @@ existing review settings. Neither triage nor a Macroscope review authorizes merg
 <a id="closure-and-reconsideration"></a>
 
 ## Closure and reconsideration
+
+Automated triage leaves a PR open for maintainer decision if someone in the trusted
+[TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) list has commented or submitted a review,
+including on an earlier head, or if `triage:keep-open` is present. This protection does not imply
+eligibility or review approval.
 
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.

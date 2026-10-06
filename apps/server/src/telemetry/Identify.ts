@@ -1,19 +1,27 @@
 import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 
+/**
+ * Codex writes `tokens` only for ChatGPT logins and omits the key for API-key,
+ * agent-identity, and personal-access-token logins, so its absence is a
+ * supported install and not a malformed file.
+ */
 const CodexAuthJsonSchema = Schema.Struct({
-  tokens: Schema.Struct({
-    account_id: Schema.String,
-  }),
+  tokens: Schema.optionalKey(
+    Schema.Struct({
+      account_id: Schema.String,
+    }),
+  ),
 });
 
 const ClaudeJsonSchema = Schema.Struct({
@@ -150,7 +158,7 @@ const readIdentityFile = (
 const hash = (source: TelemetryIdentitySource, value: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.digest("SHA-256", new TextEncoder().encode(value))),
-    Effect.map(Encoding.encodeHex),
+    Effect.map(Hex.encode),
     Effect.mapError(
       (cause) =>
         new TelemetryIdentityHashError({
@@ -183,7 +191,9 @@ const getCodexAccountId = Effect.fn("TelemetryIdentity.getCodexAccountId")(funct
     ),
   );
 
-  return Option.some(authJson.tokens.account_id);
+  return authJson.tokens === undefined
+    ? Option.none<string>()
+    : Option.some(authJson.tokens.account_id);
 });
 
 const getClaudeUserId = Effect.fn("TelemetryIdentity.getClaudeUserId")(function* (
@@ -231,7 +241,7 @@ const upsertAnonymousId = Effect.gen(function* () {
         }),
     ),
   );
-  yield* fileSystem.writeFileString(anonymousIdPath, anonymousId).pipe(
+  yield* writeFileStringAtomically({ filePath: anonymousIdPath, contents: anonymousId }).pipe(
     Effect.mapError(
       (cause) =>
         new TelemetryAnonymousIdPersistenceError({
@@ -250,6 +260,9 @@ const upsertAnonymousId = Effect.gen(function* () {
  * 1. ~/.codex/auth.json tokens.account_id
  * 2. ~/.claude.json userID
  * 3. ~/.t3/telemetry/anonymous-id
+ *
+ * A missing file or an API-key-only Codex auth.json falls through quietly. Only
+ * unreadable or malformed files warn.
  */
 export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierForHome")(
   function* (homeDirectory: string) {

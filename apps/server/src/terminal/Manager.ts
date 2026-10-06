@@ -40,12 +40,16 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { mergePathEntries } from "@t3tools/shared/shell";
+
+import { acpRegistryManagedBinaryDirectories } from "../provider/acp/AcpRegistrySupport.ts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -55,14 +59,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   increment,
@@ -1225,11 +1228,11 @@ function legacySafeThreadId(threadId: string): string {
 }
 
 function toSafeThreadId(threadId: string): string {
-  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
+  return `terminal_${Base64Url.encode(threadId)}`;
 }
 
 function toSafeTerminalId(terminalId: string): string {
-  return Encoding.encodeBase64Url(terminalId);
+  return Base64Url.encode(terminalId);
 }
 
 function toSessionKey(threadId: string, terminalId: string): string {
@@ -1305,7 +1308,8 @@ function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv?: Record<string, string> | null,
+  runtimeEnv: Record<string, string> | null | undefined,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1315,12 +1319,17 @@ function createTerminalSpawnEnv(
   }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
-      spawnEnv[key] =
+      const existingKey =
+        platform === "win32"
+          ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
+          : undefined;
+      spawnEnv[existingKey ?? key] =
         key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value) : value;
     }
   }
-  // Both PTY backends feed truecolor-capable terminal clients.
-  if (spawnEnv.COLORTERM === undefined || spawnEnv.COLORTERM === "") {
+  // An explicit empty override opts out for terminals started without a client.
+  // Otherwise both PTY backends feed truecolor-capable terminal clients.
+  if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
   return stripAppImageRuntimeEnv(spawnEnv);
@@ -1342,6 +1351,13 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Catalog cache and tool directories for managed ACP Registry installs. Their
+   * install directories are appended to the terminal PATH so users can run
+   * managed agents by name (e.g. `kimi login`).
+   */
+  managedBinaryCacheDir?: string;
+  managedBinaryToolsDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
@@ -1411,7 +1427,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1435,6 +1451,8 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
         (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
       ),
     ),
+    managedBinaryCacheDir: providerStatusCacheDir,
+    managedBinaryToolsDir: path.join(baseDir, "tools"),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
@@ -1453,6 +1471,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
   const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
   // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
@@ -1550,7 +1569,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     sessions: new Map(),
     killFibers: new Map(),
   });
-  const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+  const threadLocks = yield* KeyedLock.make<string>();
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
@@ -1579,29 +1598,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     f: (state: TerminalManagerState) => readonly [A, TerminalManagerState],
   ) => SynchronizedRef.modify(managerStateRef, f);
 
-  const getThreadSemaphore = (threadId: string) =>
-    SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
-      const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
-        current.get(threadId),
-      );
-      return Option.match(existing, {
-        onNone: () =>
-          Semaphore.make(1).pipe(
-            Effect.map((semaphore) => {
-              const next = new Map(current);
-              next.set(threadId, semaphore);
-              return [semaphore, next] as const;
-            }),
-          ),
-        onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
-      });
-    });
-
   const withThreadLock = <A, E, R>(
     threadId: string,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+  ): Effect.Effect<A, E, R> => threadLocks.withLock(threadId, effect);
 
   const clearKillFiber = Effect.fn("terminal.clearKillFiber")(function* (
     process: PtyAdapter.PtyProcess | null,
@@ -2237,7 +2237,40 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform);
+            // Append (never prepend) managed ACP agent install directories so
+            // `kimi login` and friends resolve by name without shadowing any
+            // system or user tool of the same name.
+            if (
+              options.managedBinaryCacheDir !== undefined &&
+              options.managedBinaryToolsDir !== undefined
+            ) {
+              const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
+                fileSystem,
+                path,
+                cacheDir: options.managedBinaryCacheDir,
+                toolsDir: options.managedBinaryToolsDir,
+                platform,
+                architecture,
+              });
+              if (managedDirectories.length > 0) {
+                const delimiter = platform === "win32" ? ";" : ":";
+                const pathKey =
+                  platform === "win32"
+                    ? (Object.keys(terminalEnv).find(
+                        (candidate) => candidate.toLowerCase() === "path",
+                      ) ?? "PATH")
+                    : "PATH";
+                const merged = mergePathEntries(
+                  terminalEnv[pathKey],
+                  managedDirectories.join(delimiter),
+                  platform,
+                );
+                if (merged !== undefined) {
+                  terminalEnv[pathKey] = merged;
+                }
+              }
+            }
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;

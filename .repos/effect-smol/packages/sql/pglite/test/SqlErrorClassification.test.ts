@@ -1,8 +1,8 @@
 import { PgliteClient } from "@effect/sql-pglite"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import type * as SqlError from "effect/unstable/sql/SqlError"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import type * as SqlError from "effect/sql/SqlError"
 
 const queryFailureReason = (cause: unknown) =>
   Effect.gen(function*() {

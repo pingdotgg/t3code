@@ -1,12 +1,12 @@
 import * as BunClusterHttp from "@effect/platform-bun/BunClusterHttp"
 import { assert, describe, it } from "@effect/vitest"
+import * as ShardingConfig from "effect/cluster/ShardingConfig"
 import * as ConfigProvider from "effect/ConfigProvider"
 import * as Effect from "effect/Effect"
-import * as ShardingConfig from "effect/unstable/cluster/ShardingConfig"
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
-import * as HttpServer from "effect/unstable/http/HttpServer"
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import * as NetAddress from "effect/unstable/net/NetAddress"
+import * as FetchHttpClient from "effect/http/FetchHttpClient"
+import * as HttpServer from "effect/http/HttpServer"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
+import * as NetAddress from "effect/net/NetAddress"
 
 describe("BunClusterHttp", () => {
   for (

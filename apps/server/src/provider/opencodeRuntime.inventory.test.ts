@@ -15,14 +15,18 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 
-import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
-const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+const layerTest = OpenCodeRuntime.layer.pipe(
+  Layer.provide(OpenCodeServerLedger.layerTest),
+  Layer.provideMerge(NodeServices.layer),
+);
 
-it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
+it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
   it.effect("aborts pending SDK requests when inventory loading is interrupted", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const started = yield* Queue.make<void>();
       const aborted = yield* Queue.make<string>();
       const client = createOpencodeClient({
@@ -61,7 +65,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
   it.effect("discovers directory-scoped commands without retaining prompt templates", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const requests: Request[] = [];
       const client = createOpencodeClient({
         baseUrl: "http://opencode.test",
@@ -113,7 +117,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
   it.effect("keeps provider inventory when agent discovery fails", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const client = {
         provider: {
           list: () =>
@@ -141,7 +145,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
   it.effect("keeps provider inventory when skill discovery fails", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const client = {
         provider: {
           list: () =>
@@ -169,7 +173,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
   it.effect("keeps only SDK skill metadata in inventory", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const client = {
         provider: {
           list: () =>
@@ -248,7 +252,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
         yield* fs.chmod(binaryPath, 0o755);
       }
 
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const inventory = yield* runtime.loadInventoryFromCli({
         binaryPath,
         cwd: tempDir,
@@ -266,7 +270,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
   it.effect("caps and drains command stdout and stderr when requested", () =>
     Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
+      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const executablePath = yield* HostProcessExecutablePath;
       const outputBytes = 2 * 1024 * 1024;
       const result = yield* runtime.runOpenCodeCommand({

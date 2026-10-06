@@ -7,6 +7,7 @@ import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
+  nativeMarkdownWithAuthoredWindowsPaths,
   nativeMarkdownWithPreservedSoftBreaks,
   nativeMarkdownContextCopyRanges,
   contextChipPresentation,
@@ -137,7 +138,7 @@ describe("nativeMarkdownTextRuns", () => {
         {
           type: "link",
           href: "file:///repo/README.md#L12",
-          children: [{ type: "text", content: "ignored label" }],
+          children: [{ type: "text", content: "validates the input" }],
         },
       ],
     };
@@ -150,12 +151,114 @@ describe("nativeMarkdownTextRuns", () => {
       },
       { text: " " },
       {
+        text: "validates the input ",
+        href: "file:///repo/README.md#L12",
+        sourceText: "[validates the input](<file:///repo/README.md#L12>)",
+      },
+      {
         text: "README.md:12",
         href: "file:///repo/README.md#L12",
         fileIcon: "markdown",
+        sourceText: "[validates the input](<file:///repo/README.md#L12>)",
       },
     ]);
   });
+
+  it.each([true, false])("copies descriptive file links with collapsed chips=%s", (collapsed) => {
+    const link: MarkdownNode = {
+      type: "link",
+      href: "/repo/src/example.ts:12",
+      children: [
+        { type: "text", content: "validates " },
+        { type: "bold", children: [{ type: "text", content: "the input" }] },
+      ],
+    };
+    const runs = nativeMarkdownTextRuns({ type: "paragraph", children: [link, link] });
+    expect(runs.map((run) => run.text).join("")).toBe(
+      "validates the input example.ts:12validates the input example.ts:12",
+    );
+    expect(runs.filter((run) => run.bold).map((run) => run.text)).toEqual([
+      "the input",
+      "the input",
+    ]);
+    const ranges = nativeMarkdownContextCopyRanges(
+      runs.map((run) => ({
+        run,
+        text: collapsed && run.fileIcon ? "" : run.text,
+        inlineImageLength: run.fileIcon ? 1 : 0,
+      })),
+    );
+    const length = "validates the input ".length + (collapsed ? 1 : "example.ts:12".length + 1);
+    expect(ranges).toEqual([
+      { start: 0, end: length, text: "[validates **the input**](</repo/src/example.ts:12>)" },
+      {
+        start: length,
+        end: length * 2,
+        text: "[validates **the input**](</repo/src/example.ts:12>)",
+      },
+    ]);
+  });
+
+  it("keeps filename-labelled links as chips", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "/repo/src/example.ts:12",
+            children: [{ type: "code_inline", content: "src/example.ts:12" }],
+          },
+        ],
+      }),
+    ).toEqual([{ text: "example.ts:12", href: "/repo/src/example.ts:12", fileIcon: "typescript" }]);
+  });
+
+  it.each([
+    [{ type: "italic", children: [{ type: "text", content: "details" }] }, "*details*"],
+    [{ type: "strikethrough", children: [{ type: "text", content: "details" }] }, "~~details~~"],
+    [{ type: "code_inline", content: "`details`" }, "`` `details` ``"],
+    [{ type: "code_inline", content: " details " }, "`  details  `"],
+    [{ type: "text", content: "[details] *literal*" }, "\\[details\\] \\*literal\\*"],
+    [{ type: "soft_break" }, "\n"],
+    [{ type: "line_break" }, "  \n"],
+    [
+      { type: "image", alt: "details", href: "https://example.com/icon.png" },
+      "![details](<https://example.com/icon.png>)",
+    ],
+  ] satisfies ReadonlyArray<readonly [MarkdownNode, string]>)(
+    "keeps descriptive label markup when copying %j",
+    (child, source) => {
+      const runs = nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "/repo/a.ts",
+            children: [{ type: "text", content: "see " }, child],
+          },
+        ],
+      });
+      expect(
+        nativeMarkdownContextCopyRanges(
+          runs.map((run) => ({
+            run,
+            text: run.fileIcon ? "" : run.text,
+            inlineImageLength: run.fileIcon ? 1 : 0,
+          })),
+        ),
+      ).toEqual([
+        {
+          start: 0,
+          end:
+            runs
+              .filter((run) => !run.fileIcon)
+              .reduce((length, run) => length + run.text.length, 0) + 1,
+          text: `[see ${source}](</repo/a.ts>)`,
+        },
+      ]);
+    },
+  );
 
   it("keeps hard breaks and collapses soft breaks", () => {
     const node: MarkdownNode = {
@@ -185,6 +288,49 @@ describe("nativeMarkdownTextRuns", () => {
     expect(nativeMarkdownTextRuns(nativeMarkdownWithPreservedSoftBreaks(node))).toEqual([
       { text: "first\nsecond" },
     ]);
+  });
+
+  it("keeps Windows path backslashes the parser reads as escapes", () => {
+    const markdown = [
+      String.raw`![shot](C:\Users\me\.t3\_build\shot.png "Shot")`,
+      String.raw`[settings](C:\Users\me\.claude\settings.json) and [site](https://example.com/a\.b)`,
+      "![ref][ref]",
+      String.raw`[ref]: \\wsl.localhost\Ubuntu\.t3\ref.png`,
+    ].join("\n\n");
+    // md4c drops each backslash that precedes punctuation.
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "image", href: String.raw`C:\Users\me.t3_build\shot.png` },
+        { type: "link", href: String.raw`C:\Users\me.claude\settings.json` },
+        { type: "link", href: "https://example.com/a.b" },
+        { type: "image", href: String.raw`\wsl.localhost\Ubuntu.t3\ref.png` },
+      ],
+    };
+
+    expect(
+      nativeMarkdownWithAuthoredWindowsPaths(node, markdown).children?.map(({ href }) => href),
+    ).toEqual([
+      String.raw`C:\Users\me\.t3\_build\shot.png`,
+      String.raw`C:\Users\me\.claude\settings.json`,
+      "https://example.com/a.b",
+      String.raw`\\wsl.localhost\Ubuntu\.t3\ref.png`,
+    ]);
+  });
+
+  it("leaves a Windows path as parsed when two written paths could have produced it", () => {
+    const markdown = [
+      String.raw`\`![example](C:\Users\me\.t3\shot.png)\``,
+      String.raw`![real](C:\Users\me.t3\shot.png)`,
+    ].join("\n\n");
+    const node: MarkdownNode = {
+      type: "document",
+      children: [{ type: "image", href: String.raw`C:\Users\me.t3\shot.png` }],
+    };
+
+    expect(nativeMarkdownWithAuthoredWindowsPaths(node, markdown).children?.[0]?.href).toBe(
+      String.raw`C:\Users\me.t3\shot.png`,
+    );
   });
 
   it("normalizes common inline HTML and entities", () => {

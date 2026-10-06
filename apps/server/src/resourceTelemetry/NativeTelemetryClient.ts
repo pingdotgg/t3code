@@ -32,11 +32,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Ndjson from "effect/encoding/Ndjson";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const SAMPLE_INTERVAL_MS = 1_000;
@@ -365,7 +365,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const binary = yield* ResourceMonitorBinary.ResourceMonitorBinary;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const initializedAt = yield* DateTime.now;
   const state = yield* Ref.make(initialState);
   const collectionControl = yield* Ref.make<CollectionControl>({

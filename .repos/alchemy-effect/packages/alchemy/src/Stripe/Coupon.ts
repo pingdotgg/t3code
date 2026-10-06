@@ -204,6 +204,7 @@ export type Coupon = Resource<
  * ```
  *
  * @resource
+ * @product Product
  */
 export const Coupon = Resource<Coupon>("Stripe.Coupon");
 

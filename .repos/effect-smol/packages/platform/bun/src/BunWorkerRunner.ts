@@ -17,8 +17,8 @@ import * as Fiber from "effect/Fiber"
 import { identity } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
-import { WorkerError, WorkerReceiveError, WorkerSpawnError } from "effect/unstable/workers/WorkerError"
-import * as WorkerRunner from "effect/unstable/workers/WorkerRunner"
+import { WorkerError, WorkerReceiveError, WorkerSpawnError } from "effect/workers/WorkerError"
+import * as WorkerRunner from "effect/workers/WorkerRunner"
 
 declare const self: MessagePort
 

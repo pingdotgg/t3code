@@ -907,8 +907,8 @@ export const getSuccesses = <K extends string, A, E>(
  *
  * **Details**
  *
- * Failure values are collected in the left record, and success values are
- * collected in the right record, preserving the original keys.
+ * Success values are collected in the first record, and failure values are
+ * collected in the second record, preserving the original keys.
  *
  * **Example** (Partitioning with Result)
  *
@@ -917,7 +917,7 @@ export const getSuccesses = <K extends string, A, E>(
  *
  * const x = { a: 1, b: 2, c: 3 }
  * const f = (n: number) => (n % 2 === 0 ? Result.succeed(n) : Result.fail(n))
- * Record.partition(x, f) // => [{ a: 1, c: 3 }, { b: 2 }]
+ * Record.partition(x, f) // => [{ b: 2 }, { a: 1, c: 3 }]
  * ```
  *
  * @category filtering
@@ -928,41 +928,41 @@ export const partition: {
     f: (input: A, key: K) => Result<C, B>
   ): (
     self: ReadonlyRecord<K, A>
-  ) => [left: Record<ReadonlyRecord.NonLiteralKey<K>, B>, right: Record<ReadonlyRecord.NonLiteralKey<K>, C>]
+  ) => [passes: Record<ReadonlyRecord.NonLiteralKey<K>, C>, fails: Record<ReadonlyRecord.NonLiteralKey<K>, B>]
   <K extends string, A, B, C>(
     self: ReadonlyRecord<K, A>,
     f: (input: A, key: K) => Result<C, B>
-  ): [left: Record<ReadonlyRecord.NonLiteralKey<K>, B>, right: Record<ReadonlyRecord.NonLiteralKey<K>, C>]
+  ): [passes: Record<ReadonlyRecord.NonLiteralKey<K>, C>, fails: Record<ReadonlyRecord.NonLiteralKey<K>, B>]
 } = dual(
   2,
   <K extends string, A, B, C>(
     self: ReadonlyRecord<K, A>,
     f: (input: A, key: K) => Result<C, B>
-  ): [left: Record<ReadonlyRecord.NonLiteralKey<K>, B>, right: Record<ReadonlyRecord.NonLiteralKey<K>, C>] => {
-    const left: Record<string, B> = empty()
-    const right: Record<string, C> = empty()
+  ): [passes: Record<ReadonlyRecord.NonLiteralKey<K>, C>, fails: Record<ReadonlyRecord.NonLiteralKey<K>, B>] => {
+    const passes: Record<string, C> = empty()
+    const fails: Record<string, B> = empty()
     for (const key of keys(self)) {
       const e = f(self[key], key)
       if (R.isFailure(e)) {
-        InternalRecord.assignProperty(left, key, e.failure)
+        InternalRecord.assignProperty(fails, key, e.failure)
       } else {
-        InternalRecord.assignProperty(right, key, e.success)
+        InternalRecord.assignProperty(passes, key, e.success)
       }
     }
-    return [left, right]
+    return [passes, fails]
   }
 )
 
 /**
  * Partitions a record of `Result` values into two separate records,
- * one with the `Err` values and one with the `Ok` values.
+ * one with the success values and one with the failure values.
  *
  * **Example** (Separating Result values)
  *
  * ```ts import.meta.vitest
  * import { Record, Result } from "effect"
  *
- * Record.separate({ a: Result.fail("e"), b: Result.succeed(1) }) // => [{ a: "e" }, { b: 1 }]
+ * Record.separate({ a: Result.fail("e"), b: Result.succeed(1) }) // => [{ b: 1 }, { a: "e" }]
  * ```
  *
  * @category filtering
@@ -970,7 +970,7 @@ export const partition: {
  */
 export const separate: <K extends string, A, B>(
   self: ReadonlyRecord<K, Result<B, A>>
-) => [Record<ReadonlyRecord.NonLiteralKey<K>, A>, Record<ReadonlyRecord.NonLiteralKey<K>, B>] = partition(identity)
+) => [Record<ReadonlyRecord.NonLiteralKey<K>, B>, Record<ReadonlyRecord.NonLiteralKey<K>, A>] = partition(identity)
 
 /**
  * Retrieves the keys of a given record as an array.

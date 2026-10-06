@@ -2,8 +2,8 @@ import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRe
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
   ProjectId,
-  OrchestrationThread,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -15,15 +15,15 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
 import {
@@ -52,13 +52,6 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
     }),
   labelPrefix: "mobile:thread-search",
 });
-
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
 
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
@@ -176,19 +169,6 @@ export function useThreadSearch(
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
-  };
-}
-
-export function useThreadDetail(
-  environmentId: EnvironmentId | null,
-  threadId: ThreadId | null,
-): ThreadDetailView {
-  const state = useEnvironmentThread(environmentId, threadId);
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
   };
 }
 
@@ -372,4 +352,25 @@ export function useCheckpointDiff(target: CheckpointDiffTarget) {
     targets.turn === null ? null : orchestrationEnvironment.turnDiff(targets.turn),
   );
   return targets.fullThread === null ? turn : fullThread;
+}
+
+/** Full input and output for one tool row; pass null to skip fetching. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly row: OrchestrationV2ProjectedTurnItem;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.row.sourceThreadId,
+            itemId: target.row.sourceItemId,
+            revision: turnItemDetailRevision(target.row.item),
+          },
+        }),
+  );
 }
