@@ -1039,6 +1039,10 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                     return { committed: false, storedEvents: [] };
                   }
                   yield* Ref.update(writes, (current) => [...current, input.events]);
+                  yield* Ref.update(effectRequests, (current) => [
+                    ...current,
+                    ...(input.effects ?? []).map((effect) => effect.request.type),
+                  ]);
                   return { committed: true, storedEvents: [] };
                 }),
             }),
@@ -1171,6 +1175,8 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
         // underlying text stays in the logged cause.
         assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
       }
+      // The guarded failure write carries the baseline cleanup with it.
+      assert.deepEqual(yield* Ref.get(effectRequests), ["checkpoint.baseline.cleanup"]);
     }),
 );
 
@@ -3334,7 +3340,7 @@ it.effect.each(["completed", "interrupted", "cancelled", "failed"] as const)(
 
 it.effect("records a finished run as failed when its ownership check cannot be read", () =>
   Effect.gen(function* () {
-    const { observed } = yield* captureRootRunTermination({
+    const { observed, committedEffects } = yield* captureRootRunTermination({
       key: "finalize-guard-read-failure",
       shouldFinalizeRun: () =>
         Effect.fail(
@@ -3348,6 +3354,10 @@ it.effect("records a finished run as failed when its ownership check cannot be r
     // The fallback settles through the guarded write instead of the same
     // failing read, so the run does not stay running.
     assert.include(observed, "run:failed");
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.baseline.cleanup"],
+    );
   }),
 );
 
@@ -3399,7 +3409,7 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
-    const { observed, written } = yield* captureRootRunTermination({
+    const { observed, written, committedEffects } = yield* captureRootRunTermination({
       key: "pull-request-refresh:startup-error",
       shouldFinalizeRun: () => Effect.succeed(true),
       events: () =>
@@ -3423,6 +3433,11 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
     assert.equal(observed[0], "run:failed");
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider could not start this turn");
+    // The failed start still reclaims the baseline captured during preparation.
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.baseline.cleanup"],
+    );
   }),
 );
 
