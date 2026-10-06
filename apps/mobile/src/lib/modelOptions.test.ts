@@ -468,6 +468,25 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
   });
 
+  it("prefers the submitted model over draft and defaults while a task leaves", () => {
+    const submitted = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+    const project = { ...submitted, model: "gpt-6-astra" };
+    for (const draftSelection of [project, null]) {
+      expect(
+        resolveNewTaskModelSelection({
+          submittedSelection: submitted,
+          draftSelection,
+          projectDefaultSelection: project,
+          stickySelection: project,
+          modelOptions: [],
+        }),
+      ).toBe(submitted);
+    }
+    expect(buildModelOptions(null, submitted).map((option) => option.selection)).toContainEqual(
+      submitted,
+    );
+  });
+
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };

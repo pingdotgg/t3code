@@ -438,7 +438,10 @@ export function NewTaskDraftScreen(props: {
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
-    isIncomingShareTransferPending || flow.submitting || isImportingContext;
+    isIncomingShareTransferPending ||
+    flow.submitting ||
+    submitNavigationAction !== null ||
+    isImportingContext;
   // Hardware keyboard: step to the next machine, from the one a switch in
   // progress is heading to so repeated presses keep advancing.
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
@@ -1208,6 +1211,7 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
+    if (submitNavigationAction !== null) return;
     if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
@@ -1331,6 +1335,7 @@ export function NewTaskDraftScreen(props: {
       flow.setSubmitting(false);
     }
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
+    flow.setSubmittedModelSelection(message.modelSelection ?? modelSelection);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
     } else {
@@ -1386,6 +1391,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    submitNavigationAction === null &&
     pendingPastedTextAttachmentCount === 0 &&
     !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
@@ -1431,7 +1437,9 @@ export function NewTaskDraftScreen(props: {
         // Focusing is a user action, so presenting the form sheet has one motion.
         autoFocus={false}
         // Clipboard imports use the editor's read-only mode to retain keyboard focus.
-        editable={!isIncomingShareTransferPending && !flow.submitting}
+        editable={
+          !isIncomingShareTransferPending && !flow.submitting && submitNavigationAction === null
+        }
         readOnly={voiceInput.freezesEditor}
         multiline
         scrollEnabled
