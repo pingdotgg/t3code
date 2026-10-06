@@ -14,6 +14,13 @@ class CatalogDependencyResolutionError extends Schema.TaggedError<CatalogDepende
   }
 }
 
+/** `@scope/parent>@scope/pkg@^1` → `@scope/pkg`. */
+function selectorPackageName(selector: string): string {
+  const target = selector.split(">").at(-1) ?? selector;
+  const versionAt = target.indexOf("@", 1);
+  return versionAt === -1 ? target : target.slice(0, versionAt);
+}
+
 /**
  * Resolve `catalog:` dependency specs using the workspace catalog.
  *
@@ -32,10 +39,10 @@ export function resolveCatalogDependencies(
       }
 
       const catalogKey = spec.slice("catalog:".length).trim();
-      // An override key can be a selector such as `@scope/parent>effect`; like
-      // pnpm, a bare `catalog:` there means the catalog entry of the package
-      // the selector ends in.
-      const lookupKey = catalogKey.length > 0 ? catalogKey : (name.split(">").at(-1) ?? name);
+      // An override key can be a selector such as `@scope/parent>effect` or
+      // `undici@^8`; like pnpm, a bare `catalog:` there means the catalog entry
+      // of the package the selector ends in, without its version range.
+      const lookupKey = catalogKey.length > 0 ? catalogKey : selectorPackageName(name);
       const resolved = catalog[lookupKey];
 
       if (typeof resolved !== "string" || resolved.length === 0) {

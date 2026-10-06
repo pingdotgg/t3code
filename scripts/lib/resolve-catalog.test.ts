@@ -2,7 +2,12 @@ import { assert, describe, it } from "@effect/vitest";
 
 import { resolveCatalogDependencies } from "./resolve-catalog.ts";
 
-const catalog = { effect: "4.0.0-rc.115", "@clerk/backend": "3.18.1", react: "19.2.0" };
+const catalog = {
+  effect: "4.0.0-rc.115",
+  "@clerk/backend": "3.18.1",
+  react: "19.2.0",
+  undici: "8.11.2",
+};
 
 describe("resolveCatalogDependencies", () => {
   it("resolves bare, named and override-selector catalog specs like pnpm", () => {
@@ -12,6 +17,8 @@ describe("resolveCatalogDependencies", () => {
           "@clerk/backend": "catalog:",
           "react-dom": "catalog:react",
           "@opencode/protocol>effect": "catalog:",
+          "undici@^8": "catalog:",
+          "@scope/parent>@clerk/backend@^3": "catalog:",
           "dbus-next>usocket": "-",
           lodash: "4.17.21",
         },
@@ -22,6 +29,8 @@ describe("resolveCatalogDependencies", () => {
         "@clerk/backend": "3.18.1",
         "react-dom": "19.2.0",
         "@opencode/protocol>effect": "4.0.0-rc.115",
+        "undici@^8": "8.11.2",
+        "@scope/parent>@clerk/backend@^3": "3.18.1",
         "dbus-next>usocket": "-",
         lodash: "4.17.21",
       },
