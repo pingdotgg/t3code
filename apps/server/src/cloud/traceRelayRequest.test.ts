@@ -11,6 +11,8 @@ import {
   traceRelayRequest,
 } from "./traceRelayRequest.ts";
 
+const AUTHENTICATION = { startTime: 1_000n, endTime: 2_000n };
+
 describe("relay request tracing", () => {
   it.effect("does not accept an unauthenticated request trace parent", () =>
     Effect.gen(function* () {
@@ -62,6 +64,7 @@ describe("relay request tracing", () => {
 
       yield* traceAuthenticatedRelayRequest(
         Effect.void.pipe(Effect.withSpan("relay.mint.handler")),
+        AUTHENTICATION,
       ).pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(RelayClientTracer, Option.some(productTracer)),
@@ -69,9 +72,11 @@ describe("relay request tracing", () => {
 
       expect(spans.map((span) => span.name)).toEqual([
         "environment.relay.request",
+        "EnvironmentAuth.authenticateHttpRequest",
         "relay.mint.handler",
       ]);
-      const [relaySpan, handler] = spans;
+      const [relaySpan, authentication, handler] = spans;
+      expect(Option.getOrUndefined(authentication!.parent)?.spanId).toBe(relaySpan!.spanId);
       expect(relaySpan!.traceId).toBe("0123456789abcdef0123456789abcdef");
       expect(Option.getOrUndefined(relaySpan!.parent)?.spanId).toBe("0123456789abcdef");
       expect(Option.getOrUndefined(handler!.parent)?.spanId).toBe(relaySpan!.spanId);
@@ -105,7 +110,7 @@ describe("relay request tracing boundary", () => {
         );
       });
 
-      yield* traceAuthenticatedRelayRequest(handler()).pipe(
+      yield* traceAuthenticatedRelayRequest(handler(), AUTHENTICATION).pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(RelayClientTracer, Option.some(collect(productSpans))),
         Effect.withTracer(collect(localSpans)),
@@ -113,6 +118,7 @@ describe("relay request tracing boundary", () => {
 
       expect(productSpans).toEqual([
         "environment.relay.request",
+        "EnvironmentAuth.authenticateHttpRequest",
         "environment.orchestration.threadSnapshot",
       ]);
       expect(localSpans).toEqual(["ServerSecretStore.get", "sql.execute"]);

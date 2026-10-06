@@ -25,9 +25,9 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -36,11 +36,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
-import {
-  traceAuthenticatedRelayRequest,
-  traceLocalHandlerWork,
-  traceRelayRequest,
-} from "../cloud/traceRelayRequest.ts";
+import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
@@ -207,22 +203,9 @@ export const layerAuthenticatedAuth = Layer.effect(
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     return (httpEffect) =>
-      HttpServerRequest.HttpServerRequest.pipe(
-        Effect.flatMap((request) => {
-          const authenticated = authenticate(request, httpEffect);
-          // Only a T3 Connect session holds a DPoP credential.
-          return request.headers.authorization?.startsWith("DPoP ") === true
-            ? traceAuthenticatedRelayRequest(authenticated)
-            : authenticated;
-        }),
-        Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }),
-      );
-
-    function authenticate<A, E, R>(
-      request: HttpServerRequest.HttpServerRequest,
-      httpEffect: Effect.Effect<A, E, R>,
-    ) {
-      return Effect.gen(function* () {
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const startTime = yield* Clock.currentTimeNanos;
         const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
@@ -234,15 +217,17 @@ export const layerAuthenticatedAuth = Layer.effect(
             failEnvironmentInternal("internal_error", error),
           ),
         );
-        return yield* httpEffect.pipe(
+        const endTime = yield* Clock.currentTimeNanos;
+        const handler = httpEffect.pipe(
           Effect.provideService(EnvironmentAuthenticatedPrincipal, {
             ...session,
             scopes: new Set(session.scopes),
           }),
-          session.subject === "cloud-connect" ? identity : traceLocalHandlerWork,
         );
-      });
-    }
+        return yield* session.subject === "cloud-connect"
+          ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
+          : handler;
+      }).pipe(Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }));
   }),
 );
 
