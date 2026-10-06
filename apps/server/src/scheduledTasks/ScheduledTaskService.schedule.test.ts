@@ -108,3 +108,68 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("preserves list order when toggling a task enabled state", () =>
+  Effect.gen(function* () {
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const task1Input = yield* decodeUpsertInput({
+        id: "scheduled-task:first",
+        title: "First Task",
+        prompt: "First prompt",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: "project-order-test",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.upsert(task1Input);
+
+      yield* TestClock.adjust("10 seconds");
+
+      const task2Input = yield* decodeUpsertInput({
+        id: "scheduled-task:second",
+        title: "Second Task",
+        prompt: "Second prompt",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: "project-order-test",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.upsert(task2Input);
+
+      const initial = yield* service.list();
+      expect(initial.tasks.map((t) => t.id)).toEqual([
+        "scheduled-task:first",
+        "scheduled-task:second",
+      ]);
+
+      yield* TestClock.adjust("10 seconds");
+
+      yield* service.setEnabled({
+        id: "scheduled-task:second" as any,
+        enabled: false,
+      });
+
+      const afterToggle = yield* service.list();
+      expect(afterToggle.tasks.map((t) => t.id)).toEqual([
+        "scheduled-task:first",
+        "scheduled-task:second",
+      ]);
+      expect(afterToggle.tasks[1]?.enabled).toBe(false);
+      expect(afterToggle.tasks[0]?.enabled).toBe(true);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

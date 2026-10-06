@@ -438,7 +438,7 @@ export const layer = Layer.effect(
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
-      ORDER BY updated_at DESC, task_id ASC
+      ORDER BY created_at ASC, task_id ASC
     `;
 
     // Strict decode for the API surface: a corrupt row is a visible error.

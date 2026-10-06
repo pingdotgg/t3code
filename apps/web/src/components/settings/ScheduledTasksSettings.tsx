@@ -416,12 +416,12 @@ function ScheduledTaskRow({
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const act = async (action: "toggle" | "run" | "delete") => {
+  const act = async (action: "toggle" | "run" | "delete", nextEnabled?: boolean) => {
     if (busy) return;
     setBusy(true);
     const result =
       action === "toggle"
-        ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
+        ? await toggle({ environmentId, input: { id: task.id, enabled: nextEnabled ?? !task.enabled } })
         : action === "run"
           ? await run({ environmentId, input: { id: task.id } })
           : await remove({ environmentId, input: { id: task.id } });
@@ -464,7 +464,7 @@ function ScheduledTaskRow({
             checked={task.enabled}
             disabled={busy}
             aria-label={`Enable ${task.title}`}
-            onCheckedChange={() => void act("toggle")}
+            onCheckedChange={(checked) => void act("toggle", checked)}
           />
           <Menu>
             <MenuTrigger
