@@ -55,6 +55,7 @@ import {
   chartColumns,
   binKey,
   DEFAULT_COLUMNS,
+  environmentOfKey,
   foldFacts,
   formatShare,
   isUnpriced,
@@ -183,14 +184,26 @@ export function UsageExplorer(props: UsageExplorerProps) {
 
   const environments = useMemo(() => new Set(props.environmentIds), [props.environmentIds]);
   const environmentCount = environments.size;
-  // A focused environment deselected in the page's menu stops filtering.
-  const filters = useMemo(
-    () =>
-      filterState.environment !== null && !environments.has(filterState.environment)
-        ? { ...filterState, environment: null }
-        : filterState,
-    [environments, filterState],
-  );
+  // Focus on an environment, or on its projects or accounts, stops filtering
+  // once that environment is deselected in the page's menu.
+  const filters = useMemo(() => {
+    const selected = (key: string) => {
+      const environment = environmentOfKey(key);
+      return environment === null || environments.has(environment);
+    };
+    let next = filterState;
+    if (next.environment !== null && !environments.has(next.environment)) {
+      next = { ...next, environment: null };
+    }
+    if (next.project !== null && !selected(next.project)) next = { ...next, project: null };
+    if (next.accounts !== null && ![...next.accounts].every(selected)) {
+      const kept = [...next.accounts].filter(selected);
+      next = { ...next, accounts: kept.length === 0 ? null : new Set(kept) };
+    }
+    return next;
+  }, [environments, filterState]);
+  // Adjusting state while rendering, so reselecting does not bring the focus back.
+  if (filters !== filterState) setFilters(filters);
   // Threads live inside a project: the tab works only while one is focused.
   // Environments needs two to compare; with one, the page groups by project.
   const dimension: UsageDimension =

@@ -166,20 +166,9 @@ export function mergeAnsweredUsage(
   keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
   const answered: EnvironmentUsage[] = environments.flatMap(({ environmentId, label, summary }) =>
-    summary === null
-      ? []
-      : [
-          {
-            environmentId,
-            label,
-            summary:
-              keepBucket === undefined
-                ? summary
-                : { ...summary, buckets: summary.buckets.filter(keepBucket) },
-          },
-        ],
+    summary === null ? [] : [{ environmentId, label, summary }],
   );
-  return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
 }
 
 /** `input` null reads nothing and reports no environments. */

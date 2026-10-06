@@ -356,7 +356,8 @@ describe("mergeUsage", () => {
     }
   });
 
-  it("keeps new cells from a later complete scan the owner has not read yet", () => {
+  it("keeps one complete scan per directory, even when a newer one differs", () => {
+    // Aliases or a later read can make the same records look like other cells.
     const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
     const ran = environment("ran", {
       ...summary([bucket({ thread: 0 })], [source]),
@@ -364,22 +365,42 @@ describe("mergeUsage", () => {
       projects: [],
     });
     const later = environment("later", {
-      ...summary(
-        [bucket({ thread: 0 }), bucket({ day: "2026-08-08" as UsageDay, thread: 0, costUsd: 3 })],
-        [source],
-      ),
+      ...summary([bucket({ thread: 0, model: "fable-alias", costUsd: 15 })], [source]),
       readAt: "2026-08-08T01:00:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
     const merged = mergeUsage([later, ran], USAGE_CONTRACT_VERSION);
-    expect(merged.costUsd).toBe(13);
-    expect(
-      merged.contributions.map((entry) => [entry.environmentId, entry.buckets.length]),
-    ).toEqual([
-      ["later", 1],
-      ["ran", 1],
-    ]);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["ran"]);
+  });
+
+  it("narrows to one model without changing which environment owns a directory", () => {
+    // "a" ran more work overall; "b" ran more of model Y.
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const threads = [{ key: "t3:t", threadId: ThreadId.make("t"), located: true }];
+    const a = environment("a", {
+      ...summary(
+        [bucket({ thread: 0, records: 9 }), bucket({ model: "y", costUsd: 1, records: 1 })],
+        [source],
+      ),
+      threads,
+      projects: [],
+    });
+    const b = environment("b", {
+      ...summary(
+        [bucket({ records: 9 }), bucket({ model: "y", thread: 0, costUsd: 1, records: 1 })],
+        [source],
+      ),
+      readAt: "2026-08-08T00:00:00.000Z",
+      threads,
+      projects: [],
+    });
+    const full = mergeUsage([a, b], USAGE_CONTRACT_VERSION);
+    const onlyY = mergeUsage([a, b], USAGE_CONTRACT_VERSION, (entry) => entry.model === "y");
+    expect(full.contributions.map((entry) => entry.environmentId)).toEqual(["a"]);
+    expect(onlyY.contributions.map((entry) => entry.environmentId)).toEqual(["a"]);
+    expect(onlyY.costUsd).toBe(1);
   });
 
   it("does not recount a cell a newer partial scan split by thread differently", () => {

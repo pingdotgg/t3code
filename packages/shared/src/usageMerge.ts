@@ -220,10 +220,14 @@ function dayKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
 }
 
-/** Records in a source that the environment placed in one of its own T3 threads. */
+/**
+ * How well an environment can attribute a source: -1 when its server cannot
+ * split usage by thread at all, otherwise the records it placed in its own T3
+ * threads.
+ */
 function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number {
   const threads = summary.threads;
-  if (threads === undefined) return 0;
+  if (threads === undefined) return -1;
   let records = 0;
   for (const bucket of bucketsForSource(summary, source)) {
     if (bucket.thread !== undefined && threads[bucket.thread]?.threadId !== undefined) {
@@ -237,13 +241,18 @@ function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number 
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
+ * the same provider home and would otherwise double count every token.
  * Complete scans claim a fingerprint ahead of partial scans. Within a status,
- * the environment that ran most of the directory's work in its own T3 threads
- * wins, so its threads and projects keep their usage and the owner does not
- * change between refreshes; then the most recently read scan, then the
- * environment id. A newer scan can still contribute cells absent from an
- * older complete one.
+ * a server that splits usage by thread wins over one that cannot, then the
+ * environment that ran most of the directory's work in its own T3 threads,
+ * so threads and projects keep their usage and the owner does not change
+ * between refreshes; then the most recently read scan, then the environment
+ * id. Scans of one refresh finish seconds apart, so an older owner can miss
+ * only usage recorded in between, which the next refresh shows. A newer
+ * partial scan can still contribute cells absent from an older complete scan.
+ *
+ * Ownership is decided on whole summaries, so narrowing the buckets
+ * afterwards (to one model, say) keeps the same owners as the full merge.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -283,7 +292,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
           continue;
         }
         const list = candidates.get(key) ?? [];
-        list.push({ environment, source, inThreads: -1 });
+        list.push({ environment, source, inThreads: 0 });
         candidates.set(key, list);
       }
     }
@@ -306,12 +315,12 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     }
   }
 
-  // A newer scan may contain usage recorded after an older complete scan.
-  // Keep cells absent from the complete scan. Aggregated cells do not reveal
-  // enough to reconcile overlapping records without double counting.
+  // A newer partial scan may contain usage recorded after an older complete
+  // scan. Keep cells absent from the complete scan. Aggregated cells do not
+  // reveal enough to reconcile overlapping records without double counting.
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
-      if (source.status === "failed") continue;
+      if (source.status !== "partial") continue;
       const key = fingerprintKey(source.fingerprint);
       const owner = ownerScanByFingerprint.get(key);
       if (
@@ -357,6 +366,7 @@ function ownedContribution(
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
   supplementalBuckets: ReadonlySet<UsageBucket>,
   sessionsByFingerprint: ReadonlyMap<string, number>,
+  keepBucket: ((bucket: UsageBucket) => boolean) | undefined,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
@@ -383,10 +393,11 @@ function ownedContribution(
   return {
     buckets: environment.summary.buckets.filter(
       (bucket) =>
-        supplementalBuckets.has(bucket) ||
-        (bucket.sourcePath === undefined
-          ? ownedProviders.has(bucket.provider)
-          : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`)),
+        (supplementalBuckets.has(bucket) ||
+          (bucket.sourcePath === undefined
+            ? ownedProviders.has(bucket.provider)
+            : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`))) &&
+        (keepBucket === undefined || keepBucket(bucket)),
     ),
     sessionsByProvider,
   };
@@ -442,10 +453,14 @@ const EMPTY_MERGED: MergedUsage = {
  * reported so the UI can identify which side needs updating. Versions in
  * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
  * provider expansion does not drop Claude/Codex totals from older servers.
+ *
+ * `keepBucket` narrows the result, to one model for instance, after sources
+ * are claimed, so the slice matches the same part of the full merge.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
 
@@ -532,6 +547,7 @@ export function mergeUsage(
       ownerByFingerprint,
       supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
       sessionsByFingerprint,
+      keepBucket,
     );
     if (buckets.length > 0) {
       contributingEnvironments.push(environment.environmentId);

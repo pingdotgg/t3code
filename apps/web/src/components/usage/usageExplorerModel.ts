@@ -450,6 +450,11 @@ export const splitAccountKey = (key: string): { environmentId: string; instance:
   const index = key.indexOf(KEY_SEP);
   return { environmentId: key.slice(0, index), instance: key.slice(index + 1) };
 };
+/** The environment an account or project key belongs to; null for shared keys like Outside projects. */
+export const environmentOfKey = (key: string): string | null => {
+  const index = key.indexOf(KEY_SEP);
+  return index <= 0 ? null : key.slice(0, index);
+};
 const projectKey = (environmentId: string, projectId: string) =>
   `${environmentId}${KEY_SEP}${projectId}`;
 
