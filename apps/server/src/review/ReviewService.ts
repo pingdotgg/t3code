@@ -65,7 +65,11 @@ export const make = Effect.gen(function* () {
 
   const isWithinRoot = (candidate: string, root: string) => {
     const relative = path.relative(root, candidate);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    // A child named like `..cache` is inside the root; only a `..` segment leaves it.
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
   };
 
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (

@@ -226,17 +226,25 @@ describe("ReviewService", () => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const nested = `${projectRoot}/nested`;
       yield* fs.makeDirectory(nested);
+      // A child name that starts with `..` is still inside the root.
+      const dotted = `${projectRoot}/..cache`;
+      yield* fs.makeDirectory(dotted);
       const registeredRoots = [projectRoot];
       const detectCalls: Array<{ readonly cwd: string }> = [];
       yield* Effect.gen(function* () {
         const review = yield* ReviewService.ReviewService;
         assert.deepStrictEqual((yield* review.getDiffPreview({ cwd: projectRoot })).sources, []);
         assert.deepStrictEqual((yield* review.getDiffPreview({ cwd: nested })).sources, []);
-        assert.deepStrictEqual(detectCalls, [{ cwd: projectRoot }, { cwd: nested }]);
+        assert.deepStrictEqual((yield* review.getDiffPreview({ cwd: dotted })).sources, []);
+        assert.deepStrictEqual(detectCalls, [
+          { cwd: projectRoot },
+          { cwd: nested },
+          { cwd: dotted },
+        ]);
         registeredRoots.length = 0;
         const removed = yield* review.getDiffPreview({ cwd: projectRoot }).pipe(Effect.flip);
         assert.strictEqual(removed._tag, "VcsRepositoryDetectionError");
-        assert.strictEqual(detectCalls.length, 2);
+        assert.strictEqual(detectCalls.length, 3);
       }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, registeredRoots, detectCalls })));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
