@@ -10,11 +10,13 @@ import {
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -32,7 +34,12 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
 
+export interface ChatHeaderHandle {
+  startRename: () => void;
+}
+
 interface ChatHeaderProps {
+  ref?: Ref<ChatHeaderHandle>;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -66,6 +73,7 @@ export function resolveRenameCommit(input: {
 // opens immediately.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
+  ref,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -108,6 +116,7 @@ export const ChatHeader = memo(function ChatHeader({
       title: activeThreadTitle,
     });
   }, [activeThreadEnvironmentId, activeThreadId, activeThreadTitle]);
+  useImperativeHandle(ref, () => ({ startRename }), [startRename]);
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);

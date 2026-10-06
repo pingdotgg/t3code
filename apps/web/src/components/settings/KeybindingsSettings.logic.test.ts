@@ -33,6 +33,7 @@ describe("KeybindingsSettings.logic", () => {
       "modelPicker.previousProvider",
       "modelPicker.nextProvider",
       "thread.copyReference",
+      "thread.rename",
       "pullRequest.copyNumber",
     ]) {
       expect(rows.find((row) => row.command === command)).toMatchObject({
