@@ -20,6 +20,27 @@ describe("desktop bootstrap token", () => {
     expect(isValidDesktopBootstrapToken(SECRET, token, issuedAt + 2 * WINDOW)).toBe(false);
   });
 
+  it("accepts a token from a desktop clock slightly ahead of the backend", () => {
+    // Windows crossed the boundary, the WSL clock has not yet.
+    const desktopNow = 10 * WINDOW + 500;
+    const backendNow = 10 * WINDOW - 500;
+
+    expect(
+      isValidDesktopBootstrapToken(
+        SECRET,
+        currentDesktopBootstrapToken(SECRET, desktopNow),
+        backendNow,
+      ),
+    ).toBe(true);
+    expect(
+      isValidDesktopBootstrapToken(
+        SECRET,
+        currentDesktopBootstrapToken(SECRET, desktopNow + WINDOW),
+        backendNow,
+      ),
+    ).toBe(false);
+  });
+
   it("rejects tokens derived from another secret", () => {
     const token = currentDesktopBootstrapToken("other-secret", WINDOW);
 
