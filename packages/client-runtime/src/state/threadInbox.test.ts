@@ -12,6 +12,8 @@ function thread(id: string, working: boolean) {
     createdAt: "2026-06-01T00:00:00.000Z",
     unsettledAt: null,
     latestRun: null,
+    latestUserMessageAt: null,
+    updatedAt: "2026-06-01T00:00:00.000Z",
     hasActionableProposedPlan: false,
     hasPendingApprovals: false,
     hasPendingUserInput: false,

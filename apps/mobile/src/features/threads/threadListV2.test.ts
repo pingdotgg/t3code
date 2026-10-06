@@ -357,13 +357,25 @@ describe("sortThreadsForListV2", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["new", "older-arranged", "newer-arranged"]);
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("falls back to creation order when no activity stamps are present", () => {
     const sorted = sortThreadsForListV2([
       { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
       { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
       { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+
+  it("floats a thread with recent activity ahead of newer creation", () => {
+    const sorted = sortThreadsForListV2([
+      { id: "created-new", createdAt: "2026-06-01T12:00:00.000Z" },
+      {
+        id: "active-old",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+      },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["active-old", "created-new"]);
   });
 });
 
@@ -807,14 +819,14 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(0);
   });
 
-  it("keeps cards in creation order while settled sorts by recency", () => {
+  it("floats recently active cards above newer creation while settled sorts by recency", () => {
     const { items } = buildThreadListV2Items({
       threads: [
         makeThread({
           id: ThreadId.make("older-created"),
           title: "Older",
           createdAt: "2026-06-01T08:00:00.000Z",
-          updatedAt: NOW, // recent activity must NOT promote it
+          updatedAt: NOW, // recent activity promotes it
         }),
         makeThread({
           id: ThreadId.make("newer-created"),
@@ -827,7 +839,7 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(items.map((item) => item.thread.id)).toEqual(["newer-created", "older-created"]);
+    expect(items.map((item) => item.thread.id)).toEqual(["older-created", "newer-created"]);
   });
 
   it("sorts settled threads by their persisted settlement timestamp", () => {

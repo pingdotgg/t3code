@@ -511,3 +511,61 @@ describe("sortActiveThreadsByOrderKey", () => {
     expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
   });
 });
+
+describe("activeThreadAnchorTimestampMs activity", () => {
+  it("floats a thread on a newer user message", () => {
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "2026-03-01T09:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ).toBe(Date.parse("2026-03-09T12:00:00.000Z"));
+  });
+
+  it("floats a thread on an update or a finished run", () => {
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "2026-03-01T09:00:00.000Z",
+        updatedAt: "2026-03-09T11:00:00.000Z",
+      }),
+    ).toBe(Date.parse("2026-03-09T11:00:00.000Z"));
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "2026-03-01T09:00:00.000Z",
+        latestRun: {
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          completedAt: "2026-03-09T10:05:00.000Z",
+        },
+      }),
+    ).toBe(Date.parse("2026-03-09T10:05:00.000Z"));
+  });
+
+  it("sinks malformed stamps to 0", () => {
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "invalid",
+        latestUserMessageAt: null,
+        updatedAt: null,
+        latestRun: null,
+      }),
+    ).toBe(0);
+  });
+});
+
+describe("sortActiveThreadsByOrderKey activity", () => {
+  it("floats keyless threads on recent activity ahead of newer creation", () => {
+    const sorted = sortActiveThreadsByOrderKey([
+      {
+        id: "created-new",
+        createdAt: "2026-03-09T11:00:00.000Z",
+        updatedAt: "2026-03-09T11:00:00.000Z",
+      },
+      {
+        id: "active-old",
+        createdAt: "2026-03-01T09:00:00.000Z",
+        updatedAt: "2026-03-09T12:00:00.000Z",
+      },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["active-old", "created-new"]);
+  });
+});

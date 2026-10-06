@@ -2157,12 +2157,20 @@ describe("Working shelf (beta)", () => {
   describe("sortInboxThreadsByReturn", () => {
     const thread = (
       id: string,
-      input: { createdAt: string; completedAt?: string | null; unsettledAt?: string },
+      input: {
+        createdAt: string;
+        completedAt?: string | null;
+        unsettledAt?: string;
+        updatedAt?: string;
+        latestUserMessageAt?: string | null;
+      },
     ) => ({
       id: ThreadId.make(id),
       environmentId: localEnvironmentId,
       createdAt: input.createdAt,
       unsettledAt: input.unsettledAt ?? null,
+      updatedAt: input.updatedAt ?? input.createdAt,
+      latestUserMessageAt: input.latestUserMessageAt ?? null,
       latestRun:
         input.completedAt === undefined
           ? null
@@ -2202,6 +2210,25 @@ describe("Working shelf (beta)", () => {
           entry === waiting ? Date.parse("2026-03-09T11:05:00.000Z") : undefined,
         ).map((entry) => entry.id),
       ).toEqual(["asks-approval", "finished"]);
+    });
+
+    it("puts the thread changed most recently on top even without a new run", () => {
+      const sorted = sortInboxThreadsByReturn([
+        thread("created-new", { createdAt: "2026-03-09T11:00:00.000Z" }),
+        thread("updated-old", {
+          createdAt: "2026-03-01T09:00:00.000Z",
+          updatedAt: "2026-03-09T12:00:00.000Z",
+        }),
+        thread("messaged-old", {
+          createdAt: "2026-03-02T09:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T13:00:00.000Z",
+        }),
+      ]);
+      expect(sorted.map((entry) => entry.id)).toEqual([
+        "messaged-old",
+        "updated-old",
+        "created-new",
+      ]);
     });
   });
 

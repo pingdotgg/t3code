@@ -119,20 +119,33 @@ export function getThreadSortTimestamp(
 }
 
 /**
- * Sort anchor for the active thread list: creation time, re-anchored to
- * unsettledAt when the thread last re-entered the active list (an explicit
- * un-settle, or a settled thread waking on activity). The list stays static
- * between lifecycle transitions, but an un-settled thread surfaces at the
- * top instead of sinking back to its creation-order slot. Shared by web and
- * mobile so both render the same order. Malformed timestamps sink to 0.
+ * Sort anchor for the active thread list: the latest activity stamp (a new
+ * user message, a run starting or finishing, an update, or an explicit
+ * un-settle), falling back to creation. Keyless threads therefore float on
+ * activity instead of sinking back to their creation-order slot. Arranged
+ * threads still follow their saved keys. Shared by web and mobile so both
+ * render the same order. Malformed timestamps sink to 0.
  */
 export function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
+  readonly latestUserMessageAt?: string | null | undefined;
+  readonly updatedAt?: string | null | undefined;
+  readonly latestRun?:
+    | {
+        readonly requestedAt?: string | null | undefined;
+        readonly completedAt?: string | null | undefined;
+      }
+    | null
+    | undefined;
 }): number {
   return Math.max(
     toSortableTimestamp(thread.createdAt) ?? 0,
     toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.updatedAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
   );
 }
 
@@ -338,8 +351,9 @@ export function sortPinnedThreadsByOrderKey<
   return [...keyed, ...keyless];
 }
 
-/** New and reopened threads lead the active list. Arranged threads follow
-    their saved keys; activity leaves both groups in place. */
+/** New, reopened, and recently active threads lead the active list.
+    Arranged threads follow their saved keys; keyless threads float on
+    activity instead of holding creation order. */
 export function sortActiveThreadsByOrderKey<
   T extends {
     readonly id: string;

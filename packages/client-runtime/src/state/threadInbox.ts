@@ -35,11 +35,18 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
 
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
-  "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
+  | "id"
+  | "environmentId"
+  | "createdAt"
+  | "unsettledAt"
+  | "latestRun"
+  | "latestUserMessageAt"
+  | "updatedAt"
 >;
 
-/** The inbox lists threads newest first by when each last came back to the
-    user, so a thread that leaves the Working section lands on top.
+/** The inbox lists threads newest first by when each last changed — a return
+    to the user, a new user message, or an update — so a thread that leaves
+    the Working section or hears back lands on top.
     `observedReturnAt` adds returns the server does not stamp, such as an
     approval request mid-turn or background work ending. */
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
@@ -54,6 +61,8 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
         toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
+        toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ?? 0,
+        toSortableTimestamp(thread.updatedAt ?? undefined) ?? 0,
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
