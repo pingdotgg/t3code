@@ -12,12 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
-import {
-  makeBrowserGitHubRoutingPermissions,
-  makeCatalogBackend,
-  makeCatalogStore,
-  layer as connectionStorageLayer,
-} from "./storage";
+import * as ConnectionStorage from "./storage";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -35,12 +30,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("makeCatalogStore", () => {
+describe("ConnectionStorage.makeCatalogStore", () => {
   it.effect("quarantines malformed catalogs and starts from an empty document", () =>
     Effect.gen(function* () {
       const writes: string[] = [];
       const quarantined: string[] = [];
-      const store = yield* makeCatalogStore({
+      const store = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.succeed("{not-json"),
         write: (raw) => Effect.sync(() => writes.push(raw)),
         quarantine: (raw) => Effect.sync(() => quarantined.push(raw)),
@@ -59,7 +54,7 @@ describe("makeCatalogStore", () => {
         reason: "remote-unavailable",
         detail: "permission denied",
       });
-      const store = yield* makeCatalogStore({
+      const store = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.fail(failure),
         write: () => Effect.void,
       });
@@ -74,7 +69,7 @@ const fixedHandle = (database: IDBDatabase) => ({
   invalidate: () => Effect.void,
 });
 
-describe("makeCatalogBackend", () => {
+describe("ConnectionStorage.makeCatalogBackend", () => {
   it.effect("reports a closed IndexedDB connection as a typed read and write failure", () =>
     Effect.gen(function* () {
       vi.stubGlobal("window", {});
@@ -83,7 +78,7 @@ describe("makeCatalogBackend", () => {
           throw new DOMException("The database connection is closing.", "InvalidStateError");
         },
       } as unknown as IDBDatabase;
-      const backend = makeCatalogBackend(fixedHandle(database));
+      const backend = ConnectionStorage.makeCatalogBackend(fixedHandle(database));
 
       const readError = yield* Effect.flip(backend.read);
       const writeError = yield* Effect.flip(backend.write("{}"));
@@ -103,7 +98,7 @@ describe("makeCatalogBackend", () => {
           setConnectionCatalog,
         },
       });
-      const backend = makeCatalogBackend(fixedHandle({} as IDBDatabase));
+      const backend = ConnectionStorage.makeCatalogBackend(fixedHandle({} as IDBDatabase));
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
@@ -128,7 +123,7 @@ describe("makeCatalogBackend", () => {
           },
         }),
       });
-      const backend = makeCatalogBackend(
+      const backend = ConnectionStorage.makeCatalogBackend(
         fixedHandle({ transaction: () => transaction } as unknown as IDBDatabase),
       );
 
@@ -176,7 +171,7 @@ describe("environment cache removal", () => {
           ),
           yield* Effect.flip(cache.clearVcsRefs(EnvironmentId.make("env"))),
         ] as const;
-      }).pipe(Effect.provide(connectionStorageLayer));
+      }).pipe(Effect.provide(ConnectionStorage.layer));
 
       expect(threadError.message).toContain("Commit aborted");
       expect(refsError.message).toContain("Commit aborted");
@@ -201,7 +196,7 @@ describe("IndexedDB connection recovery", () => {
           cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread")),
         );
         expect(error.message).toContain("Storage is unavailable");
-      }).pipe(Effect.provide(connectionStorageLayer));
+      }).pipe(Effect.provide(ConnectionStorage.layer));
 
       expect(open).toHaveBeenCalledOnce();
     }),
@@ -254,7 +249,7 @@ describe("IndexedDB connection recovery", () => {
         );
         expect(recovered.every(Option.isNone)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);
-      }).pipe(Effect.provide(connectionStorageLayer));
+      }).pipe(Effect.provide(ConnectionStorage.layer));
 
       expect(first.close).not.toHaveBeenCalled();
       expect(second.close).toHaveBeenCalledOnce();
@@ -302,7 +297,7 @@ describe("IndexedDB connection closed without a close event", () => {
         const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
         expect(Option.isNone(loaded)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);
-      }).pipe(Effect.provide(connectionStorageLayer));
+      }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );
 });
@@ -329,8 +324,8 @@ describe("browser GitHub routing permissions", () => {
       };
       const firstBrowser = Object.assign(new EventTarget(), { localStorage });
       const secondBrowser = Object.assign(new EventTarget(), { localStorage });
-      const first = makeBrowserGitHubRoutingPermissions(firstBrowser);
-      const second = makeBrowserGitHubRoutingPermissions(secondBrowser);
+      const first = ConnectionStorage.makeBrowserGitHubRoutingPermissions(firstBrowser);
+      const second = ConnectionStorage.makeBrowserGitHubRoutingPermissions(secondBrowser);
       const entry = {
         target: new PrimaryConnectionTarget({
           environmentId: EnvironmentId.make("first"),
@@ -352,7 +347,7 @@ describe("browser GitHub routing permissions", () => {
       yield* first.set(entry, "read-write");
       expect(yield* second.get(entry)).toBe("read-write");
       const oldPermissions = Option.getOrThrow(yield* Stream.runHead(first.changes));
-      const staleCatalog = yield* makeCatalogStore({
+      const staleCatalog = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.succeed(
           encodeCatalog({ ...emptyCatalog, githubRoutingPermissions: oldPermissions }),
         ),
@@ -377,7 +372,9 @@ describe("browser GitHub routing permissions", () => {
       yield* staleCatalog.update((document) => ({ ...document, accountId: "updated" }));
       expect(yield* second.get(entry)).toBe("off");
       expect(yield* first.get(other)).toBe("read");
-      expect(yield* makeBrowserGitHubRoutingPermissions(firstBrowser).get(entry)).toBe("off");
+      expect(
+        yield* ConnectionStorage.makeBrowserGitHubRoutingPermissions(firstBrowser).get(entry),
+      ).toBe("off");
 
       yield* first.set(entry, "read-write");
       yield* second.forget(entry.target.environmentId);
