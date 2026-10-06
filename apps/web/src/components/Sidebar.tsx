@@ -2032,9 +2032,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
-                        : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
-                      "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
-                      snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
+                        : // While fading out, the label stays inside the slot the actions
+                          // now fill, so a long waiting label cannot sweep over the project name.
+                          "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:inset-x-0 group-has-[:focus-visible]/sidebar-status-slot:overflow-hidden group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:inset-x-0 group-any-hover/sidebar-row:overflow-hidden group-any-hover/sidebar-row:opacity-0",
+                      "flex items-center justify-end self-center tabular-nums text-secondary-label transition-opacity",
+                      snoozeMenuOpen &&
+                        "pointer-events-none absolute inset-x-0 overflow-hidden opacity-0",
                     )}
                   >
                     {topStatus ? (
@@ -2061,7 +2064,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       ) : (
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1 font-medium",
+                            "inline-flex min-w-0 items-center gap-1 font-medium",
                             topStatus.className,
                           )}
                         >
