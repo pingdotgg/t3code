@@ -133,6 +133,8 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 // Return recoverable handles before common MCP client timeouts expire.
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 45_000;
+const DEFAULT_SECRET_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
+const MAX_SECRET_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
   { thread: "child", eventType: "run.updated" },
@@ -2295,7 +2297,10 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.timeoutOption(
           Duration.millis(
-            Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
+            Math.min(
+              input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
+              MAX_SECRET_REQUEST_TIMEOUT_MS,
+            ),
           ),
         ),
         Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
