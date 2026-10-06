@@ -337,20 +337,23 @@ export function planSidebarThreadDrop(input: {
     return { kind: "none" };
   }
   // Rows whose server cannot store an order (an older server, or a machine
-  // that is offline) keep their existing keys, and the drop arranges the rest. Before,
-  // one such row refused every drop that needed fresh keys for its neighbors.
+  // that is offline) are never written. Keyless ones sort outside the keyed
+  // run, so they leave the plan; keyed ones stay as bounds. Before, one keyless row
+  // refused every drop that needed fresh keys for its neighbors.
   const arrange = (
     order: readonly string[],
     keysById: ReadonlyMap<string, string | null | undefined>,
     writable: ReadonlySet<string> | undefined,
-  ) =>
-    writable && !writable.has(activeKey)
-      ? null
-      : planPinnedReorder({
-          orderedIds: writable ? order.filter((key) => writable.has(key)) : order,
-          keysById,
-          movedId: activeKey,
-        });
+  ) => {
+    if (!writable) return planPinnedReorder({ orderedIds: order, keysById, movedId: activeKey });
+    if (!writable.has(activeKey)) return null;
+    const assignments = planPinnedReorder({
+      orderedIds: order.filter((key) => writable.has(key) || keysById.get(key) != null),
+      keysById,
+      movedId: activeKey,
+    });
+    return assignments.every(({ id }) => writable.has(id)) ? assignments : null;
+  };
   switch (target.section) {
     case "active": {
       // Like the settled tail: threads can enter a time-ordered inbox, but

@@ -2261,6 +2261,22 @@ describe("Working shelf (beta)", () => {
       expect(plan.assignments.map(({ id }) => id)).toEqual(["a2", "a1"]);
       const [a2, a1] = plan.assignments.map(({ orderKey }) => orderKey);
       expect(a2! < a1!).toBe(true);
+
+      // A keyed row on that server still sorts by its key, so it stays a bound.
+      const above = planSidebarThreadDrop({
+        activeKey: "a2",
+        activeSection: "active",
+        target: { section: "active", pinnedOrder: [], activeOrder: ["a2", "offline"] },
+        pinnedOrder: [],
+        pinnedKeysById: new Map(),
+        activeOrder: ["offline", "a2"],
+        activeKeysById: new Map([
+          ["offline", "m"],
+          ["a2", "t"],
+        ]),
+        activeReorderableKeys: new Set(["a2"]),
+      });
+      expect(above.kind === "move-active" && above.assignments[0]!.orderKey < "m").toBe(true);
     });
 
     it("only changes lifecycle when the inbox is time-ordered", () => {
