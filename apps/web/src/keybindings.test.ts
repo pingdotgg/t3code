@@ -704,16 +704,44 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
-    const bindings = compile([
-      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
-    ]);
+  it("toggles thread details with mod+alt+x on every platform", () => {
+    // Option changes the typed character on macOS, so the match comes from the physical key.
+    const macInput = event({ key: "≈", code: "KeyX", metaKey: true, altKey: true });
+    const otherInput = event({ key: "x", code: "KeyX", ctrlKey: true, altKey: true });
+    for (const [platform, input, label] of [
+      ["MacIntel", macInput, "⌥⌘X"],
+      ["Win32", otherInput, "Ctrl+Alt+X"],
+      ["Linux", otherInput, "Ctrl+Alt+X"],
+    ] as const) {
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+        "threadPanel.toggle",
+      );
+      assert.strictEqual(
+        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "threadPanel.toggle", platform),
+        label,
+      );
+    }
+  });
+
+  it("replaces the thread details default with a user-configured shortcut", () => {
+    const bindings = mergeWithDefaultKeybindings(
+      compile([{ shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" }]),
+    );
 
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
         platform: "MacIntel",
       }),
       "threadPanel.toggle",
+    );
+    assert.strictEqual(shortcutLabelForCommand(bindings, "threadPanel.toggle", "MacIntel"), "⇧⌘B");
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "≈", code: "KeyX", metaKey: true, altKey: true }),
+        bindings,
+        { platform: "MacIntel" },
+      ),
     );
   });
 

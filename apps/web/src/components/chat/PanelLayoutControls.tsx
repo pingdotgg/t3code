@@ -1,7 +1,7 @@
 import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
-import { memo, type ReactElement } from "react";
+import { memo } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -53,6 +53,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     <Toggle
       className="relative shrink-0 [-webkit-app-region:no-drag]"
       pressed={threadPanelOpen}
+      // In popover mode the popover trigger owns the click.
+      {...(threadPanelPresentation === "popover" ? {} : { onPressedChange: onToggleThreadPanel })}
       aria-label="Toggle thread details panel"
       variant="ghost"
       size="sm"
@@ -66,31 +68,28 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       ) : null}
     </Toggle>
   );
-  const threadPanelTooltip = (trigger: ReactElement) => (
-    <Tooltip>
-      <TooltipTrigger
-        render={trigger}
-        {...(threadPanelPresentation === "popover" ? {} : { onClick: onToggleThreadPanel })}
-      />
-      <TooltipPopup side="bottom">
-        Toggle thread details
-        {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
-      </TooltipPopup>
-    </Tooltip>
-  );
 
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      {showThreadPanelControl
-        ? threadPanelPresentation === "popover"
-          ? threadPanelTooltip(
-              <PopoverTrigger handle={threadPanelPopoverHandle} render={threadPanelToggle} />,
-            )
-          : threadPanelTooltip(threadPanelToggle)
-        : null}
+      {showThreadPanelControl ? (
+        <Tooltip>
+          {/* Switching presentation replaces the toggle's button, and Base UI binds tooltip
+              hover to the trigger element only once. The span is the trigger so it survives. */}
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            {threadPanelPresentation === "popover" ? (
+              <PopoverTrigger handle={threadPanelPopoverHandle} render={threadPanelToggle} />
+            ) : (
+              threadPanelToggle
+            )}
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {`Toggle thread details${threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}`}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>

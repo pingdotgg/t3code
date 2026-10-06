@@ -58,6 +58,16 @@ describe("KeybindingsSettings.logic", () => {
       );
     },
   );
+  it.each(["thread details", "mod+alt+x"])("finds the thread details shortcut with %s", (query) => {
+    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query)).toContainEqual(
+      expect.objectContaining({
+        command: "threadPanel.toggle",
+        key: "mod+alt+x",
+        source: "Default",
+        conflicts: [],
+      }),
+    );
+  });
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
       "usage.open",
@@ -263,6 +273,7 @@ describe("KeybindingsSettings.logic", () => {
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
+    expect(commandLabel("threadPanel.toggle")).toBe("Thread Details: Toggle");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 
