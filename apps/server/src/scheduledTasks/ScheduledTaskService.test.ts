@@ -1628,17 +1628,22 @@ let sendBarrier: {
   readonly acceptedAtEntry?: boolean;
 } | null = null;
 
-// The domain-event stream is a parameter so each service instance gets its
+// The stored-event source is a parameter so each service instance gets its
 // own tail: a shared queue would let a still-running reactor from another
-// test steal this test's events.
-const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) =>
+// test steal this test's events. Events at or before the requested cursor are
+// dropped, as the real store does, so a reactor resuming from the wrong
+// cursor misses events here too.
+const boundThreadManagementMockFrom = (
+  storedEvents: Stream.Stream<OrchestrationV2StoredEvent>,
+  onSubscribe?: (afterSequence: number | undefined) => void,
+) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    streamStoredEventsFrom: () =>
-      domainEvents.pipe(
-        Stream.map(
-          (event) => ({ sequence: 0, commandId: null, event }) satisfies OrchestrationV2StoredEvent,
-        ),
-      ),
+    streamStoredEventsFrom: (input) => {
+      onSubscribe?.(input?.afterSequence);
+      return storedEvents.pipe(
+        Stream.filter((stored) => stored.sequence > (input?.afterSequence ?? 0)),
+      );
+    },
     sendToThread: (input) =>
       Effect.gen(function* () {
         sendToThreadCalls += 1;
@@ -1660,6 +1665,18 @@ const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2Do
         return {} as ThreadManagementService.ThreadManagementSendResult;
       }),
   });
+
+// Live domain events numbered from 1, after anything an empty event log holds.
+const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) =>
+  boundThreadManagementMockFrom(
+    domainEvents.pipe(
+      Stream.zipWithIndex,
+      Stream.map(
+        ([event, index]) =>
+          ({ sequence: index + 1, commandId: null, event }) satisfies OrchestrationV2StoredEvent,
+      ),
+    ),
+  );
 
 const boundThreadTestDeps = Layer.mergeAll(
   SqlitePersistence.layerMemory,
@@ -2854,6 +2871,152 @@ it.effect("the domain-event reactor pauses tasks on thread archive and delete", 
         yield* awaitPaused(archivedTask.task.id);
         yield* awaitPaused(deletedTask.task.id);
         assert.equal(sendToThreadCalls, 0);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("replays an archive committed after the startup sweep checked its thread", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-09-09T12:00:00.000Z";
+        const seedTask = (taskId: string, threadId: ThreadId, nextRunAt: string) =>
+          sql`INSERT INTO scheduled_tasks ${sql.insert({
+            task_id: taskId,
+            title: taskId,
+            prompt: "prompt",
+            enabled: 1,
+            schedule_json: '{"type":"interval","everyMs":60000}',
+            project_id: archivedBindingProjectId,
+            thread_id: threadId,
+            workspace_strategy_json: '{"type":"root"}',
+            model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+            runtime_mode: "full-access",
+            interaction_mode: "default",
+            created_by: "user",
+            creation_source: "web",
+            created_at: now,
+            updated_at: now,
+            next_run_at: nextRunAt,
+            last_run_at: null,
+            last_run_status: "never",
+            last_run_error: null,
+            run_count: 0,
+          })}`;
+        // The sweep visits the live thread first, then pauses the task whose
+        // thread was archived while the server was down.
+        const liveThreadId = ThreadId.make("thread:archived-during-sweep");
+        const downThreadId = ThreadId.make("thread:archived-while-down");
+        const liveTaskId = ScheduledTaskId.make("scheduled-task:archived-during-sweep");
+        const downTaskId = ScheduledTaskId.make("scheduled-task:archived-while-down");
+        yield* seedTask(liveTaskId, liveThreadId, "2027-09-09T12:00:00.000Z");
+        yield* seedTask(downTaskId, downThreadId, "2027-09-10T12:00:00.000Z");
+        yield* setBoundThreadState(liveThreadId, "active");
+        yield* setBoundThreadState(downThreadId, "archived");
+        // An event already in the log at startup sits at or before the cursor.
+        yield* insertThreadEvent(liveThreadId, "thread.created", now);
+        // The sweep's pause of the second task commits an archive of the first
+        // thread, after the sweep has already found that thread active. A
+        // cursor read after the sweep would start past this archive.
+        yield* sql.unsafe(`
+          CREATE TRIGGER archive_live_thread_during_sweep
+          AFTER UPDATE OF enabled ON scheduled_tasks
+          WHEN NEW.task_id = '${downTaskId}' AND OLD.enabled = 1 AND NEW.enabled = 0
+          BEGIN
+            UPDATE orchestration_v2_projection_threads
+            SET archived_at = '${boundThreadArchivedAt}'
+            WHERE thread_id = '${liveThreadId}';
+            INSERT INTO orchestration_events (
+              event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+              command_id, causation_event_id, correlation_id, actor_kind, payload_json,
+              metadata_json, application_event_version
+            ) VALUES (
+              'event:archived-during-sweep', 'thread', '${liveThreadId}', 1, 'thread.archived',
+              '${boundThreadArchivedAt}', NULL, NULL, NULL, 'server', '{}', '{}', 2
+            );
+          END
+        `);
+
+        // The reactor's subscription parks on this gate, so it reads the log
+        // only after the sweep has finished.
+        const subscribed = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let requestedCursor: number | undefined;
+        const storedEvents = Stream.unwrap(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(subscribed, undefined);
+            yield* Deferred.await(release);
+            const rows = yield* sql<{
+              readonly sequence: number;
+              readonly event_id: string;
+              readonly event_type: string;
+              readonly stream_id: string;
+            }>`
+              SELECT sequence, event_id, event_type, stream_id
+              FROM orchestration_events ORDER BY sequence
+            `;
+            return Stream.fromIterable(
+              rows.map(
+                (row) =>
+                  ({
+                    sequence: row.sequence,
+                    commandId: null,
+                    event: {
+                      id: EventId.make(row.event_id),
+                      type: row.event_type,
+                      threadId: ThreadId.make(row.stream_id),
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                      occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                      payload: { id: row.stream_id },
+                    } as unknown as OrchestrationV2DomainEvent,
+                  }) satisfies OrchestrationV2StoredEvent,
+              ),
+            ).pipe(Stream.concat(Stream.never));
+          }).pipe(Effect.orDie),
+        );
+
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Scheduler.layer,
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                boundThreadManagementMockFrom(storedEvents, (afterSequence) => {
+                  requestedCursor = afterSequence;
+                }),
+              ),
+            ),
+          ),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        yield* Deferred.await(subscribed);
+        const taskOf = (id: ScheduledTaskId) =>
+          Effect.map(tasks.list(), ({ tasks: all }) =>
+            all.find((candidate) => candidate.id === id),
+          );
+        // The sweep paused the task archived while down, and found the other
+        // thread still active, so only replay can pause that one.
+        assert.isFalse((yield* taskOf(downTaskId))?.enabled);
+        assert.isTrue((yield* taskOf(liveTaskId))?.enabled);
+        const archived = yield* sql<{ readonly sequence: number }>`
+          SELECT sequence FROM orchestration_events
+          WHERE event_id = 'event:archived-during-sweep'
+        `;
+        assert.isDefined(requestedCursor);
+        assert.isBelow(requestedCursor!, archived[0]!.sequence);
+        yield* Deferred.succeed(release, undefined);
+
+        const paused = yield* tasks.subscribeList().pipe(
+          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === liveTaskId)),
+          Stream.filter((task) => task !== undefined && task.enabled === false),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(paused));
+        assert.isNull(Option.getOrThrow(paused)!.nextRunAt);
       }),
     );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
