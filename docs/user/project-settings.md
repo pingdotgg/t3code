@@ -164,6 +164,11 @@ T3 Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
+Automatic detection looks for an icon in the project's files first. If there is none and the
+repository is hosted on GitLab, T3 Code uses the avatar set in the GitLab project's settings. This
+needs the GitLab CLI (`glab`), signed in for private projects, and GitLab 16.9 or later. A changed
+avatar appears within a day.
+
 When no image is found, web and desktop show a two-character monogram with a color
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.

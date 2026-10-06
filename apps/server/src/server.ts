@@ -83,6 +83,7 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as GitLabProjectAvatarResolver from "./project/GitLabProjectAvatarResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -407,9 +408,11 @@ const layerWorkspace = Layer.mergeAll(
   layerWorkspaceFileSystem,
 );
 
+// Merged out as well, so the asset route shares the instance that owns the avatar cache.
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(T3ProjectFileLoader.layer),
+  Layer.provideMerge(GitLabProjectAvatarResolver.layer.pipe(Layer.provide(GitLabCli.layer))),
 );
 
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));

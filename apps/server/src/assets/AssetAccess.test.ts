@@ -27,6 +27,7 @@ import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as GitLabProjectAvatarResolver from "../project/GitLabProjectAvatarResolver.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -120,6 +121,15 @@ const layerTest = Layer.mergeAll(
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
+    Layer.provideMerge(
+      Layer.succeed(
+        GitLabProjectAvatarResolver.GitLabProjectAvatarResolver,
+        GitLabProjectAvatarResolver.GitLabProjectAvatarResolver.of({
+          resolvePath: () => Effect.succeed(null),
+          isManagedPath: () => false,
+        }),
+      ),
+    ),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
@@ -1188,6 +1198,47 @@ describe("AssetAccess", () => {
       );
       expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
       expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves a cached GitLab project avatar from outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-gitlab-avatar-workspace-",
+      });
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-gitlab-avatar-cache-",
+      });
+      const avatarPath = path.join(cacheDir, "avatar.png");
+      yield* fileSystem.writeFile(avatarPath, new Uint8Array([1, 2, 3]));
+      const canonicalPath = yield* fileSystem.realPath(avatarPath);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(
+        Effect.provideService(
+          ProjectFaviconResolver.ProjectFaviconResolver,
+          ProjectFaviconResolver.ProjectFaviconResolver.of({
+            resolvePath: () => Effect.succeed(avatarPath),
+          }),
+        ),
+        Effect.provideService(
+          GitLabProjectAvatarResolver.GitLabProjectAvatarResolver,
+          GitLabProjectAvatarResolver.GitLabProjectAvatarResolver.of({
+            resolvePath: () => Effect.succeed(avatarPath),
+            isManagedPath: (filePath) => filePath === avatarPath,
+          }),
+        ),
+      );
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-avatar\.png$/);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: canonicalPath });
     }).pipe(Effect.provide(layerTest)),
   );
 

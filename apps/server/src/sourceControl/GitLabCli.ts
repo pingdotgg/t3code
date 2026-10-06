@@ -310,6 +310,17 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
     }) => Effect.Effect<string | null, GitLabCliError>;
 
+    /**
+     * Downloads the avatar image of the project the checkout at `cwd` belongs to.
+     * Returns `null` when GitLab answers 404: the project has no avatar, or the
+     * server predates the avatar endpoint (GitLab 16.9).
+     */
+    readonly getProjectAvatar: (input: {
+      readonly cwd: string;
+      readonly maxBytes: number;
+      readonly timeoutMs?: number;
+    }) => Effect.Effect<Uint8Array | null, GitLabCliError>;
+
     readonly checkoutMergeRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -648,6 +659,32 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((value) => value.default_branch ?? null),
       ),
+    getProjectAvatar: (input) =>
+      Effect.suspend(() => {
+        // glab writes the image bytes to stdout, which the process runner decodes
+        // as UTF-8, so the bytes are collected from the raw chunks instead.
+        const chunks: Array<Uint8Array> = [];
+        const context = { operation: "execute", command: "glab", cwd: input.cwd } as const;
+        return process
+          .run({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            args: ["api", "projects/:fullpath/avatar"],
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            maxOutputBytes: input.maxBytes,
+            outputMode: "error",
+            onStdoutChunk: (chunk) => chunks.push(chunk.slice()),
+          })
+          .pipe(
+            Effect.map((): Uint8Array | null => Buffer.concat(chunks)),
+            Effect.catch((error) =>
+              error._tag === "VcsProcessExitError" && error.failureKind === "not-found"
+                ? Effect.succeed(null)
+                : Effect.fail(GitLabCliCommandError.fromVcsError(context, error)),
+            ),
+          );
+      }),
     checkoutMergeRequest: (input) =>
       executeMergeRequest({
         cwd: input.cwd,

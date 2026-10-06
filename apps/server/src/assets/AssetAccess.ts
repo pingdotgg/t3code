@@ -55,6 +55,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
+import * as GitLabProjectAvatarResolver from "../project/GitLabProjectAvatarResolver.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -629,11 +630,14 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
                   }),
               ),
             );
+      const gitLabProjectAvatars = yield* GitLabProjectAvatarResolver.GitLabProjectAvatarResolver;
+      // A cached GitLab avatar lives under the state dir, outside the workspace.
       const isExternalOverride =
         faviconPath !== null &&
-        input.projectFaviconPath !== undefined &&
-        path.isAbsolute(input.projectFaviconPath) &&
-        path.normalize(faviconPath) === path.normalize(input.projectFaviconPath);
+        (gitLabProjectAvatars.isManagedPath(faviconPath) ||
+          (input.projectFaviconPath !== undefined &&
+            path.isAbsolute(input.projectFaviconPath) &&
+            path.normalize(faviconPath) === path.normalize(input.projectFaviconPath)));
       const relativePath =
         faviconPath && !isExternalOverride ? path.relative(workspaceRoot, faviconPath) : null;
       const sourceFaviconPath = isExternalOverride ? faviconPath : relativePath;

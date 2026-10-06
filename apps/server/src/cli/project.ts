@@ -26,6 +26,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import * as GitLabProjectAvatarResolver from "../project/GitLabProjectAvatarResolver.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -36,6 +37,8 @@ import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -198,13 +201,19 @@ const projectCommandUuid = Crypto.Crypto.pipe(
 
 const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
   Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(
+        GitLabProjectAvatarResolver.layer.pipe(
+          Layer.provide(GitLabCli.layer),
+          Layer.provide(VcsProcess.layer),
+        ),
+      ),
     ),
   ),
+  Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );

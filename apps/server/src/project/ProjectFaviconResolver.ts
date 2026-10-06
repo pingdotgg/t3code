@@ -2,7 +2,8 @@
  * ProjectFaviconResolver - Effect service contract for project icon discovery.
  *
  * Resolves a representative favicon or app icon file for a workspace by
- * checking common file locations and project source metadata.
+ * checking common file locations and project source metadata, then falling
+ * back to the GitLab project's own avatar.
  *
  * @module ProjectFaviconResolver
  */
@@ -20,6 +21,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitLabProjectAvatarResolver from "./GitLabProjectAvatarResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 // Resolution probes 21 well-known paths plus 7 source files, so a miss
@@ -156,6 +158,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
+  const gitLabProjectAvatars = yield* GitLabProjectAvatarResolver.GitLabProjectAvatarResolver;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
@@ -312,9 +315,16 @@ export const make = Effect.gen(function* () {
       return wellKnown;
     }
 
-    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+    const declared = yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
       findIconFromSource(projectCwd, sourceFile),
     );
+    if (declared) {
+      return declared;
+    }
+
+    // Unlike GitHub, GitLab gives each project its own avatar, so it fills the
+    // gap where nothing local resolves. A group or owner avatar is never used.
+    return yield* gitLabProjectAvatars.resolvePath(projectCwd);
   });
 
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(

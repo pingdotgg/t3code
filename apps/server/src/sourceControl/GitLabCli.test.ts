@@ -371,6 +371,74 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("downloads the project avatar as raw bytes", () =>
+    Effect.gen(function* () {
+      // 0x89 and 0xff are not valid UTF-8 on their own, so decoded stdout would mangle them.
+      const avatar = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00]);
+      mockedRun.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          input.onStdoutChunk?.(avatar.subarray(0, 3));
+          input.onStdoutChunk?.(avatar.subarray(3));
+          return processOutput("\ufffdPNG\ufffd\u0000");
+        }),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getProjectAvatar({ cwd: "/repo", maxBytes: 1024 });
+
+      expect(result === null ? null : new Uint8Array(result)).toEqual(avatar);
+      expect(mockedRun.mock.calls[0]?.[0]).toMatchObject({
+        args: ["api", "projects/:fullpath/avatar"],
+        cwd: "/repo",
+        maxOutputBytes: 1024,
+        outputMode: "error",
+      });
+    }),
+  );
+
+  it.effect("reports a project without an avatar as null", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "glab: 404 Avatar Not Found (HTTP 404)",
+            failureKind: "not-found",
+          }),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+
+      assert.isNull(yield* glab.getProjectAvatar({ cwd: "/repo", maxBytes: 1024 }));
+    }),
+  );
+
+  it.effect("surfaces avatar download failures other than 404", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "glab: 401 Unauthorized",
+        failureKind: "authentication",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .getProjectAvatar({ cwd: "/repo", maxBytes: 1024 })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabCliAuthenticationError");
+      assert.strictEqual(error.cause, cause);
+    }),
+  );
+
   it.effect("preserves rate-limit failures as a distinct error", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
