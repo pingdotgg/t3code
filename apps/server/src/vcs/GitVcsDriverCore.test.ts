@@ -3217,6 +3217,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("explains that a branch with no commits cannot start a worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, ["checkout", "-b", "main"]);
+        const worktreesDir = yield* makeTmpDir("git-worktrees-");
+        const pathService = yield* Path.Path;
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: pathService.join(worktreesDir, "unborn"),
+            refName: "main",
+            newRefName: "t3/unborn",
+            baseRefName: "main",
+          })
+          .pipe(Effect.flip);
+
+        assert.include(error.detail, 'Branch "main" has no commits yet');
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(yield* fileSystem.exists(pathService.join(worktreesDir, "unborn")), false);
+        assert.notInclude(yield* git(cwd, ["branch", "--list"]), "t3/unborn");
+      }),
+    );
+
+    it.effect("keeps the generic failure when the missing ref is not the unborn branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "--orphan", "fresh"]);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: pathService.join(yield* makeTmpDir("git-worktrees-"), "missing"),
+            refName: "missing",
+            newRefName: "t3/missing",
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.detail, "git worktree add failed");
+      }),
+    );
+
     it.effect("allows worktree removal to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;

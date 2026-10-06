@@ -3350,6 +3350,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // The checked-out branch when it has no commits yet, otherwise null.
+  const readUnbornBranch = Effect.fn("readUnbornBranch")(function* (cwd: string) {
+    const head = yield* executeGit(
+      "GitVcsDriver.readUnbornBranch.head",
+      cwd,
+      ["rev-parse", "--verify", "--quiet", "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    if (head.exitCode === 0) return null;
+    const branch = yield* runGitStdout(
+      "GitVcsDriver.readUnbornBranch.branch",
+      cwd,
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      true,
+    );
+    return branch.trim() || null;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3380,27 +3398,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
+    const worktreeAddArgs = ["-c", `checkout.workers=${checkoutWorkers}`, ...args];
+    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, worktreeAddArgs, {
+      fallbackErrorDetail: "git worktree add failed",
+      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+      ...(onCheckoutProgress
+        ? {
+            // Git only prints checkout progress when stderr is a tty or the
+            // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+            env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+            progress: {
+              onStderrLine: (line) => {
+                const parsed = parseGitCheckoutProgressLine(line);
+                return parsed ? onCheckoutProgress(parsed) : Effect.void;
               },
-            }
-          : {}),
-      },
+            },
+          }
+        : {}),
+    }).pipe(
+      // A repository fresh from `git init` has no commits, so its branch is not
+      // a ref yet and git only says "invalid reference". Name the real cause.
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          readUnbornBranch(input.cwd).pipe(
+            Effect.orElseSucceed(() => null),
+            Effect.flatMap((unbornBranch) =>
+              unbornBranch !== null &&
+              [unbornBranch, `refs/heads/${unbornBranch}`, "HEAD"].includes(input.refName)
+                ? Effect.fail(
+                    new GitCommandError({
+                      ...gitCommandContext({
+                        operation: "GitVcsDriver.createWorktree",
+                        cwd: input.cwd,
+                        args: worktreeAddArgs,
+                      }),
+                      detail: `Branch "${unbornBranch}" has no commits yet, so there is nothing to create a worktree from. Make a first commit, then try again.`,
+                      cause: error,
+                    }),
+                  )
+                : Effect.fail(error),
+            ),
+          ),
+      }),
     );
 
     if (progress?.onWorktreeClaimed) {
