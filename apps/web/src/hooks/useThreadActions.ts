@@ -384,9 +384,9 @@ export function useThreadActions() {
       showThreadUndoNotice({
         action: "Archived",
         claim: action,
-        // Undo also brings the reader back when archiving moved them to a draft.
+        // Unarchive brings the reader back, but deliberately leaves schedules paused.
         undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
-        failureTitle: "Failed to undo archive",
+        failureTitle: "Failed to unarchive thread",
       });
 
       if (shouldNavigateToDraft) {

@@ -3,15 +3,36 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 
 import * as Deferred from "effect/Deferred";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -350,4 +371,2738 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+const updateProjectId = ProjectId.make("project:atomic-update");
+const otherProjectId = ProjectId.make("project:atomic-update-other");
+const updateTaskId = ScheduledTaskId.make("scheduled-task:atomic-update");
+
+const updateTestDeps = Layer.mergeAll(
+  SqlitePersistence.layerMemory,
+  NodeCrypto.layer,
+  Scheduler.layer,
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({
+    streamStoredEventsFrom: () => Stream.empty,
+  }),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+);
+
+const updateTestLayer = ScheduledTaskService.layer.pipe(Layer.provide(updateTestDeps));
+
+// Only `boundThreadId` (v2) exists as a live binding target, inside
+// `updateProjectId`. `v1ThreadId` exists only in the legacy projection —
+// shell reconciliation runs before writes are served, so a thread without a
+// v2 row can never dispatch and must be rejected. `deletedThreadId` has a
+// deleted v2 row shadowing a live v1 row — v2 is the sole authority.
+const boundThreadId = ThreadId.make("thread:in-project");
+const v1ThreadId = ThreadId.make("thread:v1-only");
+const deletedThreadId = ThreadId.make("thread:deleted");
+const archivedThreadId = ThreadId.make("thread:archived");
+
+// Same service plus direct SQL access to its in-memory database, for tests
+// that must plant row state the public API cannot express.
+const updateTestLayerWithSql = ScheduledTaskService.layer.pipe(Layer.provideMerge(updateTestDeps));
+
+const seedProjectThreads = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const now = "2026-09-14T00:00:00.000Z";
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_threads
+      (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+       created_at, updated_at, payload_json)
+    VALUES
+      (${boundThreadId}, ${updateProjectId}, 'bound', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}'),
+      (${deletedThreadId}, ${updateProjectId}, 'deleted', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}'),
+      (${archivedThreadId}, ${updateProjectId}, 'archived', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}')
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_threads
+    SET deleted_at = ${now}
+    WHERE thread_id = ${deletedThreadId}
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_threads
+    SET archived_at = ${now}
+    WHERE thread_id = ${archivedThreadId}
+  `;
+  // v1-only rows must NOT satisfy the check — dispatch reads only the v2
+  // projection, so one of them shadows the deleted v2 row to prove the v1
+  // table is never consulted.
+  yield* sql`
+    INSERT INTO projection_threads
+      (thread_id, project_id, title, created_at, updated_at)
+    VALUES
+      (${v1ThreadId}, ${updateProjectId}, 'v1', ${now}, ${now}),
+      (${deletedThreadId}, ${updateProjectId}, 'v1 shadow', ${now}, ${now})
+  `;
+});
+
+const seedTask = Effect.gen(function* () {
+  const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+  const { task } = yield* tasks.upsert({
+    id: updateTaskId,
+    title: "title original",
+    prompt: "prompt original",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: updateProjectId,
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  return task;
+});
+
+const findSeeded = Effect.gen(function* () {
+  const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+  const { tasks: all } = yield* tasks.list();
+  return all.find((candidate) => candidate.id === updateTaskId);
+});
+
+it.effect("update keeps disjoint concurrent edits and untouched fields", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const [first, second] = yield* Effect.all(
+      [
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, title: "title A" }),
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, prompt: "prompt B" }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.isTrue(Option.isSome(first));
+    assert.isTrue(Option.isSome(second));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    // Both disjoint edits survive — neither overwrote the other's column.
+    assert.equal(after!.title, "title A");
+    assert.equal(after!.prompt, "prompt B");
+    // Unset fields keep their seeded values.
+    assert.equal(after!.enabled, true);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 60_000 });
+    assert.equal(after!.projectId, updateProjectId);
+    assert.equal(after!.createdAt, seeded.createdAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update gives a webhook trigger its URL token and signing secret", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedTask;
+    const credentials = sql<{ webhook_token: string | null; webhook_secret: string | null }>`
+      SELECT webhook_token, webhook_secret FROM scheduled_tasks WHERE task_id = ${updateTaskId}
+    `.pipe(Effect.map((rows) => rows[0]));
+    const signature = {
+      header: "X-Hub-Signature-256",
+      encoding: "hex",
+      prefix: "sha256=",
+    } as const;
+
+    // Switching to a webhook without a stored secret must not drop the check.
+    const missingSecret = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "webhook", signature },
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(missingSecret)) assert.fail("expected a missing-secret failure");
+
+    const switched = Option.getOrThrow(
+      yield* tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "webhook", signature: { ...signature, secret: "s3cret" } },
+      }),
+    ).task;
+    assert.deepEqual(switched.schedule, {
+      type: "webhook",
+      signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
+      maxDeliveryAgeMinutes: null,
+    });
+    assert.isTrue(switched.webhook?.hasSecret);
+    const first = yield* credentials;
+    assert.isString(first?.webhook_token);
+    assert.equal(first?.webhook_secret, "s3cret");
+
+    // A later trigger edit without a secret keeps the stored secret and URL.
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "webhook", signature, maxDeliveryAgeMinutes: 30 },
+    });
+    assert.deepEqual(yield* credentials, first);
+
+    // Leaving the webhook trigger clears both.
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+    assert.deepEqual(yield* credentials, { webhook_token: null, webhook_secret: null });
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
+it.effect("update rejects a patch whose authorized modes were raised since", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    yield* tasks.update({ id: updateTaskId, projectId: updateProjectId, runtimeMode: "auto" });
+    // A caller authorized against "auto" loses the race to a raise.
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      runtimeMode: "full-access",
+    });
+    const stale = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        prompt: "Run something else",
+        expectedRuntimeMode: "auto",
+        expectedInteractionMode: "default",
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(stale)) assert.fail("expected a typed conflict");
+    assert.equal(stale.failure._tag, "ScheduledTaskError");
+    const after = yield* findSeeded;
+    assert.equal(after?.prompt, "prompt original");
+    assert.equal(after?.runtimeMode, "full-access");
+    // Matching pins still apply.
+    const current = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      prompt: "Run something else",
+      expectedRuntimeMode: "full-access",
+      expectedInteractionMode: "default",
+    });
+    assert.equal(Option.getOrThrow(current).task.prompt, "Run something else");
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update patches runtimeMode without disturbing other fields", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const result = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      runtimeMode: "auto",
+    });
+    assert.isTrue(Option.isSome(result));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.equal(after!.runtimeMode, "auto");
+    assert.equal(after!.title, seeded.title);
+    assert.equal(after!.enabled, true);
+    assert.equal(after!.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("concurrent schedule and enabled patches merge inside the transaction", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    // Each update reads the scoped row inside its own transaction, so the
+    // second writer sees the first writer's committed columns: whichever
+    // commits last must still observe enabled=false and produce a null due
+    // time — never a next_run_at computed from the pre-pause snapshot.
+    yield* Effect.all(
+      [
+        tasks.update({
+          id: updateTaskId,
+          projectId: updateProjectId,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        }),
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, enabled: false }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.equal(after!.enabled, false);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 3_600_000 });
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("concurrent workspaceStrategyPatch edits merge into the live strategy", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    // Move the seeded task to a worktree strategy carrying a field no client
+    // control edits (`branch`), then race two disjoint control patches: two
+    // editors saving baseRef and startFromOrigin must both keep their change
+    // instead of the second whole-object write reverting the first.
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: true,
+        branch: "release/1.2",
+      },
+    });
+    yield* Effect.all(
+      [
+        tasks.update({
+          id: updateTaskId,
+          projectId: updateProjectId,
+          workspaceStrategyPatch: { baseRef: "develop" },
+        }),
+        tasks.update({
+          id: updateTaskId,
+          projectId: updateProjectId,
+          workspaceStrategyPatch: { startFromOrigin: false },
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.deepEqual(after!.workspaceStrategy, {
+      type: "worktree",
+      baseRef: "develop",
+      startFromOrigin: false,
+      branch: "release/1.2",
+    });
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("workspaceStrategyPatch drops keys foreign to a concurrently switched kind", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    // The seeded strategy is `root`; a stale worktree-control patch has no
+    // keys that belong to it, so the merge encodes the stale edit away
+    // instead of resurrecting a worktree strategy over the concurrent
+    // kind change.
+    const result = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      workspaceStrategyPatch: { baseRef: "develop" },
+    });
+    assert.isTrue(Option.isSome(result));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.deepEqual(after!.workspaceStrategy, { type: "root" });
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update loses to a racing delete and never recreates the task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    yield* Effect.all(
+      [
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, title: "racing edit" }),
+        tasks.delete({ id: updateTaskId }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    // Whichever statement committed first, the row must stay deleted — the
+    // update is a targeted UPDATE that can never insert.
+    assert.isUndefined(yield* findSeeded);
+
+    // Deterministic stale update after the delete: typed `none`, still absent.
+    yield* seedTask;
+    yield* tasks.delete({ id: updateTaskId });
+    const stale = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "stale edit",
+    });
+    assert.isTrue(Option.isNone(stale));
+    assert.isUndefined(yield* findSeeded);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update enforces project scope and reports missing tasks as none", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    const wrongProject = yield* tasks.update({
+      id: updateTaskId,
+      projectId: otherProjectId,
+      title: "cross-project edit",
+    });
+    assert.isTrue(Option.isNone(wrongProject));
+    const after = yield* findSeeded;
+    assert.equal(after?.title, "title original");
+
+    const missing = yield* tasks.update({
+      id: ScheduledTaskId.make("scheduled-task:missing"),
+      projectId: updateProjectId,
+      title: "no row",
+    });
+    assert.isTrue(Option.isNone(missing));
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+// Gated launch barrier: lets a test park the thread dispatch between
+// markRunning and the completion write, so an edit lands in a deterministic
+// window rather than a racy one.
+let launchBarrier: {
+  readonly started: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+} | null = null;
+
+const gatedLaunchTestLayer = ScheduledTaskService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      SqlitePersistence.layerMemory,
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () =>
+          Effect.gen(function* () {
+            const barrier = launchBarrier;
+            if (barrier !== null) {
+              yield* Deferred.succeed(barrier.started, undefined);
+              yield* Deferred.await(barrier.release);
+            }
+            return {
+              threadId: ThreadId.make("thread:scheduled-run"),
+              projection: {} as unknown as OrchestrationV2ThreadProjection,
+              resumed: false,
+            };
+          }),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: () => Stream.empty,
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    ),
+  ),
+);
+
+it.effect("run completion computes the next due time from an edit committed mid-run", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    launchBarrier = { started, release };
+    try {
+      const runFiber = yield* tasks.runNow({ id: updateTaskId }).pipe(Effect.forkChild);
+      // The dispatch is parked: the update below lands after markRunning and
+      // before the completion transaction, deterministically.
+      yield* Deferred.await(started);
+      const edited = yield* tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      });
+      assert.isTrue(Option.isSome(edited));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(runFiber);
+    } finally {
+      launchBarrier = null;
+    }
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 3_600_000 });
+    assert.equal(after!.lastRunStatus, "succeeded");
+    // The completion transaction re-read the row, so the new one-hour
+    // interval — not the pre-run 60s schedule — sets the next due time.
+    assert.isNotNull(after!.nextRunAt);
+    assert.isNotNull(after!.lastRunAt);
+    const nextMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(after!.nextRunAt!));
+    const startedMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(after!.lastRunAt!));
+    assert.isAtLeast(nextMillis - startedMillis, 3_500_000);
+  }).pipe(Effect.provide(gatedLaunchTestLayer)),
+);
+
+it.effect("interrupted run records the failure against the edit committed mid-run", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    launchBarrier = { started, release };
+    try {
+      const runFiber = yield* tasks.runNow({ id: updateTaskId }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const edited = yield* tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      });
+      assert.isTrue(Option.isSome(edited));
+      // Interrupt while the dispatch is parked: runTask captures the
+      // interruption as a failed run, so the failure write must also derive
+      // next_run_at from the edited schedule rather than the stale snapshot.
+      yield* Fiber.interrupt(runFiber);
+    } finally {
+      launchBarrier = null;
+    }
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 3_600_000 });
+    assert.equal(after!.lastRunStatus, "failed");
+    assert.isNotNull(after!.nextRunAt);
+    assert.isNotNull(after!.lastRunAt);
+    const nextMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(after!.nextRunAt!));
+    const startedMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(after!.lastRunAt!));
+    assert.isAtLeast(nextMillis - startedMillis, 3_500_000);
+  }).pipe(Effect.provide(gatedLaunchTestLayer)),
+);
+
+it.effect("update retains the pending due time unless the schedule changes", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const seeded = yield* seedTask;
+    assert.isNotNull(seeded.nextRunAt);
+
+    // Move the clock forward inside the pending window: an update that
+    // recomputed next_run_at unconditionally would now emit a different
+    // timestamp, so the exact-equality checks below discriminate between
+    // "retained" and "recomputed". (+30s stays inside the 60s interval, so
+    // the task is still not due and the poller cannot fire it.)
+    yield* TestClock.adjust("30 seconds");
+
+    // Non-schedule edits keep the pending due time exactly.
+    const renamed = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "renamed",
+      prompt: "new prompt",
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+    });
+    assert.isTrue(Option.isSome(renamed));
+    assert.equal(Option.getOrThrow(renamed).task.nextRunAt, seeded.nextRunAt);
+
+    // Explicitly resubmitting the current enabled flag or an equal schedule
+    // also retains the pending due time.
+    const sameEnabled = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      enabled: true,
+    });
+    assert.equal(Option.getOrThrow(sameEnabled).task.nextRunAt, seeded.nextRunAt);
+    const sameSchedule = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+    assert.equal(Option.getOrThrow(sameSchedule).task.nextRunAt, seeded.nextRunAt);
+
+    // A semantically equivalent fixed-time schedule (an explicit all-weekdays
+    // mask means the same as an omitted one) retains it too. The due time is
+    // planted as a sentinel no recompute from the current clock could
+    // produce — exact equality discriminates here, unlike a timestamp
+    // reachable from `now`, which recomputes to the same value.
+    const sql = yield* SqlClient.SqlClient;
+    const fixedTimeId = ScheduledTaskId.make("scheduled-task:fixed-time");
+    yield* tasks.upsert({
+      id: fixedTimeId,
+      title: "fixed",
+      prompt: "fixed prompt",
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:30", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      projectId: updateProjectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const overdue = "2001-01-02T09:30:00.000Z";
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${overdue} WHERE task_id = ${fixedTimeId}`;
+    const sameFixed = yield* tasks.update({
+      id: fixedTimeId,
+      projectId: updateProjectId,
+      schedule: { type: "fixed_time", timeOfDay: "09:30" },
+    });
+    assert.equal(Option.getOrThrow(sameFixed).task.nextRunAt, overdue);
+
+    // A schedule change restarts the run clock.
+    const rescheduled = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+    });
+    const rescheduledTask = Option.getOrThrow(rescheduled).task;
+    assert.isNotNull(rescheduledTask.nextRunAt);
+    assert.notEqual(rescheduledTask.nextRunAt, seeded.nextRunAt);
+
+    // Disabling clears the due time; editing another field while disabled
+    // does not resurrect one.
+    const paused = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      enabled: false,
+    });
+    assert.isNull(Option.getOrThrow(paused).task.nextRunAt);
+    const editedWhilePaused = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "still paused",
+    });
+    assert.isNull(Option.getOrThrow(editedWhilePaused).task.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
+it.effect("update applies model selection and project moves patch-style", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const moved = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" },
+      nextProjectId: otherProjectId,
+      title: "moved",
+    });
+    const movedTask = Option.getOrThrow(moved).task;
+    assert.equal(movedTask.title, "moved");
+    assert.deepEqual(movedTask.modelSelection, {
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "opus-5",
+    });
+    assert.equal(movedTask.projectId, otherProjectId);
+    // Untouched fields — including the pending due time — survive the move.
+    assert.equal(movedTask.prompt, seeded.prompt);
+    assert.equal(movedTask.nextRunAt, seeded.nextRunAt);
+
+    // After the move, the old project scope can no longer see or edit it.
+    const staleScope = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "should not land",
+    });
+    assert.isTrue(Option.isNone(staleScope));
+    const newScope = yield* tasks.update({
+      id: updateTaskId,
+      projectId: otherProjectId,
+      prompt: "new scope works",
+    });
+    assert.isTrue(Option.isSome(newScope));
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("scoped delete loses to a racing project move instead of deleting cross-project", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    // The task moves to project B before a delete authorized for project A
+    // commits: the scoped DELETE finds no row in A and must not touch B's row.
+    const moved = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      nextProjectId: otherProjectId,
+    });
+    assert.isTrue(Option.isSome(moved));
+    const staleDelete = yield* tasks.delete({
+      id: updateTaskId,
+      projectId: updateProjectId,
+    });
+    assert.isTrue(Option.isNone(staleDelete));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.equal(after?.projectId, otherProjectId);
+
+    // Scoped to the live project the same delete succeeds; an unscoped delete
+    // of the now-missing row reports none instead of a false success.
+    const liveDelete = yield* tasks.delete({
+      id: updateTaskId,
+      projectId: otherProjectId,
+    });
+    assert.isTrue(Option.isSome(liveDelete));
+    assert.isUndefined(yield* findSeeded);
+    const goneDelete = yield* tasks.delete({ id: updateTaskId });
+    assert.isTrue(Option.isNone(goneDelete));
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("scoped runNow loses to a racing project move and never dispatches", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    dispatchLaunchCount = 0;
+    // A manual run authorized for project A commits after the task moved to
+    // project B: the dispatch transaction's re-read sees B, so the scoped run
+    // is a typed not-found and no launch fires under A's authority.
+    const moved = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      nextProjectId: otherProjectId,
+    });
+    assert.isTrue(Option.isSome(moved));
+    const staleRun = yield* tasks
+      .runNow({ id: updateTaskId, projectId: updateProjectId })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(staleRun));
+    assert.equal(dispatchLaunchCount, 0);
+
+    // Scoped to the live project the same manual run dispatches normally.
+    const liveRun = yield* tasks.runNow({
+      id: updateTaskId,
+      projectId: otherProjectId,
+    });
+    assert.equal(liveRun.task.lastRunStatus, "succeeded");
+    assert.equal(dispatchLaunchCount, 1);
+  }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect(
+  "legacy explicit-id upsert can move an unbound task without restarting its schedule",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      const seeded = yield* seedTask;
+      const moved = yield* tasks.upsert({
+        ...seeded,
+        requireExisting: true,
+        projectId: otherProjectId,
+        title: "Moved by an older client",
+      });
+      assert.equal(moved.task.projectId, otherProjectId);
+      assert.equal(moved.task.title, "Moved by an older client");
+      assert.equal(moved.task.nextRunAt, seeded.nextRunAt);
+      const stored = yield* findSeeded;
+      assert.equal(stored?.projectId, otherProjectId);
+      assert.equal(stored?.nextRunAt, seeded.nextRunAt);
+    }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update keeps an unchanged binding to a since-archived thread editable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedProjectThreads;
+    yield* seedTask;
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      enabled: false,
+    });
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET archived_at = '2026-09-15T00:00:00.000Z'
+      WHERE thread_id = ${boundThreadId}
+    `;
+    // A stale draft repeats the stored binding and project with a rename.
+    const renamed = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      nextProjectId: updateProjectId,
+      title: "renamed after archive",
+    });
+    assert.equal(Option.getOrThrow(renamed).task.title, "renamed after archive");
+    // A changed binding is still validated.
+    const rebound = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(rebound)) assert.fail("expected a typed conflict");
+    assert.equal(rebound.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
+it.effect("legacy upsert keeps an unchanged binding to a since-archived thread editable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedProjectThreads;
+    const seeded = yield* seedTask;
+    const bound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      enabled: false,
+    });
+    assert.isTrue(Option.isSome(bound));
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET archived_at = '2026-09-15T00:00:00.000Z'
+      WHERE thread_id = ${boundThreadId}
+    `;
+    // An older client resends the stored binding with a title edit.
+    const legacySave = {
+      ...seeded,
+      enabled: false,
+      threadId: boundThreadId,
+      requireExisting: true,
+    };
+    const renamed = yield* tasks.upsert({ ...legacySave, title: "renamed after archive" });
+    assert.equal(renamed.task.title, "renamed after archive");
+    assert.equal(renamed.task.threadId, boundThreadId);
+    // A changed binding is still validated.
+    const rebound = yield* tasks
+      .upsert({ ...legacySave, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(rebound)) assert.fail("expected a typed conflict");
+    assert.equal(rebound.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
+it.effect(
+  "replayed commandId upsert loses to a racing project move instead of dragging it back",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      const replayId = ScheduledTaskId.make("scheduled-task:cmd:replay-move");
+      const replayInput = {
+        title: "replay title",
+        prompt: "replay prompt",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 } as const,
+        threadId: null,
+        workspaceStrategy: { type: "root" } as const,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+        commandId: CommandId.make("cmd:replay-move"),
+      };
+      const { task: created } = yield* tasks.upsert({
+        ...replayInput,
+        projectId: updateProjectId,
+      });
+      assert.equal(created.id, replayId);
+
+      // The task moves to project B before a stale MCP replay of the same
+      // schedule_task call lands: the resolved id still matches, but the scoped
+      // upsert must answer not-found rather than rewrite the row back into A.
+      const moved = yield* tasks.update({
+        id: replayId,
+        projectId: updateProjectId,
+        nextProjectId: otherProjectId,
+      });
+      assert.isTrue(Option.isSome(moved));
+      const replay = yield* tasks
+        .upsert({ ...replayInput, projectId: updateProjectId })
+        .pipe(Effect.result);
+      assert.isTrue(Result.isFailure(replay));
+      const { tasks: all } = yield* tasks.list();
+      const after = all.find((candidate) => candidate.id === replayId);
+      assert.isDefined(after);
+      assert.equal(after?.projectId, otherProjectId);
+      assert.equal(after?.title, created.title);
+
+      // A replay authorized for the live project is still the idempotent write.
+      const liveReplay = yield* tasks.upsert({ ...replayInput, projectId: otherProjectId });
+      assert.equal(liveReplay.task.projectId, otherProjectId);
+    }).pipe(Effect.provide(updateTestLayer)),
+);
+
+// ---------- deterministic scheduler probes ----------
+// Post-statement hooks on the service's SqlClient pin the contested windows:
+// the due-read hook runs after the SELECT's connection permit is released, so
+// a competing edit commits in exactly the read/dispatch gap; the mark-read
+// hook proves the dispatch transaction revalidated the row; a follow-up
+// due-read gives a sleep-free endpoint after which the iteration is done.
+type SqlProbe = (
+  statement: string,
+  rows: ReadonlyArray<unknown>,
+) => Effect.Effect<void, SqlError.SqlError> | void;
+
+let sqlProbe: SqlProbe | null = null;
+
+const gatedSqlClient = Layer.unwrap(
+  Effect.gen(function* () {
+    const inner = yield* SqlClient.SqlClient;
+    const call = inner as (
+      strings: TemplateStringsArray,
+      ...args: ReadonlyArray<unknown>
+    ) => Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>;
+    const gated = Object.assign((strings: unknown, ...args: ReadonlyArray<unknown>): unknown => {
+      if (typeof strings === "string") {
+        return (inner as (name: string) => unknown)(strings);
+      }
+      const statement = call(strings as TemplateStringsArray, ...args);
+      const effect = statement.pipe(
+        Effect.andThen((rows) => {
+          const probe = sqlProbe;
+          if (probe === null) return Effect.succeed(rows);
+          const text = (strings as TemplateStringsArray).join(" ");
+          const hook = probe(text, rows);
+          return hook === undefined ? Effect.succeed(rows) : Effect.as(hook, rows);
+        }),
+      );
+      // Piping drops the Fragment interface, which `sql.and` clauses rely on
+      // to embed — restore the data props so the gated value stays both an
+      // executable Effect and an embeddable fragment.
+      return Object.assign(effect, {
+        "~effect/sql/Fragment": "~effect/sql/Fragment",
+        segments: (statement as unknown as { segments: ReadonlyArray<unknown> }).segments,
+      });
+    }, inner);
+    return Layer.succeed(SqlClient.SqlClient, gated as unknown as SqlClient.SqlClient);
+  }),
+);
+
+let dispatchLaunchCount = 0;
+let dispatchLaunched: Deferred.Deferred<void> | null = null;
+
+const countingLaunchLayer = Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+  launch: () =>
+    Effect.gen(function* () {
+      dispatchLaunchCount += 1;
+      const signal = dispatchLaunched;
+      if (signal !== null) yield* Deferred.succeed(signal, undefined);
+      return {
+        threadId: ThreadId.make("thread:scheduled-run"),
+        projection: {} as unknown as OrchestrationV2ThreadProjection,
+        resumed: false,
+      };
+    }),
+});
+
+// A lock timeout reported only through a raw `errcode`, without the client's
+// `errno` normalization: the native-code fallback must still retry it.
+const nodeBusyError = () =>
+  new SqlError.SqlError({
+    reason: new SqlError.UnknownError({
+      cause: Object.assign(new Error("database is locked"), { errcode: 5 }),
+    }),
+  });
+
+// The same lock timeout as Bun reports it — `code`/`errno`, which the
+// classifier maps to a retryable LockTimeoutError. Both shapes must retry.
+const bunBusyError = () =>
+  new SqlError.SqlError({
+    reason: new SqlError.LockTimeoutError({
+      cause: Object.assign(new Error("database is locked"), {
+        code: "SQLITE_BUSY",
+        errno: 5,
+      }),
+    }),
+  });
+
+const gatedDispatchLayer = ScheduledTaskService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      gatedSqlClient.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+      NodeCrypto.layer,
+      Scheduler.layer,
+      countingLaunchLayer,
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    ),
+  ),
+);
+
+const isDueRead = (statement: string) =>
+  statement.includes("FROM scheduled_tasks") && statement.includes("next_run_at <=");
+const isMarkRead = (statement: string) =>
+  statement.includes("FROM scheduled_tasks") &&
+  statement.includes("WHERE task_id") &&
+  !statement.includes("AND project_id") &&
+  !statement.includes("next_run_at <=");
+const isTerminalWrite = (statement: string) =>
+  statement.includes("UPDATE scheduled_tasks") && statement.includes("run_count = run_count + 1");
+
+// Arms the due-read gate: the first non-empty due read parks the scheduler
+// between "found due" and "dispatch"; every later due read ticks nextPoll so
+// the test can wait for the iteration to fully drain without sleeping.
+const armDueReadGate = (
+  dueArrived: Deferred.Deferred<void>,
+  dueProceed: Deferred.Deferred<void>,
+  nextPoll: Deferred.Deferred<void>,
+  rechecked: Deferred.Deferred<void>,
+) => {
+  let dueSeen = false;
+  sqlProbe = (statement, rows) => {
+    if (isDueRead(statement)) {
+      if (!dueSeen && rows.length > 0) {
+        dueSeen = true;
+        return Deferred.succeed(dueArrived, undefined).pipe(
+          Effect.andThen(Deferred.await(dueProceed)),
+        );
+      }
+      if (dueSeen) return Deferred.succeed(nextPoll, undefined);
+      return;
+    }
+    if (dueSeen && isMarkRead(statement)) {
+      return Deferred.succeed(rechecked, undefined);
+    }
+  };
+};
+
+// Each edit commits while the poll that found the task due is parked before
+// the dispatch transaction revalidates the row; the run must honour it.
+it.effect.each([
+  {
+    name: "pause",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.update({ id: updateTaskId, projectId: updateProjectId, enabled: false }),
+  },
+  {
+    name: "postpone",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      }),
+  },
+  {
+    name: "delete",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.delete({ id: updateTaskId }),
+  },
+])("scheduled dispatch honours a $name committed after the due read", ({ edit }) =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask; // interval 60s: due at T+60s
+    const dueArrived = yield* Deferred.make<void>();
+    const dueProceed = yield* Deferred.make<void>();
+    const rechecked = yield* Deferred.make<void>();
+    const nextPoll = yield* Deferred.make<void>();
+    dispatchLaunchCount = 0;
+    dispatchLaunched = null;
+    armDueReadGate(dueArrived, dueProceed, nextPoll, rechecked);
+    try {
+      const adjust = yield* TestClock.adjust("65 seconds").pipe(Effect.forkChild);
+      yield* Deferred.await(dueArrived);
+      yield* edit(tasks);
+      const edited = yield* findSeeded;
+      yield* Deferred.succeed(dueProceed, undefined);
+      yield* Fiber.join(adjust);
+      yield* Deferred.await(rechecked); // the mark transaction re-read the row
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(nextPoll); // the contested iteration fully drained
+      assert.equal(dispatchLaunchCount, 0);
+      const after = yield* findSeeded;
+      // The skipped dispatch must not stamp over the edit's state, including
+      // a postponed due time.
+      assert.equal(after?.nextRunAt, edited?.nextRunAt);
+      assert.equal(after?.lastRunStatus, edited?.lastRunStatus);
+      if (edited !== undefined) assert.equal(after?.lastRunStatus, "never");
+    } finally {
+      sqlProbe = null;
+    }
+  }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect("scheduled dispatch still fires when no edit lands in the gap", () =>
+  Effect.gen(function* () {
+    yield* seedTask;
+    const dueArrived = yield* Deferred.make<void>();
+    const dueProceed = yield* Deferred.make<void>();
+    const rechecked = yield* Deferred.make<void>();
+    const nextPoll = yield* Deferred.make<void>();
+    const settled = yield* Deferred.make<void>();
+    const launched = yield* Deferred.make<void>();
+    dispatchLaunchCount = 0;
+    dispatchLaunched = launched;
+    let dueSeen = false;
+    sqlProbe = (statement, rows) => {
+      if (isDueRead(statement)) {
+        if (!dueSeen && rows.length > 0) {
+          dueSeen = true;
+          return Deferred.succeed(dueArrived, undefined).pipe(
+            Effect.andThen(Deferred.await(dueProceed)),
+          );
+        }
+        if (dueSeen) return Deferred.succeed(nextPoll, undefined);
+        return;
+      }
+      if (dueSeen && isMarkRead(statement)) {
+        return Deferred.succeed(rechecked, undefined);
+      }
+      if (isTerminalWrite(statement)) {
+        return Deferred.succeed(settled, undefined);
+      }
+    };
+    try {
+      const adjust = yield* TestClock.adjust("65 seconds").pipe(Effect.forkChild);
+      yield* Deferred.await(dueArrived);
+      yield* Deferred.succeed(dueProceed, undefined);
+      yield* Fiber.join(adjust);
+      yield* Deferred.await(rechecked);
+      yield* Deferred.await(launched);
+      yield* Deferred.await(settled);
+      assert.equal(dispatchLaunchCount, 1);
+      const after = yield* findSeeded;
+      assert.equal(after!.lastRunStatus, "succeeded");
+      assert.equal(after!.runCount, 1);
+    } finally {
+      sqlProbe = null;
+      dispatchLaunched = null;
+    }
+  }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect("a contended completion write retries instead of stranding the task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    dispatchLaunchCount = 0;
+    let injected = false;
+    sqlProbe = (statement) => {
+      // One-shot lock timeout on the completion write: without the
+      // contention retry the transaction's failure propagates and the row is
+      // left last_run_status='running', which due scans then exclude forever.
+      if (!injected && isTerminalWrite(statement) && statement.includes("last_run_at =")) {
+        injected = true;
+        return Effect.fail(nodeBusyError());
+      }
+    };
+    try {
+      const ran = yield* tasks.runNow({ id: updateTaskId });
+      assert.isTrue(injected); // the probe fired — the retry path ran
+      assert.equal(ran.task.lastRunStatus, "succeeded");
+      assert.equal(ran.task.runCount, 1);
+    } finally {
+      sqlProbe = null;
+    }
+  }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect("a contended recovery write retries instead of stranding the task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    dispatchLaunchCount = 0;
+    let completionFails = 0;
+    let releaseFails = 0;
+    sqlProbe = (statement) => {
+      if (!isTerminalWrite(statement)) return;
+      // Fail every completion write past the retry budget so the onError
+      // recovery path runs, then fail its terminal write once. Without the
+      // contention retry that leaves the row 'running' — excluded from due
+      // scans forever. ('failed' is a literal only in releaseStuckRun's SQL.)
+      if (statement.includes("last_run_at =")) {
+        completionFails += 1;
+        return Effect.fail(nodeBusyError());
+      }
+      if (statement.includes("'failed'")) {
+        releaseFails += 1;
+        // Bun-style contention shape — exercises the isRetryable branch.
+        if (releaseFails === 1) return Effect.fail(bunBusyError());
+      }
+    };
+    try {
+      const ran = yield* tasks.runNow({ id: updateTaskId }).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(ran)); // the exhausted completion tx surfaces
+      const after = yield* findSeeded;
+      assert.isAbove(completionFails, 1); // the completion retry really ran
+      assert.isAbove(releaseFails, 0); // the recovery write was contested
+      assert.equal(after!.lastRunStatus, "failed");
+      assert.equal(after!.runCount, 1);
+      assert.isNotNull(after!.nextRunAt); // re-aimed, not dropped
+    } finally {
+      sqlProbe = null;
+    }
+  }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect("update keeps a project move and a thread binding consistent", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    yield* seedProjectThreads;
+    // Binding to a v2 thread that lives in the task's project works.
+    const bound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+    });
+    assert.isTrue(Option.isSome(bound));
+    // A v1-only thread cannot be bound: the v2 projection is the only
+    // authority dispatch reads, and it has no row for this thread.
+    const boundV1 = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: v1ThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(boundV1)) assert.fail("expected a typed conflict");
+    assert.equal(boundV1.failure._tag, "ScheduledTaskError");
+    // A deleted v2 row still wins over a live v1 row for the same thread.
+    const deleted = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(deleted)) assert.fail("expected a typed conflict");
+    assert.equal(deleted.failure._tag, "ScheduledTaskError");
+    // An archived thread is rejected the same way: sendToThread refuses
+    // archived targets, so a bound task would save as runnable and then fail
+    // every dispatch.
+    const archived = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: archivedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(archived)) assert.fail("expected a typed conflict");
+    assert.equal(archived.failure._tag, "ScheduledTaskError");
+    // The contested merge: a move patch landing on top of the committed
+    // binding cannot keep a thread from the old project — the merged pair
+    // would fail every dispatch, so it is a typed conflict instead.
+    const moved = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, nextProjectId: otherProjectId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(moved)) assert.fail("expected a typed conflict");
+    assert.equal(moved.failure._tag, "ScheduledTaskError");
+    const kept = yield* findSeeded;
+    assert.equal(kept?.projectId, updateProjectId);
+    assert.equal(kept?.threadId, boundThreadId);
+    // The explicit escape hatch: unbind and move in the same patch.
+    const unbound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      nextProjectId: otherProjectId,
+      threadId: null,
+    });
+    const movedTask = Option.getOrThrow(unbound).task;
+    assert.isNull(movedTask.threadId);
+    assert.equal(movedTask.projectId, otherProjectId);
+    // The reverse interleaving: after the move, binding a thread from the old
+    // project conflicts too.
+    const relink = yield* tasks
+      .update({ id: updateTaskId, projectId: otherProjectId, threadId: boundThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(relink)) assert.fail("expected a typed conflict");
+    assert.equal(relink.failure._tag, "ScheduledTaskError");
+    // And binding a thread that does not exist in the project at all.
+    const missing = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: otherProjectId,
+        threadId: ThreadId.make("thread:nowhere"),
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(missing)) assert.fail("expected a typed conflict");
+    assert.equal(missing.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
+// Bound-thread lifecycle coverage: the service reads thread liveness from the
+// v2 projection table inside its own transactions, so flipping a thread's
+// state means writing that row — the map only drives the sendToThread mock,
+// which still decides whether an in-flight dispatch is accepted.
+const archivedBindingProjectId = ProjectId.make("project:archived-binding");
+const archiveBoundThreadId = ThreadId.make("thread:archive-bound");
+const boundThreadArchivedAt = "2026-09-10T00:00:00.000Z";
+const boundThreadStates = new Map<string, "active" | "archived" | "deleted">();
+const boundThreadStateOf = (threadId: string) => boundThreadStates.get(threadId) ?? "active";
+
+// Mirror a state flip into the projection row the service's in-transaction
+// reads consult; boundThreadStates keeps the sendToThread mock honest.
+const setBoundThreadState = (
+  threadId: ThreadId,
+  state: "active" | "archived" | "deleted",
+  projectId: ProjectId = archivedBindingProjectId,
+) =>
+  Effect.gen(function* () {
+    boundThreadStates.set(threadId, state);
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-14T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads
+        (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+         created_at, updated_at, archived_at, deleted_at, payload_json)
+      VALUES (
+        ${threadId}, ${projectId}, 'bound', 'codex', 'full-access', 'default',
+        ${now}, ${now},
+        ${state === "archived" ? boundThreadArchivedAt : null},
+        ${state === "deleted" ? now : null}, '{}'
+      )
+      ON CONFLICT (thread_id) DO UPDATE SET
+        project_id = excluded.project_id,
+        archived_at = excluded.archived_at,
+        deleted_at = excluded.deleted_at
+    `;
+  });
+
+let sendToThreadCalls = 0;
+// Optional dispatch gate: parks sendToThread between its entry and return so a
+// test can land an archive inside a deterministic mid-dispatch window.
+// acceptedAtEntry models a send the thread already accepted when the call
+// arrived — the archive may land while the dispatch is in flight without the
+// send itself being rejected.
+let sendBarrier: {
+  readonly started: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+  readonly acceptedAtEntry?: boolean;
+} | null = null;
+
+// The stored-event source is a parameter so each service instance gets its
+// own tail: a shared queue would let a still-running reactor from another
+// test steal this test's events. Events at or before the requested cursor are
+// dropped, as the real store does, so a reactor resuming from the wrong
+// cursor misses events here too.
+const boundThreadManagementMockFrom = (
+  storedEvents: Stream.Stream<OrchestrationV2StoredEvent>,
+  onSubscribe?: (afterSequence: number | undefined) => void,
+) =>
+  Layer.mock(ThreadManagementService.ThreadManagementService)({
+    streamStoredEventsFrom: (input) => {
+      onSubscribe?.(input?.afterSequence);
+      return storedEvents.pipe(
+        Stream.filter((stored) => stored.sequence > (input?.afterSequence ?? 0)),
+      );
+    },
+    sendToThread: (input) =>
+      Effect.gen(function* () {
+        sendToThreadCalls += 1;
+        const barrier = sendBarrier;
+        const acceptedAtEntry =
+          barrier?.acceptedAtEntry === true
+            ? boundThreadStateOf(input.threadId) === "active"
+            : null;
+        if (barrier !== null) {
+          yield* Deferred.succeed(barrier.started, undefined);
+          yield* Deferred.await(barrier.release);
+        }
+        const sendable = acceptedAtEntry ?? boundThreadStateOf(input.threadId) === "active";
+        if (!sendable) {
+          return yield* new ThreadManagementService.ThreadManagementThreadArchivedError({
+            threadId: input.threadId,
+          });
+        }
+        return {} as ThreadManagementService.ThreadManagementSendResult;
+      }),
+  });
+
+// Live domain events numbered from 1, after anything an empty event log holds.
+const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) =>
+  boundThreadManagementMockFrom(
+    domainEvents.pipe(
+      Stream.zipWithIndex,
+      Stream.map(
+        ([event, index]) =>
+          ({ sequence: index + 1, commandId: null, event }) satisfies OrchestrationV2StoredEvent,
+      ),
+    ),
+  );
+
+const boundThreadTestDeps = Layer.mergeAll(
+  SqlitePersistence.layerMemory,
+  NodeCrypto.layer,
+  Scheduler.layer,
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  boundThreadManagementMock(Stream.never),
+);
+
+// Same service plus direct SQL access: the tests plant projection and
+// event-log state the public API cannot express.
+const boundThreadTestLayerWithSql = ScheduledTaskService.layer.pipe(
+  Layer.provideMerge(boundThreadTestDeps),
+);
+
+// A persisted thread lifecycle event row. Rows land in insert order, so the
+// archive-vs-enable ordering a test wants is just the order these calls run
+// in relative to the task writes.
+const insertThreadEvent = (threadId: ThreadId, type: string, occurredAt: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const version = yield* sql<{ next: number }>`
+      SELECT COALESCE(MAX(stream_version), -1) + 1 AS next
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+    `;
+    yield* sql`INSERT INTO orchestration_events ${sql.insert({
+      event_id: `event:${type}:${threadId}:${occurredAt}:${version[0]?.next ?? 0}`,
+      aggregate_kind: "thread",
+      stream_id: threadId,
+      stream_version: version[0]?.next ?? 0,
+      event_type: type,
+      occurred_at: occurredAt,
+      command_id: null,
+      causation_event_id: null,
+      correlation_id: null,
+      actor_kind: "server",
+      payload_json: "{}",
+      metadata_json: "{}",
+      application_event_version: 2,
+    })}`;
+  });
+
+// The service layer needs SqlClient itself: this variant lets a test seed raw
+// rows before building the service (the startup sweep runs at layer build).
+const boundThreadTestDepsWithoutSqlite = Layer.mergeAll(
+  NodeCrypto.layer,
+  Scheduler.layer,
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  boundThreadManagementMock(Stream.never),
+);
+
+const boundTaskInput = {
+  title: "bound",
+  prompt: "bound prompt",
+  schedule: { type: "interval", everyMs: 60_000 },
+  projectId: archivedBindingProjectId,
+  threadId: archiveBoundThreadId,
+  workspaceStrategy: { type: "root" },
+  modelSelection: {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.1-codex",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  createdBy: "user",
+  creationSource: "web",
+} as const;
+
+const seedBoundTask = (enabled: boolean) =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const { task } = yield* tasks.upsert({ ...boundTaskInput, enabled });
+    return task;
+  });
+
+const findTaskById = (id: ScheduledTaskId) =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const { tasks: all } = yield* tasks.list();
+    return all.find((candidate) => candidate.id === id);
+  });
+
+it.effect(
+  "rejects binding an enabled task to an archived thread while storing a disabled one",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+
+      const rejected = yield* tasks.upsert({ ...boundTaskInput, enabled: true }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(rejected));
+      if (Exit.isFailure(rejected)) {
+        assert.include(Cause.pretty(rejected.cause), "archived");
+      }
+      assert.isUndefined(
+        yield* Effect.map(tasks.list(), ({ tasks: all }) =>
+          all.find((candidate) => candidate.threadId === archiveBoundThreadId),
+        ),
+      );
+
+      const disabled = yield* tasks.upsert({ ...boundTaskInput, enabled: false });
+      assert.isFalse(disabled.task.enabled);
+      assert.isNull(disabled.task.nextRunAt);
+      assert.equal(disabled.task.threadId, archiveBoundThreadId);
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect(
+  "archiving a bound thread pauses its task; re-enable stays explicit until unarchive",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      const seeded = yield* seedBoundTask(true);
+      assert.isNotNull(seeded.nextRunAt);
+
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+      yield* tasks.pauseForThread(archiveBoundThreadId);
+      const paused = yield* findTaskById(seeded.id);
+      assert.isDefined(paused);
+      assert.isFalse(paused!.enabled);
+      assert.isNull(paused!.nextRunAt);
+
+      const rejected = yield* tasks.setEnabled({ id: seeded.id, enabled: true }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(rejected));
+      if (Exit.isFailure(rejected)) {
+        assert.include(Cause.pretty(rejected.cause), "archived");
+      }
+
+      // Unarchive alone never resumes the task; the explicit re-enable does.
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      const stillPaused = yield* findTaskById(seeded.id);
+      assert.isFalse(stillPaused!.enabled);
+      const resumed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+      assert.isTrue(resumed.task.enabled);
+      assert.isNotNull(resumed.task.nextRunAt);
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a stale archive event still pauses a task that was never re-enabled", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    assert.isNotNull(seeded.nextRunAt);
+
+    // The archive event committed after the task was enabled (higher
+    // sequence), then the thread was unarchived before the pause landed: the
+    // event is stale, but unarchive alone must not resume the schedule. The
+    // occurred_at is deliberately earlier than the enable's write time — the
+    // ordering comes from commit sequence, not the wall-clock timestamp.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "1969-12-31T23:59:59.000Z");
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a compacted archive event still pauses via its command receipt", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    assert.isNotNull(seeded.nextRunAt);
+
+    // The archive committed through the command path, then the thread was
+    // unarchived and event compaction deleted every superseded state event —
+    // only a later non-archive event and the never-compacted command receipt
+    // remain. The receipt's result_sequence is the archived event's
+    // sequence, so the enablement watermark still sees the archive and the
+    // task pauses instead of dispatching without an explicit re-enable.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    const archivedSeq = yield* sql<{ readonly sequence: number }>`
+      SELECT sequence FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${archiveBoundThreadId}
+        AND event_type = 'thread.archived'
+    `;
+    yield* sql`INSERT INTO orchestration_command_receipts ${sql.insert({
+      command_id: "command:archive:compacted",
+      aggregate_kind: "thread",
+      aggregate_id: archiveBoundThreadId,
+      command_type: "thread.archive",
+      accepted_at: "2026-01-01T00:00:01.000Z",
+      result_sequence: archivedSeq[0]!.sequence,
+      status: "accepted",
+      error: null,
+    })}`;
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.pinned", "2026-01-01T00:00:03.000Z");
+    yield* sql`
+      DELETE FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${archiveBoundThreadId}
+        AND event_type IN ('thread.archived', 'thread.unarchived')
+    `;
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+    // A later explicit enable outranks the retained receipt too.
+    yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    sendToThreadCalls = 0;
+    const ran = yield* tasks.runNow({ id: seeded.id });
+    assert.isTrue(ran.task.enabled);
+    assert.equal(sendToThreadCalls, 1);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a stale archive event spares an explicit post-unarchive re-enable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // The archive committed, the pause landed, the thread was unarchived, and
+    // the task was explicitly re-enabled after — the re-enable's enabled_seq
+    // watermarks past the unarchive event, newer than the archive's sequence.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const resumed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    assert.isTrue(resumed.task.enabled);
+    const row = yield* sql<{
+      enabled_seq: number | null;
+    }>`SELECT enabled_seq FROM scheduled_tasks WHERE task_id = ${seeded.id}`;
+    assert.isNotNull(row[0]?.enabled_seq);
+
+    // The delayed archive event finally arrives; the re-enable must stand.
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an explicit enable after unarchive is spared even if the pause never ran", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // Archive and unarchive both commit while the archive event is still
+    // queued, so the pause never landed and the task is still enabled. The
+    // explicit enable that follows — a no-op flag-wise — must still
+    // re-watermark past the archive, or the delayed event pauses a task the
+    // user affirmatively enabled.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+    const affirmed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    assert.isTrue(affirmed.task.enabled);
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an enabled:true update after unarchive re-affirms an already-enabled task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+    const updated = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      enabled: true,
+    });
+    assert.isTrue(Option.isSome(updated));
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+const overdueNextRunAt = "2020-01-01T00:00:00.000Z";
+
+// The task's stored enablement was voided by a committed archive whose pause
+// never landed (unarchive beat the reactor), leaving an overdue next_run_at.
+// Any explicit re-enable is a resume: the interval must restart from now, not
+// fire the stale due time a pre-archive schedule left behind.
+const pinOverdueAndArchive = (taskId: ScheduledTaskId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${taskId}`;
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+  });
+
+it.effect("a setEnabled resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const affirmed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    assert.isTrue(affirmed.task.enabled);
+    assert.isNotNull(affirmed.task.nextRunAt);
+    assert.notEqual(affirmed.task.nextRunAt, overdueNextRunAt);
+    // The interval restarted from now — under the frozen test clock this is
+    // exactly the value the original seed produced.
+    assert.equal(affirmed.task.nextRunAt, seeded.nextRunAt);
+
+    // The delayed archive event must still spare the affirmed enablement.
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an enabled:true update resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const updated = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      enabled: true,
+    });
+    assert.isTrue(Option.isSome(updated));
+    const updatedTask = Option.getOrThrow(updated).task;
+    assert.isNotNull(updatedTask.nextRunAt);
+    assert.notEqual(updatedTask.nextRunAt, overdueNextRunAt);
+    assert.equal(updatedTask.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an unchanged-schedule upsert resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const { task: saved } = yield* tasks.upsert({
+      ...boundTaskInput,
+      id: seeded.id,
+      enabled: true,
+    });
+    assert.isNotNull(saved.nextRunAt);
+    assert.notEqual(saved.nextRunAt, overdueNextRunAt);
+    assert.equal(saved.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect(
+  "a due run pauses instead of dispatching while an archive+unarchive pause is pending",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      sendToThreadCalls = 0;
+      const seeded = yield* seedBoundTask(true);
+
+      // Archive and unarchive committed while the archive event is still queued
+      // for the reactor, so the pause never landed. Unarchive alone must not
+      // resume the schedule: the claim transaction sees the committed archive
+      // postdate the task's enablement and pauses instead of dispatching.
+      yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+      yield* insertThreadEvent(
+        archiveBoundThreadId,
+        "thread.unarchived",
+        "2026-01-01T00:00:02.000Z",
+      );
+
+      const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(attempted));
+      assert.equal(sendToThreadCalls, 0);
+      const after = yield* findTaskById(seeded.id);
+      assert.isDefined(after);
+      assert.isFalse(after!.enabled);
+      assert.isNull(after!.nextRunAt);
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("archive checks use a bounded event lookup on a long-lived thread", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* sql`
+      WITH RECURSIVE history(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 40000
+      )
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      )
+      SELECT 'history:' || n, 'thread', ${archiveBoundThreadId}, n,
+        'thread.visited', '2026-01-01T00:00:00.000Z', 'server', '{}', '{}', 2
+      FROM history
+    `;
+    const queries: string[] = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string" && query.includes("'thread.archived'")) {
+            queries.push(query);
+          }
+        };
+        return span;
+      },
+    });
+    sendToThreadCalls = 0;
+    yield* tasks.pauseForThread(archiveBoundThreadId).pipe(Effect.withTracer(tracer));
+    const ran = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.withTracer(tracer));
+    assert.equal(sendToThreadCalls, 1);
+    assert.isTrue(ran.task.enabled);
+    assert.equal(ran.task.runCount, 1);
+    assert.isAtLeast(queries.length, 2);
+    for (const query of queries) {
+      // Explain the actual pause/claim SQL, including its UNION and UPDATE,
+      // rather than a second hand-written copy of the archive predicate.
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+        Array.from(query.matchAll(/\?/g), () => null),
+      );
+      const details = plan.map((row) => row.detail).join("\n");
+      assert.match(
+        details,
+        /SEARCH orchestration_events USING (?:COVERING )?INDEX orchestration_events_v2_archived_threads_idx \(stream_id=\?\)/,
+      );
+      assert.notMatch(details, /idx_orch_events_stream_sequence|SCAN orchestration_events/);
+    }
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("archive checks ignore unrelated events and uncommitted receipts", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    const now = "2026-01-01T00:00:01.000Z";
+    for (const [index, overrides] of [
+      { application_event_version: 1 },
+      { aggregate_kind: "project" },
+      { stream_id: "thread:other" },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        event_id: `irrelevant-archive:${index}`,
+        aggregate_kind: "thread",
+        stream_id: archiveBoundThreadId,
+        stream_version: index,
+        event_type: "thread.archived",
+        occurred_at: now,
+        actor_kind: "server",
+        payload_json: "{}",
+        metadata_json: "{}",
+        application_event_version: 2,
+        ...overrides,
+      })}`;
+    }
+    for (const [index, overrides] of [
+      { status: "rejected" },
+      { status: "reserved" },
+      { result_sequence: 0 },
+      { aggregate_kind: "project" },
+      { aggregate_id: "thread:other" },
+      { command_type: "thread.unarchive" },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_command_receipts ${sql.insert({
+        command_id: `irrelevant-receipt:${index}`,
+        aggregate_kind: "thread",
+        aggregate_id: archiveBoundThreadId,
+        command_type: "thread.archive",
+        accepted_at: now,
+        result_sequence: 100,
+        status: "accepted",
+        error: null,
+        ...overrides,
+      })}`;
+    }
+    sendToThreadCalls = 0;
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const ran = yield* tasks.runNow({ id: seeded.id });
+    assert.isTrue(ran.task.enabled);
+    assert.equal(sendToThreadCalls, 1);
+    // A matching V2 archive still voids the same enablement.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", now);
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const paused = yield* findTaskById(seeded.id);
+    assert.isFalse(paused!.enabled);
+    assert.isNull(paused!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a legacy NULL-watermark task is spared on a never-archived thread", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    // A row enabled before enabled_seq existed carries NULL. A pause pass on
+    // a thread with no committed archive must leave it alone.
+    yield* sql`UPDATE scheduled_tasks SET enabled_seq = NULL WHERE task_id = ${seeded.id}`;
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a legacy NULL-watermark task pauses when its thread has archive history", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* sql`UPDATE scheduled_tasks SET enabled_seq = NULL WHERE task_id = ${seeded.id}`;
+    // The thread was archived after the task existed, then unarchived before
+    // the pause landed — unarchive alone must not spare the legacy row.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("rebinding an enabled task is not undone by the destination's earlier archive", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const rearchiveBoundThreadId = ThreadId.make("thread:previously-archived");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // The destination thread was archived and unarchived before the task was
+    // ever bound to it. The rebind refreshes enabled_seq past that archive,
+    // so a delayed pause pass must not disable the healthy task.
+    yield* insertThreadEvent(rearchiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(
+      rearchiveBoundThreadId,
+      "thread.unarchived",
+      "2026-01-01T00:00:02.000Z",
+    );
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+    });
+    assert.isTrue(Option.isSome(rebound));
+    assert.isTrue(Option.getOrThrow(rebound).task.enabled);
+
+    yield* tasks.pauseForThread(rearchiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("rebinding off a voided binding restarts the interval on the healthy thread", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-healthy");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    // The stored binding's enablement was voided: archive+unarchive committed
+    // while the pause is still queued, leaving an overdue due time behind.
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+      enabled: true,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.isTrue(reboundTask.enabled);
+    // The invalidation belongs to the stored binding — the move must restart
+    // the interval, not carry the overdue due time onto the new thread.
+    assert.notEqual(reboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(reboundTask.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("rebinding onto a previously archived thread keeps the pending due time", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-stale-history");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    // A pending due time mid-interval — the value a wrongful "resume" would
+    // overwrite with a fresh interval.
+    const pendingDueAt = "2020-06-01T00:00:00.000Z";
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${pendingDueAt} WHERE task_id = ${seeded.id}`;
+    // The destination's archive+unarchive predate this binding entirely; the
+    // stored binding was never archived, so this enablement is intact.
+    yield* insertThreadEvent(rearchiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(
+      rearchiveBoundThreadId,
+      "thread.unarchived",
+      "2026-01-01T00:00:02.000Z",
+    );
+
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+      enabled: true,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.equal(reboundTask.nextRunAt, pendingDueAt);
+
+    // The rebind watermarked past the destination's old archive, so its
+    // delayed pause must not disable the healthy task.
+    yield* tasks.pauseForThread(rearchiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.equal(after!.nextRunAt, pendingDueAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("unbinding a voided binding restarts the interval on the launch path", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const unbound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: null,
+      enabled: true,
+    });
+    const unboundTask = Option.getOrThrow(unbound).task;
+    assert.isNull(unboundTask.threadId);
+    assert.isTrue(unboundTask.enabled);
+    assert.notEqual(unboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(unboundTask.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an upsert whose write lands after a committed pause restarts fresh", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const gateArmed = yield* Ref.make(false);
+        const deps = yield* Layer.build(
+          Layer.mergeAll(
+            SqlitePersistence.layerMemory,
+            NodeCrypto.layer,
+            Scheduler.layer,
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            boundThreadManagementMock(Stream.never),
+          ),
+        );
+        const sqlClient = Context.get(deps, SqlClient.SqlClient);
+        const realWithTransaction = sqlClient.withTransaction;
+        Object.assign(sqlClient, {
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() =>
+              Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
+            ).pipe(
+              Effect.flatMap((gated) =>
+                gated
+                  ? Deferred.succeed(entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                      Effect.andThen(realWithTransaction(effect)),
+                    )
+                  : realWithTransaction(effect),
+              ),
+            ),
+        });
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        yield* setBoundThreadState(archiveBoundThreadId, "active");
+        const { task: seeded } = yield* tasks.upsert({ ...boundTaskInput, enabled: true });
+        yield* sqlClient`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${seeded.id}`;
+
+        // The upsert's whole transaction is parked while the archive pause
+        // commits: the row it reads must already be the paused one, or the
+        // save would restore the overdue due time the pause just cleared.
+        yield* Ref.set(gateArmed, true);
+        const upsertExit = yield* tasks
+          .upsert({ ...boundTaskInput, id: seeded.id, enabled: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* insertThreadEvent(
+          archiveBoundThreadId,
+          "thread.archived",
+          "2026-01-01T00:00:01.000Z",
+        );
+        yield* setBoundThreadState(archiveBoundThreadId, "archived");
+        yield* tasks.pauseForThread(archiveBoundThreadId);
+        yield* insertThreadEvent(
+          archiveBoundThreadId,
+          "thread.unarchived",
+          "2026-01-01T00:00:02.000Z",
+        );
+        yield* setBoundThreadState(archiveBoundThreadId, "active");
+        yield* Deferred.succeed(release, undefined);
+        const saved = yield* Fiber.join(upsertExit);
+        assert.isTrue(Exit.isSuccess(saved));
+        if (Exit.isSuccess(saved)) {
+          assert.isTrue(saved.value.task.enabled);
+          assert.isNotNull(saved.value.task.nextRunAt);
+          assert.notEqual(saved.value.task.nextRunAt, overdueNextRunAt);
+        }
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a binding-only update on a voided enablement restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-binding-only");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    // No enabled field at all: the rebind alone refreshes the watermark past
+    // the stored binding's archive, escaping the queued pause — so the
+    // overdue due time must restart rather than fire on the new thread.
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.isTrue(reboundTask.enabled);
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.notEqual(reboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(reboundTask.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(rearchiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a paused task bound to an archived thread stays editable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const paused = yield* seedBoundTask(false);
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+
+    const edited = yield* tasks.update({
+      id: paused.id,
+      projectId: archivedBindingProjectId,
+      title: "still editable",
+    });
+    assert.isTrue(Option.isSome(edited));
+    if (Option.isSome(edited)) assert.equal(edited.value.task.title, "still editable");
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("update cannot enable or bind an archived-thread task, but unbinding stays allowed", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const pausedBound = yield* seedBoundTask(false);
+    const { task: unbound } = yield* tasks.upsert({
+      ...boundTaskInput,
+      enabled: true,
+      threadId: null,
+    });
+
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+
+    const enableRejected = yield* tasks
+      .update({ id: pausedBound.id, projectId: archivedBindingProjectId, enabled: true })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(enableRejected));
+
+    const bindRejected = yield* tasks
+      .update({
+        id: unbound.id,
+        projectId: archivedBindingProjectId,
+        threadId: archiveBoundThreadId,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(bindRejected));
+    const unboundTask = yield* findTaskById(unbound.id);
+    assert.isNull(unboundTask!.threadId);
+
+    // Unbinding while archived is the supported escape hatch.
+    const unboundUpdate = yield* tasks.update({
+      id: pausedBound.id,
+      projectId: archivedBindingProjectId,
+      enabled: true,
+      threadId: null,
+    });
+    assert.isTrue(Option.isSome(unboundUpdate));
+    assert.isTrue(Option.getOrThrow(unboundUpdate).task.enabled);
+    assert.isNull(Option.getOrThrow(unboundUpdate).task.threadId);
+    assert.isNotNull(Option.getOrThrow(unboundUpdate).task.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+// Parks the next sql.withTransaction call between two Deferreds so a second
+// mutation can commit deterministically in the gap. With the bound-thread
+// guard outside the transaction, setEnabled validates the stale pre-image
+// and then enables the racing update's binding; inside the transaction it
+// re-reads the committed row and rejects.
+it.effect("an enable racing a committed rebind still validates the new binding", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const gateArmed = yield* Ref.make(false);
+        // Wrap the built SqlClient instance in place so the service sees the
+        // gate regardless of layer-merge precedence.
+        const deps = yield* Layer.build(
+          Layer.mergeAll(
+            SqlitePersistence.layerMemory,
+            NodeCrypto.layer,
+            Scheduler.layer,
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            boundThreadManagementMock(Stream.never),
+          ),
+        );
+        const sqlClient = Context.get(deps, SqlClient.SqlClient);
+        const realWithTransaction = sqlClient.withTransaction;
+        Object.assign(sqlClient, {
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() =>
+              Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
+            ).pipe(
+              Effect.flatMap((gated) =>
+                gated
+                  ? Deferred.succeed(entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                      Effect.andThen(realWithTransaction(effect)),
+                    )
+                  : realWithTransaction(effect),
+              ),
+            ),
+        });
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        const { task: seeded } = yield* tasks.upsert({
+          ...boundTaskInput,
+          enabled: false,
+          threadId: null,
+        });
+        // The service runs on the explicitly-built sqlClient — a second
+        // in-memory database — so the projection row must be written there,
+        // not through the test's ambient client.
+        yield* setBoundThreadState(archiveBoundThreadId, "archived").pipe(
+          Effect.provideService(SqlClient.SqlClient, sqlClient),
+        );
+
+        // setEnabled parks just before its transaction; the concurrent
+        // update then commits the archived binding while the task is still
+        // disabled — the only interleaving the old outside-transaction check
+        // could miss.
+        yield* Ref.set(gateArmed, true);
+        const enableExit = yield* tasks
+          .setEnabled({ id: seeded.id, enabled: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(entered);
+        const bound = yield* tasks.update({
+          id: seeded.id,
+          projectId: archivedBindingProjectId,
+          threadId: archiveBoundThreadId,
+        });
+        assert.isTrue(Option.isSome(bound));
+        yield* Deferred.succeed(release, undefined);
+        const enable = yield* Fiber.join(enableExit);
+        assert.isTrue(Exit.isFailure(enable));
+        const after = yield* Effect.map(tasks.list(), ({ tasks: all }) =>
+          all.find((candidate) => candidate.id === seeded.id),
+        );
+        assert.isDefined(after);
+        assert.isFalse(after!.enabled);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a binding committed while disabled is still caught when enabling", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const { task: seeded } = yield* tasks.upsert({
+      ...boundTaskInput,
+      enabled: false,
+      threadId: null,
+    });
+
+    // The bind lands while the task is disabled — allowed, since a stored
+    // disabled task may point anywhere. The enable that follows must still
+    // validate the binding the earlier write committed.
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+    const bound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: archiveBoundThreadId,
+    });
+    assert.isTrue(Option.isSome(bound));
+    assert.equal(Option.getOrThrow(bound).task.threadId, archiveBoundThreadId);
+
+    const rejected = yield* tasks.setEnabled({ id: seeded.id, enabled: true }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(rejected));
+    if (Exit.isFailure(rejected)) {
+      assert.include(Cause.pretty(rejected.cause), "archived");
+    }
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a run firing against a cross-project thread pauses instead of dispatching", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const crossProjectThreadId = ThreadId.make("thread:archive-cross-project");
+    yield* setBoundThreadState(crossProjectThreadId, "active");
+    sendToThreadCalls = 0;
+    const { task: seeded } = yield* tasks.upsert({
+      ...boundTaskInput,
+      enabled: true,
+      threadId: crossProjectThreadId,
+    });
+
+    // The thread is owned by another project — a binding that write-time
+    // validation can no longer produce, but the fire-time check must still
+    // pause it rather than loop a guaranteed sendToThread rejection.
+    yield* setBoundThreadState(
+      crossProjectThreadId,
+      "active",
+      ProjectId.make("project:other-owner"),
+    );
+    const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(attempted));
+    assert.equal(sendToThreadCalls, 0);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a run firing after its bound thread is deleted pauses instead of dispatching", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const deletedThreadId = ThreadId.make("thread:fire-deleted");
+    yield* setBoundThreadState(deletedThreadId, "active");
+    sendToThreadCalls = 0;
+    const { task: seeded } = yield* tasks.upsert({
+      ...boundTaskInput,
+      enabled: true,
+      threadId: deletedThreadId,
+    });
+
+    // The thread was deleted but its pause has not landed — the fire-time
+    // check sees no shell at all and must pause, not loop sendToThread.
+    yield* setBoundThreadState(deletedThreadId, "deleted");
+    const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(attempted));
+    assert.equal(sendToThreadCalls, 0);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("a run firing after archive pauses the task instead of dispatching", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    sendToThreadCalls = 0;
+    const seeded = yield* seedBoundTask(true);
+
+    // The archive committed but its pause has not landed yet — the
+    // fire-time check is the backstop that must not dispatch.
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+    const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(attempted));
+    assert.equal(sendToThreadCalls, 0);
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+    // Nothing was dispatched, so no phantom run may be recorded.
+    assert.equal(after!.lastRunStatus, "never");
+    assert.equal(after!.runCount, 0);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("records a rejected run when archive lands mid-dispatch and never re-arms", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    sendToThreadCalls = 0;
+    const seeded = yield* seedBoundTask(true);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    sendBarrier = { started, release };
+    try {
+      const runFiber = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.forkChild);
+      // The dispatch is parked inside sendToThread: the archive pause lands
+      // deterministically between markRunning and the completion write.
+      yield* Deferred.await(started);
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+      yield* tasks.pauseForThread(archiveBoundThreadId);
+      yield* Deferred.succeed(release, undefined);
+      const finished = yield* Fiber.join(runFiber);
+      // The rejected run is recorded once as failed — the archive pause is
+      // not overwritten by the completion write.
+      assert.equal(finished.task.lastRunStatus, "failed");
+      assert.equal(finished.task.runCount, 1);
+      assert.isFalse(finished.task.enabled);
+      assert.isNull(finished.task.nextRunAt);
+    } finally {
+      sendBarrier = null;
+    }
+    const after = yield* findTaskById(seeded.id);
+    assert.isDefined(after);
+    assert.isFalse(after!.enabled);
+    assert.isNull(after!.nextRunAt);
+    // No recurring doomed dispatches: a second fire refuses before sending.
+    const second = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(second));
+    assert.equal(sendToThreadCalls, 1);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect(
+  "keeps a durably accepted run's success when archive lands mid-dispatch and never re-arms",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      sendToThreadCalls = 0;
+      const seeded = yield* seedBoundTask(true);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      // The thread accepted the dispatch before the archive landed, so the
+      // send itself completes — the pause must not drop or re-arm it.
+      sendBarrier = { started, release, acceptedAtEntry: true };
+      try {
+        const runFiber = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* setBoundThreadState(archiveBoundThreadId, "archived");
+        yield* tasks.pauseForThread(archiveBoundThreadId);
+        yield* Deferred.succeed(release, undefined);
+        const finished = yield* Fiber.join(runFiber);
+        // The accepted run is recorded exactly once as succeeded — the
+        // completion write respects the pause that landed mid-dispatch.
+        assert.equal(finished.task.lastRunStatus, "succeeded");
+        assert.equal(finished.task.runCount, 1);
+        assert.isFalse(finished.task.enabled);
+        assert.isNull(finished.task.nextRunAt);
+      } finally {
+        sendBarrier = null;
+      }
+      const after = yield* findTaskById(seeded.id);
+      assert.isDefined(after);
+      assert.isFalse(after!.enabled);
+      assert.isNull(after!.nextRunAt);
+      assert.equal(after!.lastRunStatus, "succeeded");
+      assert.equal(after!.runCount, 1);
+      // No recurring doomed dispatches: a second fire refuses before sending.
+      const second = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(second));
+      assert.equal(sendToThreadCalls, 1);
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("the domain-event reactor pauses tasks on thread archive and delete", () =>
+  Effect.gen(function* () {
+    // scoped so the built layer's reactor fiber lives for the whole test body.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        sendToThreadCalls = 0;
+        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        // The reactor subscribes when the layer builds, so the service must come
+        // up inside the test with this queue already wired into the mock.
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Scheduler.layer,
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                boundThreadManagementMock(Stream.fromQueue(domainEvents)),
+              ),
+            ),
+          ),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        const archivedThreadId = ThreadId.make("thread:reactor-archived");
+        const deletedThreadId = ThreadId.make("thread:reactor-deleted");
+        yield* setBoundThreadState(archivedThreadId, "active");
+        yield* setBoundThreadState(deletedThreadId, "active");
+        const archivedTask = yield* tasks.upsert({
+          ...boundTaskInput,
+          enabled: true,
+          threadId: archivedThreadId,
+        });
+        const deletedTask = yield* tasks.upsert({
+          ...boundTaskInput,
+          enabled: true,
+          threadId: deletedThreadId,
+        });
+
+        const emittedAt = DateTime.makeUnsafe(boundThreadArchivedAt);
+        // The events mean the state change already committed — the mock must
+        // reflect it because the pause rechecks the live shell and ignores
+        // stale events (a thread unarchived before the event is consumed).
+        yield* setBoundThreadState(archivedThreadId, "archived");
+        yield* setBoundThreadState(deletedThreadId, "deleted");
+        yield* Queue.offer(domainEvents, {
+          id: EventId.make("event:reactor-archived"),
+          type: "thread.archived",
+          threadId: archivedThreadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          occurredAt: emittedAt,
+          payload: { id: archivedThreadId },
+        } as unknown as OrchestrationV2DomainEvent);
+        yield* Queue.offer(domainEvents, {
+          id: EventId.make("event:reactor-deleted"),
+          type: "thread.deleted",
+          threadId: deletedThreadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          occurredAt: emittedAt,
+          payload: { id: deletedThreadId, deletedAt: emittedAt },
+        } as unknown as OrchestrationV2DomainEvent);
+
+        // subscribeList re-emits on notifyChanged, so each pause is awaited on a
+        // real change receipt rather than a sleep.
+        const awaitPaused = (id: ScheduledTaskId) =>
+          tasks.subscribeList().pipe(
+            Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === id)),
+            Stream.filter((task) => task !== undefined && task.enabled === false),
+            Stream.runHead,
+          );
+        yield* awaitPaused(archivedTask.task.id);
+        yield* awaitPaused(deletedTask.task.id);
+        assert.equal(sendToThreadCalls, 0);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("replays an archive committed after the startup sweep checked its thread", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-09-09T12:00:00.000Z";
+        const seedTask = (taskId: string, threadId: ThreadId, nextRunAt: string) =>
+          sql`INSERT INTO scheduled_tasks ${sql.insert({
+            task_id: taskId,
+            title: taskId,
+            prompt: "prompt",
+            enabled: 1,
+            schedule_json: '{"type":"interval","everyMs":60000}',
+            project_id: archivedBindingProjectId,
+            thread_id: threadId,
+            workspace_strategy_json: '{"type":"root"}',
+            model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+            runtime_mode: "full-access",
+            interaction_mode: "default",
+            created_by: "user",
+            creation_source: "web",
+            created_at: now,
+            updated_at: now,
+            next_run_at: nextRunAt,
+            last_run_at: null,
+            last_run_status: "never",
+            last_run_error: null,
+            run_count: 0,
+          })}`;
+        // The sweep visits the live thread first, then pauses the task whose
+        // thread was archived while the server was down.
+        const liveThreadId = ThreadId.make("thread:archived-during-sweep");
+        const downThreadId = ThreadId.make("thread:archived-while-down");
+        const liveTaskId = ScheduledTaskId.make("scheduled-task:archived-during-sweep");
+        const downTaskId = ScheduledTaskId.make("scheduled-task:archived-while-down");
+        yield* seedTask(liveTaskId, liveThreadId, "2027-09-09T12:00:00.000Z");
+        yield* seedTask(downTaskId, downThreadId, "2027-09-10T12:00:00.000Z");
+        yield* setBoundThreadState(liveThreadId, "active");
+        yield* setBoundThreadState(downThreadId, "archived");
+        // An event already in the log at startup sits at or before the cursor.
+        yield* insertThreadEvent(liveThreadId, "thread.created", now);
+        // The sweep's pause of the second task commits an archive of the first
+        // thread, after the sweep has already found that thread active. A
+        // cursor read after the sweep would start past this archive.
+        yield* sql.unsafe(`
+          CREATE TRIGGER archive_live_thread_during_sweep
+          AFTER UPDATE OF enabled ON scheduled_tasks
+          WHEN NEW.task_id = '${downTaskId}' AND OLD.enabled = 1 AND NEW.enabled = 0
+          BEGIN
+            UPDATE orchestration_v2_projection_threads
+            SET archived_at = '${boundThreadArchivedAt}'
+            WHERE thread_id = '${liveThreadId}';
+            INSERT INTO orchestration_events (
+              event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+              command_id, causation_event_id, correlation_id, actor_kind, payload_json,
+              metadata_json, application_event_version
+            ) VALUES (
+              'event:archived-during-sweep', 'thread', '${liveThreadId}', 1, 'thread.archived',
+              '${boundThreadArchivedAt}', NULL, NULL, NULL, 'server', '{}', '{}', 2
+            );
+          END
+        `);
+
+        // The reactor's subscription parks on this gate, so it reads the log
+        // only after the sweep has finished.
+        const subscribed = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let requestedCursor: number | undefined;
+        const storedEvents = Stream.unwrap(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(subscribed, undefined);
+            yield* Deferred.await(release);
+            const rows = yield* sql<{
+              readonly sequence: number;
+              readonly event_id: string;
+              readonly event_type: string;
+              readonly stream_id: string;
+            }>`
+              SELECT sequence, event_id, event_type, stream_id
+              FROM orchestration_events ORDER BY sequence
+            `;
+            return Stream.fromIterable(
+              rows.map(
+                (row) =>
+                  ({
+                    sequence: row.sequence,
+                    commandId: null,
+                    event: {
+                      id: EventId.make(row.event_id),
+                      type: row.event_type,
+                      threadId: ThreadId.make(row.stream_id),
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                      occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                      payload: { id: row.stream_id },
+                    } as unknown as OrchestrationV2DomainEvent,
+                  }) satisfies OrchestrationV2StoredEvent,
+              ),
+            ).pipe(Stream.concat(Stream.never));
+          }).pipe(Effect.orDie),
+        );
+
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Scheduler.layer,
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                boundThreadManagementMockFrom(storedEvents, (afterSequence) => {
+                  requestedCursor = afterSequence;
+                }),
+              ),
+            ),
+          ),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        yield* Deferred.await(subscribed);
+        const taskOf = (id: ScheduledTaskId) =>
+          Effect.map(tasks.list(), ({ tasks: all }) =>
+            all.find((candidate) => candidate.id === id),
+          );
+        // The sweep paused the task archived while down, and found the other
+        // thread still active, so only replay can pause that one.
+        assert.isFalse((yield* taskOf(downTaskId))?.enabled);
+        assert.isTrue((yield* taskOf(liveTaskId))?.enabled);
+        const archived = yield* sql<{ readonly sequence: number }>`
+          SELECT sequence FROM orchestration_events
+          WHERE event_id = 'event:archived-during-sweep'
+        `;
+        assert.isDefined(requestedCursor);
+        assert.isBelow(requestedCursor!, archived[0]!.sequence);
+        yield* Deferred.succeed(release, undefined);
+
+        const paused = yield* tasks.subscribeList().pipe(
+          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === liveTaskId)),
+          Stream.filter((task) => task !== undefined && task.enabled === false),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(paused));
+        assert.isNull(Option.getOrThrow(paused)!.nextRunAt);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("the startup sweep leaves a task alone when its thread shell is not reconciled yet", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    // Legacy shells are imported into the v2 projection after the service is
+    // built, so the sweep can see a bound thread with no v2 row at all.
+    yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+      task_id: "scheduled-task:unreconciled",
+      title: "unreconciled",
+      prompt: "unreconciled prompt",
+      enabled: 1,
+      schedule_json: '{"type":"interval","everyMs":60000}',
+      project_id: archivedBindingProjectId,
+      thread_id: "thread:not-yet-reconciled",
+      workspace_strategy_json: '{"type":"root"}',
+      model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_by: "user",
+      creation_source: "web",
+      created_at: now,
+      updated_at: now,
+      next_run_at: "2027-09-09T12:00:00.000Z",
+      last_run_at: null,
+      last_run_status: "never",
+      last_run_error: null,
+      run_count: 0,
+    })}`;
+    const context = yield* Effect.scoped(
+      Layer.build(ScheduledTaskService.layer.pipe(Layer.provide(boundThreadTestDepsWithoutSqlite))),
+    );
+    const service = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+    const { tasks: all } = yield* service.list();
+    const kept = all.find(
+      (candidate) => candidate.id === ScheduledTaskId.make("scheduled-task:unreconciled"),
+    );
+    assert.isTrue(kept?.enabled);
+    assert.equal(kept?.nextRunAt, "2027-09-09T12:00:00.000Z");
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("the startup sweep pauses enabled tasks whose thread was archived while down", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+      task_id: "scheduled-task:swept",
+      title: "swept",
+      prompt: "swept prompt",
+      enabled: 1,
+      schedule_json: '{"type":"interval","everyMs":60000}',
+      project_id: archivedBindingProjectId,
+      thread_id: archiveBoundThreadId,
+      workspace_strategy_json: '{"type":"root"}',
+      model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_by: "user",
+      creation_source: "web",
+      created_at: now,
+      updated_at: now,
+      next_run_at: "2027-09-09T12:00:00.000Z",
+      last_run_at: null,
+      last_run_status: "never",
+      last_run_error: null,
+      run_count: 0,
+    })}`;
+    yield* setBoundThreadState(archiveBoundThreadId, "archived");
+
+    // Building the service against the seeded database runs the archive
+    // sweep before the test body — this is the crash-window recovery path.
+    const context = yield* Effect.scoped(
+      Layer.build(ScheduledTaskService.layer.pipe(Layer.provide(boundThreadTestDepsWithoutSqlite))),
+    );
+    const service = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+    const { tasks: all } = yield* service.list();
+    const swept = all.find(
+      (candidate) => candidate.id === ScheduledTaskId.make("scheduled-task:swept"),
+    );
+    assert.isDefined(swept);
+    assert.isFalse(swept!.enabled);
+    assert.isNull(swept!.nextRunAt);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
