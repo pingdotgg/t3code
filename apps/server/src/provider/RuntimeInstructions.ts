@@ -3,6 +3,15 @@ When the t3-code MCP server exposes link_pull_request, you must use it to regist
 </pull_request_linking>`;
 
 /**
+ * Only attached when the session actually has the `cua-driver` MCP server.
+ * The user shares the screen with the agent, so foreground delivery steals
+ * focus and windows the agent leaves open hide the thread they are watching.
+ */
+export const COMPUTER_USE_INSTRUCTIONS = `<computer_use>
+The cua-driver MCP tools control the computer the user is working on right now. Use them only for work that needs an app's GUI; when shell commands, other MCP tools, or the t3-code preview tools can do the task, use those instead. Every input tool (click, type_text, press_key, hotkey, scroll, drag, ...) defaults to delivery_mode "background", which acts on the target window without raising it or taking focus. Keep that default. Pass delivery_mode "foreground" only after a background action reported that it did not land, and never call bring_to_front just to look at a window: get_window_state captures it without activating it. Target windows by pid and window id rather than by what is frontmost. When the task is done, leave the desktop as you found it: close windows you opened, do not close windows the user had open, and restore the window that was active before you started so the user can see your reply.
+</computer_use>`;
+
+/**
  * Shared runtime context; omit model and effort when the harness manages them dynamically.
  * `modelName` is the display name users see in the model picker; `model` is the slug.
  */
@@ -11,6 +20,8 @@ export function buildRuntimeInstructions(runtime: {
   readonly model?: string | undefined;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  /** True when this session's tool list includes the managed `cua-driver` MCP server. */
+  readonly computerUse?: boolean | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -20,7 +31,8 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  const computerUse = runtime.computerUse ? `\n\n${COMPUTER_USE_INSTRUCTIONS}` : "";
+  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}${computerUse}`;
 }
 
 function toSingleLine(value: string): string {

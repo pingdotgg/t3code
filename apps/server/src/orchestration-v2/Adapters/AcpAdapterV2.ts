@@ -691,7 +691,10 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
   // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
   // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
   // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
-  // travels via environment variables, never the command line.
+  // travels via environment variables, never the command line. The managed
+  // Cua Driver is already a stdio server, so it is listed in both forms: an
+  // agent with MCP-over-ACP receives only `acpServers`.
+  const cua = McpProviderSession.cuaAcpMcpServers(session);
   return {
     servers: [
       {
@@ -704,8 +707,9 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
       },
+      ...cua,
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }, ...cua],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
@@ -6790,6 +6794,9 @@ export function makeAcpAdapterV2(
             text: buildRuntimeInstructions({
               harness: flavor.runtimeHarness ?? driver,
               model: turnInput.modelSelection.model,
+              computerUse:
+                McpProviderSession.readMcpProviderSession(turnInput.threadId)?.cuaDriver !==
+                undefined,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };

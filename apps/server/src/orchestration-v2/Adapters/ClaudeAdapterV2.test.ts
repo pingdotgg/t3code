@@ -500,6 +500,34 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     }
   };
 
+  it("attaches the managed Cua Driver as a stdio server beside t3-code", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-cua");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make(`environment-${threadId}`),
+      threadId,
+      providerSessionId: `mcp-session-${threadId}`,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-claude-token",
+      browserToolsAvailable: true,
+      cuaDriver: { command: "/resources/cua-driver", args: ["mcp"], environment: [] },
+    });
+    try {
+      const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+        threadId,
+        readOnlySandbox: false,
+      });
+      assert.deepEqual(overrides.mcpServers?.["cua-driver"], {
+        type: "stdio",
+        command: "/resources/cua-driver",
+        args: ["mcp"],
+        env: {},
+      });
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+  });
+
   it("leaves an absent allowlist absent when no MCP session exists", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       threadId: ThreadId.make("thread-claude-no-mcp-no-allowlist"),

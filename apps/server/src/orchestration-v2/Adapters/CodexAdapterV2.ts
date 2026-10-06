@@ -705,6 +705,8 @@ export function buildCodexTurnStartParams(input: {
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
+  /** The managed `cua-driver` MCP server is attached to this thread. */
+  readonly computerUse?: boolean;
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
 }) {
@@ -739,6 +741,7 @@ export function buildCodexTurnStartParams(input: {
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
+              computerUse: input.computerUse ?? false,
             },
           )
         : undefined;
@@ -1281,6 +1284,8 @@ export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  /** The user's Codex config already defines `cua-driver`; theirs wins. */
+  readonly userCuaDriver?: boolean;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1303,6 +1308,17 @@ export function codexThreadRuntimeParams(input: {
                   Authorization: mcpSession.authorizationHeader,
                 },
               },
+              ...(mcpSession.cuaDriver === undefined || input.userCuaDriver === true
+                ? {}
+                : {
+                    [McpProviderSession.CUA_MCP_SERVER_NAME]: {
+                      command: mcpSession.cuaDriver.command,
+                      args: [...mcpSession.cuaDriver.args],
+                      env: Object.fromEntries(
+                        mcpSession.cuaDriver.environment.map(({ name, value }) => [name, value]),
+                      ),
+                    },
+                  }),
             },
           }),
     },
@@ -1736,6 +1752,44 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             yield* Ref.set(initialized, true);
           }),
         );
+        /**
+         * Whether the user's merged Codex config (home and project layers)
+         * already defines `cua-driver`. Their server wins over the managed
+         * one, so a thread never gets two drivers. Read once per directory;
+         * an unreadable config also yields to the user.
+         */
+        const userCuaDriverByCwd = new Map<string, boolean>();
+        const userCuaDriver = (threadId: ThreadId | null, cwd: string | null | undefined) =>
+          Effect.gen(function* () {
+            // Only a thread with the managed driver needs the answer.
+            if (
+              threadId === null ||
+              McpProviderSession.readMcpProviderSession(threadId)?.cuaDriver === undefined
+            ) {
+              return false;
+            }
+            const key = cwd ?? "";
+            const known = userCuaDriverByCwd.get(key);
+            if (known !== undefined) return known;
+            const configured = yield* ensureInitialized.pipe(
+              Effect.andThen(client.request("config/read", { cwd: cwd ?? null })),
+              Effect.map((response) => {
+                const servers = response.config.mcp_servers;
+                return (
+                  typeof servers === "object" &&
+                  servers !== null &&
+                  Object.hasOwn(servers, McpProviderSession.CUA_MCP_SERVER_NAME)
+                );
+              }),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not read Codex config; leaving Cua to the user.", {
+                  cause,
+                }).pipe(Effect.as(true)),
+              ),
+            );
+            userCuaDriverByCwd.set(key, configured);
+            return configured;
+          });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -5873,6 +5927,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+              computerUse:
+                mcpSession?.cuaDriver !== undefined &&
+                !(yield* userCuaDriver(turnInput.threadId, turnInput.runtimePolicy.cwd)),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
             });
             yield* Ref.update(pendingRootTurns, (current) => {
@@ -6074,13 +6131,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(
+              Effect.andThen(userCuaDriver(threadInput.threadId, threadInput.runtimePolicy.cwd)),
+              Effect.flatMap((configured) =>
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
                     threadId: threadInput.threadId,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    userCuaDriver: configured,
                   }),
                 ),
               ),
@@ -6106,6 +6165,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const configured = yield* userCuaDriver(
+                threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                threadInput.runtimePolicy?.cwd,
+              );
               // excludeTurns is not in the generated request schema yet.
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
@@ -6118,6 +6181,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  userCuaDriver: configured,
                 }),
               });
               const response = yield* ensureInitialized.pipe(
@@ -6838,6 +6902,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     threadId: threadInput.providerThread.appThreadId,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
+                    userCuaDriver: yield* userCuaDriver(
+                      threadInput.providerThread.appThreadId,
+                      input.runtimePolicy.cwd,
+                    ),
                   }),
                 });
               }
@@ -6876,6 +6944,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
+              const configured = yield* userCuaDriver(
+                threadInput.targetThreadId,
+                threadInput.runtimePolicy?.cwd,
+              );
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
                   client.request("thread/fork", {
@@ -6891,6 +6963,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ...(threadInput.runtimePolicy === undefined
                         ? {}
                         : { runtimePolicy: threadInput.runtimePolicy }),
+                      userCuaDriver: configured,
                     }),
                   }),
                 ),

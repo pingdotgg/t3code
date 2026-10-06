@@ -8,6 +8,7 @@
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
+import { COMPUTER_USE_INSTRUCTIONS } from "../../provider/RuntimeInstructions.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -15,6 +16,8 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+/** The managed Cua Driver's stdio MCP command, as JSON `{ command, args, env }`. */
+export const T3_CUA_MCP_ENV = "T3_CUA_MCP";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -24,12 +27,15 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ChildProcess } from "node:child_process";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
+const CUA_ENV = ${JSON.stringify(T3_CUA_MCP_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const COMPUTER_USE_INSTRUCTIONS = ${JSON.stringify(COMPUTER_USE_INSTRUCTIONS)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -209,6 +215,130 @@ function createMcpClient(endpoint: string, token: string) {
   };
 }
 
+type ToolContent =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly data: string; readonly mimeType: string };
+
+/** MCP image blocks share Pi's shape, so screenshots reach the model as images. */
+function mcpImages(result: unknown): ToolContent[] {
+  const content = (result as { readonly content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part) =>
+    part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string"
+      ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }]
+      : [],
+  );
+}
+
+/** A newline-delimited JSON-RPC client for a stdio MCP server, started on first use. */
+function createStdioMcpClient(spec: { command: string; args: string[]; env: Record<string, string> }) {
+  let nextId = 1;
+  let child: ChildProcess | undefined;
+  const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+
+  const failAll = (error: Error) => {
+    for (const pending of waiting.values()) pending.reject(error);
+    waiting.clear();
+  };
+  const start = async () => {
+    // Loaded on first use, so sessions without computer use never touch it.
+    const { spawn } = await import("node:child_process");
+    const current = spawn(spec.command, spec.args, {
+      env: { ...process.env, ...spec.env },
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    child = current;
+    let buffer = "";
+    current.stdout?.setEncoding("utf8");
+    current.stdout?.on("data", (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split("\\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message: JsonRpcResponse;
+        try {
+          message = JSON.parse(line) as JsonRpcResponse;
+        } catch {
+          continue;
+        }
+        const pending = typeof message.id === "number" ? waiting.get(message.id) : undefined;
+        if (pending === undefined) continue;
+        waiting.delete(message.id as number);
+        if (message.error) pending.reject(new Error(message.error.message ?? "MCP error"));
+        else pending.resolve(message.result);
+      }
+    });
+    // Only the current driver's exit fails calls: a replaced one's late exit
+    // must not fail the calls already waiting on its replacement.
+    const stopped = () => {
+      if (child !== current) return;
+      child = undefined;
+      failAll(new Error("Cua Driver stopped. Call the tool again to start a new session."));
+    };
+    current.on("exit", stopped);
+    current.on("error", stopped);
+  };
+  const request = async (method: string, params?: unknown, signal?: AbortSignal) => {
+    if (child === undefined) await start();
+    return new Promise<unknown>((resolve, reject) => {
+      const id = nextId++;
+      waiting.set(id, { resolve, reject });
+      signal?.addEventListener("abort", () => {
+        if (waiting.delete(id)) reject(new Error("Aborted"));
+      });
+      child?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n");
+    });
+  };
+  const notify = (method: string, params?: unknown) => {
+    child?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\\n");
+  };
+
+  const connect = async (signal?: AbortSignal) => {
+    await request(
+      "initialize",
+      { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "t3-pi-mcp", version: "1.0.0" } },
+      signal,
+    );
+    notify("notifications/initialized", {});
+  };
+
+  return {
+    connect,
+    async listTools(signal?: AbortSignal) {
+      const result = (await request("tools/list", {}, signal)) as { tools?: McpTool[] } | undefined;
+      return result?.tools ?? [];
+    },
+    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
+      // A driver that exited (the session ended) starts again and needs a handshake.
+      if (child === undefined) await connect(signal);
+      return request("tools/call", { name, arguments: args }, signal);
+    },
+    close() {
+      const current = child;
+      child = undefined;
+      current?.kill();
+      failAll(new Error("Cua Driver stopped. Call the tool again to start a new session."));
+    },
+  };
+}
+
+function cuaSpec(): { command: string; args: string[]; env: Record<string, string> } | undefined {
+  const raw = env(CUA_ENV);
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { command?: unknown; args?: unknown; env?: unknown };
+    if (typeof parsed.command !== "string" || !Array.isArray(parsed.args)) return undefined;
+    return {
+      command: parsed.command,
+      args: parsed.args.map(String),
+      env: (parsed.env ?? {}) as Record<string, string>,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export default async function t3McpExtension(pi: ExtensionAPI) {
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
@@ -321,11 +451,58 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
+  // The managed Cua Driver, registered as mcp__cua-driver__<tool> like other
+  // harnesses name it. Its screenshots pass through as image content.
+  const cua = cuaSpec();
+  let computerUse = false;
+  if (cua !== undefined) {
+    const cuaClient = createStdioMcpClient(cua);
+    pi.on("session_shutdown", () => cuaClient.close());
+    try {
+      const signal = AbortSignal.timeout(20_000);
+      await cuaClient.connect(signal);
+      for (const tool of await cuaClient.listTools(signal)) {
+        const name = tool.name;
+        const description = tool.description ?? name;
+        pi.registerTool({
+          name: \`mcp__cua-driver__\${name}\`,
+          label: name,
+          description,
+          promptSnippet: description.split("\\n")[0] ?? name,
+          parameters: jsonSchemaToTypebox(tool.inputSchema),
+          async execute(_toolCallId, params, signal) {
+            const result = await cuaClient.callTool(
+              name,
+              (params ?? {}) as Record<string, unknown>,
+              signal,
+            );
+            const text = formatMcpContent(result);
+            return {
+              content: [...(text ? [{ type: "text" as const, text }] : []), ...mcpImages(result)],
+              details: { server: "cua-driver", tool: name },
+              ...(isMcpToolError(result) ? { isError: true } : {}),
+            };
+          },
+        });
+      }
+      computerUse = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pi.on("session_start", async (_event, ctx) => {
+        ctx.ui.notify(\`Cua Driver unavailable: \${message}\`, "warning");
+      });
+    }
+  }
+
   // Deliver orchestration guidance through pi's real system-prompt channel.
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
+    systemPrompt:
+      event.systemPrompt +
+      "\\n\\n" +
+      ORCHESTRATION_INSTRUCTIONS +
+      (computerUse ? "\\n\\n" + COMPUTER_USE_INSTRUCTIONS : ""),
   }));
 }
 `;

@@ -29,6 +29,13 @@ describe("buildRuntimeInstructions", () => {
     ).toContain("through the Codex harness, as my-model.");
   });
 
+  it("steers computer use to the background only when Cua is attached", () => {
+    expect(buildRuntimeInstructions({ harness: "Claude Code" })).not.toContain("<computer_use>");
+    const instructions = buildRuntimeInstructions({ harness: "Claude Code", computerUse: true });
+    expect(instructions).toContain("<computer_use>");
+    expect(instructions).toContain('defaults to delivery_mode "background"');
+  });
+
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
     expect(instructions).toContain("through the Cursor harness.");

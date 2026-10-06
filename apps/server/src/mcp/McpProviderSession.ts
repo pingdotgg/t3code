@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  CuaDriverMcpConfiguration,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -22,6 +27,57 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * Set when the environment's managed Cua Driver is running for this session.
+   * Adapters attach it as a stdio MCP server named `cua-driver` and add the
+   * computer use instructions; a provider without an MCP client ignores it.
+   */
+  readonly cuaDriver?: CuaDriverMcpConfiguration;
+}
+
+/** Server name every provider sees for the managed Cua Driver. */
+export const CUA_MCP_SERVER_NAME = "cua-driver";
+
+const cuaEnvironment = (descriptor: CuaDriverMcpConfiguration) =>
+  Object.fromEntries(descriptor.environment.map(({ name, value }) => [name, value]));
+
+/** Claude and Cursor SDK `mcpServers` entry for the session's Cua Driver, keyed by name. */
+export function cuaStdioMcpServers(config: McpProviderSessionConfig | undefined) {
+  const descriptor = config?.cuaDriver;
+  return descriptor === undefined
+    ? {}
+    : {
+        [CUA_MCP_SERVER_NAME]: {
+          type: "stdio" as const,
+          command: descriptor.command,
+          args: [...descriptor.args],
+          env: cuaEnvironment(descriptor),
+        },
+      };
+}
+
+/** ACP stdio `mcpServers` entry for the session's Cua Driver. */
+export function cuaAcpMcpServers(config: McpProviderSessionConfig | undefined) {
+  const descriptor = config?.cuaDriver;
+  return descriptor === undefined
+    ? []
+    : [
+        {
+          name: CUA_MCP_SERVER_NAME,
+          command: descriptor.command,
+          args: [...descriptor.args],
+          env: descriptor.environment.map(({ name, value }) => ({ name, value })),
+        },
+      ];
+}
+
+/** OpenCode `local` MCP config for the session's Cua Driver. */
+export function cuaOpenCodeMcpConfig(descriptor: CuaDriverMcpConfiguration) {
+  return {
+    type: "local" as const,
+    command: [descriptor.command, ...descriptor.args],
+    environment: cuaEnvironment(descriptor),
+  };
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

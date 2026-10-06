@@ -986,6 +986,25 @@ export function makeOpenCodeAdapterV2(
             }),
           );
         }
+        // Computer use is an addition: a server that cannot add it still runs
+        // the session, and the prompt only advertises it once it is attached.
+        const cuaDriver = mcpSession?.cuaDriver;
+        const computerUse =
+          hasT3Mcp && cuaDriver !== undefined
+            ? yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                client.mcp.add({
+                  name: McpProviderSession.CUA_MCP_SERVER_NAME,
+                  config: McpProviderSession.cuaOpenCodeMcpConfig(cuaDriver),
+                }),
+              ).pipe(
+                Effect.as(true),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not add Cua Driver to OpenCode.", cause).pipe(
+                    Effect.as(false),
+                  ),
+                ),
+              )
+            : false;
 
         const now = yield* DateTime.now;
         let sessionEntity: OrchestrationV2ProviderSession = {
@@ -3263,6 +3282,7 @@ export function makeOpenCodeAdapterV2(
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
+                  computerUse,
                 }),
               ]
                 .filter(Boolean)

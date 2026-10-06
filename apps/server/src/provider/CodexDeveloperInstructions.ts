@@ -14,6 +14,8 @@ The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators an
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
+  /** The managed `cua-driver` MCP server is attached to this turn. */
+  readonly computerUse?: boolean;
 }
 
 const normalizeAvailability = (
@@ -218,7 +220,11 @@ export function buildCodexAdditionalContext(
     t3_code_orchestration: { kind: "application", value: T3_CODE_ORCHESTRATION_INSTRUCTIONS },
     t3_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+      value: buildRuntimeInstructions({
+        harness: "Codex",
+        ...runtime,
+        computerUse: typeof toolsAvailable !== "boolean" && toolsAvailable.computerUse === true,
+      }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
   };
