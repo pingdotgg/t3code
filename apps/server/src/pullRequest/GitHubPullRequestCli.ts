@@ -1885,8 +1885,8 @@ export const make = Effect.gen(function* () {
       const batchable = entries.filter(
         (entry) => buildPullRequestSummariesGraphQlQuery([entry.request]) !== null,
       );
-      // Stack membership rides along where GitHub serves stacks, so the background sync can skip
-      // the REST stack read for pull requests that are in none.
+      // Stack membership and merge-queue state ride along where github.com serves them, so the
+      // background sync can skip the REST stack read for pull requests that are in no stack.
       const query = buildPullRequestSummariesGraphQlQuery(
         batchable.map((entry) => entry.request),
         first.request.host === "github.com",

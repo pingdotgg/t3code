@@ -118,13 +118,21 @@ export function PullRequestReviewDecisionGlyph({
  * the list, and the detail header all resolve through here so one pull request cannot look like
  * two different things in two places.
  *
- * Closed and merged take precedence over a stale draft flag.
+ * Closed and merged take precedence over stale draft and merge-queue flags.
  */
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
+  const key =
+    input.state !== "open"
+      ? input.state
+      : input.inMergeQueue
+        ? "queued"
+        : input.isDraft
+          ? "draft"
+          : "open";
   return PULL_REQUEST_STATE_PRESENTATION[key];
 }
 

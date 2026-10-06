@@ -332,6 +332,18 @@ describe("chain selection and badge state", () => {
     },
   );
 
+  it("reads queued once every request still open is in the merge queue", () => {
+    const merged = link(1, { snapshot: snapshot({ state: "merged", headBranch: "base" }) });
+    const queued = (number: number, inMergeQueue: boolean) =>
+      link(number, {
+        snapshot: snapshot({ inMergeQueue, baseBranch: "base", headBranch: `top-${number}` }),
+      });
+    expect(resolveThreadPullRequestBadge([merged, queued(2, true)])?.state).toBe("queued");
+    expect(resolveThreadPullRequestBadge([merged, queued(2, true), queued(3, false)])?.state).toBe(
+      "open",
+    );
+  });
+
   it.each(["open", "merged", "closed"] as const)(
     "targets the top of a derived %s chain despite a later bottom update and link",
     (state) => {

@@ -313,6 +313,13 @@ describe("pull request primary control", () => {
     expect(resolvePullRequestPrimaryControl({ ...open, state: "closed" })).toBe("closed");
   });
 
+  it("shows a queued pull request as queued instead of offering to merge it again", () => {
+    expect(resolvePullRequestPrimaryControl({ ...open, inMergeQueue: true })).toBe("queued");
+    expect(resolvePullRequestPrimaryControl({ ...open, state: "merged", inMergeQueue: true })).toBe(
+      "merged",
+    );
+  });
+
   it("keeps conflicts and drafts actionable before merge", () => {
     expect(resolvePullRequestPrimaryControl({ ...open, mergeability: "conflicting" })).toBe(
       "resolve",
@@ -1637,6 +1644,10 @@ describe("the compact row's single action slot", () => {
   it("offers Merge only for a clean pull request whose checks pass", () => {
     expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
     expect(resolveThreadPanelPullRequestAction(openDetail({ checks: [] }))).toBe("merge");
+  });
+
+  it("offers nothing for a pull request already in the merge queue", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail({ inMergeQueue: true }))).toBeNull();
   });
 
   it("holds the slot while checks run rather than offering a merge that races them", () => {

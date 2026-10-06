@@ -2027,6 +2027,44 @@ describe("batched pull request summaries", () => {
     expect(decoded.get(0)?.stack).toBeNull();
     expect(decoded.get(1)?.stack).toEqual({ number: 3, size: 2, base: "main", position: 2 });
   });
+
+  it("reads merge-queue membership only where github.com was asked", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true),
+    ).toContain("isInMergeQueue");
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }]),
+    ).not.toContain("isInMergeQueue");
+    expect(pullRequestCoreGraphQlQuery("github.com")).toContain("isInMergeQueue");
+    expect(pullRequestCoreGraphQlQuery("github.example.com")).not.toContain("isInMergeQueue");
+    const pullRequest = (number: number, extra: Record<string, unknown>) => ({
+      pullRequest: {
+        number,
+        title: "Queued",
+        url: `https://github.com/acme/web/pull/${number}`,
+        headRefName: `feat/${number}`,
+        baseRefName: "main",
+        state: "OPEN",
+        updatedAt: "2026-08-24T00:00:00Z",
+        ...extra,
+      },
+    });
+    const decoded = expectSuccess(
+      decodePullRequestSummariesJson(
+        JSON.stringify({
+          data: {
+            s0: pullRequest(7, { isInMergeQueue: true }),
+            s1: pullRequest(8, { isInMergeQueue: false }),
+            s2: pullRequest(9, {}),
+          },
+        }),
+      ),
+    );
+    expect(decoded.get(0)?.inMergeQueue).toBe(true);
+    expect(decoded.get(1)?.inMergeQueue).toBe(false);
+    // A read that did not ask leaves the answer out rather than claiming "not queued".
+    expect(decoded.get(2)).not.toHaveProperty("inMergeQueue");
+  });
 });
 
 describe("pull request watch fingerprints", () => {

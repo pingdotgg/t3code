@@ -20,6 +20,13 @@ describe("resolvePullRequestState", () => {
       "text-zinc-500 dark:text-zinc-400/80",
     ],
     [
+      "queued",
+      { state: "open", isDraft: false, inMergeQueue: true },
+      PullRequestGlyph.pullRequest,
+      "Queued",
+      "text-amber-600 dark:text-amber-300/90",
+    ],
+    [
       "closed",
       { state: "closed", isDraft: false },
       PullRequestGlyph.closed,
@@ -43,6 +50,15 @@ describe("resolvePullRequestState", () => {
       });
     },
   );
+
+  it("lets merge-queue state outrank draft but never a terminal state", () => {
+    expect(
+      resolvePullRequestState({ state: "open", isDraft: true, inMergeQueue: true }).label,
+    ).toBe("Queued");
+    expect(
+      resolvePullRequestState({ state: "merged", isDraft: false, inMergeQueue: true }).label,
+    ).toBe("Merged");
+  });
 
   it("keeps a merged pull request merged when stale draft metadata is also present", () => {
     expect(resolvePullRequestState({ state: "merged", isDraft: true })).toMatchObject({

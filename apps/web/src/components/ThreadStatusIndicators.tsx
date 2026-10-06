@@ -145,6 +145,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      ...(snapshot.inMergeQueue === true ? { inMergeQueue: true } : {}),
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -359,7 +360,11 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                inMergeQueue: snapshot.inMergeQueue,
+              });
         return (
           <ThreadPullRequestMiniListItem
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -437,7 +442,11 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const state = resolvePullRequestState({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    inMergeQueue: pr.inMergeQueue,
+  });
 
   const tooltipLead = `${presentation.shortName} #${pr.number} - ${state.label}`;
   return {

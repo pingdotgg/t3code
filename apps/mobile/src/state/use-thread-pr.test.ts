@@ -46,6 +46,16 @@ describe("presentThreadPr", () => {
       textClassName: "text-foreground-muted",
     });
   });
+
+  it("uses amber for pull requests in the merge queue", () => {
+    expect(
+      presentThreadPr({ ...pullRequest, state: "open", inMergeQueue: true }, undefined),
+    ).toMatchObject({
+      inMergeQueue: true,
+      accessibilityLabel: "#3774 pull request queued",
+      textClassName: "text-adaptive-amber-700-300",
+    });
+  });
 });
 
 function linkedPr(

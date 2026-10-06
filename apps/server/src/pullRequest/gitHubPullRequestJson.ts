@@ -405,6 +405,8 @@ const RawDetailSchema = Schema.Struct({
   headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   /** The exact head revision, used to find workflow runs that GitHub has not started yet. */
   headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Only GraphQL reads on github.com ask for it; `gh pr view --json` has no such field. */
+  isInMergeQueue: Schema.optional(Schema.NullOr(Schema.Boolean)),
   body: Schema.optional(Schema.String),
   changedFiles: Schema.optional(Schema.Int),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -714,17 +716,18 @@ export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS}
 
 /**
  * Pull refs let the comparison share the detail read without first resolving a fork branch.
- * `isRequired` is asked for on github.com only: an older Enterprise server may not know it, and
- * an unknown field fails the whole read.
+ * `isRequired` and `isInMergeQueue` are asked for on github.com only: an older Enterprise server
+ * may not know them, and an unknown field fails the whole read.
  */
 export const pullRequestCoreGraphQlQuery = (host: string) => {
-  const required =
-    host.toLowerCase() === "github.com" ? " isRequired(pullRequestNumber: $number)" : "";
+  const isGitHubDotCom = host.toLowerCase() === "github.com";
+  const required = isGitHubDotCom ? " isRequired(pullRequestNumber: $number)" : "";
+  const mergeQueue = isGitHubDotCom ? " isInMergeQueue" : "";
   return `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
-      number title url body state isDraft mergeable reviewDecision
+      number title url body state isDraft${mergeQueue} mergeable reviewDecision
       additions deletions changedFiles createdAt updatedAt mergedAt closedAt
       headRefName baseRefName headRefOid isCrossRepository
       headRepositoryOwner { login }
@@ -1215,6 +1218,8 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   /** The owner of the head branch's repository; null where `gh` did not say. */
   readonly headRepositoryOwner: string | null;
   readonly headSha?: string | null;
+  /** Absent where the read could not ask GitHub, which is any read but github.com's GraphQL. */
+  readonly inMergeQueue?: boolean;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -1630,6 +1635,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
       : {}),
     headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
     headSha: trimmed(raw.headRefOid),
+    ...(raw.isInMergeQueue == null ? {} : { inMergeQueue: raw.isInMergeQueue }),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,
     mergedAt: trimmed(raw.mergedAt),
@@ -1870,6 +1876,8 @@ export function decodePullRequestStatsJson(
  * rather than the whole check list `gh pr view` hands back, which is what keeps a batch cheap.
  */
 const STACK_MEMBERSHIP_SELECTION = "stack { number size baseRefName } stackEntry { position }";
+/** Fields only github.com is known to serve; an unknown field fails an Enterprise read. */
+const GITHUB_DOT_COM_SUMMARY_SELECTION = `isInMergeQueue ${STACK_MEMBERSHIP_SELECTION}`;
 
 const PULL_REQUEST_SUMMARY_SELECTION =
   "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
@@ -1884,7 +1892,7 @@ const PULL_REQUEST_SUMMARY_SELECTION =
  */
 export function buildPullRequestSummariesGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-  includeStacks = false,
+  isGitHubDotCom = false,
 ): string | null {
   if (changeRequests.length === 0) return null;
   const selections: string[] = [];
@@ -1894,7 +1902,7 @@ export function buildPullRequestSummariesGraphQlQuery(
     if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
     if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
     selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""} } }`,
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION}${isGitHubDotCom ? ` ${GITHUB_DOT_COM_SUMMARY_SELECTION}` : ""} } }`,
     );
   }
   return `query PullRequestSummaries {\n${selections.join("\n")}\n}`;
@@ -1907,6 +1915,7 @@ const RawSummarySchema = Schema.Struct({
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   createdAt: Schema.optional(Schema.String),
+  isInMergeQueue: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 const decodeSummaries = decodeJsonResult(
   Schema.Struct({
@@ -1930,6 +1939,8 @@ export interface GitHubPullRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  /** Absent when the read did not ask, which is any host but github.com. */
+  readonly inMergeQueue?: boolean;
   readonly closedAt: string | null;
   readonly mergedAt: string | null;
   readonly updatedAt: string;
@@ -1968,6 +1979,7 @@ export function decodePullRequestSummariesJson(
       baseBranch: pr.baseRefName,
       state: toState(pr),
       isDraft: pr.isDraft ?? false,
+      ...(pr.isInMergeQueue == null ? {} : { inMergeQueue: pr.isInMergeQueue }),
       closedAt: trimmed(pr.closedAt),
       mergedAt: trimmed(pr.mergedAt),
       updatedAt: pr.updatedAt,

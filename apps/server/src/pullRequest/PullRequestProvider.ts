@@ -121,6 +121,8 @@ export interface ProviderChangeRequestSummary {
   readonly state: PullRequestState;
   /** Present when the host says an open pull request is still a draft. */
   readonly isDraft?: boolean;
+  /** Present where the host reports merge queues, which is GitHub only. */
+  readonly inMergeQueue?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
@@ -230,6 +232,8 @@ export interface ProviderChangeRequestStat {
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   /** The head commit, where the host's detail read reports it. */
   readonly headSha?: string | null;
+  /** Present where the host reports merge queues, which is GitHub only. */
+  readonly inMergeQueue?: boolean;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;

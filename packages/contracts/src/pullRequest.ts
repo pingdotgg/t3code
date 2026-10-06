@@ -737,6 +737,8 @@ export const PullRequestSummary = Schema.Struct({
   state: PullRequestState,
   /** Present when the host says the open pull request is still a draft. */
   isDraft: Schema.optional(Schema.Boolean),
+  /** True while the open pull request waits in the host's merge queue; GitHub only. */
+  inMergeQueue: Schema.optional(Schema.Boolean),
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -842,6 +844,8 @@ export const PullRequestDetail = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  /** True while the open pull request waits in the host's merge queue; GitHub only. */
+  inMergeQueue: Schema.optional(Schema.Boolean),
   mergeability: PullRequestMergeability,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,

@@ -1434,6 +1434,7 @@ export function PullRequestDetailPanel({
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
@@ -1455,6 +1456,7 @@ export function PullRequestDetailPanel({
     ((autoMergeArmed && can("disable-auto-merge")) ||
       (!autoMergeArmed &&
         primaryAction !== "enable-auto-merge" &&
+        primaryAction !== "queued" &&
         !detail.isDraft &&
         !conflicting &&
         can("enable-auto-merge") &&
@@ -1469,6 +1471,7 @@ export function PullRequestDetailPanel({
     allowedMergeMethods.length > 0;
   const showsMergeMethods =
     detail?.state === "open" &&
+    primaryAction !== "queued" &&
     can("merge") &&
     !detail.isDraft &&
     !conflicting &&
@@ -1476,7 +1479,11 @@ export function PullRequestDetailPanel({
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. Conflicts take the action slot while they need a person, but do not change the PR state.
   const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
+    ? resolvePullRequestState({
+        state: detail.state,
+        isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
+      })
     : null;
   const showsApproveWorkflows =
     workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows");
@@ -1941,7 +1948,9 @@ export function PullRequestDetailPanel({
                     {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
                   </TooltipPopup>
                 </Tooltip>
-              ) : (primaryAction === "merged" || primaryAction === "closed") &&
+              ) : (primaryAction === "queued" ||
+                  primaryAction === "merged" ||
+                  primaryAction === "closed") &&
                 statePresentation !== null ? (
                 <Badge size="control" variant="outline">
                   <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>

@@ -52,6 +52,8 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   isDraft: Schema.Boolean,
+  /** Present and true while the open pull request waits in the host's merge queue. */
+  inMergeQueue: Schema.optional(Schema.Boolean),
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),

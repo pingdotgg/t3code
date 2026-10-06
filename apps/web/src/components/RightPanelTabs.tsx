@@ -140,9 +140,13 @@ export interface PullRequestTabStatus {
   number: number;
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
 }
 
-export type PullRequestTabStatusSeed = Pick<PullRequestTabStatus, "state" | "isDraft">;
+export type PullRequestTabStatusSeed = Pick<
+  PullRequestTabStatus,
+  "state" | "isDraft" | "inMergeQueue"
+>;
 
 export function shouldOpenDefaultBrowserProfileFromMenuClick(
   pointerType: string | undefined,
@@ -784,6 +788,7 @@ function PullRequestSurfaceIcon({
   const presentation = resolvePullRequestState({
     state: status.state,
     isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
+    inMergeQueue: status.inMergeQueue,
   });
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }

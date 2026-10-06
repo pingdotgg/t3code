@@ -1640,6 +1640,9 @@ export const make = Effect.gen(function* () {
             updatedAt: changeRequest.updatedAt,
             observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
             ...(changeRequest.additions === undefined
               ? {}
@@ -1729,6 +1732,9 @@ export const make = Effect.gen(function* () {
             author: changeRequest.author,
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             mergeability: changeRequest.mergeability,
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
@@ -3045,6 +3051,8 @@ export const make = Effect.gen(function* () {
     url: detail.url,
     state: detail.state,
     isDraft: detail.isDraft,
+    // Assigned rather than spread so a detail that saw the queue empty clears a held true.
+    inMergeQueue: detail.inMergeQueue === true,
     author: detail.author,
     additions: detail.additions,
     deletions: detail.deletions,
