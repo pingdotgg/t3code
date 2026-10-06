@@ -24,8 +24,9 @@ const loadEntry = (entryPath: string): Partial<PluginModule> =>
 const isAsyncModuleError = (error: unknown) =>
   error instanceof Error && "code" in error && error.code === "ERR_REQUIRE_ASYNC_MODULE";
 
-const errorMessage = (error: unknown) =>
-  (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+// The server refuses a longer `Failed.message`, and a line it cannot decode kills the child.
+const errorMessage = (error: unknown, prefix = "") =>
+  `${prefix}${error instanceof Error ? error.message : String(error)}`.slice(0, 2000);
 
 /** Serves one plugin over fd 3 until the server deactivates it or goes away. */
 export const runPluginHostChild = (): void => {
@@ -59,13 +60,19 @@ export const runPluginHostChild = (): void => {
       send({ _tag: "Failed", requestId, message: errorMessage(outcome) });
       return;
     }
-    let line: string;
+    let value: string | undefined;
     try {
-      line = JSON.stringify({ _tag: "Succeeded", requestId, value: outcome ?? null });
+      value = JSON.stringify(outcome ?? null);
     } catch (error) {
-      send({ _tag: "Failed", requestId, message: `Result is not JSON: ${errorMessage(error)}` });
+      send({ _tag: "Failed", requestId, message: errorMessage(error, "Result is not JSON: ") });
       return;
     }
+    // A function, symbol or `toJSON` returning undefined has no JSON form at all.
+    if (value === undefined) {
+      send({ _tag: "Failed", requestId, message: "Result is not JSON." });
+      return;
+    }
+    const line = `{"_tag":"Succeeded","requestId":${requestId},"value":${value}}`;
     if (Buffer.byteLength(line) > maxBytes) {
       send({ _tag: "Failed", requestId, message: `Result exceeds ${maxBytes} bytes.` });
       return;
