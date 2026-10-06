@@ -1872,15 +1872,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    // Transcripts for later sessions opened on the same adapter, in order.
+    laterSessions: ReadonlyArray<CodexReplay.CodexAppServerReplayTranscript> = [],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequest> = [];
+      const sessionTranscripts = [transcript, ...laterSessions];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
-        open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+        open: (openInput) => {
+          const sessionTranscript = sessionTranscripts.shift() ?? transcript;
+          return Layer.build(CodexReplay.layerReplay(sessionTranscript)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterOpenSessionError({
@@ -1892,7 +1896,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.flatMap((context) =>
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
-                  withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  withCodexReplayChildMetadata(client, sessionTranscript, readChildMetadata),
                 ),
                 Effect.map(
                   (client) =>
@@ -1907,7 +1911,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 Effect.provide(context),
               ),
             ),
-          ),
+          );
+        },
       };
       const adapter = CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -1969,6 +1974,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             event.type === "subagent.updated",
         );
       return {
+        adapter,
         runtime,
         providerThread,
         threadId,
@@ -2497,6 +2503,210 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ? [event.turnItem]
         : [],
     );
+
+  it.effect("remembers the context window Codex reports for later sessions", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "context-window-thread";
+      const nativeTurnId = "context-window-turn";
+      const prompt = "Measure the context window.";
+      const cwd = CODEX_TEST_RUNTIME_POLICY.cwd;
+      const usage = {
+        totalTokens: 15,
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 5,
+        reasoningOutputTokens: 1,
+      };
+      const usageReport = (
+        modelContextWindow: number | null,
+      ): CodexReplay.CodexAppServerReplayEntry => ({
+        type: "emit_inbound",
+        label: "usage",
+        frame: {
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            tokenUsage: { total: usage, last: usage, modelContextWindow },
+          },
+        },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "context-window-report",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          usageReport(400_000),
+          // A report without a window keeps the known one.
+          usageReport(null),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      // A later session only starts its native thread before asking for capacity.
+      const laterSession = makeCodexReplayTranscript({
+        scenario: "context-window-later-session",
+        entries: codexReplayPreamble({
+          nativeThreadId: "context-window-later-thread",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        }).slice(0, 5),
+      });
+      const adapter = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            [laterSession],
+          );
+          assert.isUndefined(
+            harness.runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION, cwd),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("context-window-attempt"),
+              text: prompt,
+            }),
+          );
+          yield* harness.firstTerminal;
+          assert.equal(
+            harness.runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION, cwd),
+            400_000,
+          );
+          // Reasoning effort does not change the window; a different model does.
+          assert.equal(
+            harness.runtime.getModelContextWindow?.(
+              {
+                ...CODEX_TEST_MODEL_SELECTION,
+                options: [{ id: "reasoningEffort", value: "high" }],
+              },
+              cwd,
+            ),
+            400_000,
+          );
+          assert.isUndefined(
+            harness.runtime.getModelContextWindow?.(
+              {
+                ...CODEX_TEST_MODEL_SELECTION,
+                model: "gpt-5.4-mini",
+              },
+              cwd,
+            ),
+          );
+          // Another project's config may set another window.
+          assert.isUndefined(
+            harness.runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION, "/other-project"),
+          );
+          return harness.adapter;
+        }),
+      );
+      // The first session is closed, as after idle release or in another thread.
+      const threadId = ThreadId.make("thread-context-window-later-session");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-context-window-later"),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      assert.equal(runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION, cwd), 400_000);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("does not remember the context window of a rerouted Codex turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "rerouted-window-thread";
+        const nativeTurnId = "rerouted-window-turn";
+        const prompt = "Measure the rerouted window.";
+        const usage = {
+          totalTokens: 15,
+          inputTokens: 10,
+          cachedInputTokens: 2,
+          outputTokens: 5,
+          reasoningOutputTokens: 1,
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "rerouted-context-window",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            {
+              type: "emit_inbound",
+              label: "reroute",
+              frame: {
+                method: "model/rerouted",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  fromModel: CODEX_TEST_MODEL_SELECTION.model,
+                  toModel: "gpt-5.4-mini",
+                  reason: "highRiskCyberActivity",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "usage",
+              frame: {
+                method: "thread/tokenUsage/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  tokenUsage: { total: usage, last: usage, modelContextWindow: 272_000 },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("rerouted-window-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.firstTerminal;
+        // The window belongs to the model Codex rerouted to, not the selection.
+        assert.isUndefined(
+          harness.runtime.getModelContextWindow?.(
+            CODEX_TEST_MODEL_SELECTION,
+            CODEX_TEST_RUNTIME_POLICY.cwd,
+          ),
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
