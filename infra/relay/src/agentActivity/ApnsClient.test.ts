@@ -179,6 +179,13 @@ describe("ApnsClient", () => {
         },
       });
 
+      // Expo iOS NotificationRecords.serializedNotificationData uses userInfo.body for remote pushes.
+      const expoData = (request.payload as { body?: unknown }).body;
+      expect(expoData).toEqual({
+        environmentId: "env",
+        threadId: "thread",
+        deepLink: "/threads/env/thread",
+      });
       expect(request.priority).toBe("10");
       expect(request.payload).toMatchObject({
         aps: {
