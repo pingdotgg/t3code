@@ -1,3 +1,4 @@
+import type { WorktreeBaseRef } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 
 type WorkspaceMode = "local" | "worktree";
@@ -64,8 +65,11 @@ export function resolveNewTaskBranchAfterWorkspaceModeChange(input: {
   readonly previousMode: WorkspaceMode;
   readonly branch: string | null;
   readonly branchSelection: "auto" | "manual" | undefined;
+  readonly configuredBaseRef: WorktreeBaseRef | undefined;
 }): string | null {
+  // Without a configured base, keep the checkout branch exactly as before the setting existed.
   if (
+    input.configuredBaseRef != null &&
     input.previousMode === "local" &&
     input.mode === "worktree" &&
     input.branchSelection === "auto"

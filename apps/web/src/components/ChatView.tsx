@@ -10427,11 +10427,16 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
-          branch: resolveDraftBranchAfterEnvModeChange({
+          // Only send a cleared branch: a non-null branch marks the environment manual.
+          ...(draftThread?.branch &&
+          resolveDraftBranchAfterEnvModeChange({
             mode,
-            branch: draftThread?.branch ?? null,
-            environmentSelection: draftThread?.environmentSelection,
-          }),
+            branch: draftThread.branch,
+            environmentSelection: draftThread.environmentSelection,
+            defaultWorktreeBaseRef: activeProjectSettings.settings.defaultWorktreeBaseRef,
+          }) === null
+            ? { branch: null }
+            : {}),
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -10449,6 +10454,7 @@ export default function ChatView(props: ChatViewProps) {
       draftThread?.environmentSelection,
       isLocalDraftThread,
       multipleModelSelections,
+      activeProjectSettings.settings.defaultWorktreeBaseRef,
       activeProjectSettings.settings.newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
       scheduleComposerFocus,

@@ -557,7 +557,7 @@ export function BranchToolbarBranchSelector({
   const worktreeBaseBranchCandidate = resolveDefaultWorktreeBaseRef({
     configuredRef: configuredBaseRef,
     rememberedRef: rememberedBranchPending ? undefined : (rememberedRef?.name ?? null),
-    refs: baseBranchesQuery.data?.refs ?? null,
+    refs: baseBranchesQuery.error ? [] : (baseBranchesQuery.data?.refs ?? null),
     currentBranch: currentGitBranch,
   });
 
@@ -704,7 +704,7 @@ export function BranchToolbarBranchSelector({
         value={itemValue}
         onClick={() => selectPickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
-        hint={isSelectingWorktreeBase && itemValue === lastWorktreeBaseBranch ? "Last used" : null}
+        hint={isSelectingWorktreeBase && itemValue === rememberedBranch ? "Last used" : null}
       />
     );
   }

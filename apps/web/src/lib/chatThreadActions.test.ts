@@ -109,13 +109,23 @@ describe("chatThreadActions", () => {
         mode: "worktree",
         branch: "feature/current-checkout",
         environmentSelection: "auto",
+        defaultWorktreeBaseRef: "develop",
       }),
     ).toBeNull();
     expect(
       resolveDraftBranchAfterEnvModeChange({
         mode: "worktree",
+        branch: "feature/current-checkout",
+        environmentSelection: "auto",
+        defaultWorktreeBaseRef: null,
+      }),
+    ).toBe("feature/current-checkout");
+    expect(
+      resolveDraftBranchAfterEnvModeChange({
+        mode: "worktree",
         branch: "feature/chosen-base",
         environmentSelection: "manual",
+        defaultWorktreeBaseRef: "develop",
       }),
     ).toBe("feature/chosen-base");
     expect(
@@ -123,6 +133,7 @@ describe("chatThreadActions", () => {
         mode: "local",
         branch: "feature/current-checkout",
         environmentSelection: "auto",
+        defaultWorktreeBaseRef: "develop",
       }),
     ).toBe("feature/current-checkout");
   });

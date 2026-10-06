@@ -172,6 +172,7 @@ type NewTaskFlowContextValue = {
   /** False for threads without a project: their folder has no branch or worktree. */
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
+  /** Set only when the base ref setting is Last used. */
   readonly lastWorktreeBaseBranch: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -945,19 +946,26 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       } else {
         pendingLocalBranchSyncDraftKeysRef.current.delete(selectedProjectDraftKey);
       }
+      const branch =
+        mode === "local"
+          ? localSelection.branch
+          : resolveNewTaskBranchAfterWorkspaceModeChange({
+              mode,
+              previousMode: workspaceMode,
+              branch: selectedBranchName,
+              branchSelection: selectedBranchSelection,
+              configuredBaseRef,
+            });
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode,
-          branch:
+          branch,
+          worktreePath:
             mode === "local"
-              ? localSelection.branch
-              : resolveNewTaskBranchAfterWorkspaceModeChange({
-                  mode,
-                  previousMode: workspaceMode,
-                  branch: selectedBranchName,
-                  branchSelection: selectedBranchSelection,
-                }),
-          worktreePath: mode === "local" ? localSelection.worktreePath : null,
+              ? localSelection.worktreePath
+              : branch === selectedBranchName
+                ? selectedWorktreePath
+                : null,
           branchSelection: mode === "local" ? "auto" : (selectedBranchSelection ?? "manual"),
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
@@ -965,11 +973,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     },
     [
       availableBranches,
+      configuredBaseRef,
       draftStartFromOrigin,
       selectedBranchName,
       selectedBranchSelection,
       selectedProject,
       selectedProjectDraftKey,
+      selectedWorktreePath,
       workspaceMode,
     ],
   );
@@ -1394,7 +1404,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       workspaceMode,
       canChooseWorkspace,
       selectedBranchName,
-      lastWorktreeBaseBranch,
+      lastWorktreeBaseBranch: rememberedBranch,
       selectedWorktreePath,
       startFromOrigin,
       draftKey: selectedProjectDraftKey,
@@ -1479,7 +1489,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       reset,
       runtimeMode,
       selectedBranchName,
-      lastWorktreeBaseBranch,
+      rememberedBranch,
       hasMoreBranches,
       selectedEnvironmentId,
       selectedModel,

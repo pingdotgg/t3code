@@ -63,8 +63,23 @@ describe("resolveNewTaskBranchAfterWorkspaceModeChange", () => {
         previousMode: "local",
         branch: "feature/current",
         branchSelection: "auto",
+        configuredBaseRef: "develop",
       }),
     ).toBeNull();
+  });
+
+  it("keeps the checkout branch when no base ref is configured", () => {
+    for (const configuredBaseRef of [null, undefined]) {
+      expect(
+        resolveNewTaskBranchAfterWorkspaceModeChange({
+          mode: "worktree",
+          previousMode: "local",
+          branch: "feature/current",
+          branchSelection: "auto",
+          configuredBaseRef,
+        }),
+      ).toBe("feature/current");
+    }
   });
 
   it("keeps an explicit branch choice even when it matches the checkout", () => {
@@ -74,6 +89,7 @@ describe("resolveNewTaskBranchAfterWorkspaceModeChange", () => {
         previousMode: "local",
         branch: "feature/current",
         branchSelection: "manual",
+        configuredBaseRef: { mode: "last-used" },
       }),
     ).toBe("feature/current");
   });
@@ -85,6 +101,7 @@ describe("resolveNewTaskBranchAfterWorkspaceModeChange", () => {
         previousMode: "local",
         branch: "feature/current",
         branchSelection: undefined,
+        configuredBaseRef: "develop",
       }),
     ).toBe("feature/current");
   });
