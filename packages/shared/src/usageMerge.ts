@@ -220,6 +220,9 @@ function dayKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
 }
 
+/** How much older than the newest scan of a folder its owner may be. */
+const ATTRIBUTION_MAX_AGE_MS = 10 * 60 * 1000;
+
 /**
  * How well an environment can attribute a source: -1 when its server cannot
  * split usage by thread at all, otherwise the records it placed in its own T3
@@ -247,8 +250,9 @@ function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number 
  * environment that ran most of the directory's work in its own T3 threads,
  * so threads and projects keep their usage and the owner does not change
  * between refreshes; then the most recently read scan, then the environment
- * id. Scans of one refresh finish seconds apart, so an older owner can miss
- * only usage recorded in between, which the next refresh shows. A newer
+ * id. Attribution only decides among scans read within
+ * {@link ATTRIBUTION_MAX_AGE_MS} of the newest, so an older owner misses at
+ * most the usage recorded in between, which the next refresh shows. A newer
  * partial scan can still contribute cells absent from an older complete scan.
  *
  * Ownership is decided on whole summaries, so narrowing the buckets
@@ -298,8 +302,15 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     }
     for (const [key, list] of candidates) {
       if (list.length > 1) {
+        // `list` is newest first. A scan far older than the newest, such as a
+        // summary kept after a failed refresh, never wins on attribution.
+        const newest = Date.parse(list[0]!.environment.summary.readAt) || 0;
         for (const entry of list) {
-          entry.inThreads = recordsInT3Threads(entry.environment.summary, entry.source);
+          const readAt = Date.parse(entry.environment.summary.readAt) || 0;
+          entry.inThreads =
+            newest - readAt > ATTRIBUTION_MAX_AGE_MS
+              ? -2
+              : recordsInT3Threads(entry.environment.summary, entry.source);
         }
       }
       // A stable sort keeps the read-time order among equals. A copy, not

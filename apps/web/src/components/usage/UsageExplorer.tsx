@@ -23,6 +23,7 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button, InlineButton } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import {
   Menu,
@@ -973,14 +974,14 @@ export function UsageExplorer(props: UsageExplorerProps) {
               >
                 <span className="text-muted-foreground">{chip.label}</span>
                 <span className="text-foreground">{chip.value}</span>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
+                <Button
+                  size="icon-tiny"
+                  variant="ghost"
                   aria-label={`Clear ${chip.label.toLowerCase()} filter`}
                   onClick={chip.clear}
                 >
-                  <XIcon className="size-3" aria-hidden />
-                </button>
+                  <XIcon aria-hidden />
+                </Button>
               </span>
             ))}
             {chips.length > 1 ? (
@@ -1217,6 +1218,7 @@ function ProviderList({
   };
   const row = (
     keys: readonly string[],
+    name: string,
     label: ReactNode,
     totals: UsageTotals,
     sub: ReactNode,
@@ -1233,16 +1235,18 @@ function ProviderList({
           nested && "ps-5",
         )}
       >
-        <input
-          type="checkbox"
+        <span
           className={cn(
-            "absolute top-1 -left-5 size-3.5 opacity-0 group-hover/provider:opacity-100 focus-visible:opacity-100",
+            "absolute top-0.5 -left-6 flex opacity-0 group-hover/provider:opacity-100 focus-within:opacity-100",
             accounts !== null && "opacity-100",
           )}
-          checked={on}
-          aria-label={`Include ${typeof label === "string" ? label : "this provider"}`}
-          onChange={() => toggle(keys)}
-        />
+        >
+          <Checkbox
+            checked={on}
+            aria-label={`Include ${name}`}
+            onCheckedChange={() => toggle(keys)}
+          />
+        </span>
         <div className="flex items-baseline justify-between gap-4">
           <button
             type="button"
@@ -1283,6 +1287,7 @@ function ProviderList({
           <div key={provider} className="flex flex-col gap-1.5">
             {row(
               keys,
+              presentation.label,
               <>
                 <ProviderInstanceIcon
                   driverKind={presentation.driverKind}
@@ -1337,6 +1342,7 @@ function ProviderList({
                     <div key={account}>
                       {row(
                         [account],
+                        accountName(account),
                         <span className="truncate">{accountName(account)}</span>,
                         byAccount.get(account)!,
                         null,
@@ -1694,13 +1700,12 @@ function BreakdownTable({
                       ) : null}
                       {row.dimension === "model" ? (
                         // A model's name opens its detail, as the row's own click expands it.
-                        <button
-                          type="button"
-                          className="min-w-0 truncate text-left text-foreground underline-offset-2 hover:underline"
+                        <InlineButton
+                          className="min-w-0 shrink"
                           onClick={() => onOpenModel(row.key)}
                         >
-                          {name}
-                        </button>
+                          <span className="truncate">{name}</span>
+                        </InlineButton>
                       ) : (
                         <span className="min-w-0 truncate text-foreground">
                           {row.dimension === "project" && favorites.has(row.key) ? "★ " : ""}

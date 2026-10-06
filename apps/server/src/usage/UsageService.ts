@@ -886,8 +886,15 @@ export const make = Effect.gen(function* () {
         collectDirs(windowStartMs, settings, retentionCutoffMs),
         input.groupByThread
           ? attribution.read.pipe(
+              // Usage still reads without threads; the stage says which read failed.
+              Effect.catchTags({
+                UsageAttributionError: (error) =>
+                  Effect.logWarning("Usage thread attribution unavailable", {
+                    stage: error.stage,
+                  }).pipe(Effect.as(EMPTY_ATTRIBUTION)),
+              }),
               Effect.catchCause((cause) =>
-                Effect.logWarning("Usage thread attribution unavailable", Cause.pretty(cause)).pipe(
+                Effect.logWarning("Usage thread attribution failed", Cause.pretty(cause)).pipe(
                   Effect.as(EMPTY_ATTRIBUTION),
                 ),
               ),

@@ -337,13 +337,13 @@ describe("mergeUsage", () => {
     // server) cannot split by thread at all.
     const outside = environment("outside", {
       ...summary([bucket({ thread: 0 })], [source]),
-      readAt: "2026-08-08T00:00:00.000Z",
+      readAt: "2026-08-07T00:01:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
     const older = environment("older", {
       ...summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE),
-      readAt: "2026-08-09T00:00:00.000Z",
+      readAt: "2026-08-07T00:02:00.000Z",
     });
 
     for (const ordered of [
@@ -366,13 +366,31 @@ describe("mergeUsage", () => {
     });
     const later = environment("later", {
       ...summary([bucket({ thread: 0, model: "fable-alias", costUsd: 15 })], [source]),
-      readAt: "2026-08-08T01:00:00.000Z",
+      readAt: "2026-08-07T00:05:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
     const merged = mergeUsage([later, ran], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(10);
     expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["ran"]);
+  });
+
+  it("does not let a scan kept from a failed refresh hold a directory", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const stale = environment("stale", {
+      ...summary([bucket({ thread: 0 })], [source]),
+      threads: [{ key: "t3:ship", threadId: ThreadId.make("ship"), located: true }],
+      projects: [],
+    });
+    const fresh = environment("fresh", {
+      ...summary([bucket({ thread: 0, costUsd: 50 })], [source]),
+      readAt: "2026-08-07T03:00:00.000Z",
+      threads: [{ key: "session:claude:s", located: true }],
+      projects: [],
+    });
+    const merged = mergeUsage([stale, fresh], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(50);
+    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["fresh"]);
   });
 
   it("narrows to one model without changing which environment owns a directory", () => {
@@ -392,7 +410,7 @@ describe("mergeUsage", () => {
         [bucket({ records: 9 }), bucket({ model: "y", thread: 0, costUsd: 1, records: 1 })],
         [source],
       ),
-      readAt: "2026-08-08T00:00:00.000Z",
+      readAt: "2026-08-07T00:01:00.000Z",
       threads,
       projects: [],
     });

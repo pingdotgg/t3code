@@ -11,12 +11,21 @@ import type { NativeThreadRef, T3ThreadRef, UsageAttributionIndex } from "./usag
 
 export class UsageAttributionError extends Schema.TaggedError<UsageAttributionError>()(
   "UsageAttributionError",
-  { cause: Schema.Defect() },
+  {
+    /** Which read failed. */
+    stage: Schema.Literals(["providerThreads", "subagents", "threads", "projects"]),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Could not read threads and projects for usage attribution.";
+    return `Could not read ${this.stage} for usage attribution.`;
   }
 }
+
+const failedAt =
+  (stage: UsageAttributionError["stage"]) =>
+  <A, E, R>(read: Effect.Effect<A, E, R>) =>
+    read.pipe(Effect.mapError((cause) => new UsageAttributionError({ stage, cause })));
 
 const NativeRow = Schema.Struct({
   driver: Schema.String,
@@ -104,10 +113,10 @@ const make = Effect.gen(function* () {
 
   const read = Effect.all(
     [
-      selectNativeThreads(undefined),
-      selectNativeSubagents(undefined),
-      selectThreads(undefined),
-      projectStore.list({ includeDeleted: true }),
+      selectNativeThreads(undefined).pipe(failedAt("providerThreads")),
+      selectNativeSubagents(undefined).pipe(failedAt("subagents")),
+      selectThreads(undefined).pipe(failedAt("threads")),
+      projectStore.list({ includeDeleted: true }).pipe(failedAt("projects")),
     ],
     { concurrency: 1 },
   ).pipe(
@@ -131,7 +140,6 @@ const make = Effect.gen(function* () {
         deleted: project.deletedAt !== null,
       })),
     })),
-    Effect.mapError((cause) => new UsageAttributionError({ cause })),
     Effect.withSpan("UsageAttribution.read"),
   );
 
