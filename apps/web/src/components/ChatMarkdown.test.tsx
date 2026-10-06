@@ -73,6 +73,59 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe.each([
+  "linear://linear.app/example/issue/EXAMPLE-123",
+  "slack://channel?team=T123&id=C123",
+  "notion://www.notion.so/example-page",
+  "obsidian://open?vault=Example&file=Notes",
+])("ChatMarkdown app deep link %s", (href) => {
+  it.each([true, false])(
+    "preserves app destinations with lowercase and mixed-case schemes with parseRawHtml=%s",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      let renderer: ReactTestRenderer | undefined;
+      const uppercaseHref = href.replace(/^[^:]+/, (scheme) => scheme.toUpperCase());
+      const mixedCaseHref = href.replace(/^./, (letter) => letter.toUpperCase());
+      const text = [
+        `[Open in app](${href})`,
+        "[Open][app]",
+        `[app]: ${uppercaseHref}`,
+        `<${mixedCaseHref}>`,
+        `[Uppercase](${uppercaseHref})`,
+        "[Unsafe](JAVASCRIPT:alert)",
+        "[Unknown](UNKNOWN://example.com)",
+        ...(parseRawHtml
+          ? [
+              `<a href="${mixedCaseHref}">HTML app link</a>`,
+              '<a href="JAVASCRIPT:alert">Unsafe HTML</a>',
+            ]
+          : []),
+      ].join("\n\n");
+      try {
+        await act(async () => {
+          renderer = create(
+            <ChatMarkdown cwd="/workspace/project" text={text} parseRawHtml={parseRawHtml} />,
+          );
+        });
+
+        const destinations = renderer!.root.findAllByType("a").map((link) => link.props.href);
+        expect(destinations.filter(Boolean)).toEqual([
+          href,
+          parseRawHtml ? href : uppercaseHref,
+          parseRawHtml ? href : mixedCaseHref,
+          parseRawHtml ? href : uppercaseHref,
+          ...(parseRawHtml ? [href] : []),
+        ]);
+      } finally {
+        await act(async () => {
+          renderer?.unmount();
+        });
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+});
+
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

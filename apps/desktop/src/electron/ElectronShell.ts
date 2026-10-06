@@ -10,10 +10,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Electron from "electron";
+import { isExternalAppLink } from "@t3tools/shared/externalAppLinks";
 
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
-// `zed://ssh/<host>/<path>`) must reach the OS handler; every other non-web
-// scheme stays blocked.
+// Known apps and remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
+// `zed://ssh/<host>/<path>`) must reach the OS handler; other non-web schemes stay blocked.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -42,7 +42,9 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
 
   try {
     const url = new URL(rawUrl);
-    return SAFE_WEB_PROTOCOLS.has(url.protocol) || isRemoteEditorUrl(url)
+    return SAFE_WEB_PROTOCOLS.has(url.protocol) ||
+      isExternalAppLink(url.href) ||
+      isRemoteEditorUrl(url)
       ? Option.some(url.href)
       : Option.none();
   } catch {

@@ -34,6 +34,7 @@ import type {
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
+import { EXTERNAL_APP_LINK_SCHEMES, isExternalAppLink } from "@t3tools/shared/externalAppLinks";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
@@ -448,10 +449,19 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
-/** Carries authored image source metadata through the sanitizer to the image renderer. */
-function rehypePreserveImageSourceMeta() {
+/** Prepares app link schemes and authored image metadata for the sanitizer. */
+function rehypePrepareMarkdownSources() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.tagName === "a" && typeof href === "string" && isExternalAppLink(href)) {
+        // The sanitizer matches protocols case-sensitively. Preserve the rest of the URL.
+        const colon = href.indexOf(":");
+        node.properties = {
+          ...node.properties,
+          href: href.slice(0, colon).toLowerCase() + href.slice(colon),
+        };
+      }
       const src = node.properties?.src;
       const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
@@ -487,7 +497,13 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation", "t3-context"],
+    href: [
+      ...(defaultSchema.protocols?.href ?? []),
+      "file",
+      "t3-citation",
+      "t3-context",
+      ...EXTERNAL_APP_LINK_SCHEMES,
+    ],
     src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
@@ -515,7 +531,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
-  rehypePreserveImageSourceMeta,
+  rehypePrepareMarkdownSources,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -2587,6 +2603,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
+    if (isExternalAppLink(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
