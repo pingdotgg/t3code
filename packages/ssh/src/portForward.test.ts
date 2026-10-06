@@ -11,8 +11,8 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
 import * as SshTunnel from "./tunnel.ts";

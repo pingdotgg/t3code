@@ -1953,7 +1953,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                                   readiness: "forward",
                                   remoteHost: "localhost",
                                   authOptions,
-                                }).pipe(Effect.provideService(Scope.Scope, attemptScope)),
+                                  scope: attemptScope,
+                                }),
                             }),
                           ).pipe(
                             Effect.onExit((attemptExit) =>
@@ -1965,21 +1966,24 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                         }),
                       );
                     return yield* startForward(localPort).pipe(
-                      Effect.catchTag("SshCommandError", (error) =>
-                        Effect.gen(function* () {
-                          // The port probe cannot reserve the port for ssh. Re-probe
-                          // after an exited preferred attempt, independent of stderr
-                          // delivery order or localized bind diagnostics.
-                          if (
-                            !preferRemotePort ||
-                            error.exitCode === null ||
-                            (yield* net.isPortAvailableOnLoopback(localPort))
-                          ) {
-                            return yield* error;
-                          }
-                          return yield* reserveLocalTunnelPort().pipe(Effect.flatMap(startForward));
-                        }),
-                      ),
+                      Effect.catchTags({
+                        SshCommandError: (error) =>
+                          Effect.gen(function* () {
+                            // The port probe cannot reserve the port for ssh. Re-probe
+                            // after an exited preferred attempt, independent of stderr
+                            // delivery order or localized bind diagnostics.
+                            if (
+                              !preferRemotePort ||
+                              error.exitCode === null ||
+                              (yield* net.isPortAvailableOnLoopback(localPort))
+                            ) {
+                              return yield* error;
+                            }
+                            return yield* reserveLocalTunnelPort().pipe(
+                              Effect.flatMap(startForward),
+                            );
+                          }),
+                      }),
                     );
                   }),
                   Deferred.await(cancelled),
