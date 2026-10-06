@@ -49,6 +49,10 @@ describe("skillRootWatch", () => {
       "release.tmp",
       "release~",
       "4913",
+      // Codex also loads skills nested below a root.
+      "new-skill/references/SKILL.md",
+      "group/nested-skill/SKILL.md",
+      ".system/imagegen/SKILL.md",
     ]) {
       assert.isTrue(isSkillListChange(path), path);
     }
@@ -57,8 +61,6 @@ describe("skillRootWatch", () => {
       "new-skill/scripts/run.sh",
       "new-skill/assets",
       "new-skill/README.md",
-      "new-skill/references/SKILL.md",
-      ".system/imagegen/SKILL.md",
       "new-skill/.SKILL.md.swp",
       "new-skill/SKILL.md~",
     ]) {

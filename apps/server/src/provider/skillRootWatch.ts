@@ -6,8 +6,10 @@
  * A skill root holds one directory per skill, each with a `SKILL.md`. Only
  * changes that can alter the list count: an entry appearing, disappearing, or
  * being renamed directly under the root (a skill directory or a symlink to
- * one), and a skill's `SKILL.md` changing. Anything deeper in a skill, such
- * as scripts, assets, or editor temp files, is ignored. Entries directly under
+ * one), and any `SKILL.md` changing. Codex loads `SKILL.md` files nested below
+ * a root too, so a nested one counts even though Claude ignores it. Anything
+ * else deeper in a skill, such as scripts, assets, or editor temp files, is
+ * ignored. Entries directly under
  * the root are not filtered by name, because any directory name can hold a
  * skill. Edits behind a symlinked skill directory are not observed; the
  * explicit refresh still covers those.
@@ -23,9 +25,9 @@ import * as Stream from "effect/Stream";
 
 /** Whether a change at `relativePath` (relative to a skill root) can alter its skill list. */
 export function isSkillListChange(relativePath: string): boolean {
-  const [entry, file, ...rest] = relativePath.split(/[\\/]/).filter((segment) => segment !== "");
-  if (entry === undefined || rest.length > 0) return false;
-  return file === undefined || file === "SKILL.md";
+  const segments = relativePath.split(/[\\/]/).filter((segment) => segment !== "");
+  if (segments.length === 0) return false;
+  return segments.length === 1 || segments.at(-1) === "SKILL.md";
 }
 
 /**
