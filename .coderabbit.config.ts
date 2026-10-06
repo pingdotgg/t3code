@@ -7,6 +7,9 @@ export default defineConfig({
     auto_review: {
       enabled: true,
     },
+    pre_merge_checks: {
+      docstrings: { mode: "off" },
+    },
     path_filters: [
       // Vendored read-only reference checkouts of upstream Effect and Alchemy
       // (see scripts/lib/reference-repos.ts). Nothing imports from them.
