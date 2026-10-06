@@ -59,8 +59,8 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import {
   structuralProtocolMethod,
   summarizeNativeProtocolPayload,
@@ -3140,16 +3140,18 @@ export function makeOpenCodeAdapterV2(
           );
           yield* Effect.raceFirst(Fiber.join(request), Deferred.await(receipt)).pipe(
             Effect.timeout("10 seconds"),
-            Effect.catchTag("TimeoutError", (cause) => {
-              const error = new OpenCodeRuntime.OpenCodeRuntimeError({
-                operation: "session.command",
-                detail: "OpenCode command admission did not complete within 10 seconds.",
-                cause,
-              });
-              abortController.abort();
-              return finalizeTurn(state, turn, "failed", {
-                failure: makeProviderFailure({ cause: error, class: "provider_error" }),
-              }).pipe(Effect.andThen(Effect.fail(error)));
+            Effect.catchTags({
+              TimeoutError: (cause) => {
+                const error = new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "session.command",
+                  detail: "OpenCode command admission did not complete within 10 seconds.",
+                  cause,
+                });
+                abortController.abort();
+                return finalizeTurn(state, turn, "failed", {
+                  failure: makeProviderFailure({ cause: error, class: "provider_error" }),
+                }).pipe(Effect.andThen(Effect.fail(error)));
+              },
             }),
           );
         });

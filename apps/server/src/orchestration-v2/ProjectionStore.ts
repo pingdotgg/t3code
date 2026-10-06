@@ -4999,12 +4999,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS pending_request_payload_json,
               (
                 SELECT secret.payload_json
-                FROM orchestration_v2_projection_turn_items secret
+                -- Keep runs outermost so completed history is never scanned for a pending secret.
+                FROM orchestration_v2_projection_runs r
+                CROSS JOIN orchestration_v2_projection_turn_items secret
                   INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
-                INNER JOIN orchestration_v2_projection_runs r ON r.run_id = secret.run_id
-                WHERE secret.thread_id = t.thread_id
-                  AND secret.type = 'secret_request' AND secret.status = 'waiting'
+                WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND secret.thread_id = t.thread_id AND secret.run_id = r.run_id
+                  AND secret.type = 'secret_request' AND secret.status = 'waiting'
                 ORDER BY secret.updated_at DESC, secret.turn_item_id DESC
                 LIMIT 1
               ) AS pending_secret_request_payload_json,

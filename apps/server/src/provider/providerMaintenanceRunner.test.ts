@@ -20,7 +20,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
@@ -190,7 +190,7 @@ function makeRegistry(
       );
     });
 
-    const registry: ProviderRegistry.ProviderRegistryShape = {
+    const registry: ProviderRegistry.ProviderRegistry["Service"] = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
@@ -210,7 +210,7 @@ function makeRegistry(
 }
 
 const makeTestRunner = (
-  registry: ProviderRegistry.ProviderRegistryShape,
+  registry: ProviderRegistry.ProviderRegistry["Service"],
   // Generic updater fixtures use synthetic versions. Keep their compatibility
   // unknown so real harness minimums do not bypass the command under test.
   manifest: ModelManifest.ModelManifestData = {

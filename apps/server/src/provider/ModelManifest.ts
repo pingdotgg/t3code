@@ -30,6 +30,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
@@ -411,7 +412,9 @@ export const make = Effect.gen(function* () {
     manifest = fetched;
     fetchedAtMs = now;
     yield* encodeManifestCache({ fetchedAtMs: now, manifest: fetched }).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(cachePath, serialized)),
+      Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
       Effect.ignoreCause,
     );
     return manifest;

@@ -42,6 +42,7 @@
     "effect": "catalog:",
     "jose": "catalog:",
     "node-pty": "^1.2.0-beta.15",
+    "playwright-core": "1.60.0",
     "proper-lockfile": "4.1.2",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
@@ -50,6 +51,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",

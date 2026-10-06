@@ -12,15 +12,15 @@ import {
   completeCodexTurnTokenUsage,
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
-import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
+import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
-import { buildCodexInitializeParams } from "../../provider/Layers/CodexProvider.ts";
+import { buildCodexInitializeParams } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
   codexUsageLimitResetAt,
   type CodexRateLimitSnapshot,
-} from "../../provider/Layers/codexUsageLimits.ts";
+} from "../../provider/codexUsageLimits.ts";
 import {
   CodexSettings,
   defaultInstanceIdForDriver,
@@ -101,12 +101,9 @@ import {
   boundProviderEventForLogging,
   type EventNdjsonLogger,
   shouldPersistProviderEvent,
-} from "../../provider/Layers/EventNdjsonLogger.ts";
-import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
-import {
-  codexAppServerArgs,
-  resolveCodexLaunchArgs,
-} from "../../provider/Layers/codexLaunchArgs.ts";
+} from "../../provider/EventNdjsonLogger.ts";
+import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
+import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1687,21 +1684,39 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             ),
           );
         const initialized = yield* Ref.make(false);
-        const ensureInitialized = Effect.gen(function* () {
-          const alreadyInitialized = yield* Ref.get(initialized);
-          if (alreadyInitialized) {
-            return;
-          }
+        // Threads share this app-server, and Codex rejects a second
+        // `initialize`. Callers wait for an in-flight handshake instead of
+        // starting their own; a failed handshake leaves the flag unset so the
+        // next caller retries.
+        const initializePermit = yield* Semaphore.make(1);
+        const ensureInitialized = initializePermit.withPermit(
+          Effect.gen(function* () {
+            const alreadyInitialized = yield* Ref.get(initialized);
+            if (alreadyInitialized) {
+              return;
+            }
 
-          yield* client.request("initialize", {
-            // Codex uses the client name as the request originator, so sessions
-            // identify themselves exactly like the provider probe.
-            clientInfo: buildCodexInitializeParams().clientInfo,
-            capabilities: CODEX_CLIENT_CAPABILITIES,
-          });
-          yield* client.notify("initialized", undefined);
-          yield* Ref.set(initialized, true);
-        });
+            yield* client
+              .request("initialize", {
+                // Codex uses the client name as the request originator, so sessions
+                // identify themselves exactly like the provider probe.
+                clientInfo: buildCodexInitializeParams().clientInfo,
+                capabilities: CODEX_CLIENT_CAPABILITIES,
+              })
+              .pipe(
+                Effect.catchTags({
+                  // A caller interrupted after its `initialize` reached Codex
+                  // leaves the app-server initialized but the flag unset.
+                  CodexAppServerRequestError: (error) =>
+                    error.code === -32600 && error.errorMessage === "Already initialized"
+                      ? Effect.void
+                      : Effect.fail(error),
+                }),
+              );
+            yield* client.notify("initialized", undefined);
+            yield* Ref.set(initialized, true);
+          }),
+        );
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,

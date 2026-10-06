@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   CommandId,
   EnvironmentId,
@@ -765,7 +767,22 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
+            const refusedSettle = yield* invoke("t3_thread_organize", { action: "settle" });
+            expect(refusedSettle.isError).toBe(true);
+            expect(refusedSettle.structuredContent).toBeUndefined();
+            expect(declaredFailure(refusedSettle)).toEqual({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+              message: `Thread ${parentThreadId} has active or blocked work and cannot be settled.`,
+            });
+            const afterRefusedSettle = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterRefusedSettle.thread.settledOverride).not.toBe("settled");
+            expect(afterRefusedSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
+              "running",
+            );
+
             const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
+            expect(pinned.isError).toBe(false);
             expect(pinned.structuredContent).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
             yield* invoke("t3_thread_organize", { action: "unpin" });
@@ -774,6 +791,20 @@ describe("orchestrator MCP toolkit", () => {
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
             }
+            for (const name of ["t3_queue_edit", "t3_queue_cancel"]) {
+              const refusedQueueMutation = yield* invoke(name, {
+                queuedRunId: parentRun.id,
+                ...(name === "t3_queue_edit" ? { text: "Keep the active turn." } : {}),
+              });
+              expect(refusedQueueMutation.isError).toBe(true);
+              expect(refusedQueueMutation.structuredContent).toBeUndefined();
+              expect(declaredFailure(refusedQueueMutation)).toEqual({
+                _tag: "OrchestratorMcpFailure",
+                code: "orchestration_error",
+                message: `Run ${parentRun.id} is not queued.`,
+              });
+            }
+
             let parentRootNodeId = parentRun.rootNodeId;
             const queueAutomaticCompletion = (suffix: string, taskText: string) =>
               Effect.gen(function* () {
@@ -1211,9 +1242,35 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
             const queueFirstPage = yield* invoke("t3_queue_list", { limit: 1 });
+            expect(queueFirstPage.isError).toBe(false);
             expect(queueFirstPage.structuredContent).toMatchObject({
               items: [{ queuedRunId: queueRace.queuedRun.id }],
               nextCursor: 1,
+            });
+            const queueDefinition = server.tools.find(({ tool }) => tool.name === "t3_queue_list");
+            const validateQueue = new AjvJsonSchemaValidator().getValidator(
+              queueDefinition!.tool.outputSchema! as JsonSchemaType,
+            );
+            expect(validateQueue(queueFirstPage.structuredContent).valid).toBe(true);
+            const missingThreadId = ThreadId.make("00000000-0000-4000-8000-000000000000");
+            const missingThreadQueue = yield* invoke("t3_queue_list", {
+              threadId: missingThreadId,
+              limit: 1,
+            });
+            expect(missingThreadQueue.isError).toBe(true);
+            expect(declaredFailure(missingThreadQueue)).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+              message: "The thread was not found.",
+            });
+            expect(missingThreadQueue.structuredContent).toBeUndefined();
+            expect(validateQueue({ items: "invalid", nextCursor: null }).valid).toBe(false);
+            const missingThreadRead = yield* invoke("t3_thread_read", {
+              threadId: missingThreadId,
+            });
+            expect(missingThreadRead.isError).toBe(true);
+            expect(declaredFailure(missingThreadRead)).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
             });
             const queueSecondPage = yield* invoke("t3_queue_list", { cursor: 1, limit: 1 });
             expect(queueSecondPage.structuredContent).toEqual({

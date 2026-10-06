@@ -172,6 +172,54 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Browser on a remote environment
+
+Browser tabs belong to the environment, so you and your agents see the same
+tabs from any device. The desktop app shows its own environment's tabs
+directly. Every other device, and the desktop app for other environments,
+streams them from the host. Agents keep using them while no device is
+connected, and `localhost` addresses reach servers on the host.
+
+The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
+is the same browser [HTML renders](html-renders.md) use, so a host downloads it
+only once. Some Linux hosts need [setup](#browser-host-setup) before it can
+start.
+
+Agent tabs have separate storage and share a Chromium process. Take control before
+typing into an agent's tab, then release control when you want the agent to
+continue. Read-only connections can watch without changing the page.
+
+While you have control, the tab works with your device: text the page copies or
+cuts goes to your clipboard, a file picker on the page opens your device's
+picker, and a finished download is offered for you to save. Popups such as
+sign-in windows open as their own tabs. Downloads stay on the host until the
+tab closes. Audio does not play on your device.
+
+On a phone, tap the floating preview's corner dot to show its controls, then
+**Pop into separate window** to keep watching in picture-in-picture over other
+apps.
+
+### Browser host setup
+
+macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
+one-time setup: Ubuntu 23.10 and later block the sandbox the browser runs in,
+and minimal images and containers lack libraries it loads. When that happens,
+the server says so at startup, and browser tabs and HTML previews show the
+command to run on the host:
+
+```sh
+sudo t3 browser setup
+```
+
+The server shows the exact line for how you started it, such as
+`sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
+for your user. It allows Chrome's sandbox with an AppArmor profile and installs
+any missing libraries with apt. It is safe to run again. Without `sudo`, it
+only reports what it would change.
+
+The browser always runs in Chrome's sandbox. Where you cannot change the host,
+set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create
@@ -193,6 +241,11 @@ tunnel after it stays offline for several minutes. The environment stays linked
 and keeps the same address. When the host starts again or wakes, T3 Connect
 creates a replacement tunnel on its own. You do not need to pair again. Cleanup
 usually runs five to ten minutes after the tunnel goes down.
+
+T3 Connect also removes the tunnel of an environment running an older version of
+T3 Code once it has been offline for seven days. That environment shows a message
+asking you to update. Start T3 Code on that computer and update it to the latest
+version; it reconnects at the same address without pairing again.
 
 On a command-line host, `t3 connect unlink` disables exposure while retaining
 your login; `t3 connect logout` also clears that login. Background-service

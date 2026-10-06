@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
+import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -90,6 +90,7 @@ export interface EventSinkV2Shape {
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -437,9 +438,17 @@ const layerBase: Layer.Layer<
               events: normalized,
             });
             yield* applyStoredEvents(storedEvents);
+            yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents };
           }),
-          (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
+          (result) =>
+            Effect.gen(function* () {
+              if (!result.committed) return;
+              if (input.effects !== undefined && input.effects.length > 0) {
+                yield* effectOutbox.notifyAvailable(input.effects.length);
+              }
+              yield* publishStoredEvents(result.storedEvents);
+            }),
         );
       },
     );

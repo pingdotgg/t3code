@@ -43,7 +43,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "./LiveStreamBudget.ts";
-import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -1525,6 +1525,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-stale-provider-start");
       const runId = RunId.make("run:foundation-stale-provider-start");
@@ -1567,6 +1568,30 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ],
       });
 
+      const captureEffect = {
+        id: "effect:foundation-current-capture",
+        commandId: CommandId.make("command:foundation-current-capture"),
+        threadId,
+        request: {
+          type: "checkpoint.capture" as const,
+          runId,
+          scopeId: CheckpointScopeId.make("scope:foundation-current-capture"),
+        },
+      };
+      assert.isTrue(
+        (yield* eventSink.writeIfRunCurrent({
+          threadId,
+          runId,
+          activeAttemptId: attemptId,
+          expectedStatus: "starting",
+          events: [],
+          effects: [captureEffect],
+        })).committed,
+      );
+      assert.isTrue(Option.isSome(yield* outbox.get(captureEffect.id)));
+      yield* outbox.awaitAvailable;
+      const staleCaptureEffect = { ...captureEffect, id: "effect:foundation-stale-capture" };
+
       const reachedPrecommitGap = yield* Deferred.make<void>();
       const releaseStaleStart = yield* Deferred.make<void>();
       const providerStartCount = yield* Ref.make(0);
@@ -1578,6 +1603,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           runId,
           activeAttemptId: attemptId,
           expectedStatus: "starting",
+          effects: [staleCaptureEffect],
           events: [
             {
               id: EventId.make("event:foundation-stale-provider-start:running"),
@@ -1619,11 +1645,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       const staleResult = yield* Fiber.join(staleStartFiber);
       assert.isFalse(staleResult.committed);
+      assert.isTrue(Option.isNone(yield* outbox.get(staleCaptureEffect.id)));
       assert.deepEqual(staleResult.storedEvents, []);
       assert.equal(yield* Ref.get(providerStartCount), 0);
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "cancelled");
-    }),
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("guards post-terminal provider-thread writes by attempt and run ordinal", () =>

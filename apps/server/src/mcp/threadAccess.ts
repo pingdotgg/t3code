@@ -11,6 +11,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
+import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -20,6 +21,18 @@ export const unavailable = () =>
     code: "orchestration_error",
     message: "The operation could not be completed.",
   });
+
+/** Decider string rejections are public; wrapped storage and hydration causes are not. */
+export const dispatchFailure = (error: OrchestratorV2Error) =>
+  (error._tag === "OrchestratorDispatchError" ||
+    error._tag === "OrchestratorCommandRejectedError") &&
+  typeof error.cause === "string" &&
+  error.cause.length > 0
+    ? new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: Array.from(error.cause).slice(0, 1000).join(""),
+      })
+    : unavailable();
 
 /**
  * The most a caller may hand to the threads it targets. A thread caller is

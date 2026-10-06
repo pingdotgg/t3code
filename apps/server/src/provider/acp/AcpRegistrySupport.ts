@@ -1916,16 +1916,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ),
       )
       .pipe(
-        Effect.catchTag(
-          "ServerSettingsError",
-          (cause) =>
+        Effect.catchTags({
+          ServerSettingsError: (cause) =>
             new AcpRegistryError({
               reason: "install_failed",
               detail:
                 "Could not read provider settings while checking managed ACP binary references.",
               cause,
             }),
-        ),
+        }),
       );
 
   return AcpRegistryCatalog.of({

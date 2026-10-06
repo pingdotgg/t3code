@@ -27,7 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
-import * as SqlitePersistence from "./persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
@@ -49,7 +49,7 @@ const layerServerSettings = () =>
     ),
   );
 
-/** Like `makeServerSettingsLayer`, but also exposes the secret store for assertions. */
+/** Like `layerServerSettings`, but also exposes the secret store for assertions. */
 const layerServerSettingsWithSecrets = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
@@ -300,6 +300,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         operation: "read-provider-history",
         settingsPath: serverConfig.settingsPath,
       });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("retries a failed settings read instead of keeping the failure", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // A directory where the file should be makes the read itself fail.
+      yield* fileSystem.makeDirectory(serverConfig.settingsPath);
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+      assert.deepInclude(error, { _tag: "ServerSettingsError", operation: "read-file" });
+
+      yield* fileSystem.remove(serverConfig.settingsPath, { recursive: true });
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{ "responseStreamingMode": "turn" }`,
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(settings.responseStreamingMode, "turn");
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

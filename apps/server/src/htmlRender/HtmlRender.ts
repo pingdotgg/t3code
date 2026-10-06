@@ -1,5 +1,5 @@
 import type { ThreadId } from "@t3tools/contracts";
-import { HostProcessUserId } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   clampHtmlRenderHeight,
   HTML_RENDER_COLUMN_WIDTH,
@@ -29,9 +29,11 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
+import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
-import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
+import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
@@ -118,6 +120,7 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
       | PreviewBrowser.PreviewBrowserUnsupportedError
+      | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
     >;
   }
@@ -336,41 +339,31 @@ const make = Effect.gen(function* () {
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
   const browsers = yield* Semaphore.make(MAX_CONCURRENT_BROWSERS);
-  // Chrome refuses its sandbox as root. Other hosts that cannot provide one
-  // (Ubuntu 23.10+ AppArmor) are learned from the first launch and remembered.
-  let noSandbox = (yield* HostProcessUserId) === 0;
+  // Chrome's sandbox stays on unless the operator explicitly turns it off.
+  // Chrome also refuses it as root, where that opt-out is the only way to run.
+  const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcessEnvironment);
+  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
+  /** Runs one browser launch; a host that cannot start it gets setup steps instead. */
   const launching = <A>(
-    run: (
-      noSandbox: boolean,
-    ) => Effect.Effect<
-      A,
-      HeadlessChrome.HtmlRenderBrowserError | HeadlessChrome.HtmlRenderSandboxUnavailableError
-    >,
+    executable: string,
+    run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
   ) =>
     browsers.withPermits(1)(
-      // Read once a permit is held, so a queued call sees a fallback learned meanwhile.
-      Effect.suspend(() => run(noSandbox)).pipe(
-        Effect.catchTag("HtmlRenderSandboxUnavailableError", () =>
-          Effect.logInfo(
-            "Chrome's sandbox is unavailable on this host; launching it without one.",
-          ).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                noSandbox = true;
-              }),
-            ),
-            Effect.andThen(run(true)),
-          ),
-        ),
-        Effect.catchTag("HtmlRenderSandboxUnavailableError", (cause) =>
-          Effect.fail(
-            new HeadlessChrome.HtmlRenderBrowserError({
-              reason: "the browser has no sandbox",
-              cause,
-            }),
-          ),
-        ),
+      run(noSandbox).pipe(
+        Effect.catchTags({
+          HtmlRenderBrowserError: (error) =>
+            error.output === undefined
+              ? Effect.fail(error)
+              : PreviewBrowserHost.diagnoseLaunchFailure({
+                  executable,
+                  setupCommand,
+                  output: error.output,
+                }).pipe(
+                  Effect.provideContext(services),
+                  Effect.flatMap((hostError) => Effect.fail(hostError ?? error)),
+                ),
+        }),
       ),
     );
 
@@ -379,7 +372,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const heights = yield* launching((noSandbox) =>
+      const heights = yield* launching(executable.value, (noSandbox) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
@@ -471,7 +464,7 @@ const make = Effect.gen(function* () {
       appearance,
       HTML_RENDER_MEASURE_FONTS,
     );
-    const screenshot = yield* launching((noSandbox) =>
+    const screenshot = yield* launching(executable, (noSandbox) =>
       HeadlessChrome.captureHtmlScreenshot({
         executable,
         noSandbox,
