@@ -12,10 +12,14 @@ import * as Stream from "effect/Stream";
 
 import { isSkillListChange, watchSkillRoot } from "./skillRootWatch.ts";
 
+// Only the entry type matters to the watch.
+const directoryInfo = { type: "Directory" } as FileSystem.File.Info;
+
 // A filesystem whose watch streams replay queued events and then end, so each
 // test controls exactly which events a root reports.
 const makeWatchFileSystem = (options: {
   readonly exists: (path: string) => boolean;
+  readonly directories?: ReadonlySet<string>;
   readonly events: ReadonlyMap<string, ReadonlyArray<FileSystem.WatchEvent>>;
 }) =>
   Effect.gen(function* () {
@@ -29,6 +33,17 @@ const makeWatchFileSystem = (options: {
     }
     const fileSystem = FileSystem.makeNoop({
       exists: (path) => Effect.succeed(options.exists(path)),
+      stat: (path) =>
+        options.directories?.has(path)
+          ? Effect.succeed(directoryInfo)
+          : Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "stat",
+                pathOrDescriptor: path,
+              }),
+            ),
       watch: (path, watchOptions) => {
         watched.push({ path, recursive: watchOptions?.recursive ?? false });
         const queue = queues.get(path);
@@ -103,6 +118,38 @@ describe("skillRootWatch", () => {
       // A watch that ends on its own is not started again.
       assert.strictEqual(watchCount(watched, root, true), 1);
       assert.strictEqual(watchCount(watched, path.dirname(root), false), 1);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts populated skill directories moved into or out of a nested group", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const root = path.resolve("/home/user/.codex/skills");
+      // Moving a populated directory reports only the directory itself, never
+      // a separate event for the SKILL.md it already holds.
+      const { fileSystem } = yield* makeWatchFileSystem({
+        exists: (candidate) => candidate === root,
+        directories: new Set([root, path.join(root, "group", "moved-in-skill")]),
+        events: new Map([
+          [
+            root,
+            [
+              { _tag: "Create", path: "group/moved-in-skill" },
+              { _tag: "Remove", path: "group/moved-out-skill" },
+              // A new file deeper in a skill is still ignored.
+              { _tag: "Create", path: "group/moved-in-skill/notes.txt" },
+              { _tag: "Update", path: "group/moved-in-skill/scripts/run.sh" },
+            ],
+          ],
+        ]),
+      });
+
+      const emitted = yield* watchSkillRoot(root).pipe(
+        Stream.runCollect,
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      assert.strictEqual(emitted.length, 2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

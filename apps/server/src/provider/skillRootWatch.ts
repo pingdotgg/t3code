@@ -7,12 +7,15 @@
  * changes that can alter the list count: an entry appearing, disappearing, or
  * being renamed directly under the root (a skill directory or a symlink to
  * one), and any `SKILL.md` changing. Codex loads `SKILL.md` files nested below
- * a root too, so a nested one counts even though Claude ignores it. Anything
- * else deeper in a skill, such as scripts, assets, or editor temp files, is
- * ignored. Entries directly under
- * the root are not filtered by name, because any directory name can hold a
- * skill. Edits behind a symlinked skill directory are not observed; the
- * explicit refresh still covers those.
+ * a root too, so a nested one counts even though Claude ignores it. Moving a
+ * populated skill directory into or out of a nested group reports only the
+ * directory, so a directory appearing at any depth counts, and so does any
+ * removal at depth, because a removed path can no longer be checked for being
+ * a directory. Anything else deeper in a skill, such as edited scripts,
+ * assets, or new editor temp files, is ignored. Entries directly under the
+ * root are not filtered by name, because any directory name can hold a skill.
+ * Edits behind a symlinked skill directory are not observed; the explicit
+ * refresh still covers those.
  *
  * @module provider/skillRootWatch
  */
@@ -49,6 +52,23 @@ export const watchSkillRoot = (
       const path = yield* Path.Path;
       const exists = (target: string) =>
         fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
+      const isDirectory = (target: string) =>
+        fileSystem.stat(target).pipe(
+          Effect.map((info) => info.type === "Directory"),
+          Effect.orElseSucceed(() => false),
+        );
+      const changesSkillList = (event: FileSystem.WatchEvent) => {
+        const target = path.resolve(root, event.path);
+        if (isSkillListChange(path.relative(root, target))) return Effect.succeed(true);
+        switch (event._tag) {
+          case "Remove":
+            return Effect.succeed(true);
+          case "Create":
+            return isDirectory(target);
+          default:
+            return Effect.succeed(false);
+        }
+      };
       // Start over only after the event that changed the root's state, never
       // because a watch ended on its own, which would spin.
       let rootStateChanged = false;
@@ -62,9 +82,7 @@ export const watchSkillRoot = (
       if (yield* exists(root)) {
         const parent = path.dirname(root);
         const changes = fileSystem.watch(root, { recursive: true }).pipe(
-          Stream.filter((event) =>
-            isSkillListChange(path.relative(root, path.resolve(root, event.path))),
-          ),
+          Stream.filterEffect(changesSkillList),
           Stream.as(false),
           // The root can vanish between the exists check and the watch starting.
           // Treat that as a root change so it is followed again; any other
