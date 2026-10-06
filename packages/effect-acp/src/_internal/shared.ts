@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { RpcClientError } from "effect/rpc";
@@ -29,6 +30,19 @@ export const callRpc = <A>(
     }),
   );
 
+/**
+ * Runs a notification handler so it cannot stop the caller: a typed failure is
+ * dropped, as notifications have no reply, and a defect is logged.
+ */
+export const isolateNotificationHandler = <E, R>(effect: Effect.Effect<void, E, R>) =>
+  effect.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasDies(cause)
+        ? Effect.logError("ACP notification handler failed", cause)
+        : Effect.void,
+    ),
+  );
+
 export const runHandler = Effect.fnUntraced(function* <A, B, Args extends ReadonlyArray<unknown>>(
   handler: ((payload: A, ...args: Args) => Effect.Effect<B, AcpError.AcpError>) | undefined,
   payload: A,
@@ -39,6 +53,9 @@ export const runHandler = Effect.fnUntraced(function* <A, B, Args extends Readon
     return yield* Effect.fail(AcpError.AcpRequestError.methodNotFound(method).toProtocolError());
   }
   return yield* handler(payload, ...args).pipe(
+    Effect.tapDefect((defect) =>
+      Effect.logError(`ACP request handler failed for '${method}'`, defect),
+    ),
     Effect.mapError((error) =>
       AcpError.AcpRequestError.fromCoreHandlerError(error, method).toProtocolError(),
     ),

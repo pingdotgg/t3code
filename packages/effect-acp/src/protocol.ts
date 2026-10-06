@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
@@ -20,6 +21,7 @@ import * as AcpSchema from "./schema.ts";
 import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
+import { isolateNotificationHandler } from "./_internal/shared.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
 
 export interface AcpProtocolLogEvent {
@@ -385,8 +387,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const dispatchNotification = (notification: AcpIncomingNotification) =>
     Queue.offer(notificationQueue, notification).pipe(
       Effect.andThen(
+        // A failing or dying handler must not stop the reader, or every later
+        // message on the connection goes unanswered.
         options.onNotification
-          ? options.onNotification(notification).pipe(Effect.ignore)
+          ? isolateNotificationHandler(options.onNotification(notification))
           : Effect.void,
       ),
       Effect.asVoid,
@@ -458,12 +462,38 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         method: message.tag,
       })
       .pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            respondWithError(
-              message.id,
-              AcpError.AcpRequestError.fromExtensionHandlerError(error, message.tag),
-            ),
+        Effect.matchCauseEffect({
+          // A dying handler answers its own request, like a core handler, and
+          // leaves the reader running. A defect wins over a typed failure in
+          // the same cause, so it is never hidden behind an expected error.
+          onFailure: (cause) => {
+            const failure = Cause.hasDies(cause) ? Option.none() : Cause.findErrorOption(cause);
+            if (Option.isSome(failure)) {
+              return respondWithError(
+                message.id,
+                AcpError.AcpRequestError.fromExtensionHandlerError(failure.value, message.tag),
+              );
+            }
+            return Effect.logError(
+              `ACP extension request handler failed for '${message.tag}'`,
+              cause,
+            ).pipe(
+              Effect.andThen(
+                respondWithError(
+                  message.id,
+                  AcpError.AcpRequestError.internalError(
+                    `ACP extension request handler failed for method '${message.tag}'`,
+                    undefined,
+                    {
+                      method: message.tag,
+                      operation: "handle-extension-request",
+                      cause: Cause.squash(cause),
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
           onSuccess: (value) => respondWithSuccess(message.id, value),
         }),
       );
@@ -685,8 +715,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         ),
       ),
     ),
-    Effect.matchEffect({
-      onFailure: (error) => {
+    // Anything that ends the reader, including a defect in a callback it runs,
+    // terminates the connection so pending requests fail instead of hanging.
+    Effect.matchCauseEffect({
+      onFailure: (cause) => {
+        // The reader's own interruption never gets here: an interrupted fiber
+        // skips failure handlers. An interrupt raised inside it ends it too.
+        const failure = Cause.findErrorOption(cause);
+        const error = Option.isSome(failure) ? failure.value : Cause.squash(cause);
         const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
