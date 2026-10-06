@@ -40,7 +40,7 @@ export interface DayColumn {
   readonly total: number;
 }
 
-interface Point {
+export interface Point {
   readonly x: number;
   readonly y: number;
 }
@@ -111,14 +111,14 @@ function monotoneTangents(points: readonly Point[]): readonly number[] {
   return tangents;
 }
 
-interface CurveSegment {
+export interface CurveSegment {
   readonly from: Point;
   readonly c1: Point;
   readonly c2: Point;
   readonly to: Point;
 }
 
-function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
+export function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
   if (points.length < 2) return [];
   const tangents = monotoneTangents(points);
   const segments: CurveSegment[] = [];

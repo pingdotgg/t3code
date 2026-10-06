@@ -5,13 +5,21 @@
  * driven outside T3 Code. Source status describes gaps in local coverage.
  *
  * Environments return pre-aggregated `(day, hourStart?, provider, model, sourcePath?)`
- * buckets. Raw transcript records never cross the wire.
+ * buckets. Raw transcript records never cross the wire. A summary read with
+ * `groupByThread` also splits buckets by provider account and thread, and lists
+ * those threads with their projects.
  *
  * @module usage
  */
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
@@ -137,8 +145,45 @@ export const UsageBucket = Schema.Struct({
   unpricedRecords: NonNegativeInt,
   /** Distinct transcript sessions that contributed to this cell. */
   sessions: NonNegativeInt,
+  /**
+   * Provider instance that recorded these tokens, when it is known. Present
+   * only on summaries read with `groupByThread`.
+   */
+  instanceId: Schema.optional(TrimmedNonEmptyString),
+  /** Index into {@link UsageSummary.threads}. Present only with `groupByThread`. */
+  thread: Schema.optional(NonNegativeInt),
 });
 export type UsageBucket = typeof UsageBucket.Type;
+
+/**
+ * A conversation that used tokens: a T3 thread, a provider session started
+ * outside T3, or a provider-native sub-agent inside either.
+ */
+export const UsageThread = Schema.Struct({
+  /**
+   * Stable across summaries: the T3 thread, or the provider session and
+   * sub-agent. `parent` indexes stay local to one summary.
+   */
+  key: TrimmedNonEmptyString,
+  /** The T3 thread, when this usage belongs to one. */
+  threadId: Schema.optional(ThreadId),
+  title: Schema.optional(TrimmedNonEmptyString),
+  /** Absent when the work ran outside every project, or the folder is unknown. */
+  projectId: Schema.optional(ProjectId),
+  /** Index of the thread that started this one. */
+  parent: Schema.optional(NonNegativeInt),
+  /** A sub-agent the provider ran inside another session, not a thread of its own. */
+  subagent: Schema.optional(Schema.Boolean),
+  /** Whether the working directory is known. Without it, a missing project means unknown. */
+  located: Schema.optional(Schema.Boolean),
+});
+export type UsageThread = typeof UsageThread.Type;
+
+export const UsageProject = Schema.Struct({
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+});
+export type UsageProject = typeof UsageProject.Type;
 
 /**
  * Identifies the physical transcript directory a source read from.
@@ -217,6 +262,8 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /** Split buckets by provider account and thread, and list the threads. */
+  groupByThread: Schema.optional(Schema.Boolean),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -229,6 +276,13 @@ export const UsageSummary = Schema.Struct({
   buckets: ForwardCompatibleArray(UsageBucket),
   sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
+  /**
+   * Threads that buckets point at, by index. Present only with
+   * `groupByThread`. A plain array: skipping an entry would shift every index.
+   */
+  threads: Schema.optional(Schema.Array(UsageThread)),
+  /** Projects that threads point at. Present only with `groupByThread`. */
+  projects: Schema.optional(ForwardCompatibleArray(UsageProject)),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });

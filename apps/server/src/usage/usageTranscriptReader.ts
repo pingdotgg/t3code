@@ -76,6 +76,8 @@ export interface TranscriptParseResult {
   readonly position: TranscriptParsePosition;
   /** Whether the parse continued from `resumeFrom` rather than byte 0. */
   readonly resumed: boolean;
+  /** Session working directory seen in the parsed bytes, or null. */
+  readonly cwd: string | null;
 }
 
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
@@ -99,6 +101,7 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
     timestamp: true,
     requestId: true,
     sessionId: true,
+    cwd: true,
     costUSD: true,
     message: { id: true, model: true, usage: true },
   },
@@ -109,6 +112,7 @@ const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
       type: true,
       id: true,
       session_id: true,
+      cwd: true,
       model: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
@@ -278,6 +282,7 @@ export async function readTranscriptRecords(
 
   try {
     let codexState = initialCodexScanState();
+    const session = { cwd: "" };
     let resumed = false;
     let start = 0;
     if (
@@ -310,7 +315,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
+      const record = parseClaudeLine(line, session);
       if (record !== null) out.push(record);
     };
 
@@ -360,7 +365,7 @@ export async function readTranscriptRecords(
           const record =
             provider === "codex"
               ? parseCodexRecord(projected, state)
-              : parseClaudeRecord(projected);
+              : parseClaudeRecord(projected, session);
           if (record !== null) out.push(record);
         }
       } else if (pendingBytes > 0) {
@@ -423,6 +428,7 @@ export async function readTranscriptRecords(
         codexState: provider === "codex" ? codexState : null,
       },
       resumed,
+      cwd: (provider === "codex" ? codexState.cwd : session.cwd) || null,
     };
   } catch {
     return null;

@@ -296,6 +296,80 @@ describe("mergeUsage", () => {
     }
   });
 
+  it("hands each environment's owned buckets and threads to the page", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const threads = [{ key: "t3:ship", title: "Ship it", located: true }];
+    const owner = environment("a", {
+      ...summary([bucket({ thread: 0, instanceId: "claude-work" })], [source]),
+      threads,
+      projects: [],
+    });
+    // A second server reading the same directory contributes nothing.
+    const duplicate = environment("b", {
+      ...summary([bucket({ thread: 0 })], [source]),
+      readAt: "2026-08-06T00:00:00.000Z",
+      threads,
+      projects: [],
+    });
+
+    const merged = mergeUsage([owner, duplicate], USAGE_CONTRACT_VERSION);
+    expect(merged.contributions).toEqual([
+      {
+        environmentId: "a",
+        buckets: [bucket({ thread: 0, instanceId: "claude-work" })],
+        threads,
+        projects: [],
+      },
+    ]);
+  });
+
+  it("does not recount a cell a newer partial scan split by thread differently", () => {
+    // Thread indexes are local to each summary: the same session is 0 in one
+    // scan and 1 in the other, so the overlap check ignores them.
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const complete = environment("old", summary([bucket({ thread: 0 })], [source]));
+    const partialSummary = summary(
+      [bucket({ thread: 1 }), bucket({ thread: 0, costUsd: 3 })],
+      [source],
+    );
+    const partial = environment("new", {
+      ...partialSummary,
+      readAt: "2026-08-08T01:00:00.000Z",
+      sources: partialSummary.sources.map((entry) => ({ ...entry, status: "partial" as const })),
+    });
+    expect(mergeUsage([complete, partial], USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+  });
+
+  it("keeps every thread of a cell a newer partial scan adds", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const complete = environment("old", summary([bucket({ thread: 0 })], [source]));
+    const partialSummary = summary(
+      [
+        bucket({ day: "2026-08-08" as UsageDay, thread: 0, costUsd: 20 }),
+        bucket({ day: "2026-08-08" as UsageDay, thread: 1, costUsd: 30 }),
+      ],
+      [source],
+    );
+    const partial = environment("new", {
+      ...partialSummary,
+      readAt: "2026-08-08T01:00:00.000Z",
+      sources: partialSummary.sources.map((entry) => ({ ...entry, status: "partial" as const })),
+    });
+    expect(mergeUsage([complete, partial], USAGE_CONTRACT_VERSION).costUsd).toBe(60);
+  });
+
+  it("compares a daily and an hourly scan of one directory by day", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const daily = environment("old", summary([bucket()], [source]));
+    const hourlySummary = summary([bucket({ hourStart: "2026-08-07T10:00:00.000Z" })], [source]);
+    const hourly = environment("new", {
+      ...hourlySummary,
+      readAt: "2026-08-08T01:00:00.000Z",
+      sources: hourlySummary.sources.map((entry) => ({ ...entry, status: "partial" as const })),
+    });
+    expect(mergeUsage([daily, hourly], USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+  });
+
   it("retains a complete cell when a larger partial cell may have skipped old records", () => {
     const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
     const complete = environment("old", summary([bucket()], [source]));

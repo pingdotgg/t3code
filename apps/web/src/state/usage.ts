@@ -13,9 +13,12 @@ import {
   type UsageBucket,
   type UsageSummary,
   type UsageSummaryInput,
+  UsageReadError,
 } from "@t3tools/contracts";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
@@ -31,6 +34,34 @@ export interface EnvironmentUsageStatus {
   readonly error: string | null;
   readonly summary: UsageSummary | null;
   readonly needsCursorKeychainAccess: boolean;
+  /** Read by day because the server cannot read this span by hour. */
+  readonly readByDay: boolean;
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const isUsageReadError = Schema.is(UsageReadError);
+
+/** Only the window rejection falls back; other failures stay visible as errors. */
+export function isRejectedWindow(result: AsyncResult.AsyncResult<unknown, unknown>): boolean {
+  if (result._tag !== "Failure") return false;
+  const error = Cause.squash(result.cause);
+  return isUsageReadError(error) && error.reason === "invalidWindow";
+}
+
+/**
+ * Servers from before week-long hourly reads reject hourly windows over a
+ * day. The same span by day still answers, so callers can chart it by day.
+ */
+export function dailyFallback(input: UsageSummaryInput): UsageSummaryInput | null {
+  if (input.resolution !== "hour" || !input.sinceTime || !input.untilTime) return null;
+  if (Date.parse(input.untilTime) - Date.parse(input.sinceTime) <= 24 * HOUR_MS) return null;
+  return {
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    resolution: "day",
+    ...(input.groupByThread === undefined ? {} : { groupByThread: input.groupByThread }),
+  };
 }
 
 /**
@@ -42,18 +73,27 @@ export interface EnvironmentUsageStatus {
  */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    const input = JSON.parse(windowKey) as UsageSummaryInput | null;
+    // No window asks nothing, so an optional read can keep its hook in place.
+    if (input === null) return [];
     const presentations = get(environmentPresentations.presentationsAtom);
 
     const statuses: EnvironmentUsageStatus[] = [];
+    const fallbackInput = dailyFallback(input);
     for (const [environmentId, presentation] of presentations) {
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      let result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      let readByDay = false;
+      if (fallbackInput !== null && isRejectedWindow(result)) {
+        result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackInput }));
+        readByDay = true;
+      }
       const summary = Option.getOrNull(AsyncResult.value(result));
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
         isPending: result.waiting,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
+        readByDay,
         summary,
         needsCursorKeychainAccess: needsCursorKeychainAccess(
           summary,
@@ -107,29 +147,24 @@ export function mergeAnsweredUsage(
   return mergeUsage(answered, USAGE_CONTRACT_VERSION);
 }
 
+/** `input` null reads nothing and reports no environments. */
 export function useUsage(
-  input: UsageSummaryInput,
+  input: UsageSummaryInput | null,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
 ): UsageView {
-  const windowKey = useMemo(
-    () =>
-      JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
-      }),
-    [
-      input.sinceDay,
-      input.untilDay,
-      input.timeZone,
-      input.resolution,
-      input.sinceTime,
-      input.untilTime,
-    ],
-  );
+  // A string key, so a fresh but equal window object reuses the same query.
+  const windowKey =
+    input === null
+      ? "null"
+      : JSON.stringify({
+          sinceDay: input.sinceDay,
+          untilDay: input.untilDay,
+          timeZone: input.timeZone,
+          resolution: input.resolution,
+          sinceTime: input.sinceTime,
+          untilTime: input.untilTime,
+          groupByThread: input.groupByThread,
+        });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
   const selectedEnvironments = useMemo(
@@ -143,14 +178,17 @@ export function useUsage(
   );
 
   const refresh = useCallback(
-    (nextInput?: UsageSummaryInput) =>
-      refreshUsage({
+    async (nextInput?: UsageSummaryInput) => {
+      const target = nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput | null);
+      if (target === null) return;
+      await refreshUsage({
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
         environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
-        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-      }),
+        input: target,
+      });
+    },
     [selectedEnvironments, windowKey],
   );
 

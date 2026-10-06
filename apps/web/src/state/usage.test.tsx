@@ -1,9 +1,22 @@
-import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  UsageDay,
+  UsageReadError,
+  USAGE_CONTRACT_VERSION,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useUsage, type EnvironmentUsageStatus, type UsageView } from "./usage";
+import {
+  dailyFallback,
+  isRejectedWindow,
+  useUsage,
+  type EnvironmentUsageStatus,
+  type UsageView,
+} from "./usage";
 
 const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
@@ -24,6 +37,7 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
     isPending: cost === null,
     error: null,
     needsCursorKeychainAccess: false,
+    readByDay: false,
     summary:
       cost === null
         ? null
@@ -163,5 +177,43 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+});
+
+describe("dailyFallback", () => {
+  it("reads a week-long hourly window by day for servers that reject it", () => {
+    const week = {
+      sinceDay: UsageDay.make("2026-09-29"),
+      untilDay: UsageDay.make("2026-10-05"),
+      timeZone: "UTC",
+      resolution: "hour" as const,
+      sinceTime: "2026-09-29T00:00:00.000Z",
+      untilTime: "2026-10-05T12:00:00.000Z",
+      groupByThread: true,
+    };
+    expect(dailyFallback(week)).toEqual({
+      sinceDay: week.sinceDay,
+      untilDay: week.untilDay,
+      timeZone: "UTC",
+      resolution: "day",
+      groupByThread: true,
+    });
+    // Every server reads a day by hour, so there is nothing to fall back to.
+    expect(dailyFallback({ ...week, sinceTime: "2026-10-04T12:00:00.000Z" })).toBeNull();
+    expect(dailyFallback({ ...week, resolution: "day" })).toBeNull();
+  });
+});
+
+describe("isRejectedWindow", () => {
+  it("falls back only when the server rejects the window itself", () => {
+    const rejected = new UsageReadError({ reason: "invalidWindow", detail: "at most 24 hours" });
+    const failedScan = new UsageReadError({ reason: "scanFailed", detail: "disk error" });
+    expect(isRejectedWindow(AsyncResult.failure(Cause.fail(rejected)))).toBe(true);
+    // A scan failure or a dropped connection stays an error, not a quieter daily read.
+    expect(isRejectedWindow(AsyncResult.failure(Cause.fail(failedScan)))).toBe(false);
+    expect(isRejectedWindow(AsyncResult.failure(Cause.die(new Error("socket closed"))))).toBe(
+      false,
+    );
+    expect(isRejectedWindow(AsyncResult.success(1))).toBe(false);
   });
 });

@@ -10,10 +10,12 @@ import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
+  type UsageProject,
   type UsageProviderKind,
   type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
+  type UsageThread,
   type UsageTokenTotals,
 } from "@t3tools/contracts";
 
@@ -132,6 +134,18 @@ export interface MergedUsage {
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly contractMismatches: readonly UsageContractMismatch[];
+  /**
+   * Each environment's buckets after source ownership, with the threads and
+   * projects they point at. Thread indexes are local to their environment.
+   */
+  readonly contributions: readonly UsageContribution[];
+}
+
+export interface UsageContribution {
+  readonly environmentId: EnvironmentId;
+  readonly buckets: readonly UsageBucket[];
+  readonly threads: readonly UsageThread[];
+  readonly projects: readonly UsageProject[];
 }
 
 /**
@@ -163,8 +177,47 @@ function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly 
   );
 }
 
+/**
+ * The overlap cell for partial-scan supplements. Thread and account stay out
+ * of it on purpose: thread indexes are local to each summary, so the same
+ * usage carries a different index in each scan.
+ */
 function bucketKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
+}
+
+/**
+ * Cells already counted for one transcript directory. An hourly and a daily
+ * summary of the same directory can only be compared by day, so a bucket
+ * overlaps when its own cell, or its day at the other resolution, is counted.
+ */
+class SeenCells {
+  readonly #cells = new Set<string>();
+  readonly #hourlyDays = new Set<string>();
+  readonly #dailyDays = new Set<string>();
+
+  constructor(buckets: readonly UsageBucket[]) {
+    this.addAll(buckets);
+  }
+
+  overlaps(bucket: UsageBucket): boolean {
+    const day = dayKey(bucket);
+    return (
+      this.#cells.has(bucketKey(bucket)) ||
+      (bucket.hourStart === undefined ? this.#hourlyDays.has(day) : this.#dailyDays.has(day))
+    );
+  }
+
+  addAll(buckets: readonly UsageBucket[]): void {
+    for (const bucket of buckets) {
+      this.#cells.add(bucketKey(bucket));
+      (bucket.hourStart === undefined ? this.#dailyDays : this.#hourlyDays).add(dayKey(bucket));
+    }
+  }
+}
+
+function dayKey(bucket: UsageBucket): string {
+  return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
 }
 
 /**
@@ -188,7 +241,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     string,
     { environment: EnvironmentUsage; source: UsageSource }
   >();
-  const seenBucketKeysByFingerprint = new Map<string, Set<string>>();
+  const seenBucketKeysByFingerprint = new Map<string, SeenCells>();
   const supplementalBucketsByEnvironment = new Map<EnvironmentId, Set<UsageBucket>>();
   const sessionsByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
@@ -233,20 +286,19 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
       let seen = seenBucketKeysByFingerprint.get(key);
       if (seen === undefined) {
-        seen = new Set(bucketsForSource(owner.environment.summary, owner.source).map(bucketKey));
+        seen = new SeenCells(bucketsForSource(owner.environment.summary, owner.source));
         seenBucketKeysByFingerprint.set(key, seen);
       }
       const supplemental =
         supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set<UsageBucket>();
-      let added = false;
-      for (const bucket of bucketsForSource(environment.summary, source)) {
-        const cell = bucketKey(bucket);
-        if (seen.has(cell)) continue;
-        seen.add(cell);
-        supplemental.add(bucket);
-        added = true;
-      }
-      if (!added) continue;
+      // Every bucket of a new cell counts: one cell holds a bucket per thread.
+      // Cells are marked seen only after the whole source, so siblings stay.
+      const admitted = bucketsForSource(environment.summary, source).filter(
+        (bucket) => !seen.overlaps(bucket),
+      );
+      for (const bucket of admitted) supplemental.add(bucket);
+      seen.addAll(admitted);
+      if (admitted.length === 0) continue;
       supplementalBucketsByEnvironment.set(environment.environmentId, supplemental);
       sessionsByFingerprint.set(
         key,
@@ -343,6 +395,7 @@ const EMPTY_MERGED: MergedUsage = {
   duplicateSources: [],
   contributingEnvironments: [],
   contractMismatches: [],
+  contributions: [],
 };
 
 /**
@@ -435,6 +488,7 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const contributions: UsageContribution[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(
@@ -443,7 +497,15 @@ export function mergeUsage(
       supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
       sessionsByFingerprint,
     );
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      contributions.push({
+        environmentId: environment.environmentId,
+        buckets,
+        threads: environment.summary.threads ?? [],
+        projects: environment.summary.projects ?? [],
+      });
+    }
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
@@ -641,5 +703,6 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     contractMismatches,
+    contributions,
   };
 }

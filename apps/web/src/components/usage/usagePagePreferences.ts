@@ -30,3 +30,53 @@ export function saveUsagePagePreferences(preferences: UsagePagePreferences): voi
     console.error("Could not save Usage page preferences.", error);
   }
 }
+
+const EXPLORER_STORAGE_KEY = "t3code:usage-explorer:v1";
+const UsageExplorerPreferencesSchema = Schema.Struct({
+  dimension: Schema.Literals(["project", "provider", "model"]),
+  running: Schema.Boolean,
+  columns: Schema.Array(
+    Schema.Literals([
+      "cost",
+      "share",
+      "tokens",
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "cacheWriteCost",
+      "cached",
+      "change",
+    ]),
+  ),
+  /** Favourite projects, keyed by environment and project id. */
+  favorites: Schema.Array(Schema.String),
+});
+export type UsageExplorerPreferences = typeof UsageExplorerPreferencesSchema.Type;
+
+const DEFAULT_EXPLORER_PREFERENCES: UsageExplorerPreferences = {
+  dimension: "project",
+  running: false,
+  columns: ["cost", "share", "tokens"],
+  favorites: [],
+};
+
+export function readUsageExplorerPreferences(): UsageExplorerPreferences {
+  try {
+    return (
+      getLocalStorageItem(EXPLORER_STORAGE_KEY, UsageExplorerPreferencesSchema) ??
+      DEFAULT_EXPLORER_PREFERENCES
+    );
+  } catch (error) {
+    console.error("Could not read Usage breakdown preferences.", error);
+    return DEFAULT_EXPLORER_PREFERENCES;
+  }
+}
+
+export function saveUsageExplorerPreferences(preferences: UsageExplorerPreferences): void {
+  try {
+    setLocalStorageItem(EXPLORER_STORAGE_KEY, preferences, UsageExplorerPreferencesSchema);
+  } catch (error) {
+    console.error("Could not save Usage breakdown preferences.", error);
+  }
+}

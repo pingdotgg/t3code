@@ -29,6 +29,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.ref
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
 vi.mock("../../state/usage", () => ({
+  dailyFallback: () => null,
   useUsage: () => ({
     merged: mergeUsage([], USAGE_CONTRACT_VERSION),
     environments: [
@@ -57,6 +58,13 @@ vi.mock("../../state/usage", () => ({
 vi.mock("./usagePagePreferences", () => ({
   readUsagePagePreferences: () => ({ metric: state.metric, windowDays: 30 }),
   saveUsagePagePreferences: vi.fn(),
+  readUsageExplorerPreferences: () => ({
+    dimension: "project",
+    running: false,
+    columns: ["cost", "share", "tokens"],
+    favorites: [],
+  }),
+  saveUsageExplorerPreferences: vi.fn(),
 }));
 vi.mock("../ui/button", () => ({ Button: "button", InlineButton: "button" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
@@ -86,7 +94,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 }));
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
-vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageExplorer", () => ({ UsageExplorer: () => null }));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: "span" }));
