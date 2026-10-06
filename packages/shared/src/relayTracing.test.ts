@@ -6,7 +6,7 @@ import * as Tracer from "effect/Tracer";
 import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
-import { RelayClientTracer, withRelayClientTracing } from "./relayTracing.ts";
+import { RelayClientTracer, withLocalTracing, withRelayClientTracing } from "./relayTracing.ts";
 import * as RelayTracing from "./relayTracing.ts";
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
@@ -100,4 +100,50 @@ describe("withRelayClientTracing", () => {
       ),
     );
   });
+});
+
+describe("withLocalTracing", () => {
+  it.effect("keeps local work inside a relay span off the product tracer", () =>
+    Effect.gen(function* () {
+      const localSpans: Array<string> = [];
+      const productSpans: Array<string> = [];
+      const localTracer = collectingTracer(localSpans);
+      const productTracer = collectingTracer(productSpans);
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("relay.connection.nested"),
+        Effect.andThen(
+          Effect.void.pipe(
+            Effect.withSpan("sql.execute"),
+            Effect.withSpan("ServerSecretStore.get"),
+            withLocalTracing,
+          ),
+        ),
+        Effect.withSpan("environment.orchestration.threadSnapshot"),
+        withRelayClientTracing,
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+        Effect.withTracer(localTracer),
+      );
+
+      expect(productSpans).toEqual([
+        "relay.connection.nested",
+        "environment.orchestration.threadSnapshot",
+      ]);
+      expect(localSpans).toEqual(["sql.execute", "ServerSecretStore.get"]);
+    }),
+  );
+
+  it.effect("leaves the current tracer alone outside relay tracing", () =>
+    Effect.gen(function* () {
+      const localSpans: Array<string> = [];
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("sql.execute"),
+        withLocalTracing,
+        Effect.withTracer(collectingTracer(localSpans)),
+      );
+
+      expect(localSpans).toEqual(["sql.execute"]);
+    }),
+  );
 });
