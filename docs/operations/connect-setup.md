@@ -34,6 +34,31 @@ Copy `infra/relay/.env.example` to `infra/relay/.env` for relay deployment setti
 Deploy `prod` before personal stages because it owns the retained database that their branches
 depend on. The stack's `PublishClientConfig` action writes the resulting relay URL back to the root `.env`.
 
+## Separate background delivery relay
+
+A custom mobile build can send device listing/registration, Live Activity registration, and agent activity
+snapshot requests to a different relay while keeping environment discovery, linking, and connections
+on `T3CODE_RELAY_URL`. Set `T3CODE_BACKGROUND_RELAY_URL` to the background relay's HTTPS origin
+before building the mobile app. Omit it to use the normal T3 Connect relay for everything.
+
+On each publishing server, supply these runtime environment variables through its service's secret
+configuration, then restart the server:
+
+- `T3CODE_BACKGROUND_RELAY_URL`: the same background relay origin.
+- `T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL`: that relay's environment credential.
+- `T3CODE_BACKGROUND_RELAY_ISSUER`: optional signing issuer origin; defaults to the background URL.
+
+The environment's existing agent activity publishing switch still controls sharing. A configured
+background relay replaces the activity destination; it does not publish a second copy to T3 Connect.
+Remove the runtime overrides and rebuild the mobile app without the build override to restore the
+single-relay configuration. Existing T3 Connect credentials are not replaced.
+
+This only selects an already-provisioned relay. It must accept the mobile app's existing Clerk
+identity, link the environment's signing key to that account, and have push credentials for the app's
+bundle ID and signing environment. These options do not provision a deployment, migrate registrations,
+or grant access to another relay's accounts. Register the app again after switching relays. Never put
+the environment credential or APNs private key in the mobile build configuration.
+
 ## CLI OAuth application
 
 In Clerk's OAuth applications settings:
