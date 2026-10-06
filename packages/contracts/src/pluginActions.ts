@@ -16,6 +16,7 @@
  * @module PluginActions
  */
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   ForwardCompatibleArray,
@@ -47,6 +48,22 @@ const PluginActionTargetKind = Schema.Literals(["environment", "project", "threa
 /** Where clients offer the action. Clients ignore placements they do not know. */
 const PluginActionPlacement = Schema.Literals(["command-palette", "thread-menu", "composer-slash"]);
 export type PluginActionPlacement = typeof PluginActionPlacement.Type;
+const isPluginActionPlacement = Schema.is(PluginActionPlacement);
+
+/**
+ * Placements as sent to clients; a placement this client does not know is
+ * dropped by itself. `ForwardCompatibleArray` cannot do this here: nested in
+ * the actions array, dropping one placement would drop the whole action.
+ */
+const OfferedPluginActionPlacements = Schema.Array(Schema.String).pipe(
+  Schema.decodeTo(
+    Schema.Array(PluginActionPlacement),
+    SchemaTransformation.transform<ReadonlyArray<PluginActionPlacement>, ReadonlyArray<string>>({
+      decode: (placements) => placements.filter(isPluginActionPlacement),
+      encode: (placements) => placements,
+    }),
+  ),
+);
 
 /** One entry of the manifest's `actions` array. */
 export const PluginActionDeclaration = Schema.Struct({
@@ -77,7 +94,7 @@ const PluginAction = Schema.Struct({
   title: Schema.String,
   description: Schema.optionalKey(Schema.String),
   target: PluginActionTargetKind,
-  placements: ForwardCompatibleArray(PluginActionPlacement),
+  placements: OfferedPluginActionPlacements,
 });
 export type PluginAction = typeof PluginAction.Type;
 
