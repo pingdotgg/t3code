@@ -1,8 +1,11 @@
 import {
   ToolActivityIcon,
   PreviewAutomationClickInput,
+  PreviewAutomationDialogInput,
+  PreviewAutomationDragInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationHoverInput,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
@@ -11,17 +14,20 @@ import {
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
+  PreviewAutomationSelectInput,
+  PreviewAutomationSelectResult,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
+  PreviewAutomationUploadInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -52,7 +58,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
+    "Report whether a collaborative browser tab is automation-capable, including its control owner, pending dialog, URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
@@ -66,7 +72,7 @@ const PreviewStatusTool = Tool.make("preview_status", {
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Parallel subagents sharing a provider session must each open with reuseExistingTab=false and pass their returned tabId on every call. Server tabs use isolated storage and cannot be operated by a different agent session.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -74,6 +80,17 @@ const PreviewOpenTool = browserTool(
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
+);
+
+const PreviewDialogTool = browserTool(
+  Tool.make("preview_dialog", {
+    description:
+      "Accept or dismiss the server browser dialog reported by preview_status. For a prompt, supply promptText when accepting. Requires this agent to own the tab. Desktop hosts may not support this operation.",
+    parameters: PreviewAutomationDialogInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Resolve browser dialog"),
 );
 
 const PreviewNavigateTool = safeBrowserTool(
@@ -119,7 +136,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. The text is capped near 20 KB and lists what it omitted; use preview_evaluate to read more. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and screenshotPath. Embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Server snapshots include an accessibilityTree with refs; pass locator=aria-ref=<ref> to target one exact element, including inside frames. Refresh refs after navigation, another snapshot, or human takeover. The text is capped near 20 KB and lists what it omitted; use preview_evaluate to read more. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and screenshotPath. Embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
@@ -144,7 +161,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
-      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together.",
+      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together. Set button=right for a context menu or clickCount=2 for a double-click; server browser tabs only.",
     parameters: PreviewAutomationClickInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -161,6 +178,53 @@ const PreviewTypeTool = browserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Type into preview page"),
+);
+
+const PreviewHoverTool = safeBrowserTool(
+  Tool.make("preview_hover", {
+    description:
+      "Move the mouse over exactly one target in the tab selected by tabId, or this agent session's current tab when omitted, to reveal hover menus and tooltips. Server browser tabs only.",
+    parameters: PreviewAutomationHoverInput,
+    success: PreviewActionResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Hover preview page"),
+);
+
+const PreviewSelectTool = browserTool(
+  Tool.make("preview_select", {
+    description:
+      "Choose options in one native <select> in the tab selected by tabId, or this agent session's current tab when omitted, by option value or visible label. Custom dropdowns are not <select>; click them open and click the option instead. Server browser tabs only.",
+    parameters: PreviewAutomationSelectInput,
+    success: Schema.Struct({
+      ...PreviewAutomationSelectResult.fields,
+      ...presentationFields,
+    }),
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Select preview option"),
+);
+
+const PreviewDragTool = browserTool(
+  Tool.make("preview_drag", {
+    description:
+      "Drag one element onto another in the tab selected by tabId, or this agent session's current tab when omitted. Server browser tabs only.",
+    parameters: PreviewAutomationDragInput,
+    success: PreviewActionResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Drag in preview page"),
+);
+
+const PreviewUploadTool = browserTool(
+  Tool.make("preview_upload", {
+    description:
+      "Give files on the environment to the page in the tab selected by tabId, or this agent session's current tab when omitted. After clicking an upload control, preview_status reports the open fileChooser; call this with absolute paths to answer it, or with an empty list to cancel. Pass a locator for an <input type=file> to set its files without a picker. Server browser tabs only.",
+    parameters: PreviewAutomationUploadInput,
+    success: PreviewActionResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Upload files to preview page"),
 );
 
 const PreviewPressTool = browserTool(
@@ -242,6 +306,7 @@ const PreviewRecordingStopTool = safeBrowserTool(
 );
 
 export const PreviewToolkit = Toolkit.make(
+  PreviewDialogTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
@@ -250,6 +315,10 @@ export const PreviewToolkit = Toolkit.make(
   PreviewSnapshotTool,
   PreviewClickTool,
   PreviewTypeTool,
+  PreviewHoverTool,
+  PreviewSelectTool,
+  PreviewDragTool,
+  PreviewUploadTool,
   PreviewPressTool,
   PreviewScrollTool,
   PreviewEvaluateTool,
@@ -259,6 +328,7 @@ export const PreviewToolkit = Toolkit.make(
 );
 
 export const PreviewStandardToolkit = Toolkit.make(
+  PreviewDialogTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
@@ -266,6 +336,10 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewSetAppearanceTool,
   PreviewClickTool,
   PreviewTypeTool,
+  PreviewHoverTool,
+  PreviewSelectTool,
+  PreviewDragTool,
+  PreviewUploadTool,
   PreviewPressTool,
   PreviewScrollTool,
   PreviewEvaluateTool,

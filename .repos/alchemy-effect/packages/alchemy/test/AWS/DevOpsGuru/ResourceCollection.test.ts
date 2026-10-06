@@ -25,11 +25,14 @@ const observedTags = devopsguru
 // Ungated typed-error probe: getResourceCollection either returns the
 // configured collection or fails with the typed not-found tag — never an
 // untyped catch-all.
-test.provider("getResourceCollection returns typed results", () =>
-  Effect.gen(function* () {
-    const tags = yield* observedTags;
-    expect(Array.isArray(tags)).toBe(true);
-  }),
+test.provider(
+  "getResourceCollection returns typed results",
+  () =>
+    Effect.gen(function* () {
+      const tags = yield* observedTags;
+      expect(Array.isArray(tags)).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:devopsguru", "live"] },
 );
 
 // The resource collection is an account/region singleton. This test only
@@ -111,5 +114,8 @@ test.provider(
       const after = yield* observedTags;
       expect(after).toEqual([]);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:devopsguru", "live"],
+    timeout: 180_000,
+  },
 );

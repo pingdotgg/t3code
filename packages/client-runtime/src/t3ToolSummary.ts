@@ -285,6 +285,9 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("requestId")), "pending question request"),
       );
       break;
+    case "secret-request":
+      label = phrase("Asked for", "ask for", quantity(selected.length, "secret"));
+      break;
     case "worktree-handoff":
       label = phrase(
         "Handed off to",
@@ -394,6 +397,12 @@ export function summarizeT3ToolCalls(
       break;
     case "device":
       label = phrase("Used", "use", `device controls ${times}`);
+      break;
+    case "html-preview":
+      label = phrase("Previewed", "preview", quantity(selected.length, "HTML page"));
+      break;
+    case "html-render":
+      label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
       break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);

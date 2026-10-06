@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import {
   CreateThreadsTool,
@@ -26,7 +26,7 @@ describe("orchestrator MCP tool guidance", () => {
     );
     assert.include(
       OrchestratorToolkit.tools.task_cancel.description ?? "",
-      "without interrupting later child-thread runs",
+      "This includes later child-thread runs, even after the task is terminal",
     );
   });
 

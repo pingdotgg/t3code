@@ -8,11 +8,13 @@ import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import {
   createProviderVersionAdvisory,
   makeTargetedProviderUpdateAction,
@@ -899,6 +901,61 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(resolutions).toBe(1);
       yield* resolve({ fresh: true });
       yield* resolve();
+      expect(resolutions).toBe(2);
+    }),
+  );
+
+  it.effect("starts a fresh read instead of joining the resolution already running", () =>
+    Effect.gen(function* () {
+      const releaseStale = yield* Deferred.make<void>();
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Deferred.await(releaseStale).pipe(Effect.as(manualPackageTool))
+            : Effect.succeed(manualPackageTool);
+        }),
+      );
+
+      // An advisory read starts a resolution that is still running when the
+      // user clicks Update; the fresh read must not wait on or reuse it.
+      const advisory = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      const fresh = yield* Effect.forkChild(resolve({ fresh: true }), { startImmediately: true });
+      // The fresh read runs its own resolution, so it finishes while the stale
+      // one is still waiting.
+      expect(resolutions).toBe(2);
+      expect(fresh.pollUnsafe()).toBeDefined();
+      yield* Deferred.succeed(releaseStale, undefined);
+      expect(yield* Fiber.join(fresh)).toEqual(manualPackageTool);
+      yield* Fiber.join(advisory);
+    }),
+  );
+
+  it.effect("resolves again after the first read is interrupted", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Effect.never
+            : Deferred.await(release).pipe(Effect.as(manualPackageTool));
+        }),
+      );
+
+      const first = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      yield* Fiber.interrupt(first);
+
+      // The next read resolves again, and a reader that joined it keeps it
+      // running when the reader that started it goes away.
+      const owner = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      const waiter = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      yield* Fiber.interrupt(owner);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(waiter)).toEqual(manualPackageTool);
+      expect(yield* resolve()).toEqual(manualPackageTool);
       expect(resolutions).toBe(2);
     }),
   );

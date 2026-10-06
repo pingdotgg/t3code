@@ -18,6 +18,22 @@ const makeWorker = Effect.gen(function*() {
 })
 
 describe("FiberHandle", () => {
+  it.effect("run defers startup", () =>
+    Effect.gen(function*() {
+      const container = yield* FiberHandle.make()
+      let started = false
+      const fiber = yield* FiberHandle.run(
+        container,
+        Effect.sync(() => {
+          started = true
+        }),
+        { startImmediately: false }
+      )
+      assert.isFalse(started)
+      yield* Fiber.join(fiber)
+      assert.isTrue(started)
+    }))
+
   it.effect("interrupts the current fiber when the scope closes", () =>
     Effect.gen(function*() {
       const ref = yield* (Ref.make(0))

@@ -24,6 +24,7 @@ export interface RetrieveWebhookEndpointRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Webhook
  */
 export interface RetrieveWebhookEndpoint extends Binding.Service<
   RetrieveWebhookEndpoint,

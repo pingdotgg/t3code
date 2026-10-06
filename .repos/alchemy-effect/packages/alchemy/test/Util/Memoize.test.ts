@@ -2,6 +2,7 @@ import { cachedInScope } from "@/Util/Memoize.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -10,7 +11,7 @@ import * as Scope from "effect/Scope";
 // interrupting that caller while others wait fails every waiter with an
 // interrupt-only cause and leaves the cache poisoned. These pin the
 // behaviour `cachedInScope` exists for.
-describe("cachedInScope", () => {
+describe("cachedInScope", { tags: ["unit", "local"] }, () => {
   it.live("survives the first caller being interrupted", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make();
@@ -57,17 +58,25 @@ describe("cachedInScope", () => {
     }),
   );
 
-  it.live("closing the scope cancels the computation for its waiters", () =>
-    Effect.gen(function* () {
-      const scope = yield* Scope.make();
-      const memo = yield* cachedInScope(scope)(Effect.never);
-      const waiter = yield* Effect.forkChild(memo);
-      yield* Effect.sleep("10 millis");
-      yield* Scope.close(scope, Exit.void);
-      const exit = yield* Fiber.await(waiter);
-      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(
-        true,
-      );
-    }),
+  it.live(
+    "closing the scope cancels the computation for its waiters",
+    () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const started = yield* Deferred.make<void>();
+        const memo = yield* cachedInScope(scope)(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        );
+        const waiter = yield* Effect.forkChild(memo);
+        yield* Deferred.await(started);
+        yield* Scope.close(scope, Exit.void);
+        const exit = yield* Fiber.await(waiter);
+        expect(
+          Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
+        ).toBe(true);
+      }),
+    { timeout: 5_000, retry: 0 },
   );
 });

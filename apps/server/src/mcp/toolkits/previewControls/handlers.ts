@@ -1,19 +1,20 @@
 import * as Effect from "effect/Effect";
 import * as Preview from "../../../preview/Manager.ts";
-import { requireMcpCapability } from "../../McpInvocationContext.ts";
+import { requireThreadMcpCapability } from "../../McpInvocationContext.ts";
 import { unavailable } from "../../threadAccess.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const access = Effect.gen(function* () {
   // The preview capability already reflects the calling project's access setting.
-  const scope = yield* requireMcpCapability("preview");
+  const scope = yield* requireThreadMcpCapability("preview");
   return { scope, manager: yield* Preview.PreviewManager };
 });
-export const PreviewControlsHandlersLive = PreviewControlsToolkit.toLayer({
+export const layer = PreviewControlsToolkit.toLayer({
   t3_preview_list: (input) =>
     Effect.gen(function* () {
       const { scope, manager } = yield* access;
-      const result = yield* manager.list({ threadId: scope.threadId });
+      const result = yield* manager.list({ threadId: scope.thread.threadId });
       const start = input.cursor ?? 0;
       const end = start + (input.limit ?? 20);
       return {
@@ -25,8 +26,18 @@ export const PreviewControlsHandlersLive = PreviewControlsToolkit.toLayer({
   t3_preview_close: (input) =>
     Effect.gen(function* () {
       const { scope, manager } = yield* access;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      if (
+        sessions.some((session) => session.tabId === input.tabId && session.runtime === "server")
+      ) {
+        const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+        yield* broker
+          .invoke({ scope, operation: "close", input: {}, tabId: input.tabId })
+          .pipe(Effect.mapError(unavailable));
+        return {};
+      }
       yield* manager
-        .close({ threadId: scope.threadId, tabId: input.tabId })
+        .close({ threadId: scope.thread.threadId, tabId: input.tabId })
         .pipe(Effect.mapError(unavailable));
       return {};
     }),

@@ -80,6 +80,53 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     );
   });
 
+  it.effect("keeps stale records and supervised startup out of the manual launch preflight", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-" });
+      for (const [name, pid, mode, rejectRunningServer] of [
+        ["stale", 2_147_483_647, "web", true],
+        ["desktop", process.pid, "desktop", true],
+        ["serve", process.pid, "web", false],
+      ] as const) {
+        const baseDir = path.join(root, name);
+        const stateDir = path.join(baseDir, "userdata");
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(stateDir, "server-runtime.json"),
+          yield* encodeUnknownJson({
+            version: 1,
+            pid,
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-10-01T00:00:00.000Z",
+          }),
+        );
+        const cwd = path.join(root, `${name}-project`);
+        const config = yield* resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            mode: Option.some(mode),
+            port: Option.some(8788),
+            cwd: Option.some(cwd),
+          },
+          Option.none(),
+          { rejectRunningServer },
+        ).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+        );
+        expect(config.cwd).toBe(cwd);
+        expect(yield* fs.exists(cwd)).toBe(true);
+      }
+    }),
+  );
+
   it.effect("enables a trimmed reusable auth token only for web dev mode", () =>
     Effect.gen(function* () {
       const baseDir = yield* FileSystem.FileSystem.pipe(
@@ -99,7 +146,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
       };
-      const configLayer = ConfigProvider.layer(
+      const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
             T3CODE_DEV_AUTH_TOKEN: "  reusable-dev-auth-token-that-is-long-enough  ",
@@ -107,12 +154,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         }),
       );
       const web = yield* resolveServerConfig(flags, Option.none()).pipe(
-        Effect.provide(Layer.mergeAll(configLayer, NetService.layer)),
+        Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)),
       );
       const desktop = yield* resolveServerConfig(
         { ...flags, mode: Option.some("desktop" as const) },
         Option.none(),
-      ).pipe(Effect.provide(Layer.mergeAll(configLayer, NetService.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)));
 
       expect(web.devAuthToken).toBeDefined();
       if (web.devAuthToken === undefined) {
@@ -143,21 +190,21 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
       };
-      const configLayer = ConfigProvider.layer(
+      const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
       );
       const error = yield* resolveServerConfig(flags, Option.none()).pipe(
-        Effect.provide(Layer.mergeAll(configLayer, NetService.layer)),
+        Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)),
         Effect.flip,
       );
       const desktop = yield* resolveServerConfig(
         { ...flags, mode: Option.some("desktop" as const) },
         Option.none(),
-      ).pipe(Effect.provide(Layer.mergeAll(configLayer, NetService.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)));
       const staticWeb = yield* resolveServerConfig(
         { ...flags, devUrl: Option.none() },
         Option.none(),
-      ).pipe(Effect.provide(Layer.mergeAll(configLayer, NetService.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)));
 
       expect(String(error)).not.toContain(secret);
       const serialized = yield* encodeUnknownJson(error);

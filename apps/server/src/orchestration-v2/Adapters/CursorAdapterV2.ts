@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
@@ -1282,6 +1283,12 @@ export function makeCursorAdapterV2(
               turnItem = {
                 ...base,
                 type: "dynamic_tool",
+                ...(toolCall.type === "mcp"
+                  ? mcpToolPresentation({
+                      serverName: toolCall.args.providerIdentifier,
+                      toolName: toolCall.args.toolName,
+                    })
+                  : {}),
                 toolName: cursorToolName(toolCall),
                 input: toolCall.args,
                 ...(cursorToolOutput(toolCall) === undefined
@@ -1565,10 +1572,10 @@ export function makeCursorAdapterV2(
               },
               prompt: args.prompt,
               title: args.description,
-              model: args.model?.trim() || null,
               result: null,
               startedAt: now,
             }),
+            model: args.model?.trim() || existing?.task.model || null,
             nativeTaskRef: {
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeId: input.callId,

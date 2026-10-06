@@ -153,15 +153,7 @@ ${clientErrorSource(name)}`
       const type = `typeof ${operation.payload}.Encoded`
       options.push(`${key}: ${type}`)
     }
-    options.push("readonly config?: Config | undefined")
-
-    // If all options are optional, the argument itself should be optional
     const hasOptions = (operation.params && !operation.paramsOptional) || operation.payload
-    if (hasOptions) {
-      args.push(`options: { ${options.join("; ")} }`)
-    } else {
-      args.push(`options: { ${options.join("; ")} } | undefined`)
-    }
 
     const successTypes = new Set(Array.from(responses.successSchemas.values(), (schema) => `typeof ${schema}.Type`))
     if (responses.binarySuccessStatuses.size > 0) {
@@ -186,10 +178,7 @@ ${clientErrorSource(name)}`
 
     const jsdoc = Utils.toComment(operation.description)
     const methodKey = `readonly "${operation.id}"`
-    const generic = `<Config extends OperationConfig>`
-    const parameters = args.join(", ")
-    const returnType = `Effect.Effect<WithOptionalResponse<${success}, Config>, ${errors.join(" | ")}>`
-    return `${jsdoc}${methodKey}: ${generic}(${parameters}) => ${returnType}`
+    return `${jsdoc}${methodKey}: ${operationSignatures(args, options, Boolean(hasOptions), success, errors)}`
   }
 
   const operationToSseMethod = (_name: string, operation: ParsedOperation) => {
@@ -265,7 +254,7 @@ ${clientErrorSource(name)}`
     const requirements = computeImportRequirements(operations)
     const implMethods: Array<string> = []
     for (const op of operations) {
-      implMethods.push(operationToImpl(op))
+      implMethods.push(operationToImpl(name, op))
       if (op.httpClientResponses.sseSchema) {
         implMethods.push(operationToSseImpl(importName, op))
       }
@@ -312,9 +301,11 @@ ${clientErrorSource(name)}`
  * of an operation based upon the value of the \`includeResponse\` configuration
  * option.
  */
-export type WithOptionalResponse<A, Config extends OperationConfig> = Config extends {
+export type WithOptionalResponse<A, Config extends OperationConfig | undefined> = Config extends {
   readonly includeResponse: true
-} ? [A, HttpClientResponse.HttpClientResponse] : A
+} ? [A, HttpClientResponse.HttpClientResponse]
+  : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
+  : A | [A, HttpClientResponse.HttpClientResponse]
 
 export const make = (
   httpClient: HttpClient.HttpClient,
@@ -341,10 +332,12 @@ export const make = (
 }`
   }
 
-  const operationToImpl = (operation: ParsedOperation) => {
+  const operationToImpl = (name: string, operation: ParsedOperation) => {
     const responses = operation.httpClientResponses
-    const args: Array<string> = [...operation.pathIds, "options"]
-    const params = `${args.join(", ")}`
+    const params = [
+      ...operation.pathIds,
+      `options: Parameters<${name}["${operation.id}"]>[${operation.pathIds.length}]`
+    ].join(", ")
 
     const pipeline: Array<string> = []
 
@@ -502,18 +495,18 @@ export const make = (
         imports.push(`import * as Stream from "effect/Stream"`)
       }
       if (requirements.eventStream) {
-        imports.push(`import * as Sse from "effect/unstable/encoding/Sse"`)
+        imports.push(`import * as Sse from "effect/encoding/Sse"`)
       }
       // HttpClient needs to be a value import when streaming is used (for filterStatusOk)
       if (requiresStreaming(requirements)) {
-        imports.push(`import * as HttpClient from "effect/unstable/http/HttpClient"`)
+        imports.push(`import * as HttpClient from "effect/http/HttpClient"`)
       } else {
-        imports.push(`import type * as HttpClient from "effect/unstable/http/HttpClient"`)
+        imports.push(`import type * as HttpClient from "effect/http/HttpClient"`)
       }
       imports.push(
-        `import * as HttpClientError from "effect/unstable/http/HttpClientError"`,
-        `import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"`,
-        `import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"`
+        `import * as HttpClientError from "effect/http/HttpClientError"`,
+        `import * as HttpClientRequest from "effect/http/HttpClientRequest"`,
+        `import * as HttpClientResponse from "effect/http/HttpClientResponse"`
       )
       return imports.join("\n")
     },
@@ -591,15 +584,7 @@ ${clientErrorSource(name)}`
     if (operation.payload) {
       options.push(`readonly payload: ${operation.payload}`)
     }
-    options.push("readonly config?: Config | undefined")
-
-    // If all options are optional, the argument itself should be optional
     const hasOptions = (operation.params && !operation.paramsOptional) || operation.payload
-    if (hasOptions) {
-      args.push(`options: { ${options.join("; ")} }`)
-    } else {
-      args.push(`options: { ${options.join("; ")} } | undefined`)
-    }
 
     const successTypes = new Set(responses.successSchemas.values())
     if (responses.binarySuccessStatuses.size > 0) {
@@ -622,10 +607,7 @@ ${clientErrorSource(name)}`
 
     const jsdoc = Utils.toComment(operation.description)
     const methodKey = `readonly "${operation.id}"`
-    const generic = `<Config extends OperationConfig>`
-    const parameters = args.join(", ")
-    const returnType = `Effect.Effect<WithOptionalResponse<${success}, Config>, ${errors.join(" | ")}>`
-    return `${jsdoc}${methodKey}: ${generic}(${parameters}) => ${returnType}`
+    return `${jsdoc}${methodKey}: ${operationSignatures(args, options, Boolean(hasOptions), success, errors)}`
   }
 
   const operationToSseMethod = (operation: ParsedOperation) => {
@@ -697,7 +679,7 @@ ${clientErrorSource(name)}`
     const requirements = computeImportRequirements(operations)
     const implMethods: Array<string> = []
     for (const op of operations) {
-      implMethods.push(operationToImpl(op))
+      implMethods.push(operationToImpl(name, op))
       if (op.httpClientResponses.sseSchema) {
         implMethods.push(operationToSseImpl(op))
       }
@@ -743,9 +725,11 @@ ${clientErrorSource(name)}`
  * of an operation based upon the value of the \`includeResponse\` configuration
  * option.
  */
-export type WithOptionalResponse<A, Config extends OperationConfig> = Config extends {
+export type WithOptionalResponse<A, Config extends OperationConfig | undefined> = Config extends {
   readonly includeResponse: true
-} ? [A, HttpClientResponse.HttpClientResponse] : A
+} ? [A, HttpClientResponse.HttpClientResponse]
+  : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
+  : A | [A, HttpClientResponse.HttpClientResponse]
 
 export const make = (
   httpClient: HttpClient.HttpClient,
@@ -778,10 +762,12 @@ export const make = (
 }`
   }
 
-  const operationToImpl = (operation: ParsedOperation) => {
+  const operationToImpl = (name: string, operation: ParsedOperation) => {
     const responses = operation.httpClientResponses
-    const args: Array<string> = [...operation.pathIds, "options"]
-    const params = `${args.join(", ")}`
+    const params = [
+      ...operation.pathIds,
+      `options: Parameters<${name}["${operation.id}"]>[${operation.pathIds.length}]`
+    ].join(", ")
 
     const pipeline: Array<string> = []
 
@@ -935,15 +921,15 @@ export const make = (
       if (requiresStreaming(requirements)) {
         imports.push(
           `import * as Stream from "effect/Stream"`,
-          `import * as HttpClient from "effect/unstable/http/HttpClient"`
+          `import * as HttpClient from "effect/http/HttpClient"`
         )
       } else {
-        imports.push(`import type * as HttpClient from "effect/unstable/http/HttpClient"`)
+        imports.push(`import type * as HttpClient from "effect/http/HttpClient"`)
       }
       imports.push(
-        `import * as HttpClientError from "effect/unstable/http/HttpClientError"`,
-        `import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"`,
-        `import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"`
+        `import * as HttpClientError from "effect/http/HttpClientError"`,
+        `import * as HttpClientRequest from "effect/http/HttpClientRequest"`,
+        `import * as HttpClientResponse from "effect/http/HttpClientResponse"`
       )
       return imports.join("\n")
     },
@@ -1179,6 +1165,29 @@ export const ${name}Error = <Tag extends string, E>(
     response,
     request: response.request,
   }) as any`
+
+const operationSignatures = (
+  args: ReadonlyArray<string>,
+  options: ReadonlyArray<string>,
+  optionsRequired: boolean,
+  success: string,
+  errors: ReadonlyArray<string>
+): string => {
+  const signature = (configOptional: boolean) => {
+    const config = configOptional ? "Config | undefined" : "Config"
+    const fields = [...options, `readonly config${configOptional ? "?" : ""}: ${config}`].join("; ")
+    const parameters = [...args, `options: { ${fields} }${configOptional && !optionsRequired ? " | undefined" : ""}`]
+    return `    <Config extends OperationConfig | undefined = undefined>(${
+      parameters.join(", ")
+    }): Effect.Effect<WithOptionalResponse<${success}, ${config}>, ${errors.join(" | ")}>;`
+  }
+  // Infer the whole config from a required property before allowing omitted config.
+  // An optional property would otherwise discard undefined during inference.
+  return `{
+${signature(false)}
+${signature(true)}
+  }`
+}
 
 const resolveConfigAccessor = (operation: ParsedOperation, rootKey: string, configKey: string): string => {
   // If an operation payload is defined, then the root object must exist

@@ -11,11 +11,12 @@
  * @since 4.0.0
  */
 import * as Arr from "./Array.ts"
+import * as Cause from "./Cause.ts"
 import * as Context from "./Context.ts"
 import * as Deferred from "./Deferred.ts"
 import * as Duration from "./Duration.ts"
 import type * as Effect from "./Effect.ts"
-import type * as Exit from "./Exit.ts"
+import * as Exit from "./Exit.ts"
 import * as Fiber from "./Fiber.ts"
 import { dual, identity } from "./Function.ts"
 import * as core from "./internal/core.ts"
@@ -105,6 +106,8 @@ export interface Entry<A, E> {
   expiresAt: number | undefined
   readonly deferred: Deferred.Deferred<A, E>
   readonly scope: Scope.Closeable
+  awaiters: number
+  fiber?: Fiber.Fiber<A, E>
 }
 
 /**
@@ -268,31 +271,75 @@ export const get: {
           // Move the entry to the end of the map to keep it fresh
           MutableHashMap.remove(state.map, key)
           MutableHashMap.set(state.map, key, oentry.value)
-          return restore(Deferred.await(oentry.value.deferred))
+          return awaitEntry(self, key, oentry.value, restore)
         }
         const scope = Scope.makeUnsafe()
         const deferred = Deferred.makeUnsafe<A, E>()
         const entry: Entry<A, E> = {
           expiresAt: undefined,
           deferred,
-          scope
+          scope,
+          awaiters: 0
         }
         MutableHashMap.set(state.map, key, entry)
         return checkCapacity(fiber, state.map, self.capacity).pipe(
           Option.isSome(oentry) ? effect.flatMap(() => Scope.close(oentry.value.scope, effect.exitVoid)) : identity,
-          effect.flatMap(() => Scope.provide(restore(self.lookup(key)), scope)),
-          effect.onExit((exit) => {
-            Deferred.doneUnsafe(deferred, exit)
-            const ttl = self.timeToLive(exit, key)
-            if (Duration.isFinite(ttl)) {
-              entry.expiresAt = fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
-            }
-            return effect.void
+          effect.flatMap(() => {
+            entry.fiber = effect.forkUnsafe(
+              fiber,
+              effect.onExit(effect.suspend(() => Scope.provide(self.lookup(key), scope)), (exit) => {
+                if (effect.exitHasInterrupts(exit)) {
+                  removeEntry(self, key, entry)
+                  Deferred.doneUnsafe(deferred, exit)
+                  return Scope.close(scope, exit)
+                }
+                try {
+                  const ttl = self.timeToLive(exit, key)
+                  if (Duration.isFinite(ttl)) {
+                    entry.expiresAt = fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
+                  }
+                } finally {
+                  Deferred.doneUnsafe(deferred, exit)
+                }
+                return effect.void
+              }),
+              true,
+              true
+            )
+            return awaitEntry(self, key, entry, restore)
           })
         )
       })
     )
 )
+
+const awaitEntry = <Key, A, E, R>(
+  self: ScopedCache<Key, A, E, R>,
+  key: Key,
+  entry: Entry<A, E>,
+  restore: <X, Y, Z>(effect: Effect.Effect<X, Y, Z>) => Effect.Effect<X, Y, Z>
+): Effect.Effect<A, E> => {
+  if (Deferred.isDoneUnsafe(entry.deferred)) return restore(Deferred.await(entry.deferred))
+  entry.awaiters++
+  // Install cleanup before restore so a pending interrupt cannot skip the decrement.
+  return effect.onExit(restore(Deferred.await(entry.deferred)), () => {
+    entry.awaiters--
+    const fiber = entry.fiber
+    if (entry.awaiters > 0 || fiber === undefined || Deferred.isDoneUnsafe(entry.deferred)) return effect.void
+    // Detach before interruption so callers arriving during finalization start fresh.
+    removeEntry(self, key, entry)
+    return effect.flatMap(effect.fiberInterrupt(fiber), () => {
+      const exit = fiber.pollUnsafe()!
+      return Exit.isFailure(exit) && Cause.hasDies(exit.cause) ? effect.failCause(exit.cause) : effect.void
+    })
+  })
+}
+
+const removeEntry = <Key, A, E, R>(self: ScopedCache<Key, A, E, R>, key: Key, entry: Entry<A, E>): void => {
+  if (self.state._tag !== "Open") return
+  const current = MutableHashMap.get(self.state.map, key)
+  if (Option.isSome(current) && current.value === entry) MutableHashMap.remove(self.state.map, key)
+}
 
 const hasExpired = <A, E>(entry: Entry<A, E>, fiber: Fiber.Fiber<unknown, unknown>): boolean => {
   if (entry.expiresAt === undefined) {
@@ -350,7 +397,7 @@ export const getOption: {
       core.withFiber((fiber) =>
         effect.flatMap(
           getImpl(self, key, fiber),
-          (entry) => entry ? effect.asSome(restore(Deferred.await(entry.deferred))) : effect.succeedNone
+          (entry) => entry ? effect.asSome(awaitEntry(self, key, entry, restore)) : effect.succeedNone
         )
       )
     )
@@ -464,6 +511,7 @@ export const set: {
         MutableHashMap.set(state.map, key, {
           scope: Scope.makeUnsafe(),
           deferred,
+          awaiters: 0,
           expiresAt: Duration.isFinite(ttl)
             ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
             : undefined
@@ -583,7 +631,7 @@ export const invalidateWhen: {
           if (entry === undefined) {
             return effect.succeed(false)
           }
-          return restore(Deferred.await(entry.deferred)).pipe(
+          return awaitEntry(self, key, entry, restore).pipe(
             effect.flatMap((value) => {
               if (self.state._tag === "Closed") {
                 return effect.succeed(false)
@@ -631,39 +679,35 @@ export const refresh: {
   <Key, A, E, R>(self: ScopedCache<Key, A, E, R>, key: Key): Effect.Effect<A, E, R> =>
     effect.uninterruptibleMask(effect.fnUntraced(function*(restore) {
       if (self.state._tag === "Closed") return yield* effect.interrupt
+      if (!MutableHashMap.has(self.state.map, key)) return yield* restore(get(self, key))
       const fiber = Fiber.getCurrent()!
       const scope = Scope.makeUnsafe()
       const deferred = Deferred.makeUnsafe<A, E>()
-      const entry: Entry<A, E> = {
-        scope,
-        expiresAt: undefined,
-        deferred
-      }
-      const newEntry = !MutableHashMap.has(self.state.map, key)
-      if (newEntry) {
-        MutableHashMap.set(self.state.map, key, entry)
-        yield* checkCapacity(fiber, self.state.map, self.capacity)
-      }
       const exit = yield* effect.exit(effect.suspend(() => restore(Scope.provide(self.lookup(key), scope))))
       Deferred.doneUnsafe(deferred, exit)
+      if (effect.exitHasInterrupts(exit)) {
+        yield* Scope.close(scope, exit)
+        return yield* exit
+      }
       // @ts-ignore async gap
       if (self.state._tag === "Closed") {
-        if (!newEntry) {
-          yield* Scope.close(scope, effect.exitVoid)
-        }
+        yield* Scope.close(scope, effect.exitVoid)
         return yield* effect.interrupt
       }
       const ttl = self.timeToLive(exit, key)
-      entry.expiresAt = Duration.isFinite(ttl)
-        ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
-        : undefined
-      if (!newEntry) {
-        const oentry = MutableHashMap.get(self.state.map, key)
-        MutableHashMap.set(self.state.map, key, entry)
-        yield* checkCapacity(fiber, self.state.map, self.capacity)
-        if (Option.isSome(oentry)) {
-          yield* Scope.close(oentry.value.scope, effect.exitVoid)
-        }
+      const entry: Entry<A, E> = {
+        scope,
+        deferred,
+        awaiters: 0,
+        expiresAt: Duration.isFinite(ttl)
+          ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
+          : undefined
+      }
+      const oentry = MutableHashMap.get(self.state.map, key)
+      MutableHashMap.set(self.state.map, key, entry)
+      yield* checkCapacity(fiber, self.state.map, self.capacity)
+      if (Option.isSome(oentry)) {
+        yield* Scope.close(oentry.value.scope, effect.exitVoid)
       }
       return yield* exit
     }))

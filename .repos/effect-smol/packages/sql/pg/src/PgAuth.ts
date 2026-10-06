@@ -16,7 +16,7 @@
  * @since 4.0.0
  */
 import * as Data from "effect/Data"
-import * as Encoding from "effect/Encoding"
+import * as Base64 from "effect/encoding/Base64"
 import * as Result from "effect/Result"
 import { createHash, createHmac, pbkdf2Sync } from "node:crypto"
 
@@ -63,10 +63,10 @@ const xor = (left: Uint8Array, right: Uint8Array): Uint8Array => {
   return result
 }
 
-const toBase64 = (bytes: Uint8Array): string => Encoding.encodeBase64(bytes)
+const toBase64 = (bytes: Uint8Array): string => Base64.encode(bytes)
 
 const fromBase64 = (text: string, field: string): Uint8Array => {
-  const decoded = Encoding.decodeBase64(text)
+  const decoded = Base64.decode(text)
   if (Result.isFailure(decoded)) {
     return fail(`Invalid base64 in SCRAM attribute "${field}"`)
   }

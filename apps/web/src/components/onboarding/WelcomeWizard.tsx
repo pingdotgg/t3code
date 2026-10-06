@@ -30,7 +30,6 @@ import {
   MonitorIcon,
   TerminalIcon,
 } from "lucide-react";
-import { Check, Copy } from "lucide";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
@@ -52,7 +51,6 @@ import {
   resolveOnboardingProviderLoginCommand,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
@@ -76,8 +74,8 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { CommandBlock } from "../CommandBlock";
 import { Checkbox } from "../ui/checkbox";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -1711,42 +1709,5 @@ function StepShell({
       ) : null}
       {children}
     </>
-  );
-}
-
-function CommandBlock({
-  command,
-  className,
-  prominent = false,
-}: {
-  readonly command: string;
-  readonly className?: string;
-  readonly prominent?: boolean;
-}) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    timeout: 1500,
-    target: "command",
-  });
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 font-mono",
-        prominent ? "px-4 py-3.5 text-base" : "px-3 py-2.5 text-sm",
-        className,
-      )}
-    >
-      <span className="min-w-0 truncate">
-        <span className="mr-2 text-muted-foreground">$</span>
-        {command}
-      </span>
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Copy command"
-        onClick={() => copyToClipboard(command, undefined)}
-      >
-        <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
-      </Button>
-    </div>
   );
 }

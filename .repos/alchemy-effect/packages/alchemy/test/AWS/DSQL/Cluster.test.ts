@@ -135,5 +135,5 @@ test.provider(
           gone.status === "DELETED",
       ).toBe(true);
     }),
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:dsql", "live"], timeout: 300_000 },
 );

@@ -71,5 +71,15 @@ test(
     ])) as { rows: UserRow[] };
     expect(updated.rows).toEqual([daveV2, erinV2]);
   }),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );

@@ -1,6 +1,7 @@
 import {
   CheckpointId,
   CheckpointScopeId,
+  latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
@@ -233,11 +234,10 @@ export const layer: Layer.Layer<
               const targetAttempt = projection.attempts.find(
                 (attempt) => attempt.id === targetRun?.activeAttemptId,
               );
-              const targetTurn = projection.providerTurns.find(
-                (turn) =>
-                  turn.id === targetAttempt?.providerTurnId ||
-                  turn.runAttemptId === targetAttempt?.id,
-              );
+              // A goal run can span several native turns; roll back to its last.
+              const targetTurn =
+                latestProviderTurnForAttempt(projection.providerTurns, targetAttempt?.id) ??
+                projection.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
               if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",

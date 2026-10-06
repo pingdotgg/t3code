@@ -10,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
@@ -309,8 +309,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const requestContexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       const ext = yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -431,8 +431,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
         const scope = yield* Scope.make();
-        const acpLayer = AcpClient.layerChildProcess(handle);
-        const context = yield* Layer.buildWithScope(acpLayer, scope);
+        const layerAcp = AcpClient.layerChildProcess(handle);
+        const context = yield* Layer.buildWithScope(layerAcp, scope);
 
         const result = yield* Effect.gen(function* () {
           const acp = yield* AcpClient.AcpClient;
@@ -598,8 +598,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const typedNotifications = yield* Ref.make<Array<unknown>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -679,8 +679,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const successfulHandlers = yield* Ref.make(0);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;

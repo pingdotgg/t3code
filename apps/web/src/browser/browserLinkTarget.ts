@@ -8,10 +8,10 @@
  *
  * @module browserLinkTarget
  */
-import type { BrowserLinkTarget } from "@t3tools/contracts";
+import type { BrowserLinkTarget, ScopedThreadRef } from "@t3tools/contracts";
 
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { isPreviewAvailableFor } from "./previewRuntime";
 
 export interface ResolveLinkTargetInput {
   readonly url: string;
@@ -62,7 +62,7 @@ export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkT
   return getClientSettings().browserLinkTarget;
 }
 
-/** Whether the in-app target is available at all in this client. */
-export function canOpenLinksInApp(hasThread: boolean): boolean {
-  return hasThread && isPreviewSupportedInRuntime();
+/** Whether this thread's environment has an in-app browser available to this client. */
+export function canOpenLinksInApp(threadRef: ScopedThreadRef | null | undefined): boolean {
+  return threadRef != null && isPreviewAvailableFor(threadRef.environmentId);
 }

@@ -6,13 +6,12 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { AlchemyContext } from "../../AlchemyContext.ts";
 import { getStableContextDir } from "../../Bundle/TempRoot.ts";
-import { hashDirectory } from "../../Command/Memo.ts";
+import { hashDockerBuildInputs } from "../../Docker/BuildHash.ts";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import { Docker } from "../../Docker/Docker.ts";
 import { repositoryFromImageRef } from "../../Docker/Registry.ts";
@@ -109,6 +108,7 @@ class ContainerRegistryError extends Schema.TaggedError<ContainerRegistryError>(
       "CredentialsMissingUsername",
       "ImageOutsideRegistry",
       "InvalidImageReference",
+      "ImageNotFound",
       "ManifestRequestFailed",
       "InvalidManifestDigest",
     ]),
@@ -328,17 +328,29 @@ export const LiveContainerProvider = () =>
             ),
           );
           const response = yield* http.execute(request).pipe(
-            Effect.flatMap(HttpClientResponse.filterStatusOk),
             Effect.mapError(
-              (cause) =>
+              () =>
                 new ContainerRegistryError({
                   reason: "ManifestRequestFailed",
                   message: "Failed to resolve the container registry digest",
                   imageRef,
-                  cause,
                 }),
             ),
           );
+          if (response.status === 404) {
+            return yield* new ContainerRegistryError({
+              reason: "ImageNotFound",
+              message: "Container image is not published",
+              imageRef,
+            });
+          }
+          if (response.status < 200 || response.status >= 300) {
+            return yield* new ContainerRegistryError({
+              reason: "ManifestRequestFailed",
+              message: `Container registry returned HTTP ${response.status}`,
+              imageRef,
+            });
+          }
           return yield* Schema.decodeUnknownEffect(RegistryDigest)(
             response.headers["docker-content-digest"],
           ).pipe(
@@ -377,12 +389,15 @@ export const LiveContainerProvider = () =>
         const { accountId } = yield* yield* CloudflareEnvironment;
         const name = yield* createApplicationName(id, props.name);
         const registryId = props.registryId ?? "registry.cloudflare.com";
-        const repositoryName = name.toLowerCase();
+        const repositoryName = (
+          props.publish?.repository ?? name
+        ).toLowerCase();
         const makeRef = (imageHash: string) =>
           `${registryId}/${accountId}/${repositoryName}:${imageHash}`;
 
         yield* validateContainerImageProps(props);
 
+        // Preserve serialized imageName keys so existing publication hashes remain valid.
         // Variant 1 — Effect-native program. Bundle `main` and build a
         // generated Dockerfile around it; the environment preamble comes
         // from `image` / inline `dockerfile` (default: the runtime base).
@@ -406,6 +421,7 @@ export const LiveContainerProvider = () =>
           const imageHash = (yield* sha256Object({
             bundleHash,
             dockerfile: finalDockerfile,
+            imageName: props.publish?.repository?.toLowerCase(),
           })).slice(0, 16);
           // The dev image is the deterministic build-context directory that
           // `buildAndPushImage` materializes into (and that the local provider
@@ -435,6 +451,7 @@ export const LiveContainerProvider = () =>
         if (props.image) {
           const imageHash = (yield* sha256Object({
             image: props.image,
+            imageName: props.publish?.repository?.toLowerCase(),
           })).slice(0, 16);
           // Already in the target registry (e.g. pushed by CI as a digest
           // reference) — deploy the reference as-is and skip the docker
@@ -483,6 +500,7 @@ export const LiveContainerProvider = () =>
             yield* materializeInlineDockerfileContext(id, content);
           const imageHash = (yield* sha256Object({
             dockerfile: content,
+            imageName: props.publish?.repository?.toLowerCase(),
           })).slice(0, 16);
           return {
             build: { kind: "external" as const, context, dockerfile },
@@ -503,11 +521,15 @@ export const LiveContainerProvider = () =>
         const dockerfile = props.dockerfile
           ? yield* fs.realPath(props.dockerfile)
           : path.join(context, "Dockerfile");
-        const contextHash = yield* hashDirectory({ cwd: context });
-        const dockerfileContent = yield* fs.readFileString(dockerfile);
+        // Hash what Docker can consume, including gitignored files and file
+        // modes, but excluding ancestor lockfiles outside the build context.
+        const contextHash = yield* hashDockerBuildInputs(
+          { context, dockerfile, platform: publicationPlatform },
+          "effective",
+        );
         const imageHash = (yield* sha256Object({
           contextHash,
-          dockerfile: dockerfileContent,
+          imageName: props.publish?.repository?.toLowerCase(),
         })).slice(0, 16);
         return {
           build: { kind: "external" as const, context, dockerfile },
@@ -544,6 +566,36 @@ export const LiveContainerProvider = () =>
 
         const credentials = yield* registryCredentials(props, ["pull", "push"]);
 
+        if (build.kind !== "remote") {
+          const digest = yield* resolveRegistryDigest(
+            imageRef,
+            credentials,
+          ).pipe(
+            Effect.catchTag("ContainerRegistryError", (error) =>
+              error.reason === "ImageNotFound"
+                ? Effect.succeed(undefined)
+                : Effect.fail(error),
+            ),
+          );
+          if (digest !== undefined) {
+            const published = `${repositoryFromImageRef(imageRef)}@${digest}`;
+            yield* Effect.logInfo(
+              `Cloudflare Container image: registry cache hit ${published}`,
+            );
+            if (session) {
+              yield* session.note(
+                `Reusing registry container image ${published}.`,
+              );
+            }
+            return { imageRef: published, digest };
+          }
+        }
+        const cacheRef = `${repositoryFromImageRef(imageRef)}:buildcache`;
+        const cacheOptions = {
+          "cache-from": [`type=registry,ref=${cacheRef}`],
+          "cache-to": ["type=inline"],
+        };
+
         if (build.kind === "remote") {
           // Pull the pre-built image and re-tag it to the Cloudflare registry
           // reference; nothing is built locally.
@@ -578,7 +630,8 @@ export const LiveContainerProvider = () =>
           yield* docker.image
             .build(
               {
-                tag: imageRef,
+                ...cacheOptions,
+                tag: [imageRef, cacheRef],
                 context: build.context,
                 platform,
                 file: build.dockerfile,
@@ -619,7 +672,8 @@ export const LiveContainerProvider = () =>
           yield* docker.image
             .build(
               {
-                tag: imageRef,
+                ...cacheOptions,
+                tag: [imageRef, cacheRef],
                 context: contextDir,
                 platform,
               },
@@ -656,13 +710,10 @@ export const LiveContainerProvider = () =>
         const key = JSON.stringify([
           accountId,
           props.registryId ?? "registry.cloudflare.com",
+          props.publish?.repository,
           publicationPlatform,
           build.kind,
           imageHash,
-          // The source hash follows gitignore, not Docker's context rules.
-          build.kind === "external" && !isInlineDockerfile(props.dockerfile)
-            ? [build.context, build.dockerfile]
-            : undefined,
         ]);
         const candidate: ReturnType<typeof publishImage> = yield* Effect.cached(
           publishImage(id, props, build, imageRef, session).pipe(
@@ -925,7 +976,8 @@ export const LiveContainerProvider = () =>
           const existingDigest =
             existing.hash?.digest ?? published.previousDigest;
           deploymentImageRef =
-            published.digest === existingDigest
+            published.digest === existingDigest &&
+            news.publish?.repository === undefined
               ? existing.configuration.image
               : published.imageRef;
           imageDigest = published.digest;
@@ -1337,7 +1389,8 @@ export const LiveContainerProvider = () =>
               const existingDigest =
                 existing.hash?.digest ?? published.previousDigest;
               deploymentImageRef =
-                published.digest === existingDigest
+                published.digest === existingDigest &&
+                news.publish?.repository === undefined
                   ? existing.configuration.image
                   : published.imageRef;
               imageDigest = published.digest;

@@ -2,12 +2,16 @@ import { describe, expect, it } from "@effect/vitest";
 import type {
   ApplicationStoredEvent,
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   archivedShellStreamItemFromThreadShell,
@@ -20,6 +24,7 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  skipUnchangedThreadShells,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -491,5 +496,93 @@ describe("dedupeShellEnrichment", () => {
           ),
         ).toEqual([marked, delta, resolved, marked]);
       }),
+  );
+});
+
+describe("skipUnchangedThreadShells", () => {
+  const at = (ms: number) => DateTime.makeUnsafe(Date.parse("2026-10-01T00:00:00.000Z") + ms);
+  const shell = (
+    id: string,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ): OrchestrationV2ThreadShell => ({
+    id: ThreadId.make(id),
+    projectId: ProjectId.make("project-a"),
+    title: "Thread",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    activeRunId: null,
+    latestVisibleMessage: null,
+    hasActionableProposedPlan: false,
+    itemCount: 1,
+    visibleItemCount: 1,
+    branch: null,
+    status: "running",
+    pendingRuntimeRequest: null,
+    pendingBackgroundTasks: [],
+    latestRunId: null,
+    latestUserMessageAt: null,
+    createdAt: at(0),
+    updatedAt: at(0),
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    ...overrides,
+  });
+  type Step =
+    | { readonly advanceMs: number }
+    | Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" | "synchronized" }>;
+  const updated = (sequence: number, thread: OrchestrationV2ThreadShell): Step => ({
+    kind: "thread.updated",
+    sequence,
+    location: "active",
+    thread,
+  });
+  const run = (steps: ReadonlyArray<Step>) =>
+    Stream.fromIterable(steps).pipe(
+      Stream.mapEffect((step) =>
+        "advanceMs" in step
+          ? TestClock.adjust(Duration.millis(step.advanceMs)).pipe(Effect.as(null))
+          : Effect.succeed(step),
+      ),
+      Stream.filter((item) => item !== null),
+      skipUnchangedThreadShells,
+      Stream.runCollect,
+      Effect.map((items) => Array.from(items, (item) => ("sequence" in item ? item.sequence : -1))),
+    );
+
+  it.effect("drops shells that only moved updatedAt, and resends them after a while", () =>
+    Effect.gen(function* () {
+      const sent = yield* run([
+        updated(1, shell("a")),
+        updated(2, shell("a", { updatedAt: at(100) })),
+        updated(3, shell("a", { updatedAt: at(200), itemCount: 2, visibleItemCount: 2 })),
+        updated(4, shell("a", { updatedAt: at(300), itemCount: 2, visibleItemCount: 2 })),
+        updated(5, shell("b")),
+        // The resend window is 5 s.
+        { advanceMs: 5_000 },
+        updated(6, shell("a", { updatedAt: at(5_300), itemCount: 2, visibleItemCount: 2 })),
+      ]);
+      expect(sent).toEqual([1, 3, 5, 6]);
+    }),
+  );
+
+  it.effect("sends the next update after a removal", () =>
+    Effect.gen(function* () {
+      const sent = yield* run([
+        updated(1, shell("a")),
+        { kind: "thread.removed", sequence: 2, location: "active", threadId: ThreadId.make("a") },
+        updated(3, shell("a")),
+      ]);
+      expect(sent).toEqual([1, 2, 3]);
+    }),
   );
 });

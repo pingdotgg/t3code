@@ -2,15 +2,10 @@
 import { PlatformServices, runMain } from "alchemy/Util/PlatformServices";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
-import {
-  CliConfig,
-  CliError,
-  Command,
-  Flag,
-  GlobalFlag,
-} from "effect/unstable/cli";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { CliConfig, CliError, Command, Flag, GlobalFlag } from "effect/cli";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import pkg from "../../package.json" with { type: "json" };
 import { Group, pack } from "./pack.ts";
 import { publish } from "./publish.ts";
@@ -38,11 +33,41 @@ const outFlag = Flag.String("out").pipe(
 
 export const packCommand = Command.make(
   "pack",
-  { group: groupFlag, registry: registryFlag, out: outFlag },
-  ({ group, registry, out }) =>
+  {
+    group: groupFlag,
+    registry: registryFlag,
+    out: outFlag,
+    since: Flag.String("since").pipe(
+      Flag.withDescription(
+        "Compare HEAD with this Git ref; defaults to the PR base in Actions",
+      ),
+      Flag.optional,
+    ),
+    all: Flag.Boolean("all").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription(
+        "Pack every configured package regardless of changes",
+      ),
+    ),
+    rebuildAllPaths: Flag.String("rebuild-all-path").pipe(
+      Flag.withDescription(
+        "Additional exact path or directory/** forcing all packages (repeatable)",
+      ),
+      Flag.atLeast(0),
+    ),
+  },
+  ({ group, registry, out, since, all, rebuildAllPaths }) =>
     Effect.gen(function* () {
       const cwd = yield* Effect.sync(() => process.cwd());
-      yield* pack({ cwd, groups: group, registry, out });
+      yield* pack({
+        cwd,
+        groups: group,
+        registry,
+        out,
+        since: Option.getOrUndefined(since),
+        all,
+        rebuildAllPaths,
+      });
     }),
 ).pipe(
   Command.withDescription(

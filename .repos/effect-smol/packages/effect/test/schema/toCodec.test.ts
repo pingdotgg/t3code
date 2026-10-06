@@ -1,3 +1,4 @@
+import { assert } from "@effect/vitest"
 import {
   Cause,
   DateTime,
@@ -30,6 +31,28 @@ const FiniteFromDate = Schema.Date.pipe(Schema.decodeTo(
 ))
 
 describe("Serializers", () => {
+  for (
+    const [name, toCodec] of [
+      ["toCodecJson", Schema.toCodecJson],
+      ["toCodecStringTree", Schema.toCodecStringTree]
+    ] as const
+  ) {
+    it(`${name} preserves union order when branded members share an AST`, () => {
+      const A = Schema.Struct({ a: Schema.String })
+      const First = A.pipe(Schema.brand("First"))
+      const schema = Schema.Union([
+        First,
+        Schema.Struct({ b: Schema.String }),
+        A.pipe(Schema.brand("Last"))
+      ])
+      const codec = toCodec(schema)
+      const input = { a: "a", b: "b" }
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(codec)(input), First.make({ a: "a" }))
+      assert.deepStrictEqual(Schema.encodeUnknownSync(codec)(input), { a: "a" })
+    })
+  }
+
   describe("toCodecJson", () => {
     it("exposes the source schema", () => {
       const schema = Schema.FiniteFromString

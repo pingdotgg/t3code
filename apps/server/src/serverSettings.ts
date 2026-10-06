@@ -50,7 +50,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
@@ -802,10 +802,14 @@ const make = Effect.gen(function* () {
     return migrated;
   });
 
-  const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
-    capacity: 1,
-    lookup: () => loadSettingsFromDisk,
-  });
+  // A failed read is not kept: the next read retries instead of replaying the failure.
+  const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
+    () => loadSettingsFromDisk,
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 

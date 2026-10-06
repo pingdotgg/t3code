@@ -91,5 +91,8 @@ test.provider(
         );
       expect(afterDomain).toBeUndefined();
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:codeartifact", "live"],
+    timeout: 300_000,
+  },
 );

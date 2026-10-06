@@ -1,0 +1,148 @@
+---
+title: State and recovery
+description: Preserve Neon ownership and reveal-once secrets, recover interrupted deployments, and clean up without discarding state.
+---
+
+Alchemy state records resource ownership, physical IDs, secrets, and the original
+values needed to restore governance controls. It is part of the deployment, not
+a disposable build cache. Complete [Setup](/neon/setup) and choose a durable
+[state store](/state-store) before deploying production resources.
+
+## Record the deployment identity
+
+Keep a deployment record with the stack name, stage, source revision, working
+directory/config file, profile or CI identity, and state-store location. Record
+public Neon project/branch IDs alongside it. A matching cloud resource name alone
+does not prove Alchemy ownership.
+
+The tutorial uses local `.alchemy` state; other applications may configure a
+remote store. Switching machines, directories, stages, or state backends without
+migrating the correct state can leave the original resources behind.
+
+## Protect state and backups
+
+Use the chosen backend's access controls, encryption, and backup facilities.
+Capture a consistent backup with deployments paused or through the backend's
+supported snapshot mechanism. Keep the exact state, including resource and
+replacement records, rather than exporting only stack outputs.
+
+`Redacted` prevents accidental display in normal application output, but its
+underlying value is serialized for recovery. It is not encryption by itself.
+Treat state and its backups as secrets: exclude local state from source control,
+restrict access, and never attach raw state to an issue or support request.
+
+Before changing infrastructure, verify you can locate and restore a backup through
+the state backend's documented procedure. A backup of source code alone does not
+recover a reveal-once credential or a role's original value.
+
+## Recover an interrupted operation with retained state
+
+Pause concurrent deployments first. Confirm the credentials target the original
+account and use the original stack, stage, config, and state backend. Inspect the
+failure and current cloud state without mutating them before deciding whether to
+continue deployment or clean up.
+
+For a default `alchemy.run.ts` stack previously deployed to `dev` with the
+`testing` profile, the normal continuation is:
+
+```sh
+pnpm exec alchemy deploy --profile testing --stage dev
+```
+
+Use your actual profile and stage, and the same `--config` if deployment used a
+non-default file. For cleanup, use the corresponding normal lifecycle:
+
+```sh
+pnpm exec alchemy destroy --profile testing --stage dev
+```
+
+A retry can reconcile resources whose ownership and recovery information remain
+known. It cannot reconstruct missing secrets or safely guess who owns a resource.
+Keep a recovery failure visible rather than changing names, removing rows, or
+using stack-wide adoption to force success.
+
+## Resolve ownership or restoration conflicts
+
+An ownership refusal means Alchemy cannot safely claim the observed resource.
+Inspect its ID, owning stack/stage, inherited branch lineage, and retained state.
+If another stack owns it, change the reference or coordinate with that owner.
+Resource-scoped `Alchemy.adopt(true)` is an intentional takeover mechanism only
+where the resource supports it; it is not a generic interrupted-deploy repair.
+
+Governance controls also retain original roles, direct grants, spending thresholds,
+and labels. External changes can make restoration unsafe. Compare the recorded
+baseline with the administrator's intended configuration before proceeding, and
+serialize changes to that control. Never invent a baseline from the desired
+properties: it would erase the distinction between original and managed state.
+
+For role and spending controls, restore/remove the old control before declaring
+one targeting another member, project, or organization. See
+[Organization governance](/neon/governance).
+
+## Handle missing state or reveal-once secrets
+
+When the original state cannot be recovered:
+
+1. Stop further deploy/destroy attempts for the affected scope.
+2. Inventory exact project, branch, resource, and credential IDs using read-only
+   Console/API access. Establish the owner and affected applications.
+3. Search approved backups and the original deployment machine or CI state
+   backend. Restore an authentic consistent backup before retrying, if available.
+4. If no recovery record exists, agree on an explicit recovery or retirement plan
+   with the resource owner. Preserve the inventory and approval record.
+
+`OrganizationApiKey.key` is revealed only at creation. Listing a same-named key
+cannot recover it, and the provider refuses silent rotation. If both the state
+and approved secret backup are unavailable, the organization admin must explicitly
+plan replacement/revocation and update consumers. Coordinate any exceptional
+manual action with the Alchemy state owner before resuming automation; this guide
+does not prescribe fabricating resource state or bypassing ownership checks.
+
+The same caution applies to an interrupted credential creation whose cloud result
+was never persisted. Broad account deletion, guessed adoption, and deleting state
+are not substitutes for establishing ownership.
+
+## Preserve Auth user data
+
+Disabling Managed Auth preserves its `neon_auth` schema. Neon can refuse to enable
+Auth again while that schema exists; Alchemy intentionally does not drop user and
+session data to recreate an externally disabled integration. Preserve a database
+backup and involve the application owner and Neon Support in restoration. Do not
+treat deleting the schema as a routine retry step.
+
+## Plan normal teardown
+
+Clean up previews before their parent application and retain referenced parent
+IDs while destroying a preview stack. Review destructive settings such as bucket
+`forceDestroy` before running teardown; they deliberately remove application data.
+
+Special external dependencies need their own ordering:
+
+- Remove custom-domain DNS records and allow them to expire before releasing the
+  registration; see [Custom domains](/neon/guides/custom-domains#retire-the-hostname).
+- Remove project endpoint associations before an owned organization endpoint
+  registration. Unregistration prevents re-registering that endpoint in the same
+  organization; see [Private networking](/neon/guides/private-networking).
+- Preserve governance records until original settings have been restored.
+- Keep the deployment identity authorized until cleanup completes. Plan retirement
+  of a deployment key separately from a stack that needs that key to destroy.
+
+## Verify cleanup independently
+
+After a successful destroy, use the Neon Console or read-only SDK calls to check
+that the stack's owned resources are absent. Check that referenced/shared parents
+still exist and work, adopted governance values are restored, and external DNS or
+AWS resources have the intended state. A successful command alone is not an
+inventory check.
+
+Retain protected recovery evidence until verification finishes. Avoid publishing
+connection strings, API tokens, SMTP passwords, private application data, or raw
+state when reporting an error. Include sanitized error tags, request IDs, resource
+types, and the relevant stack/stage instead.
+
+## Related guides
+
+- [State stores](/state-store) — backend selection.
+- [Organization governance](/neon/governance) — restoration and adoption rules.
+- [Preview cleanup](/neon/tutorial/previews) — tutorial-specific destruction commands.
+- [Setup](/neon/setup) — profiles and environment credential precedence.

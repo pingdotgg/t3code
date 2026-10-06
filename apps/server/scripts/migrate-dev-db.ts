@@ -36,8 +36,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { Command, Flag } from "effect/unstable/cli";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
@@ -476,7 +476,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     yield* Console.log("Running migrations on the snapshot...");
     const executed = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // Mirror server boot (persistence/Layers/Sqlite.ts).
+      // Mirror server boot (persistence/Sqlite.ts).
       yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
       return yield* runMigrations();
     }).pipe(
