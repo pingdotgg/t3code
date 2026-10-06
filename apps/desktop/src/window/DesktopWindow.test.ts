@@ -969,6 +969,43 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("destroys a main window whose creation finishes after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const destroyCount = yield* Ref.make(0);
+      const previewCount = yield* Ref.make(0);
+      const quitting = yield* Ref.make<Ref.Ref<boolean> | null>(null);
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        // Shutdown begins while the native window is being constructed.
+        onWindowCreate: Ref.get(quitting).pipe(
+          Effect.flatMap((ref) => (ref === null ? Effect.void : Ref.set(ref, true))),
+        ),
+        setPreviewMainWindow: () => Ref.update(previewCount, (count) => count + 1),
+        destroyAll: Ref.update(destroyCount, (count) => count + 1),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* Ref.set(quitting, desktopState.quitting);
+        const exit = yield* desktopWindow
+          .handleBackendReady(new URL("http://127.0.0.1:3773"))
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.hasInterrupts(exit));
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(yield* Ref.get(destroyCount), 1);
+        assert.equal(yield* Ref.get(previewCount), 0);
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("does not start main window creation after shutdown starts", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

@@ -400,6 +400,8 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    // The reads above can wait; shutdown may have started meanwhile.
+    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -426,6 +428,11 @@ export const make = Effect.gen(function* () {
       },
     });
     yield* Ref.set(desktopState.windowCreated, true);
+    // Quit may have begun while the window was being created.
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return yield* Effect.interrupt;
+    }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
