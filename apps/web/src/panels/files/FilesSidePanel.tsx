@@ -1044,8 +1044,8 @@ export default function FilesSidePanel({
     (path: string) => useRightPanelStore.getState().openFile(threadRef, path),
     [threadRef],
   );
-  // Menu and browser actions settle late; they are dropped once the host moves
-  // to another thread or draft, never applied to the newer one.
+  // Menu actions settle late; they are dropped once the host moves to another
+  // thread or draft, never applied to the newer one.
   const isScopeCurrent = useScopeLifetime(
     `${scopedThreadKey(threadRef)}|${
       typeof composerDraftTarget === "string"
@@ -1054,6 +1054,9 @@ export default function FilesSidePanel({
     }`,
   );
   const addToChat = useScopedComposerInsert(isScopeCurrent);
+  // Opening a browser belongs to the thread, not the draft: entering or
+  // leaving queued-message editing keeps the thread on screen.
+  const isThreadVisitCurrent = useScopeLifetime(scopedThreadKey(threadRef));
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   // A draft's composer target is its draft id; a thread the server knows is a ref.
@@ -1215,7 +1218,7 @@ export default function FilesSidePanel({
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
-        isScopeCurrent,
+        isScopeCurrent: isThreadVisitCurrent,
         filePath: absolutePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
@@ -1223,7 +1226,11 @@ export default function FilesSidePanel({
         openPreview,
       });
       // Errors are reported only to the visit that started the open.
-      if (result._tag === "Success" || isAtomCommandInterrupted(result) || !isScopeCurrent()) {
+      if (
+        result._tag === "Success" ||
+        isAtomCommandInterrupted(result) ||
+        !isThreadVisitCurrent()
+      ) {
         return;
       }
       const error = squashAtomCommandFailure(result);
@@ -1242,7 +1249,7 @@ export default function FilesSidePanel({
     createAssetUrl,
     cwd,
     environmentHttpBaseUrl,
-    isScopeCurrent,
+    isThreadVisitCurrent,
     openPreview,
     threadRef,
   ]);

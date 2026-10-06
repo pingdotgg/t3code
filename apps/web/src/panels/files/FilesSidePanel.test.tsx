@@ -240,11 +240,15 @@ function composerOf(threadRef: ScopedThreadRef) {
   return composers.get(key)!;
 }
 
-async function renderFileFor(threadRef: ScopedThreadRef, relativePath: string | null = "src/a.ts") {
+async function renderFileFor(
+  threadRef: ScopedThreadRef,
+  relativePath: string | null = "src/a.ts",
+  composerDraftTarget: PanelHost["composerDraftTarget"] = threadRef,
+) {
   const host: PanelHost = {
     threadRef,
     visible: true,
-    composerDraftTarget: threadRef,
+    composerDraftTarget,
     workspaceMutationId: null,
     sendAnnotation: () => undefined,
   };
@@ -489,6 +493,17 @@ describe("files actions that settle late", () => {
     const threadRef = refOn("environment-a");
     await renderFileFor(threadRef, "index.html");
     await openInBrowser();
+    await settleAsset();
+    await settleSession();
+    expect(browsersOf(threadRef).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
+  });
+
+  it("still opens a browser after the composer switches drafts in the same thread", async () => {
+    const threadRef = refOn("environment-a");
+    await renderFileFor(threadRef, "index.html");
+    await openInBrowser();
+    // Editing a queued message moves the composer to a draft; the thread stays.
+    await renderFileFor(threadRef, "index.html", "draft-1" as PanelHost["composerDraftTarget"]);
     await settleAsset();
     await settleSession();
     expect(browsersOf(threadRef).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
