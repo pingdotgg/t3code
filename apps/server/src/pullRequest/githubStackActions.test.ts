@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as FileSystem from "effect/FileSystem";
+import * as Redacted from "effect/Redacted";
+import { ChildProcessSpawner } from "effect/process";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
 /**
@@ -17,32 +21,57 @@ type Send = (
   kind: "graphql" | "rest",
 ) => Effect.Effect<string, GitHubApi.GitHubApiError>;
 
+/** Every git command the cascade ran, in order; none actually runs. */
+let gitCalls: Array<ReadonlyArray<string>> = [];
+const fakeGit = Layer.mergeAll(
+  Layer.mock(VcsProcess.VcsProcess)({
+    run: (input) =>
+      Effect.sync(() => {
+        gitCalls.push(input.args);
+        const stdout =
+          input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
+        return {
+          exitCode: ChildProcessSpawner.ExitCode(0),
+          stdout,
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }),
+  }),
+  FileSystem.layerNoop({ makeTempDirectoryScoped: () => Effect.succeed("/tmp/scratch") }),
+);
+
 const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackAction>[0]) =>
   runStackAction(input).pipe(
     Effect.provide(
-      Layer.mock(GitHubApi.GitHubApi)({
-        graphql: (request) => {
-          // GitHub refuses a document that declares a variable it never uses.
-          const declared = [...request.query.matchAll(/\$(\w+)\s*:/g)].map((match) => match[1]!);
-          const unused = declared.filter(
-            (name) => !new RegExp(`\\$${name}(?!\\w)(?!\\s*:)`).test(request.query),
-          );
-          if (unused.length > 0) {
-            return Effect.die(new Error(`Variables declared but not used: ${unused.join(", ")}`));
-          }
-          return send(words(request.query, request.variables), "graphql");
-        },
-        rest: (request) =>
-          send(words(request.path, request.body), "rest").pipe(
-            Effect.map((body) => ({
-              status: 200,
-              headers: {},
-              body,
-              truncated: false,
-              invalidUtf8: false,
-            })),
-          ),
-      }),
+      Layer.mergeAll(
+        fakeGit,
+        Layer.mock(GitHubApi.GitHubApi)({
+          credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
+          graphql: (request) => {
+            // GitHub refuses a document that declares a variable it never uses.
+            const declared = [...request.query.matchAll(/\$(\w+)\s*:/g)].map((match) => match[1]!);
+            const unused = declared.filter(
+              (name) => !new RegExp(`\\$${name}(?!\\w)(?!\\s*:)`).test(request.query),
+            );
+            if (unused.length > 0) {
+              return Effect.die(new Error(`Variables declared but not used: ${unused.join(", ")}`));
+            }
+            return send(words(request.query, request.variables), "graphql");
+          },
+          rest: (request) =>
+            send(words(request.path, request.body), "rest").pipe(
+              Effect.map((body) => ({
+                status: 200,
+                headers: {},
+                body,
+                truncated: false,
+                invalidUtf8: false,
+              })),
+            ),
+        }),
+      ),
     ),
   );
 
@@ -250,41 +279,6 @@ it.effect("refuses a changed stack before performing any mutation", () =>
   }),
 );
 
-it.effect("rebases unmerged layers bottom to top without local git commands", () =>
-  Effect.gen(function* () {
-    const api = fake([stack, access, ...rebaseResponses]);
-    yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    const mutations = api.calls.filter(isMutation);
-    expect(mutations).toHaveLength(2);
-    expect(mutations[0]).toContain("id=PR_2");
-    expect(mutations[0]).toContain("sha=bbb");
-    expect(mutations[1]).toContain("id=PR_3");
-    expect(mutations[1]).toContain("sha=ccc");
-  }),
-);
-
-it.effect("does not update later layers after a rebase failure", () =>
-  Effect.gen(function* () {
-    const api = fake([stack, access, branch(2, "bbb")]);
-    const execute: Send = (call, kind) =>
-      !isMutation(call)
-        ? api.execute(call, kind)
-        : Effect.fail(
-            new GitHubApi.GitHubApiAuthenticationError({
-              host: "github.com",
-              operation: "runGitHubStackAction",
-            }),
-          );
-    const result = yield* runGitHubStackAction(execute, { ...input, action: "update-branch" }).pipe(
-      Effect.result,
-    );
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackRebaseFailedError", number: 2, completed: 0 },
-    });
-  }),
-);
-
 it.effect("refuses the entire rebase before mutation when a later fork denies write access", () =>
   Effect.gen(function* () {
     const api = fake([
@@ -325,7 +319,7 @@ it.effect("allows a fork that explicitly permits maintainer updates", () =>
       ...rebaseResponses,
     ]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.at(-1)).toContain("id=PR_3");
+    expect(gitCalls.filter((args) => args[0] === "push")).toHaveLength(2);
   }),
 );
 
@@ -348,92 +342,52 @@ it.effect("bounds polling and reports a still-running merge without claiming suc
   }),
 );
 
-it.effect("rejects a push after preflight without rebasing the new revision", () =>
+it.effect("rebases the open layers bottom to top in a scratch clone, each onto the one below", () =>
   Effect.gen(function* () {
-    const api = fake([stack, access, branch(2, "new-head")]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      action: "update-branch",
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackChangedError", number: 2, completed: 0 },
-    });
-    expect(api.calls).toHaveLength(3);
-  }),
-);
-
-it.effect("skips current layers without submitting a rebase mutation", () =>
-  Effect.gen(function* () {
-    const api = fake([stack, access, branch(2, "bbb", 0), branch(3, "ccc", 0, ["bbb"])]);
+    gitCalls = [];
+    const api = fake([stack, access]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.some((args) => isMutation(args))).toBe(false);
+    // GitHub is only read; every change is a git push with a lease on the reviewed head.
+    expect(api.calls.some(isMutation)).toBe(false);
+    const rebases = gitCalls.filter((args) => args[0] === "rebase");
+    expect(rebases).toEqual([
+      ["rebase", "--quiet", "--onto", "origin/main", "new-sha"],
+      ["rebase", "--quiet", "--onto", "new-sha", "bbb"],
+    ]);
+    expect(gitCalls.filter((args) => args[0] === "push")).toEqual([
+      [
+        "push",
+        "--quiet",
+        "--force-with-lease=refs/heads/middle:bbb",
+        "origin",
+        "new-sha:refs/heads/middle",
+      ],
+      [
+        "push",
+        "--quiet",
+        "--force-with-lease=refs/heads/top:ccc",
+        "origin",
+        "new-sha:refs/heads/top",
+      ],
+    ]);
   }),
 );
 
-it.effect("keeps earlier progress and stops after a later layer fails", () =>
+it.effect("checks every layer's write access before any git runs", () =>
   Effect.gen(function* () {
+    gitCalls = [];
     const api = fake([
       stack,
-      access,
-      branch(2, "bbb"),
-      rebased,
-      branch(3, "ccc", 1, ["rebased-sha"]),
-      { data: { updatePullRequestBranch: null } },
+      {
+        data: {
+          repository: {
+            ...access.data.repository,
+            pr3: { headRepository: { viewerPermission: "READ" }, maintainerCanModify: false },
+          },
+        },
+      },
     ]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      action: "update-branch",
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackRebaseFailedError", number: 3, completed: 1 },
-    });
-  }),
-);
-
-it.effect("reports partial progress when a later head changes during the rebase", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      access,
-      branch(2, "bbb"),
-      rebased,
-      branch(3, "concurrent-head", 1, ["rebased-sha"]),
-    ]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      action: "update-branch",
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackChangedError", number: 3, completed: 1 },
-    });
-    if (result._tag === "Failure") {
-      expect(result.failure.message).toContain("Earlier updates remain on GitHub");
-    }
-    expect(api.calls.filter((args) => isMutation(args))).toHaveLength(1);
-  }),
-);
-
-it.effect.each([false, true])("rejects a push to a processed layer, rebased=%s", (rebasedParent) =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      access,
-      branch(2, "bbb", rebasedParent ? 1 : 0),
-      ...(rebasedParent ? [rebased] : []),
-      branch(3, "ccc", 1, ["concurrent-parent-head"]),
-    ]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      action: "update-branch",
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackChangedError", number: 2, completed: 1 },
-    });
-    expect(api.calls.at(-1)?.includes('ids=["PR_2"]')).toBe(true);
-    expect(api.calls.filter((args) => isMutation(args))).toHaveLength(rebasedParent ? 1 : 0);
+    yield* Effect.flip(runGitHubStackAction(api.execute, { ...input, action: "update-branch" }));
+    expect(gitCalls).toEqual([]);
   }),
 );

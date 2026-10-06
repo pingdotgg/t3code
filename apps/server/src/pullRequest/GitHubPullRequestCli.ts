@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -43,6 +44,7 @@ import {
 
 import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
@@ -1113,6 +1115,8 @@ const SIMPLE_ACTION_MUTATIONS = {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
   const routingIdentities = new Map<
     string,
@@ -2495,6 +2499,8 @@ export const make = Effect.gen(function* () {
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
           Effect.provideService(GitHubApi.GitHubApi, api),
+          Effect.provideService(VcsProcess.VcsProcess, vcsProcess),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(

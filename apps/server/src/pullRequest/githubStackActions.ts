@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import { decodePullRequestStacksJson } from "./gitHubPullRequestJson.ts";
+import { cascadeRebaseStack } from "./githubStackRebase.ts";
 
 const stackErrorIdentity = {
   repository: Schema.String,
@@ -78,7 +79,10 @@ export class GitHubStackRebaseFailedError extends Schema.TaggedError<GitHubStack
   { ...stackErrorIdentity, completed: Schema.Int, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Stack rebase stopped at PR #${this.number} after ${this.completed} layers. Earlier updates remain on GitHub; resolve the failing layer before retrying.`;
+    // A conflict or a refused push already says which layer and what to do about it.
+    return this.cause instanceof Error && this.cause.message !== ""
+      ? this.cause.message
+      : `Stack rebase stopped at PR #${this.number} after ${this.completed} layers. Earlier updates remain on GitHub; resolve the failing layer before retrying.`;
   }
 }
 
@@ -121,39 +125,9 @@ const decodeBranchAccess = Schema.decodeEffect(
   ),
 );
 
-const decodeRebaseBranch = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      data: Schema.Struct({
-        processed: Schema.optional(
-          Schema.Array(Schema.NullOr(Schema.Struct({ headRefOid: Schema.String }))),
-        ),
-        repository: Schema.Struct({
-          pullRequest: Schema.Struct({
-            id: Schema.String,
-            headRefOid: Schema.String,
-            baseRef: Schema.Struct({ compare: Schema.Struct({ behindBy: Schema.Int }) }),
-          }),
-        }),
-      }),
-    }),
-  ),
-);
-const decodeRebaseResponse = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      data: Schema.Struct({
-        updatePullRequestBranch: Schema.Struct({
-          pullRequest: Schema.Struct({ headRefOid: Schema.String }),
-        }),
-      }),
-    }),
-  ),
-);
-
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
-/** Remote-only updates: a stack rebase never switches or rewrites the environment's checkout. */
+/** Remote-only updates: a stack rebase works in a scratch clone, never the environment's checkout. */
 export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* (input: {
   cwd: string;
   repository: string;
@@ -242,77 +216,30 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       })
     )
       return yield* new GitHubStackPermissionError({ ...identity });
-    const processed: Array<{ id: string; number: number; headSha: string }> = [];
-    for (const [index, layer] of open.entries()) {
-      yield* Effect.gen(function* () {
-        const read = yield* api.graphql({
-          host: input.host,
-          operation: "runGitHubStackAction",
-          allowReserve: true,
-          variables: {
-            owner,
-            name,
-            number: layer.number,
-            sha: layer.headSha,
-            ids: processed.map((head) => head.id),
-          },
-          // GitHub rejects a declared variable the document never uses, so `$ids` is always
-          // selected; an empty list asks for nothing.
-          query: `query($owner:String!,$name:String!,$number:Int!,$sha:String!,$ids:[ID!]!){processed:nodes(ids:$ids){... on PullRequest{headRefOid}} repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRef{compare(headRef:$sha){behindBy}}}}}`,
-        });
-        const {
-          data: {
-            processed: observed,
-            repository: { pullRequest: pr },
-          },
-        } = yield* decodeRebaseBranch(read);
-        // A push to an earlier layer must not silently become the next layer's new base.
-        const changed = processed.find(
-          (head, index) => observed?.[index]?.headRefOid !== head.headSha,
-        );
-        if (changed !== undefined)
-          return yield* new GitHubStackChangedError({
-            ...identity,
-            number: changed.number,
-            completed: index,
-          });
-        if (pr.headRefOid !== layer.headSha)
-          return yield* new GitHubStackChangedError({
-            ...identity,
-            number: layer.number,
-            completed: index,
-          });
-        if (pr.baseRef.compare.behindBy === 0) {
-          processed.push({ id: pr.id, number: layer.number, headSha: pr.headRefOid });
-          return;
-        }
-        // Pass the reviewed revision to GitHub, including when a push races this read.
-        const updated = yield* api.graphql({
-          host: input.host,
-          operation: "runGitHubStackAction",
-          variables: { id: pr.id, sha: layer.headSha },
-          query:
-            "mutation($id:ID!,$sha:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$sha,updateMethod:REBASE}){pullRequest{headRefOid}}}",
-        });
-        const response = yield* decodeRebaseResponse(updated);
-        processed.push({
-          id: pr.id,
-          number: layer.number,
-          headSha: response.data.updatePullRequestBranch.pullRequest.headRefOid,
-        });
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause._tag === "GitHubStackChangedError"
-            ? cause
-            : new GitHubStackRebaseFailedError({
-                ...identity,
-                number: layer.number,
-                completed: index,
-                cause,
-              }),
-        ),
-      );
-    }
+    // GitHub's own "Rebase stack" has no API, and its per-PR "update branch" replays the old
+    // copy of every lower layer into the one above it. The cascade moves each layer's own commits.
+    yield* cascadeRebaseStack({
+      host: input.host,
+      repository: input.repository,
+      base: stack.base,
+      layers: open.map((layer) => ({
+        number: layer.number,
+        headBranch: layer.headBranch,
+        headSha: layer.headSha!,
+      })),
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "GitHubStackRebaseConflictError" ||
+        cause._tag === "GitHubStackRebaseGitError"
+          ? new GitHubStackRebaseFailedError({
+              ...identity,
+              number: cause.number,
+              completed: cause.completed,
+              cause,
+            })
+          : cause,
+      ),
+    );
     return;
   }
   if (open.some((layer) => layer.isDraft))

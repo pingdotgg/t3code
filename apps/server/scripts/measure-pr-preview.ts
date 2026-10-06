@@ -73,7 +73,11 @@ const measuredApi = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-const services = GitHubPullRequestCli.layer.pipe(Layer.provideMerge(measuredApi));
+const services = GitHubPullRequestCli.layer.pipe(
+  Layer.provideMerge(measuredApi),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 

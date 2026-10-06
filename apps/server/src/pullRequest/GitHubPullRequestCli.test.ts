@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
 
@@ -98,6 +100,7 @@ const layer = it.layer(
     Layer.provideMerge(mockApi),
     Layer.provideMerge(GitHubGraphQlBudget.layer),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   ),
 );
 
@@ -492,6 +495,8 @@ it.effect(
             Layer.provide(Layer.mergeAll(credentials, http)),
             Layer.provide(GitHubGraphQlBudget.layer),
             Layer.provide(SourceControlRateLimit.layer),
+            Layer.merge(VcsProcess.layer),
+            Layer.provideMerge(NodeServices.layer),
           ),
         ),
       );
