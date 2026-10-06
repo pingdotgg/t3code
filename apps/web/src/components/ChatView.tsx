@@ -11239,7 +11239,13 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
-                onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
+                onFileOpen={
+                  paintOnlyDisplayedTimeline
+                    ? noopHeldAttachment
+                    : isCloudThread
+                      ? downloadFileAttachment
+                      : openFileAttachment
+                }
                 onFileDownload={
                   paintOnlyDisplayedTimeline ? noopHeldAttachment : downloadFileAttachment
                 }
