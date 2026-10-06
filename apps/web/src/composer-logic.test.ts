@@ -25,6 +25,8 @@ import {
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
+import { searchProviderSkills } from "./providerSkillSearch";
+import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -246,6 +248,77 @@ describe("composerSubmissionIntentForKey", () => {
 });
 
 describe("detectComposerTrigger", () => {
+  it.each(["$", "+", "*", "[", "\\", "𑿝"])("opens and filters with configured %s", (symbol) => {
+    for (const query of ["", "image"]) {
+      const text = `Use ${symbol}${query} later`;
+      const cursor = `Use ${symbol}${query}`.length;
+      expect(detectComposerTrigger(text, cursor, symbol)).toEqual({
+        kind: "skill",
+        query,
+        rangeStart: 4,
+        rangeEnd: cursor,
+      });
+    }
+  });
+
+  it.each(["+image", "use +image", "use\n+image", "use\t+image", "use\r+image"])(
+    "keeps existing token boundaries for %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length, "+")?.query).toBe("image");
+    },
+  );
+
+  it.each(["a+image", "1+image", "(+image", "use\u00a0+image", "use +image ", "$image", "€image"])(
+    "does not open a customized picker for %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length, "+")).toBeNull();
+    },
+  );
+
+  it("filters plus queries and replaces only the trigger with a canonical skill reference", () => {
+    const skills = [
+      { name: "imagegen", path: "/skills/imagegen/SKILL.md", enabled: true },
+      { name: "review", path: "/skills/review/SKILL.md", enabled: true },
+    ];
+    const prompt = "Use +image next";
+    const trigger = detectComposerTrigger(prompt, "Use +image".length, "+");
+    expect(trigger?.kind).toBe("skill");
+    if (!trigger) throw new Error("Expected skill trigger");
+    const matches = searchProviderSkills(skills, trigger.query);
+    expect(matches.map((skill) => skill.name)).toEqual(["imagegen"]);
+    const selected = matches[0];
+    if (!selected) throw new Error("Expected imagegen skill");
+    const inserted = replaceTextRange(
+      prompt,
+      trigger.rangeStart,
+      trigger.rangeEnd,
+      `$${selected.name}`,
+    );
+    expect(inserted).toEqual({ text: "Use $imagegen next", cursor: "Use $imagegen".length });
+    expect(splitPromptIntoComposerSegments(inserted.text)).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "imagegen", source: "$imagegen" },
+      { type: "text", text: " next" },
+    ]);
+  });
+
+  it("only uses plus when configured and keeps other menus intact", () => {
+    expect(detectComposerTrigger("+image", 6)).toBeNull();
+    for (const text of ["@src", "#123", "/model"]) {
+      expect(detectComposerTrigger(text, text.length, "+")).toEqual(
+        detectComposerTrigger(text, text.length),
+      );
+    }
+  });
+
+  it("uses the preference when restoring a draft with an existing skill reference", () => {
+    const text = "$review +image";
+    expect(composerStateAtPromptEnd(text, "+")).toEqual({
+      cursor: 8,
+      trigger: { kind: "skill", query: "image", rangeStart: 8, rangeEnd: text.length },
+    });
+  });
+
   it("detects @path trigger at cursor", () => {
     const text = "Please check @src/com";
     const trigger = detectComposerTrigger(text, text.length);

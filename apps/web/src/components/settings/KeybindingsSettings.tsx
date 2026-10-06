@@ -28,6 +28,7 @@ import {
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { DEFAULT_CLIENT_SETTINGS, skillTriggerCharacterError } from "@t3tools/contracts/settings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -66,7 +67,13 @@ import {
   whenAstToExpression,
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1261,6 +1268,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
 interface KeybindingsListProps extends KeybindingRowActions {
   rows: ReadonlyArray<KeybindingRow>;
+  query: string;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
   savingCommand: KeybindingCommand | null;
   isAddingBinding: boolean;
@@ -1269,8 +1277,15 @@ interface KeybindingsListProps extends KeybindingRowActions {
 
 /** The add-binding row, one settings row per binding, and the empty state. */
 function KeybindingsList(props: KeybindingsListProps) {
-  const { rows, commandOptions, savingCommand, isAddingBinding, onCancelAdd, ...rowActions } =
-    props;
+  const {
+    rows,
+    query,
+    commandOptions,
+    savingCommand,
+    isAddingBinding,
+    onCancelAdd,
+    ...rowActions
+  } = props;
   const newProps: NewKeybindingProps = {
     commandOptions,
     allRows: rows,
@@ -1290,19 +1305,31 @@ function KeybindingsList(props: KeybindingsListProps) {
     }
     return ids;
   }, [rows]);
+  const renderedRows = rows.map((row) => (
+    <KeybindingSettingsRow
+      key={row.id}
+      row={row}
+      anchorId={anchorIds.get(row.id)}
+      isSaving={savingCommand === row.command}
+      {...rowActions}
+    />
+  ));
+  const skillTriggerTitle = searchableSetting("skill-trigger-character").title;
+  if (skillTriggerTitle.toLowerCase().includes(query.trim().toLowerCase())) {
+    const insertAt = rows.findIndex(
+      (row) => commandLabel(row.command).localeCompare(skillTriggerTitle) > 0,
+    );
+    renderedRows.splice(
+      insertAt === -1 ? renderedRows.length : insertAt,
+      0,
+      <SkillTriggerSetting key="skill-trigger-character" />,
+    );
+  }
   return (
     <div>
       {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-      {rows.map((row) => (
-        <KeybindingSettingsRow
-          key={row.id}
-          row={row}
-          anchorId={anchorIds.get(row.id)}
-          isSaving={savingCommand === row.command}
-          {...rowActions}
-        />
-      ))}
-      {rows.length === 0 && !isAddingBinding ? (
+      {renderedRows}
+      {renderedRows.length === 0 && !isAddingBinding ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">
           No keybindings match your search.
         </div>
@@ -1321,6 +1348,60 @@ function BrowserKeybindingNotice() {
         for better keybinding support.
       </span>
     </div>
+  );
+}
+
+function SkillTriggerSetting() {
+  const savedCharacter = useScopedSettings((settings) => settings.skillTriggerCharacter);
+  const updateSettings = useUpdateScopedSettings();
+  const [draft, setDraft] = useState(savedCharacter);
+  const [previousCharacter, setPreviousCharacter] = useState(savedCharacter);
+  if (previousCharacter !== savedCharacter) {
+    setPreviousCharacter(savedCharacter);
+    setDraft(savedCharacter);
+  }
+  const error = skillTriggerCharacterError(draft);
+
+  return (
+    <SettingsRow
+      {...searchableSetting("skill-trigger-character")}
+      description="Type this symbol in the composer to open the skill picker. Default: $."
+      resetAction={
+        savedCharacter !== DEFAULT_CLIENT_SETTINGS.skillTriggerCharacter ? (
+          <SettingResetButton
+            label="skill trigger character"
+            onClick={() =>
+              updateSettings({
+                skillTriggerCharacter: DEFAULT_CLIENT_SETTINGS.skillTriggerCharacter,
+              })
+            }
+          />
+        ) : undefined
+      }
+      control={
+        <div className="w-56 space-y-1.5">
+          <Input
+            aria-label="Skill trigger character"
+            aria-invalid={error !== null}
+            aria-describedby={error ? "skill-trigger-character-error" : undefined}
+            value={draft}
+            size="sm"
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setDraft(value);
+              if (skillTriggerCharacterError(value) === null) {
+                updateSettings({ skillTriggerCharacter: value });
+              }
+            }}
+          />
+          {error ? (
+            <p id="skill-trigger-character-error" role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      }
+    />
   );
 }
 
@@ -1360,7 +1441,8 @@ export function KeybindingsSettingsPanel() {
   // A settings-search jump must not be hidden by the page's own filter.
   if (searchTargetId !== handledSearchTargetId) {
     setHandledSearchTargetId(searchTargetId);
-    if (searchTargetId.startsWith("keybinding-")) setQuery("");
+    if (searchTargetId.startsWith("keybinding-") || searchTargetId === "skill-trigger-character")
+      setQuery("");
   }
   const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
@@ -1498,6 +1580,7 @@ export function KeybindingsSettingsPanel() {
 
   const listProps: KeybindingsListProps = {
     rows,
+    query,
     allRows: rows,
     commandOptions,
     variables: whenVariables,

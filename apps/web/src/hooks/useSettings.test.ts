@@ -37,6 +37,16 @@ afterEach(() => {
 });
 
 describe("client settings hydration", () => {
+  it("saves the skill trigger and restores it after restarting settings state", async () => {
+    await persistClientSettingsPatch({ skillTriggerCharacter: "+" });
+    const saved = persistenceMocks.setClientSettings.mock.calls[0]?.[0];
+    expect(saved?.skillTriggerCharacter).toBe("+");
+    __resetClientSettingsPersistenceForTests();
+    persistenceMocks.getClientSettings.mockResolvedValue(saved ?? null);
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().skillTriggerCharacter).toBe("+");
+  });
+
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
     timestampFormat: "12-hour" as const,

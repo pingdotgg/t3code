@@ -602,6 +602,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
         ? ["Proactive panels"]
         : []),
+      ...(settings.skillTriggerCharacter !== DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter
+        ? ["Skill trigger character"]
+        : []),
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
@@ -711,6 +714,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
+      settings.skillTriggerCharacter,
       settings.timestampFormat,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
@@ -797,6 +801,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      skillTriggerCharacter: DEFAULT_UNIFIED_SETTINGS.skillTriggerCharacter,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
@@ -2704,7 +2709,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("skills-in-slash-menu")}
-          description="Also include skills in the / command menu. Skills always appear when you type $."
+          description={`Also include skills in the / command menu. Skills always appear when you type ${settings.skillTriggerCharacter}.`}
           resetAction={
             settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
               <SettingResetButton

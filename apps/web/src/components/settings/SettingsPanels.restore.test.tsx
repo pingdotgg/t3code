@@ -61,6 +61,15 @@ beforeEach(() => {
 });
 
 describe("restoring V2 settings", () => {
+  it("restores the default skill trigger", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, skillTriggerCharacter: "+" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+    expect(restore.changedSettingLabels).toEqual(["Skill trigger character"]);
+    await restore.restoreDefaults();
+    expect(state.update.mock.calls[0]?.[0].skillTriggerCharacter).toBe("$");
+  });
+
   it.each([
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],

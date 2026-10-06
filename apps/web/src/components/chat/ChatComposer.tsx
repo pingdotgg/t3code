@@ -61,6 +61,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -77,9 +78,10 @@ import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
-  detectComposerTrigger,
+  detectComposerTrigger as detectComposerTriggerWithCharacter,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
+  isCollapsedCursorAdjacentToInlineToken,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -2364,6 +2366,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
+  const detectComposerTrigger = useCallback(
+    (text: string, cursor: number) =>
+      detectComposerTriggerWithCharacter(text, cursor, settings.skillTriggerCharacter),
+    [settings.skillTriggerCharacter],
+  );
   const [composerCursor, setComposerCursor] = useState(() =>
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
@@ -2914,6 +2921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       scheduleComposerFocus,
       setComposerDraftPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
     ],
   );
 
@@ -3441,7 +3449,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // the caret at the end so the next keystroke appends.
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateAtPromptEnd(
+          prompt,
+          settings.skillTriggerCharacter,
+        );
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -3466,11 +3477,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(
+      nextCustomAnswer,
+      settings.skillTriggerCharacter,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
   }, [
+    settings.skillTriggerCharacter,
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
@@ -3482,7 +3497,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Reset compositor state on thread/draft change
   // ------------------------------------------------------------------
-  useEffect(() => {
+  const resetComposerForThread = useEffectEvent(() => {
     setComposerHighlightedItemId(null);
     setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
@@ -3491,7 +3506,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resetComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
-  }, [draftId, activeThreadId, promptRef, resetComposerTrigger, setIsComposerScrollCollapsed]);
+  });
+  useEffect(() => {
+    resetComposerForThread();
+  }, [draftId, activeThreadId]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -3776,6 +3794,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
       composerDraftTarget,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
@@ -3874,6 +3893,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
     ],
   );
 
@@ -3895,6 +3915,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerCursor, promptRef]);
 
+  // A preference update refreshes suggestions without moving the caret or resetting the draft UI.
+  const refreshComposerTrigger = useEffectEvent(() => {
+    const snapshot = readComposerSnapshot();
+    const selection = composerEditorRef.current?.readSelectionRange();
+    const cursorAdjacentToMention =
+      isCollapsedCursorAdjacentToInlineToken(snapshot.value, snapshot.cursor, "left") ||
+      isCollapsedCursorAdjacentToInlineToken(snapshot.value, snapshot.cursor, "right");
+    resetComposerTrigger(
+      (selection && selection.start !== selection.end) || cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+    );
+  });
+  useEffect(() => {
+    refreshComposerTrigger();
+  }, [settings.skillTriggerCharacter]);
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -3906,7 +3943,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
       ),
     };
-  }, [readComposerSnapshot, resolveComposerTrigger]);
+  }, [readComposerSnapshot, resolveComposerTrigger, detectComposerTrigger]);
 
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
@@ -6504,6 +6541,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readComposerSnapshot,
       resetComposerTrigger,
       setComposerTrigger,
+      detectComposerTrigger,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
@@ -7389,7 +7427,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : `Ask anything, @tag files/folders, ${settings.skillTriggerCharacter}use skills, or / for commands`
                     }
                     disabled={
                       isConnecting ||

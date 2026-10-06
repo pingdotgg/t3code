@@ -241,7 +241,11 @@ export function isCollapsedCursorAdjacentToInlineToken(
   return false;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  skillTriggerCharacter = "$",
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
@@ -270,11 +274,17 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const skillPrefix = /^\p{Sc}/u.exec(token);
+  // Keep the existing currency aliases with the default setting.
+  const skillPrefix =
+    skillTriggerCharacter === "$"
+      ? /^\p{Sc}/u.exec(token)?.[0]
+      : token.startsWith(skillTriggerCharacter)
+        ? skillTriggerCharacter
+        : null;
   if (skillPrefix) {
     return {
       kind: "skill",
-      query: token.slice(skillPrefix[0].length),
+      query: token.slice(skillPrefix.length),
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -292,14 +302,21 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 }
 
 /** Caret and trigger after replacing composer text and continuing at the end. */
-export function composerStateAtPromptEnd(text: string): {
+export function composerStateAtPromptEnd(
+  text: string,
+  skillTriggerCharacter = "$",
+): {
   cursor: number;
   trigger: ComposerTrigger | null;
 } {
   const cursor = collapseExpandedComposerCursor(text, text.length);
   return {
     cursor,
-    trigger: detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+    trigger: detectComposerTrigger(
+      text,
+      expandCollapsedComposerCursor(text, cursor),
+      skillTriggerCharacter,
+    ),
   };
 }
 

@@ -538,6 +538,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
   },
+  {
+    id: "skill-trigger-character",
+    title: "Composer: Skill trigger character",
+    to: "/settings/keybindings",
+    searchTerms: ["composer picker symbol dollar plus keyboard layout"],
+  },
   ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "snap-shot-enabled",

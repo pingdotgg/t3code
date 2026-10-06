@@ -292,6 +292,21 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/** Validate the typed skill-menu symbol without normalizing whitespace or other input. */
+export function skillTriggerCharacterError(value: string): string | null {
+  if (Array.from(value).length !== 1 || !/^[\p{P}\p{S}]$/u.test(value)) {
+    return "Choose one symbol, without spaces, letters, or numbers.";
+  }
+  if (value === "@" || value === "#" || value === "/") {
+    return "@, #, and / already open other composer menus.";
+  }
+  return null;
+}
+
+export const SkillTriggerCharacter = Schema.String.check(
+  Schema.makeFilter((value) => skillTriggerCharacterError(value) ?? true),
+);
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -455,6 +470,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  skillTriggerCharacter: SkillTriggerCharacter.pipe(
+    Schema.withDecodingDefault(Effect.succeed("$")),
+  ),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
   // old keys, so everyone, including prior beta opt-outs, resets to the new
@@ -1819,6 +1837,7 @@ export const ClientSettingsPatch = Schema.Struct({
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
+  skillTriggerCharacter: Schema.optionalKey(SkillTriggerCharacter),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),

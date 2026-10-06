@@ -180,6 +180,12 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
+On web and desktop, change the typed symbol in **Settings → Keybindings → Skill
+trigger character**. For example, choose `+` and type `+image` to find a skill.
+The preference is saved for that client. Skill references still use their usual
+format after selection. Choose a single symbol other than `@`, `#`, or `/`, which
+open other composer menus.
+
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import type { ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
+  skillTriggerCharacterError,
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
@@ -90,6 +91,47 @@ describe("storage cleanup settings", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
     ).toThrow();
+  });
+});
+
+describe("ClientSettings skill trigger character", () => {
+  it("defaults to the existing dollar trigger", () => {
+    expect(decodeClientSettings({}).skillTriggerCharacter).toBe("$");
+  });
+
+  it.each(["$", "+", "!", "*", "[", "\\", "€", "𑿝"])("round-trips %s", (symbol) => {
+    const settings = decodeClientSettings({ skillTriggerCharacter: symbol });
+    expect(decodeClientSettings(encodeClientSettings(settings)).skillTriggerCharacter).toBe(symbol);
+    expect(decodeClientSettingsPatch({ skillTriggerCharacter: symbol })).toEqual({
+      skillTriggerCharacter: symbol,
+    });
+    expect(skillTriggerCharacterError(symbol)).toBeNull();
+  });
+
+  it.each([
+    "",
+    " ",
+    "\t",
+    "\n",
+    "\u00a0",
+    "a",
+    "ő",
+    "字",
+    "1",
+    "١",
+    "++",
+    " +",
+    "+ ",
+    "+\n",
+    "+\r",
+    "@",
+    "#",
+    "/",
+    "\u200b",
+  ])("rejects invalid character %j in snapshots and patches with an explanation", (symbol) => {
+    expect(() => decodeClientSettings({ skillTriggerCharacter: symbol })).toThrow();
+    expect(() => decodeClientSettingsPatch({ skillTriggerCharacter: symbol })).toThrow();
+    expect(skillTriggerCharacterError(symbol)).toEqual(expect.any(String));
   });
 });
 
