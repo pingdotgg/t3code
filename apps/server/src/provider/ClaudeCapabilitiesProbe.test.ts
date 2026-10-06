@@ -291,6 +291,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
         },
+        bypassPermissionsAvailable: true,
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -307,6 +308,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.mcpConfig, undefined);
 
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
+      assert.equal(invocation.args.includes("--allow-dangerously-skip-permissions"), true);
 
       const settingsFlagIndex = invocation.args.indexOf("--settings");
       assert.notEqual(settingsFlagIndex, -1);
@@ -315,6 +317,31 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         readonly disableAllHooks?: boolean;
       };
       assert.equal(flagSettings.disableAllHooks, true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports bypassPermissions as unavailable when Claude refuses it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-bypass-" });
+      const executablePath = yield* path.fromFileUrl(
+        new URL("./testing/ClaudeCapabilitiesProbe.fixture.mjs", import.meta.url),
+      );
+
+      const capabilities = yield* probeClaudeCapabilities(
+        decodeClaudeSettings({ binaryPath: executablePath }),
+        {
+          ...process.env,
+          T3_PROBE_INVOCATION_PATH: path.join(tempDir, "invocation.json"),
+          T3_PROBE_BYPASS_DISABLED: "1",
+        },
+        undefined,
+        false,
+      );
+
+      assert.equal(capabilities?.email, "dev@example.com");
+      assert.equal(capabilities?.bypassPermissionsAvailable, false);
     }).pipe(Effect.scoped),
   );
 });
