@@ -8535,33 +8535,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             candidate.providerThreadId === turn.providerThreadId &&
             candidate.ordinal > turn.ordinal,
         );
-        const parentThreadId = projection.thread.lineage.parentThreadId;
-        const parent =
-          parentThreadId === null || newerTurn
-            ? undefined
-            : yield* projectionStore
-                .getThreadRecords(parentThreadId, ["subagents", "nodes", "turnItems"], {
-                  turnItemTypes: ["subagent"],
-                  turnItemStatuses: ["pending", "running", "waiting"],
-                })
-                .pipe(mapDispatchError(command));
-        const task = parent?.subagents.find(
-          (candidate) =>
-            candidate.origin === "provider_native" &&
-            candidate.driver === "codex" &&
-            candidate.childThreadId === command.threadId &&
-            isOrchestrationV2WorkActive(candidate.status),
-        );
-        if (task !== undefined) {
-          yield* emitEvent({
-            type: "subagent.updated",
-            threadId: task.threadId,
-            ...(task.runId === null ? {} : { runId: task.runId }),
-            nodeId: task.id,
-            occurredAt: now,
-            payload: { ...task, status: "interrupted", completedAt: now, updatedAt: now },
-          });
-        }
         if (!newerTurn && stopped.providerThread.status === "active") {
           yield* emitEvent({
             type: "provider-thread.updated",
@@ -8570,10 +8543,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: { ...stopped.providerThread, status: "idle", updatedAt: now },
           });
         }
-        const nodes = [
-          ...projection.nodes.filter((node) => node.providerTurnId === turn.id),
-          ...(parent?.nodes.filter((node) => node.id === task?.id) ?? []),
-        ];
+        const nodes = projection.nodes.filter((node) => node.providerTurnId === turn.id);
         for (const node of nodes) {
           if (!isOrchestrationV2WorkActive(node.status)) continue;
           yield* emitEvent({
@@ -8585,12 +8555,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: { ...node, status: "interrupted", completedAt: now },
           });
         }
-        const items = [
-          ...projection.turnItems.filter((item) => item.providerTurnId === turn.id),
-          ...(parent?.turnItems.filter(
-            (item) => item.type === "subagent" && item.subagentId === task?.id,
-          ) ?? []),
-        ];
+        const items = projection.turnItems.filter((item) => item.providerTurnId === turn.id);
         for (const item of items) {
           yield* emitEvent({
             type: "turn-item.updated",
@@ -10728,8 +10693,93 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  const settleNativeSubagentParent = (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.background-work.settle" }
+    >,
+    parentThreadId: ThreadId,
+  ) =>
+    Effect.gen(function* () {
+      const child = yield* projectionStore.getThreadRecords(command.threadId, ["providerTurns"]);
+      const turn = child.providerTurns.find((candidate) => candidate.id === command.providerTurnId);
+      if (
+        turn?.runAttemptId !== null ||
+        turn.status !== "interrupted" ||
+        !isProviderNativeSubagentThread(child.thread) ||
+        child.providerTurns.some(
+          (candidate) =>
+            candidate.providerThreadId === turn.providerThreadId &&
+            candidate.ordinal > turn.ordinal,
+        )
+      )
+        return;
+      const parent = yield* projectionStore.getThreadRecords(
+        parentThreadId,
+        ["subagents", "nodes", "turnItems"],
+        { turnItemTypes: ["subagent"], turnItemStatuses: ["pending", "running", "waiting"] },
+      );
+      const task = parent.subagents.find(
+        (candidate) =>
+          candidate.origin === "provider_native" &&
+          candidate.driver === "codex" &&
+          candidate.childThreadId === command.threadId &&
+          isOrchestrationV2WorkActive(candidate.status),
+      );
+      if (task === undefined) return;
+      const now = yield* DateTime.now;
+      yield* writeSystemEvents([
+        {
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          ...(task.runId === null ? {} : { runId: task.runId }),
+          nodeId: task.id,
+          occurredAt: now,
+          payload: { ...task, status: "interrupted", completedAt: now, updatedAt: now },
+        },
+        ...parent.nodes
+          .filter((node) => node.id === task.id && isOrchestrationV2WorkActive(node.status))
+          .map((node) => ({
+            type: "node.updated" as const,
+            threadId: parentThreadId,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            occurredAt: now,
+            payload: { ...node, status: "interrupted" as const, completedAt: now },
+          })),
+        ...parent.turnItems
+          .filter((item) => item.type === "subagent" && item.subagentId === task.id)
+          .map((item) => ({
+            type: "turn-item.updated" as const,
+            threadId: parentThreadId,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: { ...item, status: "interrupted" as const, completedAt: now, updatedAt: now },
+          })),
+      ]);
+    }).pipe(mapDispatchError(command));
+
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    Effect.gen(function* () {
+      const result = yield* threadDispatch.withLock(
+        commandThreadId(command),
+        dispatchWithReceiptEffect(command),
+      );
+      if (command.type === "thread.background-work.settle") {
+        const child = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        const parentThreadId = child.lineage.parentThreadId;
+        if (isProviderNativeSubagentThread(child) && parentThreadId !== null) {
+          yield* threadDispatch.withLock(
+            parentThreadId,
+            settleNativeSubagentParent(command, parentThreadId),
+          );
+        }
+      }
+      return result;
+    });
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {

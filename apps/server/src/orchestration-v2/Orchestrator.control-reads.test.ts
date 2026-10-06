@@ -18,6 +18,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -25,6 +28,10 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -42,7 +49,9 @@ const adapter = {
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapterV2Shape;
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = Layer.mergeAll(
+const layerControls = Layer.mergeAll(
+  ThreadCommandExecutor.layer,
+  IdAllocator.layer,
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
@@ -51,6 +60,11 @@ const layerTest = Layer.mergeAll(
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
+);
+
+const layerTest = Layer.merge(
+  layerControls,
+  ProviderEventIngestor.layer.pipe(Layer.provide(layerControls)),
 );
 
 it.effect("interrupts only the selected running native Codex subagent", () =>
@@ -334,6 +348,151 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
     assert.equal(parent.subagents[0]?.status, "interrupted");
     assert.equal(parent.nodes[0]?.status, "interrupted");
     assert.equal(parent.turnItems[0]?.status, "interrupted");
+    const eventSink = yield* EventSink.EventSinkV2;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    for (const order of ["completion-first", "settlement-first"] as const) {
+      for (const event of [
+        { type: "provider-turn.updated", threadId: childThreadId, payload: providerTurn },
+        { type: "subagent.updated", threadId: parentThreadId, payload: subagent },
+        {
+          type: "node.updated",
+          threadId: parentThreadId,
+          payload: { ...parent.nodes[0]!, status: "running", completedAt: null },
+        },
+        { type: "turn-item.updated", threadId: parentThreadId, payload: item },
+      ] as const) {
+        yield* projections.apply({
+          ...event,
+          id: EventId.make(`reset:${order}:${event.type}`),
+          occurredAt: now,
+        });
+      }
+      const settleCommandId = CommandId.make(`settle:${order}`);
+      const reachedCommit = yield* Deferred.make<void>();
+      const releaseCommit = yield* Deferred.make<void>();
+      const providerQueued = yield* Deferred.make<void>();
+      const commitCommand = eventSink.commitCommand;
+      const writeWithEffects = eventSink.writeWithEffects;
+      const withLock = executor.withLock;
+      let parentWritesQueued = 0;
+      const commitSpy = vi
+        .spyOn(eventSink, "commitCommand")
+        .mockImplementation((input) =>
+          order === "completion-first" && input.commandId === settleCommandId
+            ? Deferred.succeed(reachedCommit, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCommit)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input),
+        );
+      const writeSpy = vi
+        .spyOn(eventSink, "writeWithEffects")
+        .mockImplementation((input) =>
+          order === "settlement-first" &&
+          input.events.some((event) => event.type === "subagent.updated")
+            ? Deferred.succeed(reachedCommit, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCommit)),
+                Effect.andThen(writeWithEffects(input)),
+              )
+            : writeWithEffects(input),
+        );
+      const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        key,
+        effect,
+      ) =>
+        key === parentThreadId && ++parentWritesQueued === 4
+          ? Deferred.succeed(providerQueued, undefined).pipe(Effect.andThen(withLock(key, effect)))
+          : withLock(key, effect);
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+      yield* Effect.gen(function* () {
+        const settle = yield* orchestrator
+          .dispatch({
+            type: "thread.background-work.settle",
+            commandId: settleCommandId,
+            threadId: childThreadId,
+            providerThreadId,
+            providerTurnId,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(reachedCommit),
+          Fiber.join(settle).pipe(
+            Effect.andThen(Effect.die("Settlement bypassed the commit barrier.")),
+          ),
+        );
+        const completions = [
+          {
+            type: "subagent.updated",
+            driver: adapter.driver,
+            subagent: {
+              ...subagent,
+              status: "completed",
+              completedAt: now,
+              completionWake: "always",
+            },
+          },
+          {
+            type: "node.updated",
+            driver: adapter.driver,
+            node: { ...parent.nodes[0]!, status: "completed", completedAt: now },
+          },
+          {
+            type: "turn_item.updated",
+            driver: adapter.driver,
+            turnItem: { ...item, status: "completed", completedAt: now, result: "Done" },
+          },
+        ] as const;
+        const complete = Effect.forEach(
+          completions,
+          (event) =>
+            ingestor.ingestNormalized({
+              providerSessionId,
+              providerInstanceId: instanceId,
+              threadId: parentThreadId,
+              event,
+            }),
+          { concurrency: "unbounded" },
+        );
+        if (order === "completion-first") {
+          yield* complete;
+          yield* Deferred.succeed(releaseCommit, undefined);
+          yield* Fiber.join(settle);
+        } else {
+          const completion = yield* complete.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.raceFirst(
+            Deferred.await(providerQueued),
+            Fiber.join(completion).pipe(
+              Effect.andThen(Effect.die("Provider updates bypassed the parent lock.")),
+            ),
+          );
+          yield* Deferred.succeed(releaseCommit, undefined);
+          yield* Fiber.join(settle);
+          yield* Fiber.join(completion);
+        }
+        const completedParent = yield* projections.getThreadProjection(parentThreadId);
+        assert.equal(completedParent.subagents[0]?.status, "completed");
+        assert.equal(completedParent.subagents[0]?.completionWake, "always");
+        assert.equal(completedParent.nodes[0]?.status, "completed");
+        assert.equal(completedParent.turnItems[0]?.status, "completed");
+        assert.equal(
+          completedParent.turnItems[0]?.type === "subagent" && completedParent.turnItems[0].result,
+          "Done",
+        );
+        assert.equal(
+          (yield* projections.getThreadProjection(childThreadId)).providerTurns[0]?.status,
+          "interrupted",
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            writeSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
+    }
     for (const race of [
       "completed-turn",
       "completed-task",
