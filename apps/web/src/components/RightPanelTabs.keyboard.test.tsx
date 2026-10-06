@@ -145,6 +145,32 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+T for the focused terminal on %s",
+    async (platform) => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+      await renderPanel({
+        getShortcutContext: () => ({
+          terminalFocus: true,
+          terminalOpen: true,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        }),
+      });
+      const terminal = document.createElement("textarea");
+      const onKeyDown = vi.fn();
+      terminal.addEventListener("keydown", onKeyDown);
+      container.append(terminal);
+      await act(() => terminal.focus());
+      const event = await press("t", { ctrlKey: true });
+      expect(event.defaultPrevented).toBe(false);
+      expect(onKeyDown).toHaveBeenCalledWith(event);
+      expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    },
+  );
+
   it("uses a custom binding from a text field and closes on Escape", async () => {
     const input = document.createElement("input");
     await renderPanel({
