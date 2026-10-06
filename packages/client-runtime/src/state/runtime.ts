@@ -717,13 +717,18 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   });
 }
 
-export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnaryRpcTag>(
+export function createEnvironmentRpcCommand<
+  R,
+  ER,
+  TTag extends EnvironmentUnaryRpcTag,
+  Input extends EnvironmentRpcInput<TTag> = EnvironmentRpcInput<TTag>,
+>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
     readonly tag: TTag;
     readonly execute?: (
-      input: EnvironmentRpcInput<TTag>,
+      input: Input,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -732,19 +737,19 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
     readonly scheduler?: AtomCommandScheduler;
     readonly concurrency?: AtomCommandConcurrency<{
       readonly environmentId: EnvironmentIdType;
-      readonly input: EnvironmentRpcInput<TTag>;
+      readonly input: Input;
     }>;
     readonly onSuccess?: (
       target: {
         readonly environmentId: EnvironmentIdType;
-        readonly input: EnvironmentRpcInput<TTag>;
+        readonly input: Input;
       },
       registry: AtomRegistry.AtomRegistry,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
         readonly environmentId: EnvironmentIdType;
-        readonly input: EnvironmentRpcInput<TTag>;
+        readonly input: Input;
       },
       registry: AtomRegistry.AtomRegistry,
     ) => Effect.Effect<void, never, R>;
@@ -755,7 +760,7 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
     label: options.label,
     ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
-    execute: (input: EnvironmentRpcInput<TTag>, registry, environmentId) => {
+    execute: (input: Input, registry, environmentId) => {
       const target = {
         environmentId,
         input,
