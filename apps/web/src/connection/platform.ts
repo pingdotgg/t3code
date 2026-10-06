@@ -421,7 +421,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 
 // Poll cadence for the desktop bootstrap topology. There is no change event on
 // the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint + token until bearer credentials approach expiry.
+// signature of their endpoint until bearer credentials approach expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
@@ -639,11 +639,16 @@ const layerPlatformConnectionSource = Layer.effect(
         const rejected = yield* Ref.get(rejectedRef);
         const nextRejected = new Map<string, RejectedSecondaryBootstrap>();
         for (const bootstrap of topologyRead.bootstraps) {
-          const signature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}|${bootstrap.bootstrapToken ?? ""}`;
+          // The cached bearer belongs to the endpoint, not to the bootstrap
+          // token it was exchanged for: a new token must not drop a live
+          // session (its removal also clears the environment's drafts). The
+          // token only decides whether a rejected exchange is retried.
+          const endpointSignature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}`;
+          const signature = `${endpointSignature}|${bootstrap.bootstrapToken ?? ""}`;
           const cached = previous.get(bootstrap.id);
           if (
             cached !== undefined &&
-            canReuseCachedPlatformRegistration(cached, signature, nowEpochMs)
+            canReuseCachedPlatformRegistration(cached, endpointSignature, nowEpochMs)
           ) {
             next.set(bootstrap.id, cached);
             registrations.push(cached.registration);
@@ -655,7 +660,11 @@ const layerPlatformConnectionSource = Layer.effect(
             // The bearer minted before the token died is still good until it expires.
             if (
               cached !== undefined &&
-              canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, signature, nowEpochMs)
+              canRetainCachedPlatformRegistrationAfterRefreshFailure(
+                cached,
+                endpointSignature,
+                nowEpochMs,
+              )
             ) {
               next.set(bootstrap.id, cached);
               registrations.push(cached.registration);
@@ -682,12 +691,16 @@ const layerPlatformConnectionSource = Layer.effect(
             Effect.option,
           );
           if (Option.isSome(built)) {
-            const cacheEntry = { signature, ...built.value };
+            const cacheEntry = { signature: endpointSignature, ...built.value };
             next.set(bootstrap.id, cacheEntry);
             registrations.push(built.value.registration);
           } else if (
             cached !== undefined &&
-            canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, signature, nowEpochMs)
+            canRetainCachedPlatformRegistrationAfterRefreshFailure(
+              cached,
+              endpointSignature,
+              nowEpochMs,
+            )
           ) {
             next.set(bootstrap.id, cached);
             registrations.push(cached.registration);

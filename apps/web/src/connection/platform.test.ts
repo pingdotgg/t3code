@@ -253,6 +253,25 @@ describe("rejected desktop-local bootstrap tokens", () => {
   });
 });
 
+describe("desktop-local bearer cache across token changes", () => {
+  it("keeps a live bearer when only the bootstrap token rotates", () => {
+    // Cached by endpoint: a rotated token reuses the bearer instead of
+    // dropping the environment (and its drafts) when the new token is rejected.
+    const cached = {
+      signature: "http://a|ws://a",
+      registration: {} as never,
+      expiresAtEpochMs: 20_000,
+      refreshAtEpochMs: 15_000,
+    };
+
+    expect(canReuseCachedPlatformRegistration(cached, "http://a|ws://a", 10_000)).toBe(true);
+    expect(
+      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, "http://a|ws://a", 16_000),
+    ).toBe(true);
+    expect(canReuseCachedPlatformRegistration(cached, "http://b|ws://b", 10_000)).toBe(false);
+  });
+});
+
 describe("primary topology cache", () => {
   const registration = {} as never;
   const cached = {
