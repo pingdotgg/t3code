@@ -1566,6 +1566,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("writes names outside ASCII as themselves when the repository quotes paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["config", "core.quotePath", "true"]);
+        yield* git(cwd, ["checkout", "-b", "feature/quotepath"]);
+        yield* writeTextFile(cwd, "ПРИКЛАД.md", "# committed\n");
+        yield* git(cwd, ["add", "ПРИКЛАД.md"]);
+        yield* git(cwd, ["commit", "-m", "committed change"]);
+        yield* writeTextFile(cwd, "ПРИКЛАД.md", "# dirty\n");
+        yield* writeTextFile(cwd, "résumé.txt", "untracked\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: false,
+        });
+
+        const workingTree = preview.sources.find((source) => source.kind === "working-tree")?.diff;
+        const branchRange = preview.sources.find((source) => source.kind === "branch-range")?.diff;
+        assert.include(workingTree, "diff --git a/ПРИКЛАД.md b/ПРИКЛАД.md");
+        assert.include(workingTree, "+++ b/résumé.txt");
+        assert.include(branchRange, "diff --git a/ПРИКЛАД.md b/ПРИКЛАД.md");
+      }),
+    );
+
     it.effect("keeps untracked filenames with pathspec magic in the review", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

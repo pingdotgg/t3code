@@ -34,6 +34,7 @@ import {
 } from "@t3tools/contracts";
 import {
   makeGitVcsDriverCore,
+  PATCH_RENDER_CONFIG_ARGS,
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
@@ -1188,6 +1189,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation,
         cwd: input.cwd,
         args: [
+          ...PATCH_RENDER_CONFIG_ARGS,
           "diff",
           ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
           "--no-color",
