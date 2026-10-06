@@ -1,5 +1,5 @@
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
+import { followStreamInEnvironment } from "./environmentStreams.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
@@ -737,19 +737,19 @@ export function createEnvironmentRpcCommand<
     readonly scheduler?: AtomCommandScheduler;
     readonly concurrency?: AtomCommandConcurrency<{
       readonly environmentId: EnvironmentIdType;
-      readonly input: Input;
+      readonly input: NoInfer<Input>;
     }>;
     readonly onSuccess?: (
       target: {
         readonly environmentId: EnvironmentIdType;
-        readonly input: Input;
+        readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
         readonly environmentId: EnvironmentIdType;
-        readonly input: Input;
+        readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
     ) => Effect.Effect<void, never, R>;

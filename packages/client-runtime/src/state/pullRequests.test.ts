@@ -307,6 +307,7 @@ it.effect("shares active read identity probes while keeping later reads and muta
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
       );
     }),
   ),
