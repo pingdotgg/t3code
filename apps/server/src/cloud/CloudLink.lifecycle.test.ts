@@ -45,7 +45,6 @@ import {
   managedTunnelStartupAction,
   retryManagedTunnelRegistration,
 } from "./managedTunnelStartup.ts";
-import { shouldRetryCloudLink } from "./relayResponse.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
@@ -109,10 +108,7 @@ describe("reconcileDesiredCloudLink", () => {
       const link = yield* CloudLink.CloudLink;
       const error = yield* Effect.flip(link.reconcileDesiredLink("http://127.0.0.1:3774"));
 
-      expect(error).toMatchObject({
-        _tag: "EnvironmentHttpUnauthorizedError",
-        message: "Run `t3 connect link` to authorize this environment.",
-      });
+      expect(error._tag).toBe("CloudLinkAuthorizationMissingError");
     }).pipe(
       Effect.provide(CloudLink.layer),
       Effect.provideService(HttpServer.HttpServer, idleHttpServer),
@@ -689,7 +685,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           link
             .registerManagedTunnelRecovery(localOrigin)
             .pipe(Effect.tapError(() => Deferred.succeed(firstFailure, undefined))),
-          shouldRetryCloudLink,
+          CloudLink.shouldRetryCloudLink,
           link
             .startManagedTunnelIfOriginConfirmed(localOrigin, {
               requireConfirmedOrigin: false,
@@ -1051,10 +1047,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { status: 401, errorTag: "EnvironmentHttpUnauthorizedError" },
-    { status: 403, errorTag: "EnvironmentHttpForbiddenError" },
-    { status: 409, errorTag: "EnvironmentHttpBadRequestError" },
-  ])("preserves a permanent $status relay recovery failure", ({ status, errorTag }) => {
+    { status: 401, rejection: "unauthorized" },
+    { status: 403, rejection: "forbidden" },
+    { status: 409, rejection: "rejected" },
+  ])("preserves a permanent $status relay recovery failure", ({ status, rejection }) => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
       [RELAY_URL_SECRET, "https://relay.example.test"],
@@ -1068,7 +1064,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const link = yield* CloudLink.CloudLink;
       const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
 
-      expect(error._tag).toBe(errorTag);
+      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection });
+      expect(CloudLink.shouldRetryCloudLink(error)).toBe(false);
       expect(requests).toHaveLength(1);
       expect(applyConfigCalls).toEqual([]);
     }).pipe(

@@ -137,7 +137,10 @@ it.effect("puts the relay back when the local save fails", () =>
       const error = yield* preferences
         .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
         .pipe(Effect.flip);
-      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepInclude(error, {
+        _tag: "CloudLinkInternalError",
+        operation: "persist-preferences",
+      });
       assert.deepEqual(relayCalls, [true, false]);
       assert.equal(
         new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
@@ -153,7 +156,10 @@ it.effect("leaves the relay untouched when the activity setting can't be saved",
       const error = yield* preferences
         .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
         .pipe(Effect.flip);
-      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepInclude(error, {
+        _tag: "CloudLinkInternalError",
+        operation: "persist-preferences",
+      });
       assert.deepEqual(relayCalls, []);
       assert.equal(
         new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
@@ -184,7 +190,7 @@ it.effect("changes nothing when the current activity setting can't be read", () 
       const error = yield* preferences
         .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
         .pipe(Effect.flip);
-      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
       assert.deepEqual(relayCalls, []);
       assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
     }),
@@ -231,7 +237,7 @@ it.effect("changes nothing when the current hold setting can't be read", () =>
       const error = yield* preferences
         .update({ publishAgentActivity: true, holdWebhooksWhileOffline: false })
         .pipe(Effect.flip);
-      assert.equal(error._tag, "EnvironmentHttpInternalServerError");
+      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
       assert.deepEqual(relayCalls, []);
       assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
     }),
