@@ -676,6 +676,9 @@ function WebhookEndpointField({
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
 }) {
+  const canRotate = useAtomValue(
+    serverEnvironment.rotateScheduledTaskWebhookToken.permissionAtom(environmentId),
+  );
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "webhook URL" });
   const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
@@ -733,7 +736,7 @@ function WebhookEndpointField({
           size="sm"
           variant="outline"
           type="button"
-          disabled={rotating}
+          disabled={rotating || !canRotate}
           onClick={() => void rotateUrl()}
         >
           Rotate

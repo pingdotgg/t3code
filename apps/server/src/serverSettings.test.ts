@@ -751,7 +751,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const restored = yield* serverSettings.updateSettings({ providerInstances });
           assert.deepEqual(restored.textGenerationModelSelection, selection);
         }),
-      ).pipe(Effect.provide(makeServerSettingsLayer())),
+      ).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("skips explicitly disabled instances when choosing a legacy fallback", () =>
@@ -768,7 +768,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.textGenerationModelSelection.instanceId, "claudeAgent");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>

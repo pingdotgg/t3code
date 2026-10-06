@@ -44,6 +44,7 @@ const task = {
   threadId,
   title: "Daily review",
   enabled: true,
+  schedule: { type: "interval", everyMs: 60000 },
   lastRunStatus: "never",
 } as ScheduledTask;
 let renderer: ReactTestRenderer;

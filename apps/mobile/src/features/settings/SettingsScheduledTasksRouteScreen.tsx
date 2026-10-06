@@ -944,7 +944,7 @@ function TaskForm({
                   : draft.task
               }
               signatureConfigured={draft.schedule.signature !== null}
-              disabled={saving || environmentUnavailable}
+              disabled={!canOperate || saving || environmentUnavailable}
             />
             <FormField
               label="Skip requests older than (minutes)"
@@ -1223,7 +1223,9 @@ function EnvironmentTasks({
                   title: task.enabled ? "Pause" : "Resume",
                   attributes: { disabled: !canOperate },
                 },
-                ...(task.schedule.type === "webhook" ? [] : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                ...(task.schedule.type === "webhook"
+                  ? []
+                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
                 {
                   id: "delete",
                   title: "Delete",

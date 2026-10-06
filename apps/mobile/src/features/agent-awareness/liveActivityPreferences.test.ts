@@ -220,7 +220,7 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("keeps device updates independently switchable without relay access", () =>
@@ -242,7 +242,7 @@ describe("liveActivityPreferences", () => {
         liveActivitiesEnabled: true,
       });
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("checks current relay access after updating the device registration", () => {
@@ -264,7 +264,7 @@ describe("liveActivityPreferences", () => {
 
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("does not retry environment changes after relay access is revoked", () => {
@@ -295,6 +295,6 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 });
