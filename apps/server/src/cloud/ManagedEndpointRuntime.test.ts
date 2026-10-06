@@ -18,7 +18,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
-const relayClientAvailableLayer = Layer.succeed(
+const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
   RelayClient.RelayClient.of({
     resolve: Effect.succeed({
@@ -34,7 +34,7 @@ const relayClientAvailableLayer = Layer.succeed(
 
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -46,7 +46,7 @@ const runtimeDependencies = (
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(

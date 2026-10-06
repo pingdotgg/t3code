@@ -51,12 +51,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
@@ -67,11 +67,8 @@ import {
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import {
-  makeReplayServerConfig,
-  makeCodexProviderAdapterRegistryReplayLayer,
-  withCodexReplayChildMetadata,
-} from "./CodexAdapterV2.testkit.ts";
+import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -720,7 +717,7 @@ describe("CodexAdapterV2 process spawning", () => {
         );
       });
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
-        Effect.provide(CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer),
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -775,7 +772,7 @@ describe("CodexAdapterV2 process spawning", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
+            CodexAdapterV2.layerAppServerClientFactory,
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-binary-home-" }),
           ),
         ),
@@ -1655,6 +1652,193 @@ function makeCodexReplayTranscript(input: {
     entries: input.entries,
   };
 }
+
+function withReplayRequestId(
+  entry: CodexReplay.CodexAppServerReplayEntry,
+  id: number,
+): CodexReplay.CodexAppServerReplayEntry {
+  return entry.type !== "runtime_exit" && Predicate.isObject(entry.frame)
+    ? { ...entry, frame: { ...entry.frame, id } }
+    : entry;
+}
+
+describe("CodexAdapterV2 session initialize", () => {
+  const openReplaySession = (
+    transcript: CodexReplay.CodexAppServerReplayTranscript,
+    beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+  ) =>
+    Effect.gen(function* () {
+      const driver = yield* CodexReplay.makeReplayDriver(
+        transcript,
+        beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
+      );
+      let initializeRequests = 0;
+      const adapter = CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: {
+          open: (openInput) =>
+            Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+              Effect.flatMap((context) =>
+                Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
+              ),
+              Effect.map(
+                (client) =>
+                  ({
+                    ...client,
+                    request: (method, params) =>
+                      Effect.sync(() => {
+                        if (method === "initialize") initializeRequests++;
+                      }).pipe(Effect.andThen(client.request(method, params))),
+                  }) satisfies CodexClient.CodexAppServerClient["Service"],
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterOpenSessionError({
+                    driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                    providerSessionId: openInput.providerSessionId,
+                    cause,
+                  }),
+              ),
+            ),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId: ThreadId.make(`thread-${transcript.scenario}`),
+        providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      return {
+        ensureThread: (threadId: string) =>
+          runtime.ensureThread({
+            threadId: ThreadId.make(threadId),
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          }),
+        initializeRequests: () => initializeRequests,
+      };
+    });
+
+  const replayPreamble = (nativeThreadId: string) =>
+    codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect("sends one initialize when two threads start on a fresh session at once", () =>
+    Effect.gen(function* () {
+      const initializeAwaitingResponse = yield* Deferred.make<void>();
+      const releaseInitialize = yield* Deferred.make<void>();
+      // The transcript allows exactly one handshake: a second `initialize`
+      // frame fails the replay, as Codex rejects it with "Already initialized".
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "concurrent-initialize",
+          entries: [
+            ...replayPreamble("concurrent-first").slice(0, 5),
+            ...replayPreamble("concurrent-second")
+              .slice(3, 5)
+              .map((entry) => withReplayRequestId(entry, 3)),
+          ],
+        }),
+        (entry) =>
+          entry.label === "initialize"
+            ? Deferred.succeed(initializeAwaitingResponse, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseInitialize)),
+              )
+            : Effect.void,
+      );
+
+      const first = yield* session
+        .ensureThread("thread-concurrent-first")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(initializeAwaitingResponse);
+      // The second thread arrives while the handshake is still unanswered.
+      const second = yield* session
+        .ensureThread("thread-concurrent-second")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseInitialize, undefined);
+
+      const providerThreads = [yield* Fiber.join(first), yield* Fiber.join(second)];
+      assert.equal(session.initializeRequests(), 1);
+      assert.sameMembers(
+        providerThreads.map((providerThread) => providerThread.nativeThreadRef?.nativeId),
+        ["concurrent-first", "concurrent-second"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("retries initialize after a failed handshake", () =>
+    Effect.gen(function* () {
+      const preamble = replayPreamble("initialize-retry");
+      const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [
+        ...preamble.slice(0, 1),
+        {
+          type: "emit_inbound",
+          label: "initialize",
+          frame: { id: 1, error: { code: -32603, message: "Codex is not ready." } },
+        },
+        ...preamble.slice(0, 2).map((entry) => withReplayRequestId(entry, 2)),
+        ...preamble.slice(2, 3),
+        ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
+      ];
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({ scenario: "initialize-retry", entries }),
+      );
+
+      const failure = yield* session.ensureThread("thread-initialize-retry").pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterEnsureThreadError");
+      const providerThread = yield* session.ensureThread("thread-initialize-retry");
+      assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-retry");
+      assert.equal(session.initializeRequests(), 2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("completes the handshake after a caller is interrupted mid-initialize", () =>
+    Effect.gen(function* () {
+      const initializeAwaitingResponse = yield* Deferred.make<void>();
+      const releaseInitialize = yield* Deferred.make<void>();
+      const preamble = replayPreamble("initialize-interrupted");
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "initialize-interrupted",
+          entries: [
+            ...preamble.slice(0, 2),
+            // Codex handled the interrupted caller's `initialize`, so it
+            // rejects the next one.
+            ...preamble.slice(0, 1).map((entry) => withReplayRequestId(entry, 2)),
+            {
+              type: "emit_inbound",
+              label: "initialize-rejected",
+              frame: { id: 2, error: { code: -32600, message: "Already initialized" } },
+            },
+            ...preamble.slice(2, 3),
+            ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
+          ],
+        }),
+        (entry) =>
+          entry.label === "initialize"
+            ? Deferred.succeed(initializeAwaitingResponse, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseInitialize)),
+              )
+            : Effect.void,
+      );
+
+      const interrupted = yield* session
+        .ensureThread("thread-initialize-interrupted")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(initializeAwaitingResponse);
+      yield* Fiber.interrupt(interrupted);
+      yield* Deferred.succeed(releaseInitialize, undefined);
+
+      const providerThread = yield* session.ensureThread("thread-initialize-interrupted");
+      assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-interrupted");
+      assert.equal(session.initializeRequests(), 2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+});
 
 describe("CodexAdapterV2 post-settle continuation", () => {
   const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
@@ -4238,9 +4422,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({
+              CodexAdapterV2Testkit.layer({
                 transcript: localTranscript,
                 driver: replayDriver,
               }),
@@ -4361,9 +4545,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop-untracked", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({ transcript: localTranscript }),
+              CodexAdapterV2Testkit.layer({ transcript: localTranscript }),
               { runEffectWorker: false },
             ),
           ),

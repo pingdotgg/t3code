@@ -38,6 +38,7 @@ export type T3McpToolSummaryAction =
   | "question-list"
   | "question-read"
   | "question-respond"
+  | "secret-request"
   | "worktree-handoff"
   | "worktree-list"
   | "worktree-status"
@@ -130,6 +131,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Delete", "Deleting", "Requested deletion of", "a scheduled task"],
     "schedule-delete",
   ),
+  request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
@@ -156,6 +158,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_dialog: tool(
+    ["Respond", "Responding", "Responded", "to a preview browser dialog"],
+    "browser",
+    "browser",
+  ),
   preview_snapshot: tool(
     ["Take a snapshot of", "Taking a snapshot of", "Took a snapshot of", "the preview page"],
     "browser",
@@ -173,6 +180,26 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
   ),
   preview_type: tool(["Type", "Typing", "Typed", "in the preview browser"], "browser", "browser"),
+  preview_hover: tool(
+    ["Hover", "Hovering", "Hovered", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_select: tool(
+    ["Choose", "Choosing", "Chose", "an option in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_drag: tool(
+    ["Drag", "Dragging", "Dragged", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_upload: tool(
+    ["Upload", "Uploading", "Uploaded", "files to the preview browser"],
+    "browser",
+    "browser",
+  ),
   preview_scroll: tool(
     ["Scroll", "Scrolling", "Scrolled", "the preview browser"],
     "browser",

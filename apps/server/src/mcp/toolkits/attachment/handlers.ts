@@ -31,7 +31,7 @@ export function resolveAttachmentReferences(
   });
 }
 
-export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
+export const layer = AttachmentToolkit.toLayer({
   t3_attachment_prepare_upload: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();

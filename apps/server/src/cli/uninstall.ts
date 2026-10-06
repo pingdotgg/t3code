@@ -20,7 +20,7 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { bootServiceLayer } from "./service.ts";
+import * as CliService from "./service.ts";
 import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -117,7 +117,7 @@ export const uninstallCommand = Command.make("uninstall", {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUninstall({ baseDir: config.baseDir, assumeYes: flags.yes }).pipe(
-        Effect.provide(bootServiceLayer(config)),
+        Effect.provide(CliService.layer(config)),
       );
     }),
   ),
@@ -162,7 +162,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({ message: "Remove t3 from this machine?", initial: false }),
-    ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     if (!confirmed) {
       yield* Console.log("Left as is.");
       return;

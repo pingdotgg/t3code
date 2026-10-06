@@ -258,8 +258,8 @@ export function pngDimensions(png: Uint8Array): { width: number; height: number 
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
-export const DeviceStandardToolkitHandlersLive = DeviceStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = DeviceStandardToolkit.toLayer(standardHandlers);
 
-export const DeviceScreenshotToolkitHandlersLive = DeviceScreenshotToolkit.toLayer({
+export const layerScreenshot = DeviceScreenshotToolkit.toLayer({
   device_screenshot,
 });

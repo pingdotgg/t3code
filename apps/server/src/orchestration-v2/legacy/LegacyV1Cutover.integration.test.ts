@@ -27,7 +27,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../../persistence/Migrations.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import Migration0042 from "../../persistence/Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "../../persistence/Migrations/043_ProjectionThreadsUnsettledAt.ts";
 import Migration0044 from "../../persistence/Migrations/044_ClearAutomaticProjectModelDefaults.ts";
@@ -50,7 +50,7 @@ import {
   type ProviderAdapterV2Shape,
 } from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 
 const PROJECT_ID = "project:cutover";
@@ -579,24 +579,32 @@ const waitForIdle = Effect.fn("LegacyV1Cutover.waitForIdle")(function* (threadId
   return yield* Effect.die(new Error("Cutover test timed out waiting for idle"));
 });
 
-const makeBootLayer = (input: {
+const layerBoot = (input: {
   readonly name: string;
   readonly dbPath: string;
   readonly workspace: string;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
 }) => {
-  const databaseLayer = makeSqlitePersistenceLive(input.dbPath).pipe(
+  const layerDatabase = SqlitePersistence.layerFromPath(input.dbPath).pipe(
     Layer.provide(NodeServices.layer),
   );
-  const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
-  const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
-  const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
-  const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
-  const importerProvided = LegacyV1ThreadImporter.layer.pipe(
-    Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+  const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
+  const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
+    Layer.provideMerge(layerDatabase),
   );
-  const maintenanceProvided = ProjectionMaintenance.layer.pipe(Layer.provide(storesProvided));
-  const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layerStoresProvided = Layer.mergeAll(
+    layerDatabase,
+    layerEventStoreProvided,
+    layerProjectionStoreProvided,
+  );
+  const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
+  const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
+  );
+  const layerMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+    Layer.provide(layerStoresProvided),
+  );
+  const layerOrchestratorProvided = ProviderReplayHarness.layerWithRegistry(
     {
       name: input.name,
       runtimePolicyOverride: {
@@ -609,15 +617,15 @@ const makeBootLayer = (input: {
         },
       },
     },
-    ProviderAdapterRegistry.makeSingleLayer(makeCodexAdapter(input.capturedTurns)),
-    { databaseLayer },
+    ProviderAdapterRegistry.layerSingle(makeCodexAdapter(input.capturedTurns)),
+    { databaseLayer: layerDatabase },
   );
   return Layer.mergeAll(
-    storesProvided,
-    eventSinkProvided,
-    importerProvided,
-    maintenanceProvided,
-    orchestratorProvided,
+    layerStoresProvided,
+    layerEventSinkProvided,
+    layerImporterProvided,
+    layerMaintenanceProvided,
+    layerOrchestratorProvided,
   );
 };
 
@@ -909,7 +917,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
               };
             }).pipe(
               Effect.provide(
-                makeBootLayer({
+                layerBoot({
                   name: "legacy-v1-cutover-first",
                   dbPath: copyPath,
                   workspace,
@@ -1020,7 +1028,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
               );
             }).pipe(
               Effect.provide(
-                makeBootLayer({
+                layerBoot({
                   name: "legacy-v1-cutover-restart",
                   dbPath: copyPath,
                   workspace,

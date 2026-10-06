@@ -38,7 +38,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
-import { bootServiceLayer } from "./service.ts";
+import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
@@ -267,7 +267,7 @@ export const updateCommand = Command.make("update", {
         assumeYes: flags.yes,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(bootServiceLayer(config), ProcessRunner.layer, FetchHttpClient.layer),
+          Layer.mergeAll(CliService.layer(config), ProcessRunner.layer, FetchHttpClient.layer),
         ),
       );
     }),
@@ -384,7 +384,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     }
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({ message: "Install the preview build anyway?", initial: false }),
-    ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     if (!confirmed) {
       yield* Console.log("Left as is.");
       return;
@@ -473,7 +473,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           message: "Restart the background service once the download is verified?",
           initial: true,
         }),
-      ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+      ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     } else {
       yield* Console.log(
         "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run `t3 service restart` later.",

@@ -19,6 +19,10 @@
       "types": "./src/device/hubAccess.ts",
       "default": "./src/device/hubAccess.ts"
     },
+    "./preview/server-browser-stream": {
+      "types": "./src/preview/serverBrowserStream.ts",
+      "default": "./src/preview/serverBrowserStream.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
@@ -34,6 +38,10 @@
     "./user-message": {
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
+    },
+    "./secret-request": {
+      "types": "./src/secretRequest.ts",
+      "default": "./src/secretRequest.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",

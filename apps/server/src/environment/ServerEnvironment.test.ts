@@ -31,13 +31,13 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
   ServerEnvironment.ServerEnvironmentIdPersistenceError,
 );
 
-const makeServerEnvironmentLayer = (baseDir: string) =>
+const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
 
-const emptySecretStoreLayer = Layer.succeed(
+const layerEmptySecretStore = Layer.succeed(
   ServerSecretStore.ServerSecretStore,
   ServerSecretStore.ServerSecretStore.of({
     get: () => Effect.succeedNone,
@@ -108,7 +108,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(emptySecretStoreLayer),
+              Layer.provide(layerEmptySecretStore),
               Layer.provide(ServerConfig.layer({ ...config, mode })),
             ),
           ),
@@ -152,7 +152,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         return yield* identity.getEnvironmentId;
       }).pipe(
         Effect.tap(() => Deferred.succeed(firstInitialized, undefined)),
-        Effect.provide(Layer.fresh(ServerEnvironment.identityLayer)),
+        Effect.provide(Layer.fresh(ServerEnvironment.layerIdentity)),
         Effect.provideService(ServerConfig.ServerConfig, serverConfig),
         Effect.provideService(FileSystem.FileSystem, {
           ...fileSystem,
@@ -207,11 +207,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const first = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
       const second = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
 
       expect(first.environmentId).toBe(second.environmentId);
       expect(first.orchestrationProtocolVersion).toBe(ORCHESTRATION_PROTOCOL_VERSION);
@@ -238,7 +238,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-server-environment-publish-test-",
       });
-      const testLayer = Layer.mergeAll(
+      const layerTest = Layer.mergeAll(
         ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
@@ -274,7 +274,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
     }),
   );
 
@@ -343,7 +343,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           description: "permission denied",
           pathOrDescriptor: environmentIdPath,
         });
-        const failingFileSystemLayer = FileSystem.layerNoop({
+        const layerFailingFileSystem = FileSystem.layerNoop({
           exists: () =>
             operation === "check" ? Effect.fail(cause) : Effect.succeed(operation === "read"),
           readFileString: () => Effect.fail(cause),
@@ -360,8 +360,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(emptySecretStoreLayer),
-              Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), layerFailingFileSystem)),
             ),
           ),
           Effect.flip,

@@ -1,7 +1,7 @@
-import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,51 +19,41 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
-import * as PreviewBrowser from "../htmlRender/PreviewBrowser.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
-import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers.ts";
+import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
-import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
+import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
-import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
+import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
-import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
-import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
+import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
-import {
-  PreviewSnapshotToolkitHandlersLive,
-  PreviewStandardToolkitHandlersLive,
-} from "./toolkits/preview/handlers.ts";
+import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
-import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
+import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
-import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
+import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
-import {
-  DeviceScreenshotToolkitHandlersLive,
-  DeviceStandardToolkitHandlersLive,
-} from "./toolkits/device/handlers.ts";
+import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
-import {
-  HtmlPreviewToolkitHandlersLive,
-  HtmlRenderToolkitHandlersLive,
-} from "./toolkits/html/handlers.ts";
+import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
@@ -134,7 +124,7 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
   Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
 );
 
-const McpAuthMiddlewareLive = HttpRouter.middleware<{
+const layerMcpAuthMiddleware = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
 
@@ -190,7 +180,7 @@ type SnapshotMetadata = {
 };
 
 /**
- * Drops the accessibility tree, shortens page text, element names, identifiers,
+ * Keeps server ARIA refs, drops legacy object trees, shortens page text, names, identifiers,
  * and log strings, keeps only the newest log entries, and finally sheds
  * interactive elements until the JSON fits. Returns the bounded value, its
  * text, and notes on what is missing so the agent can reach for
@@ -199,7 +189,8 @@ type SnapshotMetadata = {
 const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
   const { accessibilityTree, ...withoutTree } = metadata;
-  if (accessibilityTree !== undefined) {
+  const ariaTree = typeof accessibilityTree === "string" ? accessibilityTree : undefined;
+  if (accessibilityTree !== undefined && ariaTree === undefined) {
     omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
   }
   const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
@@ -262,8 +253,10 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     actionTimeline: 0,
   };
   let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
+  let ariaTreeChars = Math.min(ariaTree?.length ?? 0, 20_000);
   const value = () => ({
     ...bounded,
+    ...(ariaTree === undefined ? {} : { accessibilityTree: cutText(ariaTree, ariaTreeChars) }),
     visibleText: cutText(metadata.visibleText, visibleTextChars),
     ...lists,
   });
@@ -278,10 +271,14 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
         ? "visibleText"
         : lists.interactiveElements.length > 0
           ? "interactiveElements"
-          : undefined);
+          : ariaTreeChars > 0
+            ? "accessibilityTree"
+            : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
       visibleTextChars = Math.floor(visibleTextChars / 2);
+    } else if (key === "accessibilityTree") {
+      ariaTreeChars = Math.floor(ariaTreeChars / 2);
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
@@ -299,6 +296,9 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     omitted.push(
       `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
     );
+  }
+  if (ariaTree !== undefined && ariaTreeChars < ariaTree.length) {
+    omitted.push(`accessibilityTree after ${ariaTreeChars} characters`);
   }
   for (const key of shedOrder) {
     if (dropped[key] > 0) {
@@ -343,8 +343,10 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const millis = yield* Clock.currentTimeMillis;
+  const crypto = yield* Crypto.Crypto;
   // Two saves in the same millisecond must not overwrite each other.
-  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}.png`;
+  const unique = (yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 8);
+  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${unique}.png`;
   const screenshotPath = path.join(config.browserArtifactsDir, fileName);
   yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
     Effect.andThen(fileSystem.writeFile(screenshotPath, data)),
@@ -396,7 +398,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   // The MCP tool runner only supplies the client, so hand the save path its services here.
   const saveServices = yield* Effect.context<
-    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
+    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >();
   const built = yield* PreviewSnapshotToolkit;
   const tool = PreviewSnapshotTool;
@@ -687,89 +689,89 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
-export const HtmlToolkitRegistrationLive = Layer.mergeAll(
-  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlRenderToolkitHandlersLive)),
-  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlPreviewToolkitHandlersLive)),
-).pipe(Layer.provide(HtmlRender.layer), Layer.provide(PreviewBrowser.layer));
+export const layerHtmlToolkit = Layer.mergeAll(
+  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlHandlers.layerRender)),
+  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlHandlers.layerPreview)),
+).pipe(Layer.provide(HtmlRender.layer));
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
-  Layer.provide(PreviewStandardToolkitHandlersLive),
+const layerPreviewStandardToolkitRegistration = McpServer.toolkit(PreviewStandardToolkit).pipe(
+  Layer.provide(PreviewHandlers.layerStandard),
 );
 
-const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
-  Layer.provide(PreviewSnapshotToolkitHandlersLive),
+const layerPreviewSnapshotRegistration = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
+  Layer.provide(PreviewHandlers.layerSnapshot),
 );
 
-export const PreviewToolkitRegistrationLive = Layer.mergeAll(
-  PreviewStandardToolkitRegistrationLive,
-  PreviewSnapshotRegistrationLive,
+export const layerPreviewToolkit = Layer.mergeAll(
+  layerPreviewStandardToolkitRegistration,
+  layerPreviewSnapshotRegistration,
 );
 
-export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
-  Layer.provide(OrchestratorToolkitHandlersLive),
+export const layerOrchestratorToolkit = McpServer.toolkit(OrchestratorToolkit).pipe(
+  Layer.provide(OrchestratorHandlers.layer),
   Layer.provide(OrchestratorMcpService.layer),
   Layer.provide(ThreadMetadataMcpService.layer),
 );
 
-export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pipe(
-  Layer.provide(ThreadToolkitHandlersLive),
+export const layerThreadToolkit = McpServer.toolkit(ThreadToolkit).pipe(
+  Layer.provide(ThreadHandlers.layer),
 );
 
-const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
-  Layer.provide(WorktreeToolkitHandlersLive),
+const layerWorktreeToolkitRegistration = McpServer.toolkit(WorktreeToolkit).pipe(
+  Layer.provide(WorktreeHandlers.layer),
   Layer.provide(WorktreeMcpService.layer),
 );
 
-const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit).pipe(
-  Layer.provide(PreviewControlsHandlersLive),
+const layerPreviewControlsRegistration = McpServer.toolkit(PreviewControlsToolkit).pipe(
+  Layer.provide(PreviewControlsHandlers.layer),
 );
 
-const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
-  Layer.provide(EnvironmentHandlersLive),
+const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
+  Layer.provide(EnvironmentHandlers.layer),
 );
 
-const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
-  Layer.provide(ProjectHandlersLive),
+const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
+  Layer.provide(ProjectHandlers.layer),
 );
 
-const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
-  Layer.provide(AttachmentHandlersLive),
+const layerAttachmentRegistration = McpServer.toolkit(AttachmentToolkit).pipe(
+  Layer.provide(AttachmentHandlers.layer),
 );
 
-export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
-  Layer.provide(PullRequestsToolkitHandlersLive),
+export const layerPullRequestsToolkit = McpServer.toolkit(PullRequestsToolkit).pipe(
+  Layer.provide(PullRequestsHandlers.layer),
 );
 
-const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
-  Layer.provide(DeviceStandardToolkitHandlersLive),
+const layerDeviceStandardToolkitRegistration = McpServer.toolkit(DeviceStandardToolkit).pipe(
+  Layer.provide(DeviceHandlers.layerStandard),
 );
 
-const DeviceScreenshotRegistrationLive = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
-  Layer.provide(DeviceScreenshotToolkitHandlersLive),
+const layerDeviceScreenshotRegistration = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
+  Layer.provide(DeviceHandlers.layerScreenshot),
 );
 
-export const DeviceToolkitRegistrationLive = Layer.mergeAll(
-  DeviceStandardToolkitRegistrationLive,
-  DeviceScreenshotRegistrationLive,
+export const layerDeviceToolkit = Layer.mergeAll(
+  layerDeviceStandardToolkitRegistration,
+  layerDeviceScreenshotRegistration,
 );
 
-const McpTransportLive = McpServer.layerHttp({
+const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+}).pipe(Layer.provide(layerMcpAuthMiddleware));
 
 export const layer = Layer.mergeAll(
-  PreviewToolkitRegistrationLive,
-  OrchestratorToolkitRegistrationLive,
-  ThreadToolkitRegistrationLive,
-  AttachmentRegistrationLive,
-  ProjectRegistrationLive,
-  EnvironmentRegistrationLive,
-  PreviewControlsRegistrationLive,
-  WorktreeToolkitRegistrationLive,
-  PullRequestsToolkitRegistrationLive,
-  DeviceToolkitRegistrationLive,
-  HtmlToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+  layerPreviewToolkit,
+  layerOrchestratorToolkit,
+  layerThreadToolkit,
+  layerAttachmentRegistration,
+  layerProjectRegistration,
+  layerEnvironmentRegistration,
+  layerPreviewControlsRegistration,
+  layerWorktreeToolkitRegistration,
+  layerPullRequestsToolkit,
+  layerDeviceToolkit,
+  layerHtmlToolkit,
+).pipe(Layer.provideMerge(layerMcpTransport));

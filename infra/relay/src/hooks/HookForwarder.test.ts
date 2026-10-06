@@ -19,6 +19,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Etag from "effect/http/Etag";
+import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -29,14 +30,11 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
-import {
-  RELAY_HTTP_ROUTER_CONFIG,
-  relayCors,
-  relayNotFoundRoute,
-  traceRelayHttpRequestWith,
-} from "../http/Api.ts";
+import { RELAY_HTTP_ROUTER_CONFIG, traceRelayHttpRequestWith } from "../http/Api.ts";
+import * as RelayHttpApi from "../http/Api.ts";
 import * as HookForwarder from "./HookForwarder.ts";
 import { RELAY_HOOK_DELIVERY_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
+import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import type { HeldHook } from "./HookInboxStore.ts";
 import { RELAY_HOOK_UPSTREAM_TIMEOUT_MS } from "./upstream.ts";
@@ -69,6 +67,7 @@ const readyAllocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
   tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
   dnsRecordId: "dns-record-id",
   readyAt: "2026-05-25T00:00:00.000Z",
+  tunnelReleasedAt: null,
   origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
   updatedAt: "2026-05-25T00:00:00.000Z",
   generation: 1,
@@ -113,7 +112,8 @@ function makeHarness(options: Harness = {}) {
           new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }),
         ),
       ));
-  const forwarderLayer = HookForwarder.layer.pipe(
+  const layerForwarder = HookForwarder.layer.pipe(
+    Layer.provideMerge(HeldHooks.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
@@ -165,22 +165,28 @@ function makeHarness(options: Harness = {}) {
   const httpEffect = HttpRouter.toHttpEffect(
     Layer.mergeAll(
       HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.hooks)).pipe(
-        Layer.provide(HookForwarder.hooksApi.pipe(Layer.provide(forwarderLayer))),
+        Layer.provide(HookForwarder.layerApi.pipe(Layer.provide(layerForwarder))),
         Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),
       ),
-      relayNotFoundRoute,
-      relayCors,
+      RelayHttpApi.layerNotFoundRoute,
+      RelayHttpApi.layerCors,
     ),
   ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
+  // Goes through Effect's request handler, which applies pre-response handlers
+  // (such as CORS) to the response it sends, as the Workers runtime does.
   const send = (request: Request) =>
     Effect.gen(function* () {
       const handler = yield* httpEffect;
-      return yield* handler.pipe(
+      const sent = yield* Deferred.make<HttpServerResponse.HttpServerResponse>();
+      yield* HttpEffect.toHandled(handler, (_request, response) =>
+        Deferred.succeed(sent, response),
+      ).pipe(
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(request),
         ),
       );
+      return yield* Deferred.await(sent);
     });
   return { sent, rateLimitKeys, held, send, httpEffect };
 }
@@ -609,15 +615,13 @@ describe("HookForwarder", () => {
       });
       const harness = makeHarness();
       const handler = yield* harness.httpEffect;
-      // As the worker runtime runs it: its own tracer around ours, off for hook
-      // paths. This checks the predicate; whether alchemy applies it per event
-      // is only visible on a deployed worker (see worker.ts).
+      // As the worker runtime runs it: its own tracer around ours, turned off
+      // (see worker.ts). Whether alchemy applies the predicate per event is
+      // only visible on a deployed worker.
       yield* HttpMiddleware.tracer(
         traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)),
       ).pipe(
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, (request) =>
-          HookForwarder.isRelayHookPath(request.url),
-        ),
+        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => true),
         Effect.withTracer(tracer),
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,

@@ -17,7 +17,8 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
+import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
   buildBoundedThreadProjection,
@@ -63,7 +64,7 @@ function selectHistoryPageFromCursorOrError(
  * compressible and cacheable — and then resume the WebSocket subscription via
  * `afterSequence`.
  */
-export const orchestrationHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
@@ -174,6 +175,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* loadShellSnapshot().pipe(
+            traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
             ),
@@ -188,7 +190,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const snapshot = yield* loadThreadSnapshot(
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
-          );
+          ).pipe(traceLocalHandlerWork);
           return {
             snapshotSequence: snapshot.snapshotSequence,
             projection: snapshot.projection,
@@ -200,7 +202,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId);
+          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId).pipe(
+            traceLocalHandlerWork,
+          );
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
@@ -234,7 +238,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             args.params.threadId,
             anchorItemId,
             ThreadId.make(decodedCursor.st),
-          );
+          ).pipe(traceLocalHandlerWork);
           const pageOrError = selectHistoryPageFromCursorOrError({
             items: snapshot.projection.visibleTurnItems,
             cursor: args.query.cursor,

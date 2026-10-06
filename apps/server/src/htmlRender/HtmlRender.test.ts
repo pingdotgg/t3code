@@ -24,13 +24,13 @@ import * as NodeURL from "node:url";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "./HtmlRender.ts";
-import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 
 // Real-browser tests run only when this names a chrome-headless-shell, for
 // example one T3 installed under <T3 home>/tools/chrome-headless-shell.
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
-const htmlRenderLayer = (
+const layerHtmlRender = (
   executable?: string,
   installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
     Option.fromUndefinedOr(executable),
@@ -52,7 +52,7 @@ const htmlRenderLayer = (
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
     Layer.provideMerge(NodeServices.layer),
   );
-const testLayer = htmlRenderLayer();
+const layerTest = layerHtmlRender();
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -94,7 +94,7 @@ describe("HtmlRender", () => {
       // The theme bootstrap opens the head, ahead of the page's own markup.
       expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="t3-theme">'));
       expect(prepared.indexOf('<style id="t3-theme">')).toBeLessThan(prepared.indexOf("<title>"));
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("inlines an SVG behind processing instructions and a doctype subset", () =>
@@ -115,7 +115,7 @@ describe("HtmlRender", () => {
       const prepared = yield* htmlRender.prepare(`<img src="${svg}">`);
 
       expect(prepared).toContain(`data:image/svg+xml;base64,${Base64.encode(source)}`);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("lists every local image it cannot read", () =>
@@ -167,7 +167,7 @@ describe("HtmlRender", () => {
         upper,
         longer,
       ]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("publishes the prepared page as an html thread attachment", () =>
@@ -197,7 +197,7 @@ describe("HtmlRender", () => {
       const html = yield* fileSystem.readFileString(stored ?? "");
       expect(html).toContain('<style id="t3-theme">');
       expect(html).toContain("<p>Quarterly revenue</p>");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("removes the page when publishing is interrupted", () =>
@@ -225,7 +225,7 @@ describe("HtmlRender", () => {
         expect(yield* storedPages).toEqual([]);
       }).pipe(
         Effect.provide(
-          htmlRenderLayer(
+          layerHtmlRender(
             undefined,
             Deferred.succeed(measuring, undefined).pipe(Effect.andThen(Effect.never)),
           ),
@@ -283,7 +283,7 @@ describe("HtmlRender", () => {
               },
             ]),
           );
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );
@@ -314,7 +314,7 @@ describe("HtmlRender", () => {
           const texts = preview.consoleMessages.map((message) => message.text);
           expect(texts).toContain("secret: none");
           expect(texts.join(" ")).not.toContain("abc123");
-        }).pipe(Effect.scoped, Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );
@@ -370,7 +370,7 @@ describe("HtmlRender", () => {
               `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
             ].join(""),
           });
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
         expect(requests).toEqual([]);
         expect(datagrams).toEqual([]);
       }).pipe(Effect.scoped),
@@ -396,7 +396,7 @@ describe("HtmlRender", () => {
           expect(reference.heights).toEqual(
             HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
           );
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );

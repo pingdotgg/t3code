@@ -195,7 +195,7 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
       const recording = yield* Deferred.make<number>();
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const runtimeLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+      const layerRuntime = OpenCodeRuntime.layer.pipe(
         Layer.provide(
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -228,7 +228,7 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
           runtime.startOpenCodeServerProcess({ binaryPath, directory: tempDir, port: 4096 }),
         ),
         Effect.provideService(Scope.Scope, serverScope),
-        Effect.provide(runtimeLayer),
+        Effect.provide(layerRuntime),
         Effect.forkChild,
       );
       const pgid = yield* Deferred.await(recording);

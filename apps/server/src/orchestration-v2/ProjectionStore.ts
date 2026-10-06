@@ -28,7 +28,6 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
-  RuntimeRequestId,
   MessageId,
 } from "@t3tools/contracts";
 import {
@@ -50,6 +49,7 @@ import {
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   RunId,
+  RuntimeRequestId,
   CheckpointScopeId,
   ThreadId,
   TurnItemId,
@@ -921,6 +921,7 @@ type ShellThreadRow = {
   readonly blocking_run_completed_at: string | null;
   readonly blocking_failure_payload_json: string | null;
   readonly pending_request_payload_json: string | null;
+  readonly pending_secret_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
@@ -1305,6 +1306,29 @@ function buildVisibleTurnItems(input: {
   ]);
 }
 
+/**
+ * An agent waiting on a secret is waiting on the user just like a question,
+ * so the shell reports it as pending user input. Secret requests have no
+ * runtime request of their own; this stands one in for the shell summary
+ * only, keyed by the card's turn item.
+ */
+function secretRequestAsPendingInput(
+  item: OrchestrationV2TurnItem | null,
+): OrchestrationV2ThreadProjection["runtimeRequests"][number] | null {
+  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  return {
+    id: RuntimeRequestId.make(item.id),
+    nodeId: item.nodeId,
+    providerTurnId: item.providerTurnId,
+    nativeRequestRef: null,
+    kind: "user_input",
+    status: "pending",
+    responseCapability: { type: "message" },
+    createdAt: item.startedAt ?? item.updatedAt,
+    resolvedAt: null,
+  };
+}
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
@@ -1329,13 +1353,28 @@ export function threadShellFromProjection(
     projection.runs
       .filter(isActivityRunForShell)
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  const liveRunIds = new Set(projection.runs.filter(isActivityRunForShell).map((run) => run.id));
   const pendingRuntimeRequest =
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
       .toSorted(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-      )[0] ?? null;
+      )[0] ??
+    secretRequestAsPendingInput(
+      projection.turnItems
+        .filter(
+          (item) =>
+            item.type === "secret_request" &&
+            item.status === "waiting" &&
+            item.runId !== null &&
+            liveRunIds.has(item.runId),
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+        )[0] ?? null,
+    );
   const userMessages = projection.messages
     .filter((message) => message.role === "user")
     .toSorted(
@@ -4964,6 +5003,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
+                SELECT secret.payload_json
+                -- Keep runs outermost so completed history is never scanned for a pending secret.
+                FROM orchestration_v2_projection_runs r
+                CROSS JOIN orchestration_v2_projection_turn_items secret
+                  INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+                WHERE r.thread_id = t.thread_id
+                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND secret.thread_id = t.thread_id AND secret.run_id = r.run_id
+                  AND secret.type = 'secret_request' AND secret.status = 'waiting'
+                ORDER BY secret.updated_at DESC, secret.turn_item_id DESC
+                LIMIT 1
+              ) AS pending_secret_request_payload_json,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -5334,9 +5386,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } = input;
         const thread = yield* decodeThreadPayload(row.payload_json);
         const pendingRuntimeRequest =
-          row.pending_request_payload_json === null
-            ? null
-            : yield* decodeRuntimeRequestPayload(row.pending_request_payload_json);
+          row.pending_request_payload_json !== null
+            ? yield* decodeRuntimeRequestPayload(row.pending_request_payload_json)
+            : row.pending_secret_request_payload_json !== null
+              ? secretRequestAsPendingInput(
+                  yield* decodeTurnItemPayload(row.pending_secret_request_payload_json),
+                )
+              : null;
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
             ? null

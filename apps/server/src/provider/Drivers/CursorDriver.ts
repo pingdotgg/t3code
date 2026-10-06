@@ -13,7 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
-import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
+import { readCursorUsageLimits } from "../cursorUsageLimits.ts";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -27,8 +27,8 @@ import { ProviderDriverError } from "../Errors.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
-} from "../Layers/CursorProvider.ts";
-import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
+} from "../CursorProvider.ts";
+import * as CursorSdkCatalog from "../CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -231,7 +231,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.layer),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

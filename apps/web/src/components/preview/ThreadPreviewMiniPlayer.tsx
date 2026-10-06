@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -20,6 +21,15 @@ import {
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import type { BrowserViewportResizeDirection } from "~/browser/browserViewportLayout";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { useRendersServerTabNatively } from "~/browser/previewRuntime";
+import { type ServerBrowserHandle, ServerBrowserSurface } from "~/browser/ServerBrowserSurface";
+import {
+  closeServerPictureInPicture,
+  openServerPictureInPicture,
+  serverPictureInPictureKey,
+  supportsServerPictureInPicture,
+  useServerPictureInPictureKey,
+} from "~/browser/serverPictureInPicture";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -37,6 +47,7 @@ import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
+import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
@@ -52,11 +63,16 @@ import {
 
 interface PointerGesture {
   readonly pointerId: number;
+  readonly pointerType: string;
   readonly pointerX: number;
   readonly pointerY: number;
   readonly frame: PreviewMiniPlayerFrame;
   readonly direction: BrowserViewportResizeDirection | null;
+  moved: boolean;
 }
+
+// A touch that travels less than this is a tap on the handle, not a drag.
+const HANDLE_TAP_SLOP_PX = 6;
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
@@ -112,32 +128,54 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   const fittedSourceContent = useBrowserSurfaceStore(
     (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
   );
-  const sourceSize = resolvePreviewMiniPlayerSourceSize(
-    snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
-    fittedSourceContent,
-    desktopOverlay?.zoomFactor ?? 1,
-  );
+  const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
+  const serverTab = snapshot?.runtime === "server" && !nativeServerTab;
+  const [streamViewport, setStreamViewport] = useState<PreviewStreamViewport | null>(null);
+  const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
+  const serverPictureInPicture =
+    useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
+  const sourceSize =
+    serverTab && streamViewport
+      ? streamViewport
+      : resolvePreviewMiniPlayerSourceSize(
+          snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
+          fittedSourceContent,
+          desktopOverlay?.zoomFactor ?? 1,
+        );
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
   };
 
-  const toggleNativePictureInPicture = () => {
-    if (!previewBridge) return;
-    const operation = desktopOverlay?.pictureInPicture
-      ? previewBridge.pictureInPicture.close
-      : previewBridge.pictureInPicture.open;
-    void operation(runtimeTabId).catch((error) => {
+  const toggleNativePictureInPicture = async () => {
+    try {
+      if (serverTab) {
+        if (serverPictureInPicture) closeServerPictureInPicture();
+        else
+          await openServerPictureInPicture({
+            ...threadRef,
+            tabId,
+            seed: serverSurfaceRef.current?.canvas() ?? null,
+          });
+      } else if (previewBridge) {
+        const operation = desktopOverlay?.pictureInPicture
+          ? previewBridge.pictureInPicture.close
+          : previewBridge.pictureInPicture.open;
+        await operation(runtimeTabId);
+      }
+    } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
+        title: serverTab ? "Unable to pop out preview" : "Unable to update popped-out preview",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
-    });
+    }
   };
 
   if (!snapshot) return null;
+  const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
+  const canPopOut = serverTab ? supportsServerPictureInPicture() : true;
 
   return (
     <MiniPlayerShell
@@ -148,51 +186,68 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-                size="icon-xs"
-                aria-label={
-                  desktopOverlay?.pictureInPicture
-                    ? "Close popped-out preview"
-                    : "Pop preview into separate window"
-                }
-                disabled={!desktopOverlay?.hasWebContents}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={toggleNativePictureInPicture}
-              />
-            }
-          >
-            <PictureInPicture2 />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {desktopOverlay?.pictureInPicture
-              ? "Close separate window"
-              : "Pop into separate window"}
-          </TooltipPopup>
-        </Tooltip>
+        canPopOut ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={poppedOut ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  aria-label={
+                    poppedOut ? "Close popped-out preview" : "Pop preview into separate window"
+                  }
+                  disabled={!serverTab && !desktopOverlay?.hasWebContents}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={toggleNativePictureInPicture}
+                />
+              }
+            >
+              <PictureInPicture2 />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {poppedOut ? "Close separate window" : "Pop into separate window"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null
       }
     >
-      {(frame) => (
-        <>
-          <BrowserSurfaceSlot
-            tabId={runtimeTabId}
-            visible={Boolean(desktopOverlay?.hasWebContents)}
-            cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
-            zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
-            fitSourceContent
-            layoutVersion={`${frame.x}:${frame.y}`}
-            className="absolute inset-0"
-          />
-          {!desktopOverlay?.hasWebContents ? (
-            <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-              Reconnecting preview…
-            </div>
-          ) : null}
-        </>
-      )}
+      {(frame) =>
+        serverTab ? (
+          <div
+            className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
+            style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+          >
+            <ServerBrowserSurface
+              ref={serverSurfaceRef}
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              tabId={tabId}
+              visible
+              followSize={false}
+              controlPosition="bottom"
+              onViewport={setStreamViewport}
+              className="size-full"
+            />
+          </div>
+        ) : (
+          <>
+            <BrowserSurfaceSlot
+              tabId={runtimeTabId}
+              visible={Boolean(desktopOverlay?.hasWebContents)}
+              cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
+              zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
+              fitSourceContent
+              layoutVersion={`${frame.x}:${frame.y}`}
+              className="absolute inset-0"
+            />
+            {!desktopOverlay?.hasWebContents ? (
+              <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
+                Reconnecting preview…
+              </div>
+            ) : null}
+          </>
+        )
+      }
     </MiniPlayerShell>
   );
 }
@@ -285,6 +340,21 @@ function MiniPlayerShell({
 }) {
   const canvas = useChatCanvas();
   const gestureRef = useRef<PointerGesture | null>(null);
+  // Touch has no hover, so tapping the handle toggles the pill instead. The
+  // toggle waits for the tap's click, which would otherwise land on the pill.
+  const [pillOpen, setPillOpen] = useState(false);
+  const handleTappedRef = useRef(false);
+  const handleRef = useRef<HTMLDivElement | null>(null);
+  // The pill covers the handle, so a tap anywhere else dismisses it.
+  useEffect(() => {
+    if (!pillOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && handleRef.current?.contains(event.target)) return;
+      setPillOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
+  }, [pillOpen]);
   const container = canvas?.container ?? null;
   const obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES;
   const sourceKey = previewMiniPlayerSourceKey(miniPlayer.source);
@@ -326,10 +396,12 @@ function MiniPlayerShell({
     if (event.button !== 0 || !frame) return;
     gestureRef.current = {
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       pointerX: event.clientX,
       pointerY: event.clientY,
       frame,
       direction,
+      moved: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -340,6 +412,8 @@ function MiniPlayerShell({
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId || !container) return;
     const delta = { x: event.clientX - gesture.pointerX, y: event.clientY - gesture.pointerY };
+    if (!gesture.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
+    gesture.moved = true;
     const store = usePreviewMiniPlayerStore.getState();
     if (gesture.direction === null) {
       store.move(
@@ -366,8 +440,14 @@ function MiniPlayerShell({
   };
 
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (gestureRef.current?.pointerId !== event.pointerId) return;
+    const gesture = gestureRef.current;
+    if (gesture?.pointerId !== event.pointerId) return;
     gestureRef.current = null;
+    handleTappedRef.current =
+      event.type === "pointerup" &&
+      gesture.direction === null &&
+      gesture.pointerType === "touch" &&
+      !gesture.moved;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -389,18 +469,25 @@ function MiniPlayerShell({
           }}
         >
           <div
-            className="group pointer-events-auto absolute z-[49] size-3 touch-none cursor-grab active:cursor-grabbing"
+            ref={handleRef}
+            data-pill-open={pillOpen ? "" : undefined}
+            className="group pointer-events-auto absolute z-[49] size-3 touch-none cursor-grab active:cursor-grabbing pointer-coarse:-m-2.5 pointer-coarse:size-8"
             style={{ right: pillInset, top: pillInset }}
             onPointerDown={(event) => beginGesture(event, null)}
             onPointerMove={handlePointerMove}
             onPointerUp={endGesture}
             onPointerCancel={endGesture}
+            onClick={() => {
+              if (!handleTappedRef.current) return;
+              handleTappedRef.current = false;
+              setPillOpen((open) => !open);
+            }}
           >
             <div
               role={recording ? "status" : undefined}
               aria-label={recording ? "Recording preview" : undefined}
               aria-hidden={!recording}
-              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-pill-open:opacity-0 pointer-coarse:right-2.5 pointer-coarse:top-2.5"
             >
               <span
                 className={cn(
@@ -411,7 +498,7 @@ function MiniPlayerShell({
                 )}
               />
             </div>
-            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 active:cursor-grabbing">
+            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
               {recording ? (
                 <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />

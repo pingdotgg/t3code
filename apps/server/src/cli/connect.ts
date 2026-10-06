@@ -37,18 +37,15 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
-import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
+import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
-import {
-  bootServiceLayer,
-  offerServiceDuringOnboarding,
-  recoverServiceOnboardingOffer,
-} from "./service.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -108,11 +105,12 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   // A stored credential whose refresh fails (revoked, expired grant) must
   // fall through to a fresh device authorization, not dead-end the command.
   const existing = yield* tokens.getExisting.pipe(
-    Effect.catchTag("CloudCliCredentialRefreshError", () =>
-      Console.log(
-        "The stored T3 Connect credential could not be refreshed; signing in again.",
-      ).pipe(Effect.as(Option.none())),
-    ),
+    Effect.catchTags({
+      CloudCliCredentialRefreshError: () =>
+        Console.log(
+          "The stored T3 Connect credential could not be refreshed; signing in again.",
+        ).pipe(Effect.as(Option.none())),
+    }),
   );
   if (Option.isSome(existing)) {
     return existing.value.identity ?? null;
@@ -434,22 +432,22 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-  const runtimeLayer = Layer.mergeAll(
+  const layerRuntime = Layer.mergeAll(
     ServerSecretStore.layer,
     CliTokenManager.layer.pipe(
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(ExternalLauncher.layer),
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-    EnvironmentAuth.runtimeLayer,
-    bootServiceLayer(config),
-    headlessRelayClientTracingLayer,
+    EnvironmentAuth.layerRuntime,
+    CliService.layer(config),
+    RelayTracing.layerHeadlessRelayClient,
   ).pipe(
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ServerConfig.layer(config)),
     Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
   );
-  return yield* run.pipe(Effect.provide(runtimeLayer));
+  return yield* run.pipe(Effect.provide(layerRuntime));
 });
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");

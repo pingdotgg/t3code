@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -64,6 +65,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
         }),
         Layer.mock(TerminalManager.TerminalManager)({ open, write, subscribe }),
         ServerSettings.layerTest(),
+        NodeCrypto.layer,
       ),
     ),
   );
