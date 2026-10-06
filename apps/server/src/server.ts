@@ -125,6 +125,7 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
+import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
 import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -814,7 +815,7 @@ const layerMakeServer = Layer.unwrap(
         // while the launcher's explicit-stop marker allows it to be released.
         // Other runtimes wait for activation so a failed standby cannot tear
         // down the active runtime's tunnel.
-        const cleanupBeforeActivation = yield* CloudLink.pendingServiceUpdateExists;
+        const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
         }
