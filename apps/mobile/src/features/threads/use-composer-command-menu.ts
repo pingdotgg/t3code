@@ -186,7 +186,9 @@ export function buildPluginActionSlashItems(
 ): ComposerCommandItem[] {
   return pluginActionsAt(actions, "composer-slash", context)
     .filter(
-      ({ action }) => action.name.includes(query) || action.title.toLowerCase().includes(query),
+      // Names are lowercase today, but the wire accepts any string from a newer server.
+      ({ action }) =>
+        action.name.toLowerCase().includes(query) || action.title.toLowerCase().includes(query),
     )
     .map(({ action, target }) => ({
       id: `plugin-action:${action.id}`,

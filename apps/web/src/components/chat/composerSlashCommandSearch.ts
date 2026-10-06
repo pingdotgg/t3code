@@ -46,7 +46,7 @@ function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | n
     item.type === "slash-command"
       ? item.command.toLowerCase()
       : item.type === "plugin-action"
-        ? item.action.name
+        ? item.action.name.toLowerCase()
         : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
 
