@@ -919,10 +919,11 @@ export const layer: Layer.Layer<
             input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
               : yield* input.session.subscribeEvents;
+          const closeEventSubscription = yield* Effect.cached(eventSubscription.close);
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
-            Effect.onError(() => eventSubscription.close),
+            Effect.onError(() => closeEventSubscription),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -1333,8 +1334,13 @@ export const layer: Layer.Layer<
                 ),
               ),
             ),
-            Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(closeEventSubscription),
             Effect.forkDetach,
+          );
+          // Interrupting the fiber before it first runs skips its finalizer, so
+          // close the subscription here too.
+          const interruptProviderEvents = Fiber.interrupt(providerEventFiber).pipe(
+            Effect.ensuring(closeEventSubscription),
           );
 
           // A failed read fails the start below, so the run is recorded as
@@ -1344,7 +1350,7 @@ export const layer: Layer.Layer<
               ? Exit.succeed(true)
               : yield* Effect.exit(input.shouldStartProviderTurn());
           if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            yield* Fiber.interrupt(providerEventFiber);
+            yield* interruptProviderEvents;
             return;
           }
 
@@ -1394,7 +1400,7 @@ export const layer: Layer.Layer<
                 runId: input.run.id,
                 cause,
               }).pipe(
-                Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                Effect.andThen(interruptProviderEvents),
                 Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>
                   Ref.get(latestTurnItemOrdinal).pipe(

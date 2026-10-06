@@ -698,6 +698,106 @@ it.effect("fails the run when its ownership check cannot be read before calling 
   }),
 );
 
+it.effect.each(["declined", "rejected"] as const)(
+  "closes the event subscription when the provider turn is %s before ingestion starts",
+  (scenario) =>
+    Effect.gen(function* () {
+      const closes = yield* Ref.make(0);
+      const guardCalls = yield* Ref.make(0);
+      const threadId = ThreadId.make("thread:run-execution-subscription-close");
+      const runId = RunId.make("run:run-execution-subscription-close");
+      const attemptId = RunAttemptId.make("attempt:run-execution-subscription-close");
+      const providerThreadId = ProviderThreadId.make(
+        "provider-thread:run-execution-subscription-close",
+      );
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const layerTest = RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            }),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make("command:run-execution-subscription-close"),
+          appThread: { id: threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make("session:run-execution-subscription-close"),
+          session: {
+            events: Stream.empty,
+            subscribeEvents: Effect.succeed({
+              events: Stream.never,
+              close: Ref.update(closes, (count) => count + 1),
+            }),
+            startTurn: () =>
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver,
+                  threadId,
+                  providerThreadId,
+                  runId,
+                  cause: "provider rejected the turn",
+                }),
+              ),
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
+          rootNode: {
+            id: NodeId.make("node:run-execution-subscription-close"),
+          } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make("checkpoint-scope:run-execution-subscription-close"),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: { id: providerThreadId, driver } as OrchestrationV2ProviderThread,
+          attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+          attemptId,
+          providerTurnOrdinal: 1,
+          // Preparation passes; the check right before the provider call
+          // declines or lets the provider reject the turn.
+          shouldStartProviderTurn: () =>
+            Ref.getAndUpdate(guardCalls, (calls) => calls + 1).pipe(
+              Effect.map((calls) => calls === 0 || scenario === "rejected"),
+            ),
+          message: {
+            messageId: MessageId.make("message:run-execution-subscription-close"),
+            text: "Close the subscription.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+      }).pipe(Effect.provide(layerTest));
+
+      // The ingestion fiber is interrupted before it ever runs, so its own
+      // finalizer cannot be what closes the subscription.
+      assert.equal(yield* Ref.get(guardCalls), 2);
+      assert.equal(yield* Ref.get(closes), 1);
+    }),
+);
+
 it.effect(
   "dispatches only attachment-free compact commands through the native compaction path",
   () =>
