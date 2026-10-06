@@ -51,7 +51,13 @@
           "globalFetch": "error",
           "globalFetchInEffect": "error",
           "schemaNumber": "off"
-        }
+        },
+        "overrides": [
+          {
+            "include": ["**/*.test.ts", "**/*.test.tsx"],
+            "options": { "diagnosticSeverity": { "preferSchemaOverJson": "off" } }
+          }
+        ]
       }
     ]
   }

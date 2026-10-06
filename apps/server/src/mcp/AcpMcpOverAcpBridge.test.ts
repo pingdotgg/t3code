@@ -1,5 +1,4 @@
 // The bridge intentionally treats MCP JSON-RPC messages as opaque JSON.
-// @effect-diagnostics preferSchemaOverJson:off
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";

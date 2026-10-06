@@ -44,7 +44,6 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           FROM projection_projects
           WHERE project_id = ${projectId}
         `;
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         assert.strictEqual(rows[0]?.defaultModelSelection, JSON.stringify(modelSelection));
         assert.deepStrictEqual(
           Option.getOrNull(yield* projects.get(projectId))?.defaultModelSelection,
