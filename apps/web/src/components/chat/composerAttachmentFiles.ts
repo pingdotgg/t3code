@@ -68,6 +68,7 @@ export function normalizeComposerImageFileMimeType(file: File): File {
  */
 export const DNG_FILE_MIME_TYPE = "image/x-adobe-dng";
 
+/** Lower-cased media type without parameters, e.g. `image/dng; q=1` → `image/dng`. */
 function baseMimeType(type: string): string {
   return type.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -104,6 +105,12 @@ export function composerFileAttachmentMimeType(file: Pick<File, "name" | "type">
   );
 }
 
+/**
+ * Decides which composer path a picked, dropped or pasted file takes: `image` goes
+ * through preview and compression, `file` is uploaded as-is, `unsupported-image`
+ * is reported to the user. DNG is checked first because browsers may label it as
+ * an image type the other branches would accept.
+ */
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
