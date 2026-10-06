@@ -164,7 +164,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const iconColor = useUniwindTheme()["--color-icon"];
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
-  const environmentId = params.environmentId?.trim() ? EnvironmentId.make(params.environmentId) : null;
+  const environmentId = params.environmentId?.trim()
+    ? EnvironmentId.make(params.environmentId)
+    : null;
   const sizeBytes = Number.parseInt(params.sizeBytes, 10) || 0;
   const draftKey = params.draftKey ?? null;
   const draft = useComposerDraft(draftKey);
