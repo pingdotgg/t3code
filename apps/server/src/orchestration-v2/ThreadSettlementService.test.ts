@@ -47,7 +47,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "latestUserAuthoredRunCompletedAt"
+  >;
 
 // A fixture's user message is one the user wrote unless the test sets
 // latestUserAuthoredMessageAt on its own.
@@ -89,6 +92,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
     latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    latestUserAuthoredRunCompletedAt: null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -334,6 +338,127 @@ describe("resolveAutoSettlementAt", () => {
         thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
       }),
     ).toBeNull();
+  });
+
+  describe("a reply to the user that finishes after the merge", () => {
+    const HOUR_MS = 60 * 60 * 1_000;
+    const mergedAt = DateTime.formatIso(at(-HOUR_MS));
+    // The user wrote, the pull request merged while the agent was answering,
+    // then the answer finished.
+    const answering = shell({
+      latestUserMessageAt: at(-HOUR_MS - 8_000),
+      latestRunRequestedAt: at(-HOUR_MS - 8_000),
+      latestRunStartedAt: at(-HOUR_MS - 8_000),
+      latestRunCompletedAt: at(-HOUR_MS + 5_000),
+      latestUserAuthoredRunCompletedAt: at(-HOUR_MS + 5_000),
+    });
+    const input = {
+      thread: answering,
+      pullRequest: { state: "merged" as const, mergedAt },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    };
+
+    it("keeps the thread open", () => {
+      expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    });
+
+    it("keeps it open when the pull request was closed instead", () => {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          pullRequest: { state: "closed", closedAt: mergedAt },
+          autoSettleOnMerge: false,
+        }),
+      ).toBeNull();
+    });
+
+    it("keeps it open when the merge comes from the thread's pull request links", () => {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          pullRequest: null,
+          thread: {
+            ...answering,
+            pullRequests: [
+              {
+                host: "github.com",
+                repository: "owner/repository",
+                number: 1,
+                url: "https://github.com/owner/repository/pull/1",
+                source: "agent",
+                linkedAt: DateTime.formatIso(at(-2 * HOUR_MS)),
+                snapshot: {
+                  state: "merged",
+                  title: "Pull request",
+                  headBranch: "feature",
+                  baseBranch: "main",
+                  isDraft: false,
+                  updatedAt: mergedAt,
+                  syncedAt: mergedAt,
+                  mergedAt,
+                },
+                stack: null,
+              },
+            ],
+          },
+        }),
+      ).toBeNull();
+    });
+
+    it("settles when the reply finished before the merge", () => {
+      const answered = {
+        ...answering,
+        latestRunCompletedAt: at(-HOUR_MS - 5_000),
+        latestUserAuthoredRunCompletedAt: at(-HOUR_MS - 5_000),
+      };
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: answered }),
+      ).toEqual(at(-HOUR_MS - 5_000));
+    });
+
+    it("settles when the reply finished at the merge instant", () => {
+      const answered = {
+        ...answering,
+        latestRunCompletedAt: at(-HOUR_MS),
+        latestUserAuthoredRunCompletedAt: at(-HOUR_MS),
+      };
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: answered }),
+      ).toEqual(at(-HOUR_MS));
+    });
+
+    it("settles when only an agent-started run finished after the merge", () => {
+      // A PR watch or background notification ran after the merge; the
+      // user's own reply had finished before it.
+      const woken = {
+        ...answering,
+        latestUserMessageAt: at(-HOUR_MS + 2_000),
+        latestRunCompletedAt: at(-HOUR_MS + 5_000),
+        latestUserAuthoredRunCompletedAt: at(-HOUR_MS - 5_000),
+      };
+      expect(ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: woken })).toEqual(
+        at(-HOUR_MS + 5_000),
+      );
+    });
+
+    it("falls back to the message time while the reply has no finish time", () => {
+      const unfinished = { ...answering, latestUserAuthoredRunCompletedAt: null };
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: unfinished }),
+      ).toEqual(at(-HOUR_MS + 5_000));
+    });
+
+    it("still settles once the inactivity window passes", () => {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          nowMs: NOW_MS + 3 * DAY_MS,
+          autoSettleAfterDays: 2,
+        }),
+      ).toEqual(at(-HOUR_MS + 5_000));
+    });
   });
 
   it("settles inactive threads even when their pull request remains open", () => {
