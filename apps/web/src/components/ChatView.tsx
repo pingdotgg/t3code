@@ -972,9 +972,6 @@ function ChatViewBody(
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
-  // When set, the thread-change reset effect will open the sidebar instead of closing it.
-  // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
-  const planSidebarOpenOnNextThreadRef = useRef(false);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -2830,13 +2827,7 @@ function ChatViewBody(
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-    if (planSidebarOpenOnNextThreadRef.current) {
-      planSidebarOpenOnNextThreadRef.current = false;
-      setPlanSidebarOpen(true);
-    } else {
-      planSidebarOpenOnNextThreadRef.current = false;
-      setPlanSidebarOpen(false);
-    }
+    setPlanSidebarOpen(false);
     planSidebarDismissedForTurnRef.current = null;
   }, [routeThreadKey]);
 
@@ -4601,30 +4592,23 @@ function ChatViewBody(
         });
       })
       .then(async () => {
+        const releaseThreadDetail = retainThreadDetailSubscription(environmentId, nextThreadId);
         try {
-          await ensureRoutableServerThread(
-            scopeThreadRef(activeThread.environmentId, nextThreadId),
-          );
-          // Signal that the plan sidebar should open on the new thread when enabled.
-          planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: {
-              environmentId: activeThread.environmentId,
-              threadId: nextThreadId,
-            },
-          });
+          await ensureRoutableServerThread(scopeThreadRef(environmentId, nextThreadId));
         } catch (err) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Implementation thread started but could not be opened",
+              title: "Implementation thread is running but not visible yet",
               description:
                 err instanceof Error
-                  ? err.message
-                  : "Open the implementation thread from the sidebar to continue.",
+                  ? `${err.message} The worker continues in the background; open it from the sidebar when it appears.`
+                  : "The worker continues in the background. Open it from the sidebar when it appears; your current thread stays open.",
             }),
           );
+        } finally {
+          // Keep the worker detail warm for when the user opens it from the sidebar.
+          releaseThreadDetail();
         }
       })
       .catch(async (err: unknown) => {
@@ -4659,7 +4643,6 @@ function ChatViewBody(
     navigate,
     resetLocalDispatch,
     runtimeMode,
-    autoOpenPlanSidebar,
     environmentId,
   ]);
 

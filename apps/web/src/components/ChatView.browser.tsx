@@ -7737,7 +7737,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("does not delete a started implementation thread when routing times out", async () => {
+  it("keeps a started implementation thread in the background when it is not visible yet", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt(),
@@ -7790,11 +7790,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(document.body.textContent).toContain(
-            "Implementation thread started but could not be opened",
+            "Implementation thread is running but not visible yet",
           );
         },
         { timeout: 8_000, interval: 16 },
       );
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
       expect(
         wsRequests.some(
           (request) =>
@@ -7802,6 +7803,108 @@ describe("ChatView timeline estimator parity (full app)", () => {
             request.type === "thread.delete",
         ),
       ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the current thread selected while a plan implementation runs in a new thread", async () => {
+    let implementationThreadId: ThreadId | null = null;
+    let implementationSnapshot: OrchestrationReadModel | null = null;
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          if (body.type === "thread.create") {
+            const threadId = body.threadId as ThreadId;
+            implementationThreadId = threadId;
+            const snapshotWithWorker = addThreadToSnapshot(fixture.snapshot, threadId);
+            const activeTurnId = `turn-${threadId}` as TurnId;
+            implementationSnapshot = {
+              ...snapshotWithWorker,
+              threads: snapshotWithWorker.threads.map((thread) =>
+                thread.id === threadId
+                  ? {
+                      ...thread,
+                      title: "Implement plan",
+                      latestTurn: {
+                        turnId: activeTurnId,
+                        state: "running",
+                        requestedAt: NOW_ISO,
+                        startedAt: NOW_ISO,
+                        completedAt: null,
+                        assistantMessageId: null,
+                      },
+                      session: thread.session
+                        ? { ...thread.session, status: "running", activeTurnId }
+                        : null,
+                    }
+                  : thread,
+              ),
+            };
+          }
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.getShellSnapshot && implementationSnapshot) {
+          fixture.snapshot = implementationSnapshot;
+          return toShellSnapshot(implementationSnapshot);
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const implementationActions = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Implementation actions"]'),
+        "Unable to find implementation actions trigger.",
+      );
+      await page.screenshot({ path: "/tmp/t3-thread-switch-before.png" });
+      implementationActions.click();
+
+      const implementInNewThread = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (element) => element.textContent?.trim() === "Implement in a new thread",
+          ) ?? null,
+        "Unable to find implement-in-new-thread action.",
+      );
+      implementInNewThread.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.turn.start",
+            ),
+          ).toBe(true);
+          expect(
+            wsRequests.some(
+              (request) => request._tag === ORCHESTRATION_WS_METHODS.getShellSnapshot,
+            ),
+          ).toBe(true);
+          expect(implementationThreadId).not.toBeNull();
+          expect(
+            useStore.getState().environmentStateById[LOCAL_ENVIRONMENT_ID]?.threadShellById,
+          ).toHaveProperty(implementationThreadId!);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await page.screenshot({ path: "/tmp/t3-thread-switch-after.png" });
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start" &&
+            request.threadId === implementationThreadId,
+        ),
+      ).toBe(true);
     } finally {
       await mounted.cleanup();
     }
