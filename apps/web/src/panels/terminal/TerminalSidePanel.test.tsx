@@ -4,14 +4,20 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const drawerRenders = vi.hoisted(() => [] as Array<{ visible: boolean; threadRef: unknown }>);
+const drawerWorktreePaths = vi.hoisted(() => [] as Array<string | null>);
+const thread = vi.hoisted(() => ({
+  environmentId: "environment-a",
+  projectId: "project-a",
+  worktreePath: null as string | null,
+}));
 vi.mock("~/components/ThreadTerminalDrawer", () => ({
-  default: (props: { visible: boolean; threadRef: unknown }) => {
+  default: (props: { visible: boolean; threadRef: unknown; worktreePath: string | null }) => {
     drawerRenders.push({ visible: props.visible, threadRef: props.threadRef });
+    drawerWorktreePaths.push(props.worktreePath);
     return null;
   },
 }));
 vi.mock("~/state/entities", () => {
-  const thread = { environmentId: "environment-a", projectId: "project-a", worktreePath: null };
   const project = { workspaceRoot: "/repo" };
   return { useThreadShell: () => thread, useProject: () => project };
 });
@@ -78,5 +84,29 @@ describe("terminal side panel", () => {
       { visible: true, threadRef },
       { visible: false, threadRef },
     ]);
+  });
+
+  it("keeps a local-checkout launch on the checkout after the thread gains a worktree", () => {
+    thread.worktreePath = "/repo/.worktrees/feature";
+    drawerWorktreePaths.length = 0;
+    const launchedLocally = (
+      <PanelHostContext value={hostFor(true)}>
+        <TerminalSidePanel
+          {...terminalProps}
+          launchContext={{ cwd: "/repo", worktreePath: null }}
+        />
+      </PanelHostContext>
+    );
+    act(() => {
+      create(launchedLocally);
+    });
+    expect(drawerWorktreePaths).toEqual([null]);
+
+    drawerWorktreePaths.length = 0;
+    act(() => {
+      create(panelIn(hostFor(true)));
+    });
+    expect(drawerWorktreePaths).toEqual(["/repo/.worktrees/feature"]);
+    thread.worktreePath = null;
   });
 });

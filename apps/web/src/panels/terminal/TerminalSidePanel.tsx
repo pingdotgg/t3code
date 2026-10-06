@@ -76,8 +76,11 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
+  // A launch context's null worktree means the local checkout, not "unknown".
   const worktreePath =
-    launchContext?.worktreePath ?? activeSummary?.worktreePath ?? threadWorktreePath;
+    launchContext !== null
+      ? launchContext.worktreePath
+      : (activeSummary?.worktreePath ?? threadWorktreePath);
   const cwd = useMemo(
     () =>
       launchContext?.cwd ??
@@ -124,7 +127,9 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
         knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
           .summary ?? null;
       const terminalWorktreePath =
-        launchContext?.worktreePath ?? summary?.worktreePath ?? threadWorktreePath;
+        launchContext !== null
+          ? launchContext.worktreePath
+          : (summary?.worktreePath ?? threadWorktreePath);
       const terminalCwd =
         launchContext?.cwd ??
         summary?.cwd ??
@@ -145,14 +150,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       });
     }
     return locations;
-  }, [
-    knownTerminalSessions,
-    launchContext?.cwd,
-    launchContext?.worktreePath,
-    project,
-    surface.terminalIds,
-    threadWorktreePath,
-  ]);
+  }, [knownTerminalSessions, launchContext, project, surface.terminalIds, threadWorktreePath]);
 
   if (!project || !cwd) return null;
 
