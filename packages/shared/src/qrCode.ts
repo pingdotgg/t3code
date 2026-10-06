@@ -1,4 +1,4 @@
-/* oxlint-disable eslint/no-useless-escape */
+/* oxlint-disable eslint/no-useless-escape -- vendored Project Nayuki code, kept as upstream wrote it. */
 /*
  * QR Code generator library (TypeScript)
  *
