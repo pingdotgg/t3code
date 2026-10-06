@@ -225,6 +225,23 @@ export function resolveCurrentGitBranch(input: {
   return input.clonePhase === "done" ? currentRefName : (input.statusRefName ?? currentRefName);
 }
 
+/**
+ * The ref a new worktree's base defaults to: the repo default, else the
+ * checked-out branch. Nothing until the project's clone state is known and its
+ * clone has finished, since refs read before then can be cached from an
+ * earlier repository at the same path.
+ */
+export function resolveWorktreeBaseBranchCandidate(input: {
+  clonePhase: ProjectClonePhase | "unknown" | null;
+  isRefsLoading: boolean;
+  defaultBranchName: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (input.isRefsLoading) return null;
+  if (input.clonePhase !== null && input.clonePhase !== "done") return null;
+  return input.defaultBranchName ?? input.currentGitBranch;
+}
+
 export function resolveBranchToolbarValue(input: {
   envMode: EnvMode;
   activeWorktreePath: string | null;

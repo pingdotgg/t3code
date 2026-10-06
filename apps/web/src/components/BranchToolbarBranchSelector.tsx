@@ -52,6 +52,7 @@ import {
   resolveCurrentGitBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -515,9 +516,12 @@ export function BranchToolbarBranchSelector({
     () => refs.find((refName) => refName.isDefault)?.name ?? null,
     [refs],
   );
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
-    ? null
-    : (defaultBranchName ?? currentGitBranch);
+  const worktreeBaseBranchCandidate = resolveWorktreeBaseBranchCandidate({
+    clonePhase,
+    isRefsLoading: isInitialBranchesLoadPending,
+    defaultBranchName,
+    currentGitBranch,
+  });
 
   useEffect(() => {
     if (

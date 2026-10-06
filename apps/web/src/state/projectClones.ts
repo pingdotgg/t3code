@@ -38,9 +38,9 @@ const environmentProjectClonesPendingAtom = Atom.family((environmentId: Environm
     const config = get(environmentServerConfigsAtom).get(environmentId);
     if (config === undefined) return true;
     if (config.environment.capabilities.projectCloneTracking !== true) return false;
-    return AsyncResult.isInitial(
-      get(sourceControlEnvironment.projectClones({ environmentId, input: {} })),
-    );
+    // Pending until a list arrives: a stream that fails first never delivered one.
+    const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
+    return Option.isNone(AsyncResult.value(result));
   }).pipe(Atom.withLabel(`web-project-clones-pending:${environmentId}`)),
 );
 

@@ -14,6 +14,7 @@ import {
   resolveBranchToolbarValue,
   resolveCurrentGitBranch,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeBaseBranchCandidate,
   resolveWorkspaceDisplayName,
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
@@ -172,6 +173,32 @@ describe("resolveCurrentGitBranch", () => {
     expect(
       resolveCurrentGitBranch({ clonePhase: null, statusRefName: null, refs: clonedRefs }),
     ).toBe("main");
+  });
+});
+
+describe("resolveWorktreeBaseBranchCandidate", () => {
+  it("picks nothing until the clone state is known and the clone has finished", () => {
+    for (const clonePhase of ["unknown", "running", "failed", "cancelled"] as const) {
+      expect(
+        resolveWorktreeBaseBranchCandidate({
+          clonePhase,
+          isRefsLoading: false,
+          defaultBranchName: "cached-default",
+          currentGitBranch: null,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("prefers the repo default, then the checked-out branch, once refs have loaded", () => {
+    const input = { isRefsLoading: false, defaultBranchName: "main", currentGitBranch: "dev" };
+    expect(resolveWorktreeBaseBranchCandidate({ ...input, clonePhase: "done" })).toBe("main");
+    expect(
+      resolveWorktreeBaseBranchCandidate({ ...input, clonePhase: null, defaultBranchName: null }),
+    ).toBe("dev");
+    expect(
+      resolveWorktreeBaseBranchCandidate({ ...input, clonePhase: null, isRefsLoading: true }),
+    ).toBeNull();
   });
 });
 
