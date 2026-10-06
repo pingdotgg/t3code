@@ -929,6 +929,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly license: string;
   readonly homepage: string;
   readonly author: string;
   readonly main: string;
@@ -2766,6 +2767,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // dynamically loads the system libfuse2 library. Pin the static runtime so
     // the AppImage also launches on distributions that only provide FUSE 3.
     buildConfig.toolsets = { appimage: "1.0.3" };
+    const path = yield* Path.Path;
+    const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
       // The .deb is built from the same unpacked app after the AppImage.
       // electron-builder lists both in latest-linux.yml and writes
@@ -2794,6 +2797,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
     };
     buildConfig.deb = {
+      // FPM runs outside the staged app directory, so source paths must be absolute.
+      // AppStream consumers associate this metadata with our t3code.desktop entry.
+      fpm: [
+        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
+      ],
       // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
       // for 64-bit time; the old name is the fallback for older releases.
       depends: [
@@ -3702,7 +3711,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
+    description:
+      "T3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+    license: "MIT",
     // Required by the .deb control file.
     homepage: "https://t3.codes",
     author: "T3 Tools",
