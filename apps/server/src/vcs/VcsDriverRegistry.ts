@@ -118,10 +118,23 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
+  // The cwd and each parent below the repository root. A new `.git` in any of
+  // them means `git init` made a nested repository. Falls back to the cwd alone
+  // when the root is not above it, such as a cwd reached through a symlink.
+  const foldersBelowRoot = (cwd: string, rootPath: string) => {
+    const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
+    if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
+    return Array.from({ length: relative.split(path.sep).length }, (_, levelsUp) =>
+      path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
+    );
+  };
+
   // What `detect` re-checks on every cache hit, using stats instead of git.
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
     Effect.all({
-      cwdHasGitEntry: fileSystem.exists(path.join(cwd, ".git")),
+      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
+        fileSystem.exists(path.join(folder, ".git")),
+      ),
       repositoryOnDisk: Effect.forEach(
         repository.metadataPath === null
           ? [cwd]
@@ -132,7 +145,7 @@ export const make = Effect.gen(function* () {
 
   const detectionCache = yield* Cache.makeWith<
     string,
-    { readonly handle: VcsDriverHandle; readonly cwdHasGitEntry: boolean } | null,
+    { readonly handle: VcsDriverHandle; readonly gitEntries: ReadonlyArray<boolean> } | null,
     VcsError
   >(
     (key) =>
@@ -141,7 +154,7 @@ export const make = Effect.gen(function* () {
         const handle = yield* detectResolvedKind(input);
         if (handle === null) return null;
         const disk = yield* readDiskState(input.cwd, handle.repository);
-        return { handle, cwdHasGitEntry: disk?.cwdHasGitEntry ?? false };
+        return { handle, gitEntries: disk?.gitEntries ?? [] };
       }),
     {
       capacity: DETECTION_CACHE_CAPACITY,
@@ -153,7 +166,7 @@ export const make = Effect.gen(function* () {
   );
 
   // A hit is stale when its worktree or `.git` folder was removed, or when
-  // `git init` created a nested repository at the cwd.
+  // `git init` created a nested repository between the cwd and its root.
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);
@@ -161,7 +174,11 @@ export const make = Effect.gen(function* () {
       const cached = yield* Cache.get(detectionCache, key);
       if (cached === null) return null;
       const disk = yield* readDiskState(input.cwd, cached.handle.repository);
-      if (disk?.repositoryOnDisk && disk.cwdHasGitEntry === cached.cwdHasGitEntry) {
+      if (
+        disk?.repositoryOnDisk &&
+        disk.gitEntries.length === cached.gitEntries.length &&
+        disk.gitEntries.every((exists, index) => exists === cached.gitEntries[index])
+      ) {
         return cached.handle;
       }
       yield* Cache.invalidate(detectionCache, key);
