@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -12,9 +13,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../../config.ts";
 import * as Preview from "../../../preview/Manager.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewControlsHandlers from "./handlers.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
 
@@ -46,9 +49,19 @@ it.effect.each([
         capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
         issuedAt: 0,
       };
-      const manager = yield* Preview.make.pipe(Effect.provide(NodeCrypto.layer));
+      const manager = yield* Preview.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-controls-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+            NodeCrypto.layer,
+          ),
+        ),
+      );
       const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
       const layerDependencies = Layer.mergeAll(
+        PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer)),
         Layer.succeed(Preview.PreviewManager, manager),
         Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
         Layer.mock(ServerSettings.ServerSettingsService)({
