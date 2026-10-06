@@ -26,6 +26,8 @@ const { siblingsByEnvironment, late, Wrapper, MenuContext, RadioContext } = awai
       deferred,
       // The tree's right-click handler, as handed to the Pierre tree.
       openTreeMenu: null as null | ((item: unknown, context: unknown) => void),
+      // The tree's selection handler from its first render; the real tree keeps that one.
+      selectTreeRows: null as null | ((paths: ReadonlyArray<string>) => void),
       menuChoice: deferred<string | null>(),
       assetUrl: deferred<unknown>(),
       session: deferred<unknown>(),
@@ -120,8 +122,10 @@ vi.mock("@pierre/trees/react", () => ({
   FileTree: () => null,
   useFileTree: (options: {
     composition: { contextMenu: { onOpen: (item: unknown, context: unknown) => void } };
+    onSelectionChange: (paths: ReadonlyArray<string>) => void;
   }) => {
     late.openTreeMenu = options.composition.contextMenu.onOpen;
+    late.selectTreeRows ??= options.onSelectionChange;
     return {
       model: {
         isSearchOpen: () => false,
@@ -141,7 +145,10 @@ vi.mock("@pierre/trees/react", () => ({
 }));
 vi.mock("~/components/files/useDirectoryEntries", () => ({
   useDirectoryEntries: () => ({
-    entries: [{ path: "src", kind: "directory" }],
+    entries: [
+      { path: "src", kind: "directory" },
+      { path: "README.md", kind: "file" },
+    ],
     load: () => undefined,
     refresh: () => undefined,
     isPending: false,
@@ -358,6 +365,7 @@ const browserErrorToasts = () =>
 // Transform the lazy body once up front, so mounting it settles inside one act().
 beforeAll(() => import("./FilesSidePanel"), 30_000);
 beforeEach(() => {
+  late.selectTreeRows = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const storage = new Map<string, string>();
   vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -421,6 +429,17 @@ describe("files side panel", () => {
       ),
     );
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
+    expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
+  });
+
+  it("opens a tree click in the thread showing now, not the one the tree first showed", async () => {
+    // Threads in the same project share one tree, so it outlives the switch.
+    await renderFileFor(refOn("environment-a"));
+    const threadRef = refOn("environment-a", "thread-b");
+    await renderFileFor(threadRef);
+
+    await act(async () => late.selectTreeRows!(["README.md"]));
+    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "README.md" }]);
     expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
   });
 });

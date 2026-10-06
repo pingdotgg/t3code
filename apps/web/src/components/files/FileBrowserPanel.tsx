@@ -239,8 +239,13 @@ export default function FileBrowserPanel({
     }
   };
   const showEntryContextMenuRef = useRef(showEntryContextMenu);
+  // The tree keeps its first selection callback, so it reads the current
+  // opener through a ref; otherwise a click after a thread switch opens the
+  // file in the thread the panel first showed.
+  const onOpenFileRef = useRef(onOpenFile);
   useEffect(() => {
     showEntryContextMenuRef.current = showEntryContextMenu;
+    onOpenFileRef.current = onOpenFile;
   });
 
   // The tree reads decorations at render time; a folder still loading its
@@ -286,7 +291,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+        onOpenFileRef.current(selectedPath);
       }
     },
     paths: [],
