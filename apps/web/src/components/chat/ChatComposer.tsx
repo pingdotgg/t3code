@@ -1386,6 +1386,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+  compactBeforeSendTokens: number | null;
+  onSendWithFullHistory: () => void;
 }) {
   return (
     <>
@@ -1424,6 +1426,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+        compactBeforeSendTokens={props.compactBeforeSendTokens}
+        onSendWithFullHistory={props.onSendWithFullHistory}
       />
     </>
   );
@@ -1543,6 +1547,12 @@ export interface ChatComposerProps {
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Quiet thread state (settled, snoozed, woke) shown above the composer, outside the banner stack. */
+  threadStatusLine?: ReactNode;
+  /** Tokens Enter compacts before sending; null when the next send keeps full history. */
+  resumeCompactionTokens: number | null;
+  /** Runs `send` as a one-off send that keeps full history instead of compacting first. */
+  onSendWithFullHistory: (send: () => void) => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
   environmentUnavailable: {
@@ -4250,6 +4260,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [phase, settings.followUpBehavior, submitComposer],
   );
+  const { onSendWithFullHistory } = props;
+  const sendWithFullHistory = useCallback(
+    () => onSendWithFullHistory(() => submitComposer()),
+    [onSendWithFullHistory, submitComposer],
+  );
   const submitCitationAndSend = useCallback(() => {
     submitComposer(
       undefined,
@@ -6631,6 +6646,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
+      {props.threadStatusLine}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack
@@ -7584,6 +7600,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                    compactBeforeSendTokens={props.resumeCompactionTokens}
+                    onSendWithFullHistory={sendWithFullHistory}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                     }
