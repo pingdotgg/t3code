@@ -184,6 +184,11 @@ export const layer = Api.make(
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
     const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
+    const legacyManagedEndpointCleanupMode =
+      yield* RelayConfiguration.legacyManagedEndpointCleanupModeConfig;
+    const legacyTunnelGraceMinutes = Option.getOrUndefined(
+      yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
+    );
     // Keys are endpoint keys or hashes over them, which already differ per
     // stage, so stages sharing an account cannot collide in these namespaces.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
@@ -221,6 +226,8 @@ export const layer = Api.make(
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
         managedEndpointCleanupMode,
+        legacyManagedEndpointCleanupMode,
+        ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
       });
     });
 
