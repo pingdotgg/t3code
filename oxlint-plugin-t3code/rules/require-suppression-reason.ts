@@ -5,6 +5,7 @@ const DIRECTIVE_PATTERN =
   /^\s*\*?\s*(?:(?:oxlint|eslint)-(?:disable|enable)|@ts-(?:expect-error|ignore|nocheck)|@effect-diagnostics)/u;
 // TypeScript's own directives; whatever follows one is its reason.
 const TS_DIRECTIVE_PATTERN = /^\s*\*?\s*@ts-(?:expect-error|ignore|nocheck)(?![\w-])(.*)$/su;
+const EMPTY_COMMENT_PATTERN = /^[\s*]*$/u;
 
 /**
  * Reports a directive that disables a lint rule or the type checker without saying why. The reason
@@ -30,10 +31,14 @@ export default defineRule({
           }
         }
 
-        // A comment directly above explains a directive, even across other stacked directives.
+        // A comment directly above explains a directive, even across stacked directives and empty
+        // comment lines.
         const explainedAbove = (directive: ESTree.Comment) => {
           let above = ownLineCommentsByEndLine.get(directive.loc.start.line - 1);
-          while (above && DIRECTIVE_PATTERN.test(above.value)) {
+          while (
+            above &&
+            (DIRECTIVE_PATTERN.test(above.value) || EMPTY_COMMENT_PATTERN.test(above.value))
+          ) {
             above = ownLineCommentsByEndLine.get(above.loc.start.line - 1);
           }
           return above !== undefined;

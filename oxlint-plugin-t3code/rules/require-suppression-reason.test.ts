@@ -87,6 +87,26 @@ describe("t3code/require-suppression-reason", () => {
     `,
   );
 
+  rule.valid(
+    "allows an empty comment line between the reason and the directive",
+    `
+      // Positions are stable for a given string.
+      //
+      // oxlint-disable-next-line react/no-array-index-key
+      const items = ["a"].map((item, index) => <li key={index}>{item}</li>);
+    `,
+  );
+
+  rule.invalid(
+    "does not count an empty comment above",
+    `
+      //
+      /* */
+      // oxlint-disable-next-line react/no-array-index-key
+      const items = ["a"].map((item, index) => <li key={index}>{item}</li>);
+    `,
+  );
+
   rule.invalid(
     "does not count a trailing comment on the code line above",
     `
