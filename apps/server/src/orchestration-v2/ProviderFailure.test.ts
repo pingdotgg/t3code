@@ -126,6 +126,14 @@ it("names the adapter's reason for each wrapper category", () => {
   );
 });
 
+it("bounds a long adapter reason so the category guidance stays visible", () => {
+  const message = makeProviderFailure({
+    cause: { _tag: "ProviderAdapterTurnStartError", cause: "x".repeat(10_000) },
+  }).message;
+  assert.isBelow(message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+  assert.isTrue(message.endsWith("check the provider setup and server logs."), message);
+});
+
 it("names the adapter's reason when a turn cannot start", () => {
   const turnStart = (cause: unknown) =>
     new ProviderAdapterTurnStartError({

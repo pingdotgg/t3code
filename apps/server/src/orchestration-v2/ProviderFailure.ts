@@ -18,6 +18,8 @@ import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
+/** Keeps a long adapter reason from pushing a category's guidance past the message bound. */
+const MAX_PROVIDER_FAILURE_REASON_LENGTH = 512;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
@@ -93,7 +95,8 @@ function causeMessage(cause: unknown): string | undefined {
     }
   }
   if (category === undefined) return undefined;
-  const trimmedReason = reason?.trim().replace(/[.!?]+$/u, "");
+  const trimmedReason =
+    reason && boundedText(reason, MAX_PROVIDER_FAILURE_REASON_LENGTH).replace(/[.!?]+$/u, "");
   return trimmedReason
     ? `${category.summary}: ${trimmedReason}. ${category.guidance}`
     : `${category.summary}. ${category.guidance}`;
