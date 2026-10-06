@@ -3,11 +3,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
-import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
@@ -25,37 +26,26 @@ const processResult = (
   stderrTruncated: false,
 });
 
-function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
+function makeProvider(
+  github: Partial<GitHubCli.GitHubCli["Service"]>,
+  api: Partial<GitHubApi.GitHubApi["Service"]> = {},
+) {
   return GitHubSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
+    Effect.provide(
+      Layer.merge(Layer.mock(GitHubCli.GitHubCli)(github), Layer.mock(GitHubApi.GitHubApi)(api)),
+    ),
   );
 }
 
-it.effect("uses the enterprise quota for a current-repository default branch read", () =>
-  Effect.gen(function* () {
-    // github.com is out of quota; the enterprise read must not be priced against it.
-    const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
-    yield* budget.observe(
-      "github.com",
-      '{"data":{"rateLimit":{"cost":1,"limit":5000,"remaining":0,"resetAt":"2099-01-01T00:00:00Z"}}}',
-    );
-    const provider = yield* GitHubSourceControlProvider.make;
-    const branch = yield* provider.getDefaultBranch({
-      cwd: "/enterprise-repo",
-      context: {
-        provider: { kind: "github", name: "GitHub Enterprise", baseUrl: "https://enterprise.test" },
-        remoteName: "origin",
-        remoteUrl: "https://enterprise.test/acme/web.git",
-      },
-    });
-    assert.strictEqual(branch, "main");
-  }).pipe(
-    Effect.provide(GitHubCli.layer),
-    Effect.provideService(VcsProcess.VcsProcess, {
-      run: () => Effect.succeed(processResult("main")),
-    }),
-  ),
-);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const restResponse = (body: string): GitHubApi.GitHubRestResponse => ({
+  status: 200,
+  headers: {},
+  body,
+  truncated: false,
+  invalidUtf8: false,
+});
 
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
@@ -412,27 +402,20 @@ it.effect.each(["pull", "issues"])(
   "resolves %s subjects on the linked host without using the checkout",
   (kind) =>
     Effect.gen(function* () {
-      const provider = yield* makeProvider({
-        execute: (input) => {
-          assert.deepStrictEqual(input.args, [
-            "api",
-            "--hostname",
-            "github.com",
-            "repos/owner/repo/issues/42",
-            "--jq",
-            "{title, body}",
-          ]);
-          assert.strictEqual(input.maxOutputBytes, 32_000);
-          assert.strictEqual(input.timeoutMs, 3_000);
-          return Effect.succeed({
-            exitCode: ChildProcessSpawner.ExitCode(0),
-            stdout: JSON.stringify({ title: "Pairing expiry", body: "Preserve remote access" }),
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          });
+      const provider = yield* makeProvider(
+        {},
+        {
+          rest: (input) => {
+            assert.strictEqual(input.host, "github.com");
+            assert.strictEqual(input.path, "repos/owner/repo/issues/42");
+            return Effect.succeed(
+              restResponse(
+                encodeJson({ title: "Pairing expiry", body: "Preserve remote access", id: 1 }),
+              ),
+            );
+          },
         },
-      });
+      );
       const lookup = provider.resolveLink?.({
         cwd: "/unrelated",
         url: new URL(`https://github.com/owner/repo/${kind}/42`),
@@ -456,23 +439,20 @@ it.effect.each(["read", "decode"] as const)(
   "retains the %s failure without exposing its raw contents",
   (stage) =>
     Effect.gen(function* () {
-      const cause = new GitHubCli.GitHubCliCommandError({
-        command: "gh",
-        cwd: "/repo",
-        cause: new Error("private response text"),
+      const cause = new GitHubApi.GitHubApiResponseError({
+        host: "github.com",
+        operation: "resolveLink",
+        status: 500,
       });
-      const provider = yield* makeProvider({
-        execute: () =>
-          stage === "read"
-            ? Effect.fail(cause)
-            : Effect.succeed({
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout: "private response text",
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              }),
-      });
+      const provider = yield* makeProvider(
+        {},
+        {
+          rest: () =>
+            stage === "read"
+              ? Effect.fail(cause)
+              : Effect.succeed(restResponse("private response text")),
+        },
+      );
       const lookup = provider.resolveLink?.({
         cwd: "/repo",
         url: new URL("https://github.com/owner/repo/issues/42"),
