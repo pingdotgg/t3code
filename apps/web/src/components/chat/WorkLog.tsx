@@ -123,7 +123,7 @@ export function WorkLogDetails({
         kind === "text"
           ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
           : kind === "panel"
-            ? "mt-0.5 mb-1.5"
+            ? "mt-0.5 pb-2"
             : "mt-1",
       )}
       onClick={(event) => event.stopPropagation()}
