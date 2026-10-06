@@ -109,6 +109,20 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "waiting_for_input" });
   });
 
+  it("keeps a settled completed run held open by a monitor", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          settledOverride: "settled",
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        }),
+      }),
+    ).toMatchObject({ phase: "running" });
+  });
+
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
       projectThreadAwarenessV2({

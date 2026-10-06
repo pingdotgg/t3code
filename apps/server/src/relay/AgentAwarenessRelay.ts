@@ -91,8 +91,10 @@ export function shouldPublishAgentAwarenessEvent(
   // pending background work (a finished subagent, a cleared roster, or an
   // ended background item can release a held completion), and settlement
   // (settling a finished thread removes it). Unsettling is not published: the
-  // row is already gone, and its fresh updatedAt would re-alert Done. Message
-  // bodies and tool progress cannot change the published activity.
+  // row is already gone, and republishing a completed row with a fresh
+  // updatedAt would look newly finished (#11938 still covers later rename /
+  // model / PR sync after an unsettle). Message bodies and tool progress
+  // cannot change the published activity.
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
