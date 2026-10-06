@@ -156,6 +156,9 @@ function SettingsIndexSections() {
         {Platform.OS === "ios" ? (
           <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
         ) : null}
+        {Platform.OS === "ios" ? (
+          <SettingsRow icon="mic" label="Voice input" target="SettingsVoiceInput" />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Automations">
