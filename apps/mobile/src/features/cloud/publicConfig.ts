@@ -21,6 +21,7 @@ export interface CloudPublicConfig {
   };
   readonly relay: {
     readonly url: string | null;
+    readonly backgroundUrl: string | null;
   };
   readonly observability: {
     readonly tracesUrl: string | null;
@@ -56,7 +57,22 @@ function normalizeSecureUrl(value: unknown): string | null {
   }
 }
 
+export class BackgroundRelayUrlInvalidError extends Schema.TaggedError<BackgroundRelayUrlInvalidError>()(
+  "BackgroundRelayUrlInvalidError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_BACKGROUND_RELAY_URL must be a secure absolute HTTPS origin.";
+  }
+}
+
 export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig?.extra) {
+  const rawBackgroundUrl = trimNonEmpty(extra?.relay?.backgroundUrl);
+  const backgroundUrl =
+    rawBackgroundUrl === null ? null : normalizeSecureRelayUrl(rawBackgroundUrl);
+  if (rawBackgroundUrl !== null && backgroundUrl === null) {
+    throw new BackgroundRelayUrlInvalidError();
+  }
   return {
     clerk: {
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
@@ -64,6 +80,7 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
     },
     relay: {
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
+      backgroundUrl,
     },
     observability: {
       tracesUrl: normalizeSecureUrl(extra?.observability?.tracesUrl),
