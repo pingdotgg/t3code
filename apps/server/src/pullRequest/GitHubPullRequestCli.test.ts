@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
@@ -65,6 +66,7 @@ const layer = it.layer(
       }),
     ),
     Layer.provideMerge(GitHubGraphQlBudget.layer),
+    Layer.provide(NodeCrypto.layer),
   ),
 );
 
@@ -247,7 +249,7 @@ it.effect(
       );
       const cli = yield* GitHubPullRequestCli.make.pipe(
         Effect.provideService(GitHubCli.GitHubCli, github),
-        Effect.provide(GitHubGraphQlBudget.layer),
+        Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, NodeCrypto.layer)),
       );
       const input = { cwd: "/repo", host: "github.com" };
       const first = yield* cli.withVerifiedCredential(input, (identity) =>
