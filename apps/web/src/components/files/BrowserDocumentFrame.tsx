@@ -5,7 +5,7 @@ import {
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { cn } from "~/lib/utils";
@@ -106,7 +106,9 @@ export function HtmlRenderDocument(props: {
     return () => window.removeEventListener("message", openLink);
   }, []);
   const { onContentHeight } = props;
-  useEffect(() => {
+  // A page posts its height once per change, so listen from the commit that
+  // inserts the frame; a passive effect could run after a fast page's first post.
+  useLayoutEffect(() => {
     if (onContentHeight === undefined) return;
     const resize = (event: MessageEvent) => {
       const height = readHtmlRenderContentHeight(event.data);
