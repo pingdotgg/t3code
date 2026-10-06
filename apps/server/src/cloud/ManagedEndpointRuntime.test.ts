@@ -190,6 +190,30 @@ describe("CloudManagedEndpointRuntime", () => {
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="connection timed out" connIndex=0',
       ),
     ).toBe(false);
+    // The edge's reason for a tunnel the relay reaper deleted.
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T06:44:22Z ERR Register tunnel error from server side error="Unauthorized: Tunnel not found" connIndex=0 event=0 ip=198.41.200.43',
+      ),
+    ).toBe(true);
+    // Over QUIC, cloudflared hides the edge's reason behind an opaque control
+    // stream failure. Only the supervisor's per-attempt line counts; the
+    // connection-level line repeats the same error for the same attempt.
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T06:43:35Z ERR Serve tunnel error error="control stream encountered a failure while serving" connIndex=0 event=0 ip=198.41.200.43',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T06:43:35Z ERR failed to serve tunnel connection error="control stream encountered a failure while serving" connIndex=0 event=0 ip=198.41.200.43',
+      ),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T06:43:35Z ERR Serve tunnel error error="failed to accept QUIC stream: timeout: no recent network activity" connIndex=0 event=0 ip=198.41.200.43',
+      ),
+    ).toBe(false);
   });
 
   it.effect("keeps recovery requests sent before the server starts consuming them", () =>
@@ -315,6 +339,59 @@ describe("CloudManagedEndpointRuntime", () => {
 
       expect(yield* Deferred.await(recoveryRetried)).toEqual(config);
       expect(spawned).toEqual([600]);
+    }),
+  );
+
+  it.effect("recovers a tunnel rejected over QUIC, where cloudflared hides the edge's reason", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const checkpointObserved = yield* Deferred.make<void>();
+      const recoveryRequested = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      const encoder = new TextEncoder();
+      const connectorOutput = Stream.fromQueue(output).pipe(
+        Stream.tap((chunk) =>
+          new TextDecoder().decode(chunk) === "checkpoint\n"
+            ? Deferred.succeed(checkpointObserved, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({ pid: 610, onKill: () => {}, output: connectorOutput });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "reaped-tunnel",
+      };
+      // One failed registration attempt as cloudflared 2026.5.2 logs it over
+      // QUIC at `--loglevel info`: no server-side reason, two lines carrying
+      // the same opaque error, then the retry announcement.
+      const failedAttempt =
+        '2026-10-06T06:43:35Z ERR failed to serve tunnel connection error="control stream encountered a failure while serving" connIndex=0 event=0 ip=198.41.200.43\n' +
+        '2026-10-06T06:43:35Z ERR Serve tunnel error error="control stream encountered a failure while serving" connIndex=0 event=0 ip=198.41.200.43\n' +
+        "2026-10-06T06:43:35Z INF Retrying connection in up to 2s connIndex=0 event=0 ip=198.41.200.43\n";
+
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((requested) =>
+          Deferred.succeed(recoveryRequested, requested).pipe(Effect.asVoid),
+        ),
+        Effect.forkChild,
+      );
+      yield* runtime.applyConfig(config);
+
+      yield* Queue.offer(output, encoder.encode(failedAttempt.repeat(3)));
+      yield* Queue.offer(output, encoder.encode("checkpoint\n"));
+      yield* Deferred.await(checkpointObserved);
+      expect(yield* Deferred.isDone(recoveryRequested)).toBe(false);
+
+      yield* Queue.offer(output, encoder.encode(failedAttempt));
+
+      expect(yield* Deferred.await(recoveryRequested)).toEqual(config);
     }),
   );
 
