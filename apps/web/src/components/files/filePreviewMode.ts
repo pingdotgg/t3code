@@ -1,4 +1,5 @@
 import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
+import type { ProjectReadFileError } from "@t3tools/contracts";
 import { isAbsolutePath } from "~/terminal-links";
 
 /** Resolve workspace links before choosing between the explorer and a file preview. */
@@ -8,6 +9,27 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
 }
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
+
+/** Describe existing failure codes without exposing the underlying platform cause. */
+export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
+  switch (error.failure) {
+    case "path_not_file":
+      return "The path is a directory or special file, not a regular file.";
+    case "binary_file":
+      return "The file is binary and cannot be displayed as text.";
+    case "workspace_path_outside_root":
+      return "The requested path is outside the workspace.";
+    case "resolved_path_outside_root":
+      return "The path resolves to a location outside the workspace.";
+    case "operation_failed":
+      // A realpath failure can mean a missing path, permissions, or another I/O error.
+      return error.operation === "realpath-workspace-root"
+        ? "The workspace folder could not be accessed."
+        : "The file could not be accessed or read. It may be missing or inaccessible.";
+    default:
+      return error.message;
+  }
+}
 
 export function shouldShowFileExplorer(input: {
   readonly relativePath: string | null;

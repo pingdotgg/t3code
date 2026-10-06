@@ -82,6 +82,7 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
+  filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
@@ -957,6 +958,7 @@ export default function FilePreviewPanel({
     relativePath,
     attachment === undefined && relativePath !== null,
   );
+  const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
@@ -1236,8 +1238,29 @@ export default function FilePreviewPanel({
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-              {file.error}
+            <div role="alert" className="flex min-h-0 flex-1 flex-col overflow-auto">
+              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
+                <p className="text-destructive">
+                  {file.readError ? filePreviewReadErrorMessage(file.readError) : file.error}
+                </p>
+                {attemptedPath ? (
+                  <p className="text-muted-foreground">
+                    Attempted path
+                    <code className="block break-all font-mono text-foreground select-all">
+                      {attemptedPath}
+                    </code>
+                  </p>
+                ) : null}
+                {!isHostFile ? (
+                  <p className="text-muted-foreground">
+                    Workspace folder:{" "}
+                    <code className="break-all font-mono select-all">
+                      {file.readError?.cwd ?? cwd}
+                    </code>
+                    . Check the link's path or locate the file in Files.
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
