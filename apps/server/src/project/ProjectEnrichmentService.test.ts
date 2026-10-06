@@ -351,9 +351,10 @@ it.effect("rescans a favicon only after 15 minutes", () =>
         resolve: (workspaceRoot) => Effect.succeed(identity(workspaceRoot)),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        // Each scan returns a new path, so a wait can tell a rescan from the cached value.
         resolvePath: (workspaceRoot) =>
-          Ref.update(faviconScans, (count) => count + 1).pipe(
-            Effect.as(`${workspaceRoot}/favicon.svg`),
+          Ref.updateAndGet(faviconScans, (count) => count + 1).pipe(
+            Effect.map((scan) => `${workspaceRoot}/favicon-${scan}.svg`),
           ),
       }),
     );
@@ -361,7 +362,11 @@ it.effect("rescans a favicon only after 15 minutes", () =>
     yield* Effect.gen(function* () {
       const service = yield* ProjectEnrichment.ProjectEnrichmentService;
       yield* service.getAvailable("/repo");
-      yield* waitForAvailable(service, "/repo", (value) => value.faviconPath !== null);
+      yield* waitForAvailable(
+        service,
+        "/repo",
+        (value) => value.faviconPath === "/repo/favicon-1.svg",
+      );
 
       // Callers such as the shell stream read projects far more often than this.
       for (let minute = 1; minute < 15; minute += 1) {
@@ -372,7 +377,11 @@ it.effect("rescans a favicon only after 15 minutes", () =>
 
       yield* TestClock.adjust("1 minute");
       yield* service.getAvailable("/repo");
-      yield* waitForAvailable(service, "/repo", (value) => value.faviconPath !== null);
+      yield* waitForAvailable(
+        service,
+        "/repo",
+        (value) => value.faviconPath === "/repo/favicon-2.svg",
+      );
       assert.equal(yield* Ref.get(faviconScans), 2);
     }).pipe(Effect.provide(layer(layerMetadata)));
   }),
