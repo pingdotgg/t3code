@@ -584,9 +584,10 @@ function SnoozeMenuButton(props: {
       <MenuPopup side="bottom" align="end">
         {presets.map((preset) => {
           const favorite = snoozeFavorites.find((saved) => snoozeFavoriteId(saved) === preset.id);
-          return (
+          const item = (
             <MenuItem
               key={preset.id}
+              className={favorite ? "flex-1" : undefined}
               onClick={(event) => {
                 event.stopPropagation();
                 onSnooze(preset);
@@ -594,22 +595,29 @@ function SnoozeMenuButton(props: {
             >
               {preset.label}
               <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-              {favorite && (
-                <button
-                  type="button"
-                  aria-label={`Remove ${preset.label} from favorites`}
-                  className="-me-1 inline-flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void updateClientSettings({
-                      snoozeFavorites: removeSnoozeFavorite(snoozeFavorites, favorite),
-                    });
-                  }}
-                >
-                  <XIcon className="size-3" />
-                </button>
-              )}
             </MenuItem>
+          );
+          if (!favorite) return item;
+          // The remove control is its own menu item, not a button nested in
+          // the snooze item: nested, a press-drag-release over it would also
+          // fire the snooze item, and arrow keys could not reach it.
+          return (
+            <div key={preset.id} className="flex items-center">
+              {item}
+              <MenuItem
+                closeOnClick={false}
+                aria-label={`Remove ${preset.label} from favorites`}
+                className="size-7 justify-center px-0 text-muted-foreground"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void updateClientSettings({
+                    snoozeFavorites: removeSnoozeFavorite(snoozeFavorites, favorite),
+                  });
+                }}
+              >
+                <XIcon className="size-3" />
+              </MenuItem>
+            </div>
           );
         })}
         <MenuSeparator />
