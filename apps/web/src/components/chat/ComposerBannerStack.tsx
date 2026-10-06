@@ -87,15 +87,17 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
-  if (items.length === 0) {
-    return attachedAbove;
-  }
-
   // Activity stays attached. Urgency and severity only order the notices behind it.
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   if (!frontItem) {
-    return attachedAbove;
+    return (
+      <>
+        {null}
+        {attachedAbove}
+        {null}
+      </>
+    );
   }
   const stackedItems = orderedItems.slice(1);
   const hasStack = stackedItems.length > 0;
