@@ -311,10 +311,10 @@ describe("Grok permission prompts", () => {
 });
 
 describe("Grok launch permission mode", () => {
-  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-grok-v2-launch-",
   }).pipe(Layer.provide(NodeServices.layer));
-  const testLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, serverConfigLayer);
+  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerServerConfig);
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
@@ -357,7 +357,7 @@ describe("Grok launch permission mode", () => {
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
       Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
 
   const policy = (

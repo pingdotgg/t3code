@@ -39,7 +39,7 @@ import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const layerTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -90,7 +90,7 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-it.layer(testLayer)("CodexDriver", (it) => {
+it.layer(layerTest)("CodexDriver", (it) => {
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

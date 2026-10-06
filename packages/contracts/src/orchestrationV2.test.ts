@@ -16,12 +16,14 @@ import {
   ProviderInstanceId,
   ProviderReplayTranscript,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./index.ts";
 import {
+  latestProviderTurnForAttempt,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
@@ -203,7 +205,7 @@ describe("orchestration V2 contracts", () => {
     });
     const known = item("item-known", "system_notice", { message: "Hello" });
     // A type no build of this client knows, standing in for a newer server's item.
-    const future = item("item-future", "secret_request", { secretRef: "ref-1" });
+    const future = item("item-future", "hologram", { beam: "ref-1" });
     const projected = (position: number, turnItem: { readonly id: string }) => ({
       position,
       visibility: "local",
@@ -1404,5 +1406,18 @@ describe("limit recovery choice updates", () => {
     { autoResume: true, snooze: false },
   ])("accepts an explicit independent choice %j", (choice) => {
     expect(decode({ ...identity, ...choice })).toEqual({ ...identity, ...choice });
+  });
+});
+
+describe("latestProviderTurnForAttempt", () => {
+  it("returns the attempt's highest-ordinal turn, as a Codex goal run spans several", () => {
+    const turns = [
+      { id: "first", runAttemptId: RunAttemptId.make("goal-attempt"), ordinal: 3 },
+      { id: "other", runAttemptId: RunAttemptId.make("other-attempt"), ordinal: 9 },
+      { id: "last", runAttemptId: RunAttemptId.make("goal-attempt"), ordinal: 5 },
+      { id: "subagent", runAttemptId: null, ordinal: 7 },
+    ];
+    expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
+    expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
 });

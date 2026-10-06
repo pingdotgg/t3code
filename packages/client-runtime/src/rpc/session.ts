@@ -170,18 +170,24 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    // Set when the socket closes because pongs stopped, so the failure says so
+    // instead of looking like the server closed the connection.
+    const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Deferred.isDone(connected).pipe(
-        Effect.flatMap((wasConnected) =>
+      onPingTimeout: Ref.set(pingTimedOut, true),
+      onDisconnect: Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)]).pipe(
+        Effect.flatMap(([wasConnected, timedOut]) =>
           Deferred.fail(
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
               detail: `${
-                wasConnected
-                  ? `${connection.label} disconnected.`
-                  : `${connection.label} could not establish a WebSocket connection.`
+                !wasConnected
+                  ? `${connection.label} could not establish a WebSocket connection.`
+                  : timedOut
+                    ? `${connection.label} stopped responding.`
+                    : `${connection.label} disconnected.`
               }${networkHint}`,
             }),
           ),
@@ -189,10 +195,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
-    const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
+    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
-    const protocolLayer = Layer.effect(
+    const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
         retryTransientErrors: false,
@@ -201,13 +207,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
-          socketLayer,
+          layerSocket,
           RpcSerialization.layerJson,
           Layer.succeed(RpcClient.ConnectionHooks, hooks),
         ),
       ),
     );
-    const protocolContext = yield* Layer.build(protocolLayer).pipe(
+    const protocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));

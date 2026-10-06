@@ -22,14 +22,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
-const TestLayer = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerTest = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };
@@ -221,7 +221,7 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("recovers terminal subagent results until their cross-thread transfer exists", () =>
@@ -283,7 +283,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([parent, completed]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>
@@ -417,7 +417,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([first, second]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reads the run that owns a background roster, not a queued or resumed one", () =>
@@ -484,7 +484,7 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
     yield* createRun(quiet, "completed");
     const quietQueued = yield* createRun(quiet, "queued", { ordinal: 2, completedAt: null });
     assert.deepEqual(yield* runIds(quiet), [quietQueued]);
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
@@ -513,5 +513,5 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([fork, descendant]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );

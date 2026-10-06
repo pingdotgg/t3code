@@ -64,6 +64,7 @@ export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErro
       "claim-deprovision",
       "remove",
       "remove-claimed",
+      "get-by-tunnel-name",
     ]),
     stage: Schema.Literals(["database-request", "resolve-reservation"]),
     userId: Schema.String,
@@ -131,6 +132,10 @@ export class ManagedEndpointAllocations extends Context.Service<
   {
     readonly get: (
       input: ManagedEndpointAllocationKey,
+    ) => Effect.Effect<ManagedEndpointAllocation | null, ManagedEndpointAllocationPersistenceError>;
+    /** The allocation that owns a tunnel name; tunnel names are unique. */
+    readonly getByTunnelName: (
+      tunnelName: string,
     ) => Effect.Effect<ManagedEndpointAllocation | null, ManagedEndpointAllocationPersistenceError>;
     readonly reserve: (
       input: ReserveManagedEndpointAllocationInput,
@@ -225,6 +230,29 @@ export const make = Effect.gen(function* () {
                 operation: "get",
                 stage: "database-request",
                 ...input,
+                cause,
+              }),
+          ),
+        );
+    }),
+    getByTunnelName: Effect.fn("relay.managed_endpoint_allocations.get_by_tunnel_name")(function* (
+      tunnelName: string,
+    ) {
+      return yield* db
+        .select(allocationSelection)
+        .from(relayManagedEndpointAllocations)
+        .where(eq(relayManagedEndpointAllocations.tunnelName, tunnelName))
+        .limit(1)
+        .pipe(
+          Effect.map((rows) => rows[0] ?? null),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "get-by-tunnel-name",
+                stage: "database-request",
+                userId: "",
+                environmentId: "",
+                tunnelName,
                 cause,
               }),
           ),

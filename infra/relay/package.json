@@ -13,6 +13,7 @@
   "dependencies": {
     "@clerk/backend": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@effect/sql-sqlite-do": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/client-runtime": "workspace:*",

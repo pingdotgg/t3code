@@ -53,7 +53,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -679,13 +679,13 @@ function makeManager(input?: {
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
-  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
+  const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
-  const vcsDriverLayer = input?.gitConfigReads
+  const layerVcsDriver = input?.gitConfigReads
     ? Layer.effect(
         GitVcsDriver.GitVcsDriver,
         GitVcsDriver.make.pipe(
@@ -702,14 +702,14 @@ function makeManager(input?: {
       ).pipe(
         Layer.provideMerge(VcsProcess.layer),
         Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(layerServerConfig),
       )
     : GitVcsDriver.layer.pipe(
         Layer.provideMerge(VcsProcess.layer),
         Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(layerServerConfig),
       );
-  const sourceControlRegistryLayer = Layer.effect(
+  const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     (input?.sourceControlProvider === undefined
       ? GitHubSourceControlProvider.make
@@ -728,7 +728,7 @@ function makeManager(input?: {
     ),
   );
 
-  const managerLayer = Layer.mergeAll(
+  const layerManager = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed([]),
@@ -739,21 +739,21 @@ function makeManager(input?: {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
     ),
-    vcsDriverLayer,
-    serverSettingsLayer,
-  ).pipe(Layer.provideMerge(sourceControlRegistryLayer), Layer.provideMerge(NodeServices.layer));
+    layerVcsDriver,
+    layerServerSettings,
+  ).pipe(Layer.provideMerge(layerSourceControlRegistry), Layer.provideMerge(NodeServices.layer));
   // Built into the test's scope: the manager reads these stores after this returns.
-  const storesLayer = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
-    Layer.provideMerge(SqlitePersistenceMemory),
+  const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
+    Layer.provideMerge(SqlitePersistence.layerMemory),
   );
 
   return Effect.gen(function* () {
-    const stores = yield* Layer.build(storesLayer);
+    const stores = yield* Layer.build(layerStores);
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
     const manager = yield* GitManager.make.pipe(
-      Effect.provide(managerLayer),
+      Effect.provide(layerManager),
       Effect.provideContext(stores),
     );
     return { manager, ghCalls };
@@ -762,13 +762,13 @@ function makeManager(input?: {
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
-const GitManagerTestLayer = GitVcsDriver.layer.pipe(
+const layerGitManagerTest = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
-it.layer(GitManagerTestLayer)("GitManager", (it) => {
+it.layer(layerGitManagerTest)("GitManager", (it) => {
   it.effect("status includes draft PR metadata when branch already has a draft PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1068,6 +1068,49 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           key === "branch.feature/status-identity-cache.remote" || key === "remote.origin.url",
       );
       expect(identityReads).toHaveLength(0);
+    }),
+  );
+
+  it.effect("a branch tracking origin reads origin's URL once per PR lookup", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/origin-once"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/origin-once"]);
+
+      const gitConfigReads: string[] = [];
+      const { manager } = yield* makeManager({
+        gitConfigReads,
+        ghScenario: {
+          prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 217,
+                title: "Origin once PR",
+                url: "https://github.com/pingdotgg/t3code/pull/217",
+                baseRefName: "main",
+                headRefName: "feature/origin-once",
+                state: "OPEN",
+                updatedAt: "2026-04-03T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-once" });
+      gitConfigReads.length = 0;
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/origin-once",
+      });
+
+      expect(pullRequest?.number).toBe(217);
+      expect(gitConfigReads.filter((key) => key === "remote.origin.url")).toHaveLength(1);
     }),
   );
 
@@ -2618,7 +2661,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         providerOperation: "listChangeRequests",
         providerCommand: "gh",
         errorDetail:
-          "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.",
+          "GitHub API rate limit exceeded. For the GraphQL quota and reset time, run `gh api graphql -f query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit` reports REST.",
       });
       const loggedText = [
         warning?.message ?? "",

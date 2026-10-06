@@ -127,7 +127,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
-  const installation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
+  const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
     resolve: () =>
       Effect.gen(function* () {
@@ -203,7 +203,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "BROWSER", value: "must-not-run" },
     ].map((variable) => ({ ...variable, sensitive: false })),
   }).pipe(
-    Effect.provide(installation),
+    Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
   );
   const refresh = instance.refreshModels;
@@ -244,7 +244,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   };
 });
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const layerTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -264,7 +264,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(IdAllocator.layer),
 );
 
-it.layer(testLayer)("AntigravityDriver", (it) => {
+it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
     "preserves the Node install message when starting a standalone provider",
     () =>

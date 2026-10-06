@@ -21,7 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -30,9 +30,9 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-const ProjectionStoreTestLayer = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-  SqlitePersistenceMemory,
+const layerProjectionStoreTest = Layer.mergeAll(
+  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  SqlitePersistence.layerMemory,
 );
 
 const threadId = ThreadId.make("thread:checkpoint-capture-delegated");
@@ -50,7 +50,7 @@ const modelSelection = {
   model: "gpt-5.4",
 } as const;
 
-it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
+it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
   it.effect.each([false, true])(
     "captures without decoding history or losing newer delegated completion, ref lookup fails=%s",
     (refLookupFails) =>
@@ -265,7 +265,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         );
 
         const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-        const captureLayer = CheckpointCaptureService.layer.pipe(
+        const layerCapture = CheckpointCaptureService.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
@@ -376,7 +376,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           yield* Ref.set(committed, []);
           yield* service.execute({ threadId, runId, scopeId });
           assert.deepEqual(yield* Ref.get(committed), []);
-        }).pipe(Effect.provide(captureLayer));
+        }).pipe(Effect.provide(layerCapture));
       }),
   );
 
@@ -451,7 +451,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
       });
 
       const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-      const captureLayer = CheckpointCaptureService.layer.pipe(
+      const layerCapture = CheckpointCaptureService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
@@ -472,7 +472,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         Effect.flatMap((service) =>
           service.execute({ threadId: stoppedThreadId, runId: stoppedRunId, scopeId }),
         ),
-        Effect.provide(captureLayer),
+        Effect.provide(layerCapture),
       );
 
       assert.deepEqual(yield* Ref.get(committed), []);
@@ -680,7 +680,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         capturedAt: cancelledAt,
       };
       const commits = yield* Ref.make(0);
-      const captureLayer = CheckpointCaptureService.layer.pipe(
+      const layerCapture = CheckpointCaptureService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
@@ -716,7 +716,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           runId: cancelledRunId,
           scopeId: cancelledScopeId,
         });
-      }).pipe(Effect.provide(captureLayer));
+      }).pipe(Effect.provide(layerCapture));
 
       assert.equal(yield* Ref.get(commits), 1);
       const projected = yield* projectionStore.getCheckpointCaptureContext(cancelledThreadId, {

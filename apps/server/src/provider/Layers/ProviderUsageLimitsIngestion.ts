@@ -4,4 +4,4 @@
  */
 import * as Layer from "effect/Layer";
 
-export const ProviderUsageLimitsIngestionLive = Layer.empty;
+export const layer = Layer.empty;

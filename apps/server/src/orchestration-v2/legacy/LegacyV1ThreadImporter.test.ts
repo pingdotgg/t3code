@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Layers/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -14,25 +14,29 @@ import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 
-const databaseLayer = SqlitePersistenceMemory;
-const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
-const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
-const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
-const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
-const importerProvided = LegacyV1ThreadImporter.layer.pipe(
-  Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+const layerDatabase = SqlitePersistence.layerMemory;
+const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
+const layerProjectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(layerDatabase));
+const layerStoresProvided = Layer.mergeAll(
+  layerDatabase,
+  layerEventStoreProvided,
+  layerProjectionStoreProvided,
 );
-const projectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
-  Layer.provide(storesProvided),
+const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
+const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
 );
-const TestLayer = Layer.mergeAll(
-  storesProvided,
-  eventSinkProvided,
-  importerProvided,
-  projectionMaintenanceProvided,
+const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+  Layer.provide(layerStoresProvided),
+);
+const layerTest = Layer.mergeAll(
+  layerStoresProvided,
+  layerEventSinkProvided,
+  layerImporterProvided,
+  layerProjectionMaintenanceProvided,
 );
 
-it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
+it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
   it.effect("uses the created-thread index for startup migration checks", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

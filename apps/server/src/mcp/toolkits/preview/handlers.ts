@@ -233,8 +233,8 @@ const handlers = {
 
 const { preview_snapshot, ...standardHandlers } = handlers;
 
-export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = PreviewStandardToolkit.toLayer(standardHandlers);
 
-export const PreviewSnapshotToolkitHandlersLive = PreviewSnapshotToolkit.toLayer({
+export const layerSnapshot = PreviewSnapshotToolkit.toLayer({
   preview_snapshot,
 });

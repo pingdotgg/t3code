@@ -65,7 +65,7 @@ function toExpoDigestAlgorithm(
   }
 }
 
-export const cryptoLayer = Layer.succeed(
+export const layer = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: ExpoCrypto.getRandomBytes,

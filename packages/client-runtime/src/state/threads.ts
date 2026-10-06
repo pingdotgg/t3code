@@ -995,7 +995,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 
 export * from "./archivedThreads.ts";
 export * from "./checkpointDiff.ts";
-export * from "./boundedThreadSnapshotHttp.ts";
+export * as BoundedThreadSnapshotLoader from "./boundedThreadSnapshotHttp.ts";
 export * as ThreadHistoryController from "./threadHistoryController.ts";
 // Flat so consumers' inferred types can name it.
 export type { ThreadHistoryLoadEarlierResult } from "./threadHistoryController.ts";

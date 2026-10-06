@@ -63,9 +63,9 @@ import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
-import { ProviderOrchestrationAdapterInfrastructureLive } from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 
-const TestHttpClientLive = Layer.succeed(
+const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
@@ -74,7 +74,7 @@ const TestHttpClientLive = Layer.succeed(
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
   reportHostPowerState: () => Effect.void,
@@ -201,7 +201,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
   // dependency while still surfacing NodeServices to the test body (the
   // codex driver's `create` yields `ChildProcessSpawner` directly).
-  const baseLayer = ServerConfig.layerTest(process.cwd(), {
+  const layerBase = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -218,9 +218,9 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         ),
       }),
     ),
-    Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+    Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
     Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(layerTestHttpClient),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(
       Layer.succeed(
@@ -231,8 +231,8 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
-    Layer.provideMerge(baseLayer),
+  const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provideMerge(layerBase),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -310,7 +310,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -336,7 +336,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("reports Codex's answer when a redemption changed nothing", () =>
@@ -374,7 +374,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // The usage read fails, so the re-probe cannot confirm new limits.
       yield* codex!.snapshot.refresh;
       expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
@@ -428,7 +428,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
@@ -497,7 +497,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
       Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
 
   it.live("refreshes Claude usage after redeeming a reset", () =>
@@ -558,7 +558,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         expect(ghost.driver).toBe("ghostDriver");
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 
@@ -575,7 +575,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+  const layerInfra = OpenCodeRuntime.layer.pipe(
     Layer.provide(OpenCodeServerLedger.layerTest),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
@@ -591,17 +591,17 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       }),
     ),
   );
-  const baseLayer = AntigravityInstallation.AntigravityInstallation.layer.pipe(
+  const layerBase = AntigravityInstallation.AntigravityInstallation.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "provider-instance-registry-all-drivers-test",
       }),
     ),
-    Layer.provideMerge(infraLayer),
-    Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+    Layer.provideMerge(layerInfra),
+    Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
     Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(layerTestHttpClient),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(
       Layer.succeed(
@@ -612,8 +612,8 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
-    Layer.provideMerge(baseLayer),
+  const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provideMerge(layerBase),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -776,6 +776,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });

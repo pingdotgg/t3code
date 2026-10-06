@@ -230,8 +230,4 @@ const handler = Effect.gen(function* () {
   return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
 });
 
-export const deviceHubProxyRouteLayer = HttpRouter.add(
-  "*",
-  `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`,
-  handler,
-);
+export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

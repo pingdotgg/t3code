@@ -21,11 +21,11 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
-const SqlLayer = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
 const old = DateTime.subtract(now, { days: 10 });
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -141,7 +141,7 @@ const createItem = Effect.fn(function* (
 });
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)(
   "%s: discovers settlement work with the same activity and background semantics as the shell",
@@ -299,7 +299,7 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)("%s: the user-authored message time ignores agent notifications", ([, testLayer]) =>
   Effect.gen(function* () {
@@ -366,7 +366,7 @@ const pullRequestLink = (number: number) => ({
 });
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)(
   "%s: lists only active threads with pull request links, oldest first",
@@ -405,7 +405,7 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)("%s: an unsettled-only shell read skips settled threads", ([, testLayer]) =>
   Effect.gen(function* () {
@@ -486,7 +486,7 @@ it.effect(
       WHERE thread_id = ${threadId} AND role = 'user' ORDER BY updated_at DESC, message_id DESC LIMIT 1`;
       assert.isTrue(messagePlan.some((row) => row.detail.includes("messages_latest_user_idx")));
       assert.isFalse(messagePlan.some((row) => row.detail.includes("TEMP B-TREE")));
-    }).pipe(Effect.provide(SqlLayer)),
+    }).pipe(Effect.provide(layerSql)),
 );
 
 it.effect("shell failure lookups stay on the thread's own turn items", () =>
@@ -521,5 +521,9 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
     assert.lengthOf(itemLookups, 2);
     assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
-  }).pipe(Effect.provide(SqlLayer)),
+    // The pending secret request lookup is bounded the same way.
+    const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
+    assert.lengthOf(secretLookups, 1);
+    assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
+  }).pipe(Effect.provide(layerSql)),
 );

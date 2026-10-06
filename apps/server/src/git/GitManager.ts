@@ -733,6 +733,11 @@ export const make = Effect.gen(function* () {
         );
     return resolveProjectSettings(settings, projectId).settings;
   });
+  // Best effort: a settings read failure falls back to the default location.
+  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
+    Effect.map((settings) => settings.worktreesDirectory),
+    Effect.orElseSucceed(() => ""),
+  );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
   )(function* (input, options) {
@@ -743,7 +748,8 @@ export const make = Effect.gen(function* () {
             Effect.map((settings) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    return yield* gitCore.createWorktree(input, { ...options, submodules });
+    const worktreesDirectory = yield* readWorktreesDirectory;
+    return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
   });
 
   const readRepositoryInstructions = (cwd: string, fileName: string) =>
@@ -1398,17 +1404,25 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // Returns [head remote, origin]. Most branches track origin, so read it once.
+  const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
+    remoteName === "origin"
+      ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
+          Effect.map((origin) => [origin, origin] as const),
+        )
+      : Effect.all(
+          [
+            resolveRemoteRepositoryContext(cwd, remoteName),
+            resolveRemoteRepositoryContext(cwd, "origin"),
+          ],
+          { concurrency: "unbounded" },
+        );
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
-      const [headRemote, targetRemote] = yield* Effect.all(
-        [
-          resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
-        ],
-        { concurrency: "unbounded" },
-      );
+      const [headRemote, targetRemote] = yield* resolveHeadAndOriginContexts(cwd, remoteName);
       return {
         remoteName,
         headRemoteUrlKey:
@@ -1432,12 +1446,9 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
-      [
-        resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
-      ],
-      { concurrency: "unbounded" },
+    const [remoteRepository, originRepository] = yield* resolveHeadAndOriginContexts(
+      cwd,
+      remoteName,
     );
 
     const isCrossRepository =
@@ -2604,6 +2615,7 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
+          worktreesDirectory: yield* readWorktreesDirectory,
           // Best effort: a settings read failure falls back to the checkout's t3.json.
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map((settings) => settings.worktreeSubmodules),

@@ -22,7 +22,7 @@ vi.mock("../lib/runtime", async () => {
   const Layer = await import("effect/Layer");
   return {
     runtime: { runPromise: vi.fn() },
-    runtimeContextLayer: Layer.empty,
+    layer: Layer.empty,
   };
 });
 

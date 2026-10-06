@@ -113,6 +113,12 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
+agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
+co-authors stay credited. The setting is off by default and projects can override it. It also
+applies to auto-merge, but not merge queues or native stack merges. Original commits keep their
+messages, so merge and rebase can still retain agent credits in those commits.
+
 On web and desktop, hold **Shift** in the GitHub pull request list for quick actions.
 To close several, press **Close**, drag across the rows in the same group, and release.
 Press **Escape** before releasing to cancel. Failed closes stay in the list so you can retry them.
@@ -186,12 +192,21 @@ when requested. With **Auto-settle merged threads** enabled, a thread can settle
 review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
-the thread is active, the server checks the pull request every minute and wakes the agent when a check
-fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict.
-Comments from your own account do not wake it. Watching ends when the pull request merges or closes,
-after 10 wakes in a row that bring only comments, or when the server cannot read the pull request for
-15 minutes. Settling a thread also ends all its watches. Unsettle the thread before starting a new
-watch. To start or stop it yourself, use the row menu in the **Linked pull requests** panel.
+the thread is active, the server checks the pull request every two minutes and wakes the agent when a
+check fails, the required checks pass, someone else comments or reviews, or the branch starts to
+conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+first asks whether anything changed and reads the pull request only when it did, which keeps
+watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
+when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
+failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
+Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
+watch. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
+it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
+watched pull request shows an eye; click it to stop watching.
+
+A watched thread counts as working between wakes, so it stays in the **Working** section and does
+not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
+returns to your inbox.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.

@@ -29,7 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 
-import { rpcScopeAuthorizationLayer } from "../auth/RpcAuthorization.ts";
+import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
@@ -1276,7 +1276,7 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
             group.toLayer({
               [WS_METHODS.previewAutomationConnect]: (host) => Stream.unwrap(broker.connect(host)),
             }),
-            rpcScopeAuthorizationLayer([AuthOrchestrationOperateScope]),
+            RpcAuthorization.layer([AuthOrchestrationOperateScope]),
           ),
         ),
       );

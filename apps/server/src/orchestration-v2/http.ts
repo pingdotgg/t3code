@@ -63,7 +63,7 @@ function selectHistoryPageFromCursorOrError(
  * compressible and cacheable — and then resume the WebSocket subscription via
  * `afterSequence`.
  */
-export const orchestrationHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
