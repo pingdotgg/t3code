@@ -6,6 +6,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
@@ -121,6 +122,46 @@ describe("skillRootWatch", () => {
       );
 
       assert.strictEqual(watchCount(watched, root, true), 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("follows a root that vanishes before its watch starts", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const parent = path.resolve("/home/user/.claude");
+      const root = path.join(parent, "skills");
+      const existing = new Set([parent, root]);
+      const { fileSystem: base, watched } = yield* makeWatchFileSystem({
+        exists: (candidate) => existing.has(candidate),
+        events: new Map(),
+      });
+      const fileSystem: FileSystem.FileSystem = {
+        ...base,
+        watch: (watchedPath, options) => {
+          if (watchedPath !== root) return base.watch(watchedPath, options);
+          existing.delete(root);
+          return Stream.concat(
+            base.watch(watchedPath, options).pipe(Stream.take(0)),
+            Stream.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "watch",
+                pathOrDescriptor: root,
+              }),
+            ),
+          );
+        },
+      };
+
+      const emitted = yield* watchSkillRoot(root).pipe(
+        Stream.runCollect,
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      assert.strictEqual(emitted.length, 1);
+      // Once as the root's parent, then as the missing root's nearest ancestor.
+      assert.strictEqual(watchCount(watched, parent, false), 2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

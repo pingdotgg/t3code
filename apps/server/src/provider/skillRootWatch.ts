@@ -66,6 +66,16 @@ export const watchSkillRoot = (
             isSkillListChange(path.relative(root, path.resolve(root, event.path))),
           ),
           Stream.as(false),
+          // The root can vanish between the exists check and the watch starting.
+          // Treat that as a root change so it is followed again; any other
+          // failure leaves the parent watch running alone.
+          Stream.catchCause(() =>
+            Stream.unwrap(
+              exists(root).pipe(
+                Effect.map((stillExists) => (stillExists ? Stream.empty : Stream.make(true))),
+              ),
+            ),
+          ),
         );
         const replaced = fileSystem.watch(parent).pipe(
           Stream.filter((event) => path.resolve(parent, event.path) === root),
