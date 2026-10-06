@@ -175,6 +175,19 @@ it("names the adapter's reason when a turn cannot start", () => {
       "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
     );
   }
+  // A known tag inside provider data below a foreign error still classifies
+  // the failure, but its string is provider text, not an adapter reason.
+  const disguised = makeProviderFailure({
+    cause: turnStart({
+      _tag: "PiRpcError",
+      detail: "set_model failed",
+      cause: { _tag: "ProviderAdapterOpenSessionError", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+    }),
+  }).message;
+  assert.equal(
+    disguised,
+    "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
+  );
 });
 
 it("does not expose defect text nested inside a known error category", () => {

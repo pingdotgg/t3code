@@ -56,6 +56,9 @@ function causeMessage(cause: unknown): string | undefined {
   let reason: string | undefined;
   // True only for the node directly beneath the most recent category.
   let adapterAuthored = false;
+  // Cleared for good once the walk crosses an error T3 does not own: a known
+  // tag below that point is provider data, not an adapter-written category.
+  let ownedChain = true;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -88,7 +91,8 @@ function causeMessage(cause: unknown): string | undefined {
         category = nextCategory;
         reason = undefined;
       }
-      adapterAuthored = nextCategory !== undefined;
+      adapterAuthored = ownedChain && nextCategory !== undefined;
+      if (nextCategory === undefined) ownedChain = false;
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;
