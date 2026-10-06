@@ -532,6 +532,53 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("fingerprints watched pull requests on one host in one read", () =>
+    Effect.gen(function* () {
+      const node = (comments: number) => ({
+        state: "OPEN",
+        mergeable: "MERGEABLE",
+        headRefOid: "abc123",
+        comments: { totalCount: comments, nodes: [] },
+        reviews: { totalCount: 0, nodes: [] },
+        reviewThreads: { totalCount: 0 },
+        commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
+      });
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: { w0: { pullRequest: node(1) }, w1: { pullRequest: null } },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const reads = yield* Effect.forEach(
+        [7, 8],
+        (number) =>
+          cli.getPullRequestWatchFingerprint({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const [seven, eight] = yield* Fiber.join(reads);
+
+      expect(seven?.remarks.startsWith("1 ")).toBe(true);
+      // GitHub had no answer for #8, so its watch reads it in full.
+      expect(eight).toBeNull();
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(callAt(0).args.at(-1) ?? "").toContain(
+        'w1: repository(owner: "acme", name: "web") { pullRequest(number: 8)',
+      );
+    }),
+  );
+
   it.effect("reads a pull request the batch said nothing about on its own", () =>
     Effect.gen(function* () {
       mockedExecute

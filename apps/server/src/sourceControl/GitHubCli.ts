@@ -115,7 +115,7 @@ export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLim
   { ...gitHubCliFailureFields, retryAt: Schema.optionalKey(Schema.Finite) },
 ) {
   get detail(): string {
-    return "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.";
+    return "GitHub API rate limit exceeded. For the GraphQL quota and reset time, run `gh api graphql -f query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit` reports REST.";
   }
 
   override get message(): string {

@@ -69,6 +69,15 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
   }
 }
 
+/**
+ * `status` moves with the state, mergeability, head, or checks, which the detail read reports;
+ * `remarks` moves with comments and reviews, which only the activity read reports.
+ */
+export interface ProviderChangeRequestWatchFingerprint {
+  readonly status: string;
+  readonly remarks: string;
+}
+
 export interface PullRequestProviderFailure {
   readonly reason: PullRequestProviderError["reason"];
   readonly retryAt?: number | undefined;
@@ -435,6 +444,15 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestSummary?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
+  /**
+   * A cheap fingerprint of what a pull request watch reports, so it reads the change request in
+   * full only when this moves. Null when the host gave no answer for it. Optional: a host
+   * without one has its watched change requests read in full on every pass.
+   */
+  readonly getChangeRequestWatchFingerprint?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
 
   /**
    * The host-native stack a change request belongs to, or null when it is not stacked. Optional

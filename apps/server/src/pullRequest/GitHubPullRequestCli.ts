@@ -56,6 +56,7 @@ import {
   pullRequestCoreGraphQlQuery,
   type GitHubPullRequestCore,
   type GitHubPullRequestSummary,
+  type GitHubPullRequestWatchFingerprint,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
@@ -67,6 +68,7 @@ import {
   decodePullRequestStacksJson,
   decodePullRequestStatsJson,
   decodePullRequestSummariesJson,
+  decodePullRequestWatchFingerprintsJson,
   decodeReactionSubjectScopeJson,
   decodeReviewerCandidatesJson,
   decodeLabelCandidatesJson,
@@ -77,6 +79,7 @@ import {
   decodeReviewThreadsJson,
   buildPullRequestStatsGraphQlQuery,
   buildPullRequestSummariesGraphQlQuery,
+  buildPullRequestWatchFingerprintsGraphQlQuery,
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
   encodeGraphQlRequestJson,
@@ -447,6 +450,17 @@ class PullRequestSummaryRead extends Request.Class<
   GitHubPullRequestCliError
 > {}
 
+class PullRequestWatchFingerprintRead extends Request.Class<
+  {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+  },
+  GitHubPullRequestWatchFingerprint | null,
+  GitHubPullRequestCliError
+> {}
+
 export interface GitHubPullRequestSearchBatch {
   /** Rows across every repository asked for, newest update first, each naming its own. */
   readonly items: ReadonlyArray<GitHubPullRequestSearchItem>;
@@ -543,6 +557,16 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<ProviderChangeRequestSummary, GitHubPullRequestCliError>;
+    /**
+     * What a watch compares between passes, batched like summaries. Null when GitHub gave no
+     * answer for this pull request, so the watch reads it in full instead.
+     */
+    readonly getPullRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestWatchFingerprint | null, GitHubPullRequestCliError>;
 
     readonly revalidateChecks: Effect.Success<typeof makeChecksRevalidator>;
 
@@ -1918,6 +1942,60 @@ export const make = Effect.gen(function* () {
   const getPullRequestSummary: GitHubPullRequestCli["Service"]["getPullRequestSummary"] = (input) =>
     Effect.request(new PullRequestSummaryRead(input), summaryResolver);
 
+  // Every watched pull request on a host in one read per pass. A pull request the batch has no
+  // answer for gets null, and its watch reads it in full; a failed batch fails every entry.
+  const watchFingerprintResolver = RequestResolver.makeGrouped<
+    PullRequestWatchFingerprintRead,
+    string
+  >({
+    key: ({ request, context }) =>
+      JSON.stringify([
+        request.host.toLowerCase(),
+        Context.getOrElse(context, GitHubCli.PinnedGitHubCredential, () => null)
+          ?.credentialFingerprint ?? null,
+        Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+      ]),
+    resolver: (entries) => {
+      const [first] = entries;
+      const batchable = entries.filter(
+        (entry) => buildPullRequestWatchFingerprintsGraphQlQuery([entry.request]) !== null,
+      );
+      const query = buildPullRequestWatchFingerprintsGraphQlQuery(
+        batchable.map((entry) => entry.request),
+      );
+      const read =
+        query === null
+          ? Effect.succeed(new Map<number, GitHubPullRequestWatchFingerprint>())
+          : graphqlRead({
+              cwd: first.request.cwd,
+              host: first.request.host,
+              operation: "getPullRequestWatchFingerprint",
+              query,
+              decode: decodePullRequestWatchFingerprintsJson,
+            });
+      return read.pipe(
+        Effect.map((fingerprints) => {
+          for (const entry of entries) {
+            const index = batchable.indexOf(entry);
+            entry.completeUnsafe(
+              Exit.succeed(index === -1 ? null : (fingerprints.get(index) ?? null)),
+            );
+          }
+        }),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            for (const entry of entries) entry.completeUnsafe(Exit.failCause(cause));
+          }),
+        ),
+      );
+    },
+  }).pipe(
+    RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
+    RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
+  );
+  const getPullRequestWatchFingerprint: GitHubPullRequestCli["Service"]["getPullRequestWatchFingerprint"] =
+    (input) => Effect.request(new PullRequestWatchFingerprintRead(input), watchFingerprintResolver);
+
   return GitHubPullRequestCli.of({
     withVerifiedCredential,
     revalidateChecks,
@@ -2125,6 +2203,7 @@ export const make = Effect.gen(function* () {
     },
 
     getPullRequestSummary,
+    getPullRequestWatchFingerprint,
 
     getPullRequestDetail,
     getPullRequestPreview: (input) => {

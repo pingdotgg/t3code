@@ -2661,7 +2661,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         providerOperation: "listChangeRequests",
         providerCommand: "gh",
         errorDetail:
-          "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.",
+          "GitHub API rate limit exceeded. For the GraphQL quota and reset time, run `gh api graphql -f query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit` reports REST.",
       });
       const loggedText = [
         warning?.message ?? "",
