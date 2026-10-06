@@ -108,7 +108,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
-  readonly loadCached?: Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
+  readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
@@ -315,6 +315,28 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect("loads the server thread when its local cache read fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        loadCached: Effect.fail(
+          new Persistence.ConnectionPersistenceError({
+            operation: "load-thread",
+            message: "The database connection is closing.",
+          }),
+        ),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+        },
+      });
+
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(h.subscriptionCount)).toBe(1);
+    }),
+  );
+
   it.effect.each(["disk", "HTTP"] as const)(
     "does not rewrite an unchanged %s snapshot on navigation or warm return",
     (source) =>

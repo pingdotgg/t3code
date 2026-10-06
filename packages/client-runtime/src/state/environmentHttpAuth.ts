@@ -5,6 +5,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -98,10 +99,29 @@ const buildEnvironmentAuthHeaders = (
  * Resolve relay credentials at request time without replacing the live socket.
  * A rejected credential gets one refresh and retry, with a new request-bound
  * proof. Cookie and bearer requests keep their existing authentication behavior.
+ *
+ * A DPoP request is T3 Connect work, so its span starts an exported trace that
+ * the environment continues; its local caller's span would leave that trace
+ * without a root.
  */
-export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
-  "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
-)(function* <
+export const executeAuthenticatedEnvironmentHttpRequest = <
+  Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1],
+  A,
+  E,
+  R,
+>(
+  input: Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
+) =>
+  input.prepared.httpAuthorization?._tag === "Dpop"
+    ? executeEnvironmentRequest(input).pipe(
+        Effect.withSpan(ENVIRONMENT_REQUEST_SPAN, { root: true }),
+        withRelayClientTracing,
+      )
+    : executeEnvironmentRequest(input).pipe(Effect.withSpan(ENVIRONMENT_REQUEST_SPAN));
+
+const ENVIRONMENT_REQUEST_SPAN = "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest";
+
+const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1],
   A,
   E,

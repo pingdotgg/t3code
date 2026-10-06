@@ -23,14 +23,6 @@ const RUN_FAILURE_RETRY_MS = 60_000;
 
 type Call<A> = Effect.Effect<A, never, Alchemy.RuntimeContext>;
 
-export interface HookInboxObjectShape {
-  /** Holds a request for `baseUrl`; false when the inbox is full and nothing was stored. */
-  readonly hold: (hook: HookInboxStore.HeldHook, baseUrl: string) => Call<boolean>;
-  /** The environment is back at `baseUrl`: deliver what is waiting now. */
-  readonly wake: (baseUrl: string) => Call<boolean>;
-  readonly clear: () => Call<void>;
-}
-
 /**
  * One per managed endpoint, addressed by endpoint key. Holds webhook requests
  * the environment could not take, in SQLite, and pushes them back through
@@ -38,7 +30,13 @@ export interface HookInboxObjectShape {
  */
 export class HookInboxObject extends Cloudflare.DurableObject<
   HookInboxObject,
-  HookInboxObjectShape
+  {
+    /** Holds a request for `baseUrl`; false when the inbox is full and nothing was stored. */
+    readonly hold: (hook: HookInboxStore.HeldHook, baseUrl: string) => Call<boolean>;
+    /** The environment is back at `baseUrl`: deliver what is waiting now. */
+    readonly wake: (baseUrl: string) => Call<boolean>;
+    readonly clear: () => Call<void>;
+  }
 >()("HookInboxObject") {}
 
 /**

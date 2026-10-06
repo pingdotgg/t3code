@@ -124,8 +124,8 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
+import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
-import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
@@ -813,7 +813,7 @@ const layerMakeServer = Layer.unwrap(
         // while the launcher's explicit-stop marker allows it to be released.
         // Other runtimes wait for activation so a failed standby cannot tear
         // down the active runtime's tunnel.
-        const cleanupBeforeActivation = yield* CloudLink.pendingServiceUpdateExists;
+        const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
         }
@@ -844,8 +844,8 @@ const layerMakeServer = Layer.unwrap(
                   ),
                   Effect.retry({
                     while: (error) =>
-                      shouldRetryCloudLink(error) &&
-                      error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                      CloudLink.shouldRetryCloudLink(error) &&
+                      error._tag !== "CloudLinkEndpointUnavailableError",
                     schedule: Schedule.exponential("1 second").pipe(
                       Schedule.modifyDelay(({ duration }) =>
                         Effect.succeed(Duration.min(duration, Duration.seconds(30))),
@@ -930,8 +930,8 @@ const layerMakeServer = Layer.unwrap(
                 retryRuntimeFailures: true,
               }),
               (error) =>
-                shouldRetryCloudLink(error) &&
-                error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                CloudLink.shouldRetryCloudLink(error) &&
+                error._tag !== "CloudLinkEndpointUnavailableError",
               startedConfirmed ? Effect.void : startStoredManagedTunnel,
             ).pipe(
               Effect.tap((result) =>
@@ -976,7 +976,7 @@ const layerMakeServer = Layer.unwrap(
                 .reconcileDesiredLinkIfStillDesired(localOrigin)
                 .pipe(
                   Effect.retry({
-                    while: shouldRetryCloudLink,
+                    while: CloudLink.shouldRetryCloudLink,
                     schedule: Schedule.exponential("1 second").pipe(
                       Schedule.modifyDelay(({ duration }) =>
                         Effect.succeed(Duration.min(duration, Duration.seconds(30))),

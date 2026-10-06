@@ -444,7 +444,9 @@ const layerBase: Layer.Layer<
           (result) =>
             Effect.gen(function* () {
               if (!result.committed) return;
-              if (input.effects?.length) yield* effectOutbox.notifyAvailable(input.effects.length);
+              if (input.effects !== undefined && input.effects.length > 0) {
+                yield* effectOutbox.notifyAvailable(input.effects.length);
+              }
               yield* publishStoredEvents(result.storedEvents);
             }),
         );

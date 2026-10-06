@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -45,7 +46,7 @@ it.effect.each([
         capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
         issuedAt: 0,
       };
-      const manager = yield* Preview.make;
+      const manager = yield* Preview.make.pipe(Effect.provide(NodeCrypto.layer));
       const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
       const layerDependencies = Layer.mergeAll(
         Layer.succeed(Preview.PreviewManager, manager),

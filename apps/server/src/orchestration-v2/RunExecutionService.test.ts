@@ -3295,9 +3295,27 @@ it.effect("omits run_interrupt_result when superseded attempt request is already
   }),
 );
 
+it.effect("does not overwrite Stop when ownership changes after the finalization read", () =>
+  Effect.gen(function* () {
+    const { written, observed, submittedEffects, committedEffects } =
+      yield* captureRootRunTermination({
+        key: "stop-wins-finalization-gap",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        rejectTerminalWrite: true,
+      });
+    assert.deepEqual(written, []);
+    assert.deepEqual(observed, []);
+    assert.deepEqual(
+      submittedEffects.map((effect) => effect.request.type),
+      ["checkpoint.capture"],
+    );
+    assert.deepEqual(committedEffects, []);
+  }),
+);
+
 it.effect("emits run_interrupt_result when hard-stop finalizes the active attempt", () =>
   Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
+    const { written, observed, committedEffects } = yield* captureRootRunTermination({
       key: "hard-stop",
       shouldFinalizeRun: () => Effect.succeed(true),
     });
@@ -3306,6 +3324,10 @@ it.effect("emits run_interrupt_result when hard-stop finalizes the active attemp
       ["run_interrupt_result"],
     );
     assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.capture"],
+    );
   }),
 );
 
@@ -3436,7 +3458,7 @@ it.effect(
         assert.isTrue(result.startFailed);
         assert.deepEqual(result.written, []);
         assert.deepEqual(result.observed, ["run:starting"]);
-        assert.isEmpty(result.effects);
+        assert.isEmpty(result.committedEffects);
       }
     }),
 );
@@ -3466,7 +3488,7 @@ it.effect("settles a cloud reattach as failed when the adapter proves it was nev
       result.written.find((item) => item.type === "error")?.failure.message ?? "",
       "No task was submitted",
     );
-    assert.isEmpty(result.effects);
+    assert.isEmpty(result.committedEffects);
     assert.equal(result.baselineCalls, 0);
   }),
 );
@@ -3499,7 +3521,7 @@ it.effect.each([true, false])(
       });
       assert.deepEqual(result.observed, runCurrent ? ["run:starting"] : []);
       assert.deepEqual(
-        result.effects.map((effect) => effect.request.type),
+        result.committedEffects.map((effect) => effect.request.type),
         runCurrent ? ["provider-turn.reattach"] : [],
       );
       assert.isEmpty(result.written);
@@ -3553,7 +3575,7 @@ it.effect.each([true, false])(
   "respects filesystem checkpoint capability %s on terminal completion",
   (checkpointFilesystem) =>
     Effect.gen(function* () {
-      const { observed, effects, baselineCalls } = yield* captureRootRunTermination({
+      const { observed, committedEffects, baselineCalls } = yield* captureRootRunTermination({
         key: `capability-completed-${checkpointFilesystem}`,
         checkpointFilesystem,
         shouldFinalizeRun: () => Effect.succeed(true),
@@ -3561,7 +3583,7 @@ it.effect.each([true, false])(
       });
       assert.equal(baselineCalls, checkpointFilesystem ? 1 : 0);
       assert.equal(
-        effects.some((effect) => effect.request.type === "checkpoint.capture"),
+        committedEffects.some((effect) => effect.request.type === "checkpoint.capture"),
         checkpointFilesystem,
       );
       assert.equal(observed.includes("pull-requests-refreshed"), checkpointFilesystem);
@@ -3576,6 +3598,7 @@ function captureRootRunTermination(input: {
   readonly nativeThreadHasTurns?: boolean;
   readonly checkpointFilesystem?: boolean;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
+  readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
@@ -3585,7 +3608,6 @@ function captureRootRunTermination(input: {
   readonly refreshAfterTurn?: Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
-    const effects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const baselineCalls = yield* Ref.make(0);
     const ids = backgroundScenarioIds(input.key);
     let startFailed = false;
@@ -3599,6 +3621,8 @@ function captureRootRunTermination(input: {
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
+    const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
@@ -3630,19 +3654,23 @@ function captureRootRunTermination(input: {
                 return [];
               }),
             writeWithEffects: (payload) =>
-              captureFinalEvents(payload.events).pipe(
-                Effect.andThen(Ref.update(effects, (current) => [...current, ...payload.effects])),
-                Effect.as([]),
-              ),
+              Effect.gen(function* () {
+                yield* Ref.update(submittedEffects, (current) => [...current, ...payload.effects]);
+                yield* Ref.update(committedEffects, (current) => [...current, ...payload.effects]);
+                yield* captureFinalEvents(payload.events);
+                return [];
+              }),
             writeIfRunCurrent: (payload) =>
-              input.runCurrent === false
-                ? Effect.succeed({ committed: false, storedEvents: [] })
-                : captureFinalEvents(payload.events).pipe(
-                    Effect.andThen(
-                      Ref.update(effects, (current) => [...current, ...(payload.effects ?? [])]),
-                    ),
-                    Effect.as({ committed: true, storedEvents: [] }),
-                  ),
+              Effect.gen(function* () {
+                const effects = payload.effects ?? [];
+                yield* Ref.update(submittedEffects, (current) => [...current, ...effects]);
+                if (input.rejectTerminalWrite === true || input.runCurrent === false) {
+                  return { committed: false, storedEvents: [] };
+                }
+                yield* Ref.update(committedEffects, (current) => [...current, ...effects]);
+                yield* captureFinalEvents(payload.events);
+                return { committed: true, storedEvents: [] };
+              }),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -3772,10 +3800,11 @@ function captureRootRunTermination(input: {
     yield* Deferred.await(ingestionDone);
     return {
       written: yield* Ref.get(writtenItems),
-      effects: yield* Ref.get(effects),
       baselineCalls: yield* Ref.get(baselineCalls),
-      observed: yield* Ref.get(observed),
       startFailed,
+      observed: yield* Ref.get(observed),
+      submittedEffects: yield* Ref.get(submittedEffects),
+      committedEffects: yield* Ref.get(committedEffects),
     };
   });
 }

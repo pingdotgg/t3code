@@ -31,8 +31,8 @@ import {
   newPreviewTabId,
   normalizePreviewUrl,
 } from "@t3tools/shared/preview";
-import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -155,7 +155,8 @@ const buildIdleSnapshot = (input: {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
-  const serverEpoch = NodeCrypto.randomUUID();
+  const crypto = yield* Crypto.Crypto;
+  const serverEpoch = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to
   // block publishers if a subscriber is slow. WS clients backpressure on

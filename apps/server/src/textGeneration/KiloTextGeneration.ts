@@ -1,12 +1,11 @@
 import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { toOpenCodeFileParts } from "../provider/opencodeRuntime.ts";
 import * as KiloRuntime from "../provider/kilo/KiloRuntime.ts";
-import { makeOpenCodeOperations, type OpenCodeJsonRunner } from "./OpenCodeTextGeneration.ts";
+import * as TextGenerationOperations from "./TextGenerationOperations.ts";
 
 const isKiloRuntimeError = Schema.is(KiloRuntime.KiloRuntimeError);
 
@@ -14,7 +13,7 @@ const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Only prompt construction is shared. Protocol, credentials and lifetime belong to Kilo. */
 export function make(runtime: KiloRuntime.KiloRuntime["Service"], attachmentsDir?: string) {
-  const run: OpenCodeJsonRunner = (input) =>
+  const run: TextGenerationOperations.Runner = (input) =>
     Effect.gen(function* () {
       const separator = input.modelSelection.model.indexOf("/");
       if (separator <= 0)
@@ -53,11 +52,7 @@ export function make(runtime: KiloRuntime.KiloRuntime["Service"], attachmentsDir
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("\n");
-      // The operation supplies its output schema; it cannot be compiled once at module scope.
-      // oxlint-disable-next-line t3code/no-inline-schema-compile
-      return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(input.outputSchemaJson))(
-        extractJsonObject(text),
-      );
+      return yield* TextGenerationOperations.decodeJsonReply(input, "Kilo", text);
     }).pipe(
       Effect.scoped,
       Effect.mapError((cause) =>
@@ -72,5 +67,5 @@ export function make(runtime: KiloRuntime.KiloRuntime["Service"], attachmentsDir
             }),
       ),
     );
-  return makeOpenCodeOperations(run);
+  return TextGenerationOperations.fromRunner("KiloTextGeneration", run);
 }

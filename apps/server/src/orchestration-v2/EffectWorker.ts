@@ -177,6 +177,14 @@ export const layerExecutor: Layer.Layer<
                 providerTurnId: effect.request.providerTurnId,
               })
               .pipe(
+                Effect.catch((cause) =>
+                  isNonRetryableProviderTurnControlFailure(
+                    effect.request.type,
+                    Cause.pretty(Cause.fail(cause)),
+                  )
+                    ? Effect.void
+                    : Effect.fail(cause),
+                ),
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
                 // work no process will report on, so the Stop ends it too.
