@@ -8,7 +8,7 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

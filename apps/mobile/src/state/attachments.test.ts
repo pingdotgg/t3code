@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { runAttachmentUploadCycle } from "@t3tools/client-runtime/state/attachments";
 import * as Cause from "effect/Cause";
-import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({

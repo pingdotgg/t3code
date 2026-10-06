@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type AuthSessionState } from "@t3tools/contracts";
-import type { AsyncResult } from "effect/unstable/reactivity";
+import type { AsyncResult } from "effect/reactivity";
 import { environmentSession } from "~/state/session";
 import type {
   EnvironmentId,

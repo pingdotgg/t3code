@@ -1,7 +1,7 @@
 import { AuthOrchestrationOperateScope, RuntimeRequestId } from "@t3tools/contracts";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -51,7 +51,7 @@ vi.mock("./queued-run-edit", () => ({
   getQueuedRunEdit: () => null,
 }));
 vi.mock("./preferences", async () => {
-  const { Atom, AsyncResult } = await import("effect/unstable/reactivity");
+  const { Atom, AsyncResult } = await import("effect/reactivity");
   return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
 });
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
@@ -84,7 +84,7 @@ vi.mock("./use-thread-detail", () => ({
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     environmentThreadDetails: { queueWorkflowAtom: () => Atom.make(null) },
     threadEnvironment: {
@@ -95,12 +95,12 @@ vi.mock("./threads", async () => {
   };
 });
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { dispatchingQueuedMessageIdAtom: Atom.make(null), useThreadOutboxMessages: () => ({}) };
 });
 vi.mock("./thread-outbox", () => ({ enqueueThreadOutboxMessage: state.enqueue }));
 vi.mock("./composer-attachment-uploads", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     composerAttachmentUploadsAtom: Atom.make({}),
     composerAttachmentUploadBlockReason: () => null,
@@ -108,7 +108,7 @@ vi.mock("./composer-attachment-uploads", async () => {
   };
 });
 vi.mock("./use-composer-drafts", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),

@@ -198,7 +198,7 @@ describe("settings mutation authorization", () => {
                 return DEFAULT_SERVER_SETTINGS;
               }),
             ),
-            rpcScopeAuthorizationLayer([AuthProvidersManageScope]),
+            RpcAuthorization.layer([AuthProvidersManageScope]),
           ),
         ),
       );
@@ -226,7 +226,7 @@ describe("settings mutation authorization", () => {
                 return DEFAULT_SERVER_SETTINGS;
               }),
             ),
-            rpcScopeAuthorizationLayer([AuthSettingsWriteScope]),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
           ),
         ),
       );

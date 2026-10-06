@@ -6,7 +6,7 @@ import {
   AuthRelayWriteScope,
   type AuthSessionState,
 } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
 import {

@@ -43,7 +43,7 @@ import {
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";

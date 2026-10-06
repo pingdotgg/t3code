@@ -8,7 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
@@ -62,13 +62,13 @@ vi.mock("./entities", () => ({
   useServerConfigs: () => new Map([["secondary", state.config]]),
 }));
 vi.mock("./server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     serverEnvironment: { configValueAtom: Atom.family((_id: string) => Atom.make(state.config)) },
   };
 });
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     threadEnvironment: {
       startTurn: state.start,
@@ -114,7 +114,7 @@ vi.mock("./thread-outbox-removal", () => ({
     state.manager.remove(message, revision),
 }));
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
   await import("./thread-outbox");
   return {
@@ -125,7 +125,7 @@ vi.mock("./use-thread-outbox", async () => {
   };
 });
 vi.mock("./use-composer-drafts", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     composerDraftsAtom: Atom.make({}),
     removeDeliveredCloudQueuedMessage: async () => {},

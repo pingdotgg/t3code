@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ProjectScopedServerSettingKey,

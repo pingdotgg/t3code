@@ -4,7 +4,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({ lastAtom: null as Atom.Atom<unknown> | null }));
