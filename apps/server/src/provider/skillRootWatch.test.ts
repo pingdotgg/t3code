@@ -212,6 +212,47 @@ describe("skillRootWatch", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("follows a root that is recreated before its failed watch is seen", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const parent = path.resolve("/home/user/.claude");
+      const root = path.join(parent, "skills");
+      const { fileSystem: base, watched } = yield* makeWatchFileSystem({
+        exists: (candidate) => candidate === parent || candidate === root,
+        events: new Map([[root, [{ _tag: "Update", path: "new-skill/SKILL.md" }]]]),
+      });
+      let rootWatches = 0;
+      const fileSystem: FileSystem.FileSystem = {
+        ...base,
+        watch: (watchedPath, options) => {
+          if (watchedPath !== root || rootWatches++ > 0) return base.watch(watchedPath, options);
+          // The root vanished as the watch started and is back already.
+          return Stream.concat(
+            base.watch(path.join(root, "unwatched"), options),
+            Stream.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "watch",
+                pathOrDescriptor: root,
+              }),
+            ),
+          );
+        },
+      };
+
+      const emitted = yield* watchSkillRoot(root).pipe(
+        Stream.runCollect,
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      // The replacement, then the manifest edit seen by the new watch.
+      assert.strictEqual(emitted.length, 2);
+      assert.strictEqual(watchCount(watched, root, true), 1);
+      assert.strictEqual(rootWatches, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("follows a missing root down from its nearest existing ancestor", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

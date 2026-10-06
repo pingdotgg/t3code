@@ -21,8 +21,10 @@
  */
 import * as NodeOS from "node:os";
 
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
@@ -85,14 +87,17 @@ export const watchSkillRoot = (
           Stream.filterEffect(changesSkillList),
           Stream.as(false),
           // The root can vanish between the exists check and the watch starting.
-          // Treat that as a root change so it is followed again; any other
-          // failure leaves the parent watch running alone.
-          Stream.catchCause(() =>
-            Stream.unwrap(
-              exists(root).pipe(
-                Effect.map((stillExists) => (stillExists ? Stream.empty : Stream.make(true))),
-              ),
-            ),
+          // Treat that as a root change so it is followed again, even when the
+          // root has already been recreated by the time the failure is seen;
+          // any other failure leaves the parent watch running alone.
+          Stream.catchCause((cause) =>
+            Option.exists(Cause.findErrorOption(cause), (error) => error.reason._tag === "NotFound")
+              ? Stream.make(true)
+              : Stream.unwrap(
+                  exists(root).pipe(
+                    Effect.map((stillExists) => (stillExists ? Stream.empty : Stream.make(true))),
+                  ),
+                ),
           ),
         );
         const replaced = fileSystem.watch(parent).pipe(
