@@ -3293,6 +3293,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect.each(["blob:none", "blob:limit=1024", "tree:0", "combine:blob:none+tree:1"])(
+      "ensureRemote reuses partial clone remotes and avoids collisions with the %s filter annotation",
+      (filter) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* git(cwd, ["init"]);
+          yield* git(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
+          yield* git(cwd, [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "git@github.com:octocat/t3code.git",
+          ]);
+          yield* git(cwd, ["config", "remote.origin.promisor", "true"]);
+          yield* git(cwd, ["config", "remote.origin.partialclonefilter", filter]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const reused = yield* driver.ensureRemote({
+            cwd,
+            preferredName: "origin",
+            url: "git@github.com:pingdotgg/t3code.git",
+          });
+          assert.equal(reused, "origin");
+          const added = yield* driver.ensureRemote({
+            cwd,
+            preferredName: "origin",
+            url: "https://github.com/another-owner/t3code.git",
+          });
+          assert.equal(added, "origin-1");
+          assert.equal(yield* git(cwd, ["remote"]), "origin\norigin-1");
+        }),
+    );
+
     it.effect("explains a real fetch failure for a missing local remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

@@ -476,7 +476,8 @@ function parseGitRemoteVerboseOutput(
       continue;
     }
 
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
+    // Partial clone fetch remotes include a filter annotation such as [blob:none].
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]\r\n]+\])?$/.exec(trimmed);
     if (!match) {
       continue;
     }
