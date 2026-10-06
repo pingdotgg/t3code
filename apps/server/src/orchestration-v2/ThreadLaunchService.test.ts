@@ -17,7 +17,6 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
-  GitManagerError,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -102,7 +101,7 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
-  readonly isRepository?: GitWorkflow.GitWorkflowService["Service"]["isRepository"];
+  readonly isGitRepository?: GitWorkflow.GitWorkflowService["Service"]["isGitRepository"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -172,7 +171,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      isRepository: options.isRepository ?? (() => Effect.succeed(true)),
+      isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -1111,7 +1110,7 @@ it.effect("runs a worktree request against a non-repository project as a root la
   Effect.gen(function* () {
     // Only `projectId` stands in for the Scratch project here.
     const harness = makeHarness({
-      isRepository: () => Effect.succeed(false),
+      isGitRepository: () => Effect.succeed(false),
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         folderForThread: (input) =>
@@ -1139,28 +1138,44 @@ it.effect("runs a worktree request against a non-repository project as a root la
   }),
 );
 
-it.effect("keeps a worktree request when repository detection fails", () =>
-  Effect.gen(function* () {
-    const harness = makeHarness({
-      isRepository: () =>
-        Effect.fail(
-          new GitManagerError({ operation: "isRepository", cwd: "/repo", detail: "unreadable" }),
-        ),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      yield* launches.launch(
-        launchInput({
-          command: "command:launch:detect-failed",
-          thread: "thread:launch:detect-failed",
-          message: "Build the feature",
-          workspace: { type: "worktree", baseRef: "main" },
-        }),
-      );
-      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
-      assert.equal(harness.createWorktree.mock.calls.length, 1);
-    }).pipe(Effect.provide(harness.layer));
-  }),
+it.effect(
+  "fails a worktree request against a non-Git repository instead of running it at the root",
+  () =>
+    Effect.gen(function* () {
+      // A jj project is not a folder. Degrading it to root would quietly share the
+      // project checkout, so the driver's unsupported-VCS error has to survive.
+      const harness = makeHarness({
+        isGitRepository: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "isGitRepository",
+              command: "vcs-route",
+              cwd: "/jj-repo",
+              detail:
+                "The GitWorkflowService.isGitRepository command currently supports Git repositories only; detected jj.",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const failure = yield* Effect.flip(
+          launches.launch(
+            launchInput({
+              command: "command:launch:jj-worktree",
+              thread: "thread:launch:jj-worktree",
+              message: "Build the feature",
+              workspace: { type: "worktree", baseRef: "main" },
+            }),
+          ),
+        );
+        assert.equal(failure.operation, "provision-worktree");
+        assert.include(
+          failure.cause instanceof Error ? failure.cause.message : String(failure.cause),
+          "currently supports Git repositories only; detected jj",
+        );
+        assert.equal(harness.createWorktree.mock.calls.length, 0);
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("names the worktree itself when the client provides no branch", () =>

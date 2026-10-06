@@ -26,6 +26,41 @@ function layer(input: {
 }
 
 describe("GitWorkflowService", () => {
+  it.effect("distinguishes no VCS from a non-Git repository", () =>
+    Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      // A plain folder is the Scratch case callers degrade a worktree request for.
+      assert.isFalse(yield* workflow.isGitRepository("/folder"));
+
+      // A jj repository is not a folder, so this must fail rather than answer
+      // false and let a caller share the project checkout.
+      const failure = yield* Effect.flip(workflow.isGitRepository("/jj-repo"));
+      assert.include(failure.detail, "detected jj");
+    }).pipe(
+      Effect.provide(
+        layer({
+          detect: (input) =>
+            input.cwd === "/folder"
+              ? Effect.succeed(null)
+              : Effect.succeed({
+                  kind: "jj",
+                  repository: {
+                    kind: "jj",
+                    rootPath: "/jj-repo",
+                    metadataPath: "/jj-repo/.jj",
+                    freshness: {
+                      source: "live-local",
+                      observedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                      expiresAt: Option.none(),
+                    },
+                  },
+                  driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
+                }),
+        }),
+      ),
+    ),
+  );
+
   it.effect("reports a non-Git VCS repository as not a Git repository", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;

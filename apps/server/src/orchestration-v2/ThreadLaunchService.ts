@@ -743,13 +743,17 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        // A worktree needs a repository. The Scratch project is a folder, not a
-        // checkout, so a worktree request there becomes a root launch, which the
+        // A worktree needs a Git repository. The Scratch project is a folder, not
+        // a checkout, so a worktree request there becomes a root launch, which the
         // block below answers with a folder of its own. Resolved before the
-        // strategy is recorded on the run, so a retry replays what happened.
+        // strategy is recorded on the run, so a retry replays what happened. Only
+        // "no VCS at all" degrades: a non-Git repository keeps its own
+        // unsupported-VCS failure instead of being treated as a shared folder.
         const requestedStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "worktree" &&
-          !(yield* git.isRepository(project.workspaceRoot).pipe(Effect.orElseSucceed(() => true)))
+          !(yield* git
+            .isGitRepository(project.workspaceRoot)
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))))
             ? { type: "root" }
             : input.workspaceStrategy;
 
