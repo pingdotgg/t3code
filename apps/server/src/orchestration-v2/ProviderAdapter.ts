@@ -408,6 +408,19 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Read one durable native-child identity when its activity resumes after a restart. */
+  readonly readSubagentThread?: (
+    childThreadId: ThreadId,
+  ) => Effect.Effect<ProviderAdapterV2SubagentThread | null, ProviderAdapterProtocolError>;
+}
+
+export interface ProviderAdapterV2SubagentThread {
+  readonly subagent: OrchestrationV2Subagent;
+  readonly childThread: OrchestrationV2AppThread;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+  readonly latestProviderTurn: OrchestrationV2ProviderTurn | null;
+  readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
 }
 
 export interface ProviderAdapterV2SteerInput {

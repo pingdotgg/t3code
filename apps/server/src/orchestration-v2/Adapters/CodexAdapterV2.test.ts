@@ -10,12 +10,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   CheckpointId,
+  CheckpointScopeId,
   CodexSettings,
   EnvironmentId,
+  EventId,
   MessageId,
   type ModelSelection,
   NodeId,
   type OrchestrationV2AppThread,
+  OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   ProjectId,
@@ -54,16 +57,30 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import * as EventSink from "../EventSink.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
+import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderTurnStart from "../ProviderTurnStartService.ts";
+import * as ContextHandoffService from "../ContextHandoffService.ts";
+import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
+import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as RunExecutionService from "../RunExecutionService.ts";
+import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
+  ProviderAdapterProtocolError,
   ProviderAdapterRollbackThreadError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
@@ -1857,6 +1874,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    resumeFrom?: OrchestrationV2ProviderThread,
+    resumeInService = false,
+    beforeNotification: (method: string, payload: unknown) => Effect.Effect<void> = () =>
+      Effect.void,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1883,6 +1904,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      handleServerNotification: (method, handler) =>
+                        client.handleServerNotification(method, (payload) =>
+                          beforeNotification(method, payload).pipe(
+                            Effect.andThen(handler(payload)),
+                          ),
+                        ),
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
@@ -1912,15 +1939,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
         threadId,
-        providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
+        providerSessionId: ProviderSessionId.make(
+          `provider-session-${transcript.scenario}${resumeFrom === undefined ? "" : "-restarted"}`,
+        ),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-      });
+      const providerThread = yield* resumeFrom === undefined
+        ? runtime.ensureThread({
+            threadId,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          })
+        : resumeInService
+          ? Effect.succeed(resumeFrom)
+          : runtime.resumeThread({ providerThread: resumeFrom });
       const events: Array<ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
@@ -1964,6 +1997,169 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  const startCodexTurnThroughService = Effect.fnUntraced(function* (input: {
+    readonly turnInput: ProviderAdapterV2TurnInput;
+    readonly runtime: ProviderAdapterV2SessionRuntime;
+    readonly previousAttemptId: RunAttemptId;
+    readonly startRootRun: RunExecutionService.RunExecutionServiceV2Shape["startRootRun"];
+  }) {
+    const { turnInput } = input;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const scopeId = CheckpointScopeId.make(`checkpoint-${turnInput.runId}`);
+    const run = {
+      id: turnInput.runId,
+      threadId: turnInput.threadId,
+      ordinal: turnInput.runOrdinal,
+      providerInstanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+      modelSelection: CODEX_TEST_MODEL_SELECTION,
+      providerThreadId: turnInput.providerThread.id,
+      userMessageId: turnInput.message.messageId,
+      rootNodeId: turnInput.rootNodeId,
+      activeAttemptId: turnInput.attemptId,
+      status: "starting" as const,
+      requestedAt: now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const seed = Schema.decodeUnknownEffect(Schema.toType(OrchestrationV2DomainEvent));
+    for (const event of [
+      { type: "provider-thread.updated", payload: turnInput.providerThread },
+      {
+        type: "run.updated",
+        payload: {
+          ...run,
+          id: RunId.make(`run-${input.previousAttemptId}`),
+          ordinal: 1,
+          activeAttemptId: input.previousAttemptId,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      },
+      { type: "run.updated", payload: run },
+      {
+        type: "run-attempt.updated",
+        payload: {
+          id: turnInput.attemptId,
+          runId: run.id,
+          rootNodeId: run.rootNodeId,
+          attemptOrdinal: 1,
+          providerInstanceId: run.providerInstanceId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          reason: "initial",
+          status: "pending",
+          startedAt: null,
+          completedAt: null,
+        },
+      },
+      {
+        type: "node.updated",
+        payload: {
+          id: run.rootNodeId,
+          threadId: run.threadId,
+          runId: run.id,
+          parentNodeId: null,
+          rootNodeId: run.rootNodeId,
+          kind: "root_turn",
+          status: "pending",
+          countsForRun: true,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: scopeId,
+          startedAt: null,
+          completedAt: null,
+        },
+      },
+      {
+        type: "checkpoint-scope.created",
+        payload: {
+          id: scopeId,
+          threadId: run.threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          parentScopeId: null,
+          providerThreadId: run.providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/workspace",
+          createdAt: now,
+        },
+      },
+      {
+        type: "message.updated",
+        payload: {
+          ...turnInput.message,
+          threadId: run.threadId,
+          id: run.userMessageId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          role: "user",
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ])
+      yield* projections.apply(
+        yield* seed({
+          ...event,
+          id: EventId.make(
+            `service-seed-${event.type}-${"id" in event.payload ? event.payload.id : ""}`,
+          ),
+          threadId: run.threadId,
+          occurredAt: now,
+        }),
+      );
+    const applyEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.forEach(events, (event) => projections.apply(event), { discard: true }).pipe(
+        Effect.mapError(
+          (cause) => new EventSink.EventSinkWriteError({ eventCount: events.length, cause }),
+        ),
+      );
+    const serviceLayer = ProviderTurnStart.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProjectionStore.ProjectionStoreV2, projections),
+          IdAllocator.layer,
+          NodeServices.layer,
+          Layer.mock(EventSink.EventSinkV2)({
+            writeIfRunCurrent: ({ events }) =>
+              applyEvents(events).pipe(Effect.as({ committed: true, storedEvents: [] })),
+            write: ({ events }) => applyEvents(events).pipe(Effect.as([])),
+          }),
+          Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+          Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProviderAuthService.ProviderAuthService)({
+            tryHandlePromptCommand: () => Effect.succeed(false),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            open: () => Effect.succeed(input.runtime),
+          }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+            resolve: () => Effect.succeed(CODEX_TEST_RUNTIME_POLICY),
+          }),
+          Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+            startRootRun: input.startRootRun,
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId: run.threadId,
+        runId: run.id,
+      });
+    }).pipe(Effect.provide(serviceLayer));
+  });
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
@@ -6692,6 +6888,97 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect(
+    "keeps accepted parent startup and new child tracking when a saved child lookup fails",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const childCompleted = yield* Deferred.make<void>();
+          const preamble = codexReplayPreamble({
+            nativeThreadId: RESUME_NATIVE_THREAD,
+            nativeTurnId: RESUME_NATIVE_TURN,
+            prompt: RESUME_PROMPT,
+          });
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "codex-subagent-recovery-read-failure",
+              entries: [
+                ...preamble.slice(0, -2),
+                childTurnStarted(RESUME_CHILD_TURN_1),
+                ...preamble.slice(-2),
+                childTurnStarted(RESUME_CHILD_TURN_1),
+                resumeSubagentTranscript.entries.find(
+                  (entry) =>
+                    entry.type === "emit_inbound" &&
+                    entry.label === "item/completed/subAgentActivity-started",
+                )!,
+                childAgentMessage({
+                  id: "recovery-failure-child-answer",
+                  text: "CHILD_DONE_AFTER_READ_FAILURE",
+                  turnId: RESUME_CHILD_TURN_1,
+                  completedAtMs: 1782622442000,
+                }),
+                childTurnCompleted(RESUME_CHILD_TURN_1),
+              ],
+            }),
+            (event) =>
+              event.type === "subagent.updated" && event.subagent.status === "completed"
+                ? Deferred.succeed(childCompleted, undefined)
+                : Effect.void,
+          );
+          let failedLookups = 0;
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("recovery-read-failure"),
+              text: RESUME_PROMPT,
+            }),
+            readSubagentThread: () =>
+              Effect.sync(() => {
+                failedLookups += 1;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterProtocolError({
+                      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                      detail: "Saved child metadata is unavailable.",
+                    }),
+                  ),
+                ),
+              ),
+          });
+          yield* Deferred.await(childCompleted);
+          assert.isAtLeast(failedLookups, 3);
+          assert.lengthOf(
+            harness.subagentUpdates().filter((event) => event.subagent.status === "completed"),
+            1,
+          );
+          assert.equal(
+            harness.subagentUpdates().at(-1)?.subagent.result,
+            "CHILD_DONE_AFTER_READ_FAILURE",
+          );
+          assert.lengthOf(
+            harness.events.filter(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text === "CHILD_DONE_AFTER_READ_FAILURE",
+            ),
+            1,
+          );
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.nativeTurnRef?.nativeId === RESUME_NATIVE_TURN &&
+                event.providerTurn.status === "running",
+            ),
+          );
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
   it.effect.each([
     { name: "Sol", model: "gpt-5.6-sol" },
     { name: "Fable", model: "gpt-5.6-fable" },
@@ -6875,6 +7162,988 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.lengthOf(harness.continuationRequests, 0);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    ["subAgentActivity", "subAgentActivity", "none", false],
+    ["collabAgentToolCall", "collabAgentToolCall", "none", false],
+    [
+      "collabAgentToolCall with an early nested spawn",
+      "collabAgentToolCall",
+      "after-parent",
+      false,
+    ],
+    [
+      "collabAgentToolCall with its nested child starting first",
+      "collabAgentToolCall",
+      "before-parent",
+      false,
+    ],
+    ["subAgentActivity after a parent handoff", "subAgentActivity", "none", true],
+    ["collabAgentToolCall after a parent handoff", "collabAgentToolCall", "none", true],
+    [
+      "a reused session with early child activity after a handoff",
+      "collabAgentToolCall",
+      "none",
+      true,
+      "early",
+    ],
+    [
+      "a reused session with late child activity after a handoff",
+      "collabAgentToolCall",
+      "none",
+      true,
+      "late",
+    ],
+    ["a slow saved-child lookup", "collabAgentToolCall", "none", false, "none", true],
+  ] as const)(
+    "restores %s child status and conversation on a fresh adapter after restart",
+    ([_name, launchType, nestedStart, parentHandoff, reuseRoot = "none", slowLookup = false]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+          const scenario = `codex-restarted-subagent-${launchType}-${nestedStart}-${parentHandoff}-${reuseRoot}`;
+          const firstAttempt = RunAttemptId.make("before-restart");
+          const secondAttempt = RunAttemptId.make("after-restart");
+          const secondNativeThread = parentHandoff
+            ? "native-parent-after-handoff"
+            : RESUME_NATIVE_THREAD;
+          const secondNativeTurn = "native-parent-after-restart";
+          const savedChildTurn2 = "native-child-second-turn-before-restart";
+          const prompt = "Resume the existing child.";
+          let identity: RunExecutionService.ProviderEventRouteIdentity = {
+            threadId: ThreadId.make(`thread-${scenario}`),
+            runId: RunId.make(`run-${firstAttempt}`),
+            attemptId: firstAttempt,
+            providerThreadId: ProviderThreadId.make("not-started"),
+          };
+          let routing = RunExecutionService.makeProviderEventRoutingState({
+            identity,
+            providerTurnId: null,
+          });
+          const project = Effect.fnUntraced(function* (event: ProviderAdapterV2Event) {
+            const [accepted, next] = RunExecutionService.routeProviderEvent(
+              event,
+              identity,
+              routing,
+            );
+            routing = next;
+            if (!accepted) return;
+            const events = yield* ingestor.normalize({
+              threadId: identity.threadId,
+              runId: identity.runId,
+              providerSessionId: ProviderSessionId.make("projection-test-session"),
+              providerInstanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+              event,
+            });
+            for (const projected of events) yield* projections.apply(projected);
+          }, Effect.orDie);
+          const launch = resumeSubagentTranscript.entries.find(
+            (entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === "item/completed/subAgentActivity-started",
+          )!;
+          const launchEntry: CodexReplay.CodexAppServerReplayEntry =
+            launchType === "subAgentActivity"
+              ? launch
+              : {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: RESUME_NATIVE_THREAD,
+                      turnId: RESUME_NATIVE_TURN,
+                      item: {
+                        type: "collabAgentToolCall",
+                        id: "original-spawn-call",
+                        tool: "spawnAgent",
+                        status: "completed",
+                        senderThreadId: RESUME_NATIVE_THREAD,
+                        receiverThreadIds: [RESUME_CHILD_THREAD],
+                        prompt: "Keep this original launch prompt.",
+                        model: "gpt-5.4",
+                        agentsStates: {
+                          [RESUME_CHILD_THREAD]: { status: "running", message: null },
+                        },
+                      },
+                    },
+                  },
+                };
+          const firstEntries = [
+            ...codexReplayPreamble({
+              nativeThreadId: RESUME_NATIVE_THREAD,
+              nativeTurnId: RESUME_NATIVE_TURN,
+              prompt: RESUME_PROMPT,
+            }),
+            launchEntry,
+            childTurnStarted(RESUME_CHILD_TURN_1),
+            childAgentMessage({
+              id: "before-restart-answer",
+              text: "CODEX_FIRST_DONE",
+              turnId: RESUME_CHILD_TURN_1,
+              completedAtMs: 1782622442000,
+            }),
+            childTurnCompleted(RESUME_CHILD_TURN_1),
+            childTurnStarted(savedChildTurn2),
+            childAgentMessage({
+              id: "second-before-restart-answer",
+              text: "CODEX_SECOND_DONE",
+              turnId: savedChildTurn2,
+              completedAtMs: 1782622443000,
+            }),
+            childTurnCompleted(savedChildTurn2),
+            resumeSubagentTranscript.entries.find(
+              (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+            )!,
+          ];
+          const first = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeCodexReplayHarness(
+                makeCodexReplayTranscript({ scenario, entries: firstEntries }),
+                project,
+              );
+              identity = { ...identity, providerThreadId: harness.providerThread.id };
+              routing = RunExecutionService.makeProviderEventRoutingState({
+                identity,
+                providerTurnId: null,
+              });
+              const turnInput = makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: firstAttempt,
+                text: RESUME_PROMPT,
+              });
+              yield* projections.apply({
+                id: EventId.make("root-created-before-restart"),
+                type: "thread.created",
+                threadId: harness.threadId,
+                occurredAt: yield* DateTime.now,
+                payload: turnInput.appThread,
+              });
+              yield* harness.runtime.startTurn(turnInput);
+              yield* harness.firstTerminal;
+              return { providerThread: harness.providerThread, threadId: harness.threadId };
+            }),
+          );
+          const before = yield* projections.getThreadProjection(first.threadId);
+          const original = before.subagents[0]!;
+          assert.equal(original.status, "completed");
+          assert.equal(original.result, "CODEX_SECOND_DONE");
+          const originalChild = yield* projections.getThreadProjection(original.childThreadId!);
+          assert.isNull(
+            yield* ProviderTurnStart.readNativeSubagentThread(
+              {
+                ...projections,
+                getThreadRecords: (threadId, fields, options) =>
+                  threadId === first.threadId
+                    ? Effect.fail(
+                        new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }),
+                      )
+                    : projections.getThreadRecords(threadId, fields, options),
+              },
+              original.childThreadId!,
+            ),
+          );
+          const resumed = yield* Deferred.make<void>();
+          const lookupStarted = yield* Deferred.make<void>();
+          const parentCompletionDispatched = yield* Deferred.make<void>();
+          const newChildCompleted = yield* Deferred.make<void>();
+          const nestedChildCompleted = yield* Deferred.make<void>();
+          const newChildNativeThread = "native-new-child-after-restart";
+          const newChildNativeTurn = "new-child-turn-after-restart";
+          const unknownChildNativeThread = "native-unknown-child-after-restart";
+          const nestedChildNativeThread = "native-new-nested-child-after-restart";
+          const nestedChildNativeTurn = "new-nested-child-turn-after-restart";
+          const nestedSpawnId = "nested-spawn-after-restart";
+          const nestedTurnStarted: CodexReplay.CodexAppServerReplayEntry = {
+            type: "emit_inbound",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nestedChildNativeThread,
+                turn: makeCodexReplayTurn({ id: nestedChildNativeTurn, status: "inProgress" }),
+              },
+            },
+          };
+          const nestedEntries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =
+            nestedStart === "none"
+              ? []
+              : [
+                  ...(nestedStart === "after-parent" ? [nestedTurnStarted] : []),
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        threadId: RESUME_CHILD_THREAD,
+                        turnId: RESUME_CHILD_TURN_2,
+                        item: {
+                          type: "collabAgentToolCall",
+                          id: nestedSpawnId,
+                          tool: "spawnAgent",
+                          status: "completed",
+                          senderThreadId: RESUME_CHILD_THREAD,
+                          receiverThreadIds: [nestedChildNativeThread],
+                          prompt: "Nested child after restart",
+                          model: "gpt-5.4",
+                          agentsStates: {
+                            [nestedChildNativeThread]: { status: "running", message: null },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        threadId: nestedChildNativeThread,
+                        turnId: nestedChildNativeTurn,
+                        item: {
+                          type: "agentMessage",
+                          id: "nested-child-answer",
+                          text: "NESTED_CHILD_DONE",
+                          phase: "final_answer",
+                          memoryCitation: null,
+                        },
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "turn/completed",
+                      params: {
+                        threadId: nestedChildNativeThread,
+                        turn: makeCodexReplayTurn({
+                          id: nestedChildNativeTurn,
+                          status: "completed",
+                        }),
+                      },
+                    },
+                  },
+                ];
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const secondProviderThread = parentHandoff
+            ? {
+                ...first.providerThread,
+                id: idAllocator.derive.providerThread({
+                  driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                  nativeThreadId: secondNativeThread,
+                }),
+                nativeThreadRef: {
+                  ...first.providerThread.nativeThreadRef!,
+                  nativeId: secondNativeThread,
+                },
+              }
+            : first.providerThread;
+          const resumePreamble = (nativeThreadId: string, nativeTurnId: string, text: string) =>
+            codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: text }).map((entry) =>
+              entry.type === "expect_outbound" && entry.label === "thread/start"
+                ? {
+                    ...entry,
+                    frame: {
+                      id: 2,
+                      method: "thread/resume",
+                      params: {
+                        threadId: nativeThreadId,
+                        excludeTurns: true,
+                        cwd: "/workspace",
+                        model: "gpt-5.4",
+                        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      },
+                    },
+                  }
+                : entry,
+            );
+          let secondEntries = resumePreamble(secondNativeThread, secondNativeTurn, prompt);
+          // The child can start before turn/start returns the parent turn.
+          secondEntries.splice(
+            secondEntries.findIndex(
+              (entry) =>
+                entry.type === "emit_inbound" &&
+                entry.label === (reuseRoot === "late" ? "turn/started" : "turn/start"),
+            ) + (reuseRoot === "late" ? 1 : 0),
+            0,
+            ...(nestedStart === "before-parent" ? [nestedTurnStarted] : []),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "thread/settings/updated",
+                params: {
+                  threadId: RESUME_CHILD_THREAD,
+                  threadSettings: {
+                    model: "gpt-6-astra",
+                    modelProvider: "openai",
+                    cwd: "/workspace",
+                    approvalPolicy: "never",
+                    approvalsReviewer: "auto_review",
+                    collaborationMode: { mode: "default", settings: { model: "gpt-6-astra" } },
+                    sandboxPolicy: { type: "dangerFullAccess" },
+                  },
+                },
+              },
+            },
+            childTurnStarted(RESUME_CHILD_TURN_2),
+            ...nestedEntries,
+            childAgentMessage({
+              id: "after-restart-answer",
+              text: "CODEX_RESUME_DONE",
+              turnId: RESUME_CHILD_TURN_2,
+              completedAtMs: 1782622480000,
+            }),
+            childTurnCompleted(RESUME_CHILD_TURN_2),
+            // No saved parent exists for this child yet. Early payloads
+            // must expire before its fresh launch establishes ownership.
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: newChildNativeThread,
+                  turn: makeCodexReplayTurn({ id: newChildNativeTurn, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: newChildNativeThread,
+                  turnId: newChildNativeTurn,
+                  item: {
+                    type: "agentMessage",
+                    id: "unknown-early-answer",
+                    text: "UNKNOWN_EARLY_ANSWER",
+                    phase: "final_answer",
+                    memoryCitation: null,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: newChildNativeThread,
+                  turn: makeCodexReplayTurn({ id: newChildNativeTurn, status: "completed" }),
+                },
+              },
+            },
+          );
+          if (slowLookup)
+            secondEntries.push({
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: secondNativeThread,
+                  turn: makeCodexReplayTurn({ id: secondNativeTurn, status: "completed" }),
+                },
+              },
+            });
+          if (!slowLookup)
+            secondEntries.push(
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: unknownChildNativeThread,
+                    turn: makeCodexReplayTurn({ id: "unknown-child-turn", status: "inProgress" }),
+                  },
+                },
+              },
+              // Both older turns must stay ignored, even when they are not the latest saved turn.
+              childTurnStarted(RESUME_CHILD_TURN_1),
+              childTurnStarted(savedChildTurn2),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: newChildNativeThread,
+                    turn: makeCodexReplayTurn({ id: newChildNativeTurn, status: "inProgress" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: secondNativeThread,
+                    turnId: secondNativeTurn,
+                    item: {
+                      type: "collabAgentToolCall",
+                      id: "new-spawn-after-restart",
+                      tool: "spawnAgent",
+                      status: "completed",
+                      senderThreadId: secondNativeThread,
+                      receiverThreadIds: [newChildNativeThread],
+                      prompt: "New child after restart",
+                      model: "gpt-5.4",
+                      agentsStates: {
+                        [newChildNativeThread]: { status: "running", message: null },
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: newChildNativeThread,
+                    turnId: newChildNativeTurn,
+                    item: {
+                      type: "agentMessage",
+                      id: "new-child-answer",
+                      text: "NEW_CHILD_DONE",
+                      phase: "final_answer",
+                      memoryCitation: null,
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: newChildNativeThread,
+                    turn: makeCodexReplayTurn({ id: newChildNativeTurn, status: "completed" }),
+                  },
+                },
+              },
+            );
+          const warmupTurn = "root-before-handoff";
+          const warmupPrompt = "Continue without waking any children.";
+          if (reuseRoot !== "none") {
+            secondEntries = [
+              ...resumePreamble(RESUME_NATIVE_THREAD, warmupTurn, warmupPrompt),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: RESUME_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: warmupTurn, status: "completed" }),
+                  },
+                },
+              },
+              ...secondEntries
+                .slice(3)
+                .map((entry) =>
+                  entry.type !== "runtime_exit" &&
+                  Predicate.isObject(entry.frame) &&
+                  typeof entry.frame.id === "number"
+                    ? withReplayRequestId(entry, entry.frame.id + 2)
+                    : entry,
+                ),
+            ];
+          }
+          let projectSecondTurn = reuseRoot === "none";
+          const second = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({ scenario, entries: secondEntries }),
+            (event) =>
+              !projectSecondTurn
+                ? Effect.void
+                : project(event).pipe(
+                    Effect.andThen(
+                      event.type === "subagent.updated" &&
+                        event.subagent.status === "completed" &&
+                        event.subagent.result === "CODEX_RESUME_DONE"
+                        ? Deferred.succeed(resumed, undefined)
+                        : event.type === "subagent.updated" &&
+                            event.subagent.status === "completed" &&
+                            event.subagent.result === "NEW_CHILD_DONE"
+                          ? Deferred.succeed(newChildCompleted, undefined)
+                          : event.type === "subagent.updated" &&
+                              event.subagent.status === "completed" &&
+                              event.subagent.result === "NESTED_CHILD_DONE"
+                            ? Deferred.succeed(nestedChildCompleted, undefined)
+                            : Effect.void,
+                    ),
+                  ),
+            undefined,
+            undefined,
+            secondProviderThread,
+            true,
+            (method, payload) => {
+              if (
+                !slowLookup ||
+                !Predicate.isObject(payload) ||
+                payload.threadId !== secondNativeThread
+              )
+                return Effect.void;
+              if (method === "turn/started") return Deferred.await(lookupStarted);
+              if (method === "turn/completed")
+                return Deferred.succeed(parentCompletionDispatched, undefined).pipe(Effect.asVoid);
+              return Effect.void;
+            },
+          );
+          if (reuseRoot !== "none") {
+            const providerThread = yield* second.runtime.resumeThread({
+              providerThread: first.providerThread,
+            });
+            yield* second.runtime.startTurn({
+              ...makeCodexTestTurnInput({
+                threadId: second.threadId,
+                providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("before-handoff"),
+                text: warmupPrompt,
+              }),
+              readSubagentThread: (childThreadId) =>
+                ProviderTurnStart.readNativeSubagentThread(projections, childThreadId).pipe(
+                  Effect.orDie,
+                ),
+            });
+            yield* second.firstTerminal;
+            projectSecondTurn = true;
+          }
+          identity = {
+            ...identity,
+            providerThreadId: second.providerThread.id,
+            runId: RunId.make(`run-${secondAttempt}`),
+            attemptId: secondAttempt,
+          };
+          routing = RunExecutionService.makeProviderEventRoutingState({
+            identity,
+            providerTurnId: null,
+          });
+          const turnInput = {
+            ...makeCodexTestTurnInput({
+              threadId: second.threadId,
+              providerThread: second.providerThread,
+              now: yield* DateTime.now,
+              attemptId: secondAttempt,
+              text: prompt,
+            }),
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+          };
+          // No handoff, missed prompt or restart note triggers context delivery.
+          yield* startCodexTurnThroughService({
+            turnInput,
+            runtime: slowLookup
+              ? {
+                  ...second.runtime,
+                  startTurn: (input) =>
+                    second.runtime.startTurn({
+                      ...input,
+                      readSubagentThread: (childThreadId) =>
+                        input.readSubagentThread!(childThreadId).pipe(
+                          Effect.tap(() => Deferred.succeed(lookupStarted, undefined)),
+                          Effect.tap(() => Deferred.await(parentCompletionDispatched)),
+                          // Let the reader handle the completion while the lookup is still in flight.
+                          Effect.tap(() => Effect.yieldNow),
+                        ),
+                    }),
+                }
+              : second.runtime,
+            previousAttemptId: firstAttempt,
+            startRootRun: (input) => {
+              routing = RunExecutionService.makeProviderEventRoutingState({
+                identity,
+                providerTurnId: null,
+                relatedThreadIds: input.relatedThreadIds ?? [],
+                relatedProviderThreadIds: input.relatedProviderThreadIds ?? [],
+              });
+              return input.session
+                .startTurn({
+                  ...turnInput,
+                  providerThread: input.providerThread,
+                })
+                .pipe(Effect.orDie);
+            },
+          });
+          if (slowLookup) {
+            yield* Deferred.await(resumed);
+            yield* second.firstTerminal;
+            const rootTerminalIndex = second.events.findIndex(
+              (event) => event.type === "turn.terminal",
+            );
+            const childAnswerIndex = second.events.findIndex(
+              (event) =>
+                event.type === "message.updated" && event.message.text === "CODEX_RESUME_DONE",
+            );
+            assert.isAtLeast(childAnswerIndex, 0);
+            assert.isAbove(
+              rootTerminalIndex,
+              childAnswerIndex,
+              "Recovery must publish child activity before the root consumer closes",
+            );
+            return;
+          }
+          yield* Deferred.await(newChildCompleted);
+          assert.isTrue(
+            second.subagentUpdates().some((event) => event.subagent.id === original.id),
+            "The saved child must be restored under its original identity",
+          );
+          yield* Deferred.await(resumed);
+          if (nestedStart !== "none") yield* Deferred.await(nestedChildCompleted);
+          const after = yield* projections.getThreadProjection(first.threadId);
+          assert.lengthOf(
+            after.subagents.filter((task) => task.id === original.id),
+            1,
+          );
+          assert.lengthOf(after.subagents, 2);
+          assert.isFalse(
+            second.events.some(
+              (event) =>
+                event.type === "message.updated" && event.message.text === "UNKNOWN_EARLY_ANSWER",
+            ),
+          );
+          assert.equal(after.subagents[0]?.id, original.id);
+          assert.equal(after.subagents[0]?.childThreadId, original.childThreadId);
+          assert.equal(after.subagents[0]?.prompt, original.prompt);
+          assert.equal(after.subagents[0]?.title, original.title);
+          assert.equal(after.subagents[0]?.runId, identity.runId);
+          assert.equal(after.subagents[0]?.status, "completed");
+          assert.equal(after.subagents[0]?.result, "CODEX_RESUME_DONE");
+          assert.equal(after.subagents[0]?.model, "gpt-6-astra");
+          assert.isTrue(
+            second
+              .subagentUpdates()
+              .some(
+                (event) =>
+                  event.subagent.status === "running" &&
+                  event.subagent.result === null &&
+                  event.subagent.completedAt === null,
+              ),
+          );
+          const child = yield* projections.getThreadProjection(original.childThreadId!);
+          assert.deepEqual(child.thread, originalChild.thread);
+          assert.equal(
+            child.providerThreads[0]?.forkedFrom?.providerThreadId,
+            first.providerThread.id,
+          );
+          assert.deepEqual(
+            child.messages
+              .filter((message) => message.role === "assistant")
+              .map((message) => message.text),
+            ["CODEX_FIRST_DONE", "CODEX_SECOND_DONE", "CODEX_RESUME_DONE"],
+          );
+          assert.deepEqual(
+            child.providerTurns.map((turn) => turn.ordinal),
+            [1, 2, 3],
+          );
+          assert.equal(
+            child.providerThreads[0]?.providerSessionId,
+            second.runtime.providerSession.id,
+          );
+          if (nestedStart !== "none") {
+            assert.lengthOf(child.subagents, 1);
+            const nestedTask = child.subagents[0]!;
+            assert.equal(
+              nestedTask.id,
+              idAllocator.derive.nodeFromProviderItem({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeItemId: `${nestedSpawnId}:${nestedChildNativeThread}`,
+              }),
+            );
+            assert.equal(nestedTask.status, "completed");
+            assert.equal(nestedTask.result, "NESTED_CHILD_DONE");
+            assert.equal(
+              nestedTask.childThreadId,
+              idAllocator.derive.threadFromProviderThread({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeThreadId: nestedChildNativeThread,
+              }),
+            );
+            const nestedChild = yield* projections.getThreadProjection(nestedTask.childThreadId!);
+            assert.equal(nestedChild.thread.lineage.parentThreadId, original.childThreadId);
+            assert.equal(nestedChild.thread.lineage.rootThreadId, first.threadId);
+            assert.equal(nestedChild.providerThreads[0]?.id, nestedTask.providerThreadId);
+            assert.equal(
+              nestedChild.providerThreads[0]?.forkedFrom?.providerThreadId,
+              child.providerThreads[0]?.id,
+            );
+            assert.deepEqual(
+              nestedChild.messages.map((message) => message.text),
+              ["Nested child after restart", "NESTED_CHILD_DONE"],
+            );
+            assert.lengthOf(nestedChild.providerTurns, 1);
+            assert.equal(nestedChild.providerTurns[0]?.status, "completed");
+            assert.equal(
+              nestedChild.providerTurns[0]?.nativeTurnRef?.nativeId,
+              nestedChildNativeTurn,
+            );
+          }
+          const newChild = yield* projections.getThreadProjection(
+            idAllocator.derive.threadFromProviderThread({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeThreadId: newChildNativeThread,
+            }),
+          );
+          assert.deepEqual(
+            newChild.messages.map((message) => message.text),
+            ["New child after restart", "NEW_CHILD_DONE"],
+          );
+          assert.lengthOf(newChild.providerTurns, 1);
+          assert.isNull(
+            yield* ProviderTurnStart.readNativeSubagentThread(
+              projections,
+              idAllocator.derive.threadFromProviderThread({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeThreadId: unknownChildNativeThread,
+              }),
+            ),
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              ProviderEventIngestor.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    ProjectionStore.layerMemory,
+                    Layer.mock(EventSink.EventSinkV2)({}),
+                    ThreadCommandExecutor.layer,
+                  ),
+                ),
+              ),
+              ProjectionStore.layerMemory,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("keeps a running child with its original consumer when the next root turn starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const childCompleted = yield* Deferred.make<void>();
+        const parentCompleted = yield* Deferred.make<void>();
+        const scenario = "codex-live-child-ownership";
+        const firstAttempt = RunAttemptId.make("live-child-first");
+        const secondAttempt = RunAttemptId.make("live-child-second");
+        const secondNativeTurn = "live-child-second-root-turn";
+        const secondPrompt = "Start the next root turn.";
+        const writtenEvents: Array<OrchestrationV2DomainEvent> = [];
+        const consumers: Array<{
+          identity: RunExecutionService.ProviderEventRouteIdentity;
+          routing: RunExecutionService.ProviderEventRoutingState;
+        }> = [];
+        const project = Effect.fnUntraced(function* (event: ProviderAdapterV2Event) {
+          for (const consumer of consumers) {
+            const [accepted, next] = RunExecutionService.routeProviderEvent(
+              event,
+              consumer.identity,
+              consumer.routing,
+            );
+            consumer.routing = next;
+            if (!accepted) continue;
+            const events = yield* ingestor.normalize({
+              threadId: consumer.identity.threadId,
+              runId: consumer.identity.runId,
+              providerSessionId: ProviderSessionId.make("live-child-session"),
+              providerInstanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+              event,
+            });
+            for (const projected of events) {
+              writtenEvents.push(projected);
+              yield* projections.apply(projected);
+            }
+          }
+          if (event.type === "subagent.updated" && event.subagent.status === "completed")
+            yield* Deferred.succeed(childCompleted, undefined);
+          if (event.type === "turn.terminal") yield* Deferred.succeed(parentCompleted, undefined);
+        }, Effect.orDie);
+        const secondPreamble = codexReplayPreamble({
+          nativeThreadId: RESUME_NATIVE_THREAD,
+          nativeTurnId: secondNativeTurn,
+          prompt: secondPrompt,
+        });
+        const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [
+          ...codexReplayPreamble({
+            nativeThreadId: RESUME_NATIVE_THREAD,
+            nativeTurnId: RESUME_NATIVE_TURN,
+            prompt: RESUME_PROMPT,
+          }),
+          resumeSubagentTranscript.entries.find(
+            (entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === "item/completed/subAgentActivity-started",
+          )!,
+          childTurnStarted(RESUME_CHILD_TURN_1),
+          resumeSubagentTranscript.entries.find(
+            (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+          )!,
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 4,
+              method: "thread/resume",
+              params: {
+                threadId: RESUME_NATIVE_THREAD,
+                excludeTurns: true,
+                cwd: "/workspace",
+                model: "gpt-5.4",
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+            },
+          },
+          ...secondPreamble
+            .slice(4, 5)
+            .map((entry) =>
+              entry.type === "emit_inbound" && Predicate.isObject(entry.frame)
+                ? { ...entry, frame: { ...entry.frame, id: 4 } }
+                : entry,
+            ),
+          ...secondPreamble
+            .slice(-3)
+            .map((entry) =>
+              (entry.type === "expect_outbound" || entry.type === "emit_inbound") &&
+              Predicate.isObject(entry.frame) &&
+              "id" in entry.frame
+                ? { ...entry, frame: { ...entry.frame, id: 5 } }
+                : entry,
+            ),
+          childAgentMessage({
+            id: "live-child-final-answer",
+            text: "LIVE_CHILD_DONE",
+            turnId: RESUME_CHILD_TURN_1,
+            completedAtMs: 1782622480000,
+          }),
+          childTurnCompleted(RESUME_CHILD_TURN_1),
+        ];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario, entries }),
+          project,
+        );
+        const firstInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: firstAttempt,
+          text: RESUME_PROMPT,
+        });
+        const firstIdentity = {
+          threadId: firstInput.threadId,
+          runId: firstInput.runId,
+          attemptId: firstAttempt,
+          providerThreadId: harness.providerThread.id,
+        };
+        consumers.push({
+          identity: firstIdentity,
+          routing: RunExecutionService.makeProviderEventRoutingState({
+            identity: firstIdentity,
+            providerTurnId: null,
+          }),
+        });
+        yield* projections.apply({
+          id: EventId.make("live-child-root-created"),
+          type: "thread.created",
+          threadId: firstInput.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: firstInput.appThread,
+        });
+        yield* harness.runtime.startTurn(firstInput);
+        yield* Deferred.await(parentCompleted);
+        const before = yield* projections.getThreadProjection(harness.threadId);
+        const original = before.subagents[0]!;
+        assert.equal(original.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(consumers[0]!.routing.rootTurnEnded);
+        const secondInput = {
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: secondAttempt,
+            text: secondPrompt,
+          }),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+        };
+        yield* startCodexTurnThroughService({
+          turnInput: secondInput,
+          runtime: harness.runtime,
+          previousAttemptId: firstAttempt,
+          startRootRun: (input) => {
+            const identity = {
+              threadId: secondInput.threadId,
+              runId: secondInput.runId,
+              attemptId: secondAttempt,
+              providerThreadId: input.providerThread.id,
+            };
+            consumers.push({
+              identity,
+              routing: RunExecutionService.makeProviderEventRoutingState({
+                identity,
+                providerTurnId: null,
+                relatedThreadIds: input.relatedThreadIds ?? [],
+                relatedProviderThreadIds: input.relatedProviderThreadIds ?? [],
+              }),
+            });
+            return input.session
+              .startTurn({
+                ...secondInput,
+                providerThread: input.providerThread,
+              })
+              .pipe(Effect.orDie);
+          },
+        });
+        yield* Deferred.await(childCompleted);
+        assert.lengthOf(
+          writtenEvents.filter(
+            (event) => event.type === "message.updated" && event.payload.text === "LIVE_CHILD_DONE",
+          ),
+          1,
+        );
+        assert.lengthOf(
+          writtenEvents.filter(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.payload.id === original.id &&
+              event.payload.status === "completed",
+          ),
+          1,
+        );
+        const child = yield* projections.getThreadProjection(original.childThreadId!);
+        assert.deepEqual(
+          child.messages
+            .filter((message) => message.role === "assistant")
+            .map((message) => message.text),
+          ["LIVE_CHILD_DONE"],
+        );
+        assert.equal(
+          (yield* projections.getThreadProjection(harness.threadId)).subagents[0]?.runId,
+          firstInput.runId,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            ProjectionStore.layerMemory,
+            ProviderEventIngestor.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  IdAllocator.layer,
+                  ProjectionStore.layerMemory,
+                  Layer.mock(EventSink.EventSinkV2)({}),
+                  ThreadCommandExecutor.layer,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     ),
   );
 

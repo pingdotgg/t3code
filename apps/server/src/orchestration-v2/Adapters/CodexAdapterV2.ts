@@ -1086,6 +1086,7 @@ interface ActiveCodexTurnContext {
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
+  readonly subagentRecoveryReady?: Deferred.Deferred<void>;
   readonly input: ProviderAdapterV2TurnInput;
   readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
@@ -1153,6 +1154,8 @@ interface DeferredCodexRootTerminal {
 
 interface CodexSubagentThreadContext {
   parentContext: ActiveCodexTurnContext;
+  latestContext?: ActiveCodexTurnContext;
+  readonly restoredFromProjection?: true;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly childThread: OrchestrationV2AppThread;
   readonly subagentNodeId: OrchestrationV2ExecutionNode["id"];
@@ -1622,6 +1625,10 @@ export interface CodexAdapterV2Options {
   };
 }
 
+/**
+ * Creates an adapter for one Codex provider instance. Production client factories
+ * launch app-server processes; replay factories provide recorded protocol sessions.
+ */
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
@@ -1731,6 +1738,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const latestRootTurns = new Map<ThreadId, ActiveCodexTurnContext>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -1765,6 +1773,54 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const pendingSubagentTurns = yield* Ref.make(
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
         );
+        const pendingSubagentEvents = new Map<
+          string,
+          Array<Effect.Effect<void, CodexErrors.CodexAppServerError>>
+        >();
+        const pendingSubagentEventPermit = yield* Semaphore.make(1);
+        // The protocol reader must keep accepting a parent's turn/start reply
+        // while an early child waits for its saved identity to be restored.
+        const flushPendingSubagentEvents = Effect.gen(function* () {
+          let replayed = true;
+          while (replayed && pendingSubagentEvents.size > 0) {
+            replayed = false;
+            for (const [nativeThreadId, pending] of pendingSubagentEvents) {
+              if (!(yield* Ref.get(subagentThreads)).has(nativeThreadId)) continue;
+              for (const event of pending) yield* event;
+              pendingSubagentEvents.delete(nativeThreadId);
+              replayed = true;
+            }
+          }
+          // Replayed spawns can register children whose queue preceded the
+          // parent. Discard unknown payloads only after those children drain.
+          if ((yield* Ref.get(pendingRootTurns)).size === 0) pendingSubagentEvents.clear();
+        }).pipe(pendingSubagentEventPermit.withPermits(1));
+        const handleServerNotification: CodexClient.CodexAppServerClient["Service"]["handleServerNotification"] =
+          (method, handler) =>
+            client.handleServerNotification(method, (payload) =>
+              Effect.gen(function* () {
+                const nativeThreadId = "threadId" in payload ? payload.threadId : undefined;
+                const dispatch = Effect.suspend(() => handler(payload)).pipe(Effect.asVoid);
+                if (typeof nativeThreadId === "string") {
+                  const pending = pendingSubagentEvents.get(nativeThreadId);
+                  if (pending !== undefined) {
+                    pending.push(dispatch);
+                    return;
+                  }
+                }
+                yield* dispatch;
+                if (
+                  typeof nativeThreadId === "string" &&
+                  (yield* Ref.get(pendingSubagentTurns)).has(nativeThreadId) &&
+                  (yield* Ref.get(pendingRootTurns)).size > 0
+                ) {
+                  // Replaying this turn/started after registration precedes every
+                  // child item and terminal that arrived while the parent loaded.
+                  pendingSubagentEvents.set(nativeThreadId, [dispatch]);
+                }
+                yield* flushPendingSubagentEvents;
+              }),
+            );
         const nextProviderTurnOrdinals = yield* Ref.make(new Map<string, number>());
         const providerRetries = yield* Ref.make(
           new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
@@ -1893,13 +1949,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           Effect.gen(function* () {
             const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
             if (existing !== undefined) {
+              if (existing.subagentRecoveryReady !== undefined)
+                yield* Deferred.await(existing.subagentRecoveryReady);
               return existing;
             }
+            const subagentRecoveryReady = yield* Deferred.make<void>();
             const providerTurnId = idAllocator.derive.providerTurn({
               driver: CODEX_PROVIDER,
               nativeTurnId: input.nativeTurnId,
             });
             const context: ActiveCodexTurnContext = {
+              subagentRecoveryReady,
               ...(input.waitForNativeStart
                 ? { nativeStartReady: yield* Deferred.make<void>() }
                 : {}),
@@ -1920,39 +1980,51 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               startedAt: input.startedAt,
               itemPositions: new Map(),
             };
-            yield* Ref.update(limitedTurnItems, (current) => {
-              const next = new Map(current);
-              next.delete(context.providerThread.id);
-              return next;
-            });
-            beginTurnTokenUsage(context);
-            yield* Ref.update(activeTurns, (current) => {
-              const updated = new Map(current);
-              updated.set(input.nativeTurnId, context);
-              return updated;
-            });
-            yield* emitProviderEvent({
-              type: "provider_turn.updated",
-              driver: CODEX_PROVIDER,
-              threadId: input.turnInput.threadId,
-              providerTurn: {
-                id: providerTurnId,
-                providerThreadId: input.turnInput.providerThread.id,
-                nodeId: input.turnInput.rootNodeId,
-                runAttemptId: input.turnInput.attemptId,
-                nativeTurnRef: {
-                  driver: CODEX_PROVIDER,
-                  nativeId: input.nativeTurnId,
-                  strength: "strong",
+            return yield* Effect.gen(function* () {
+              yield* Ref.update(limitedTurnItems, (current) => {
+                const next = new Map(current);
+                next.delete(context.providerThread.id);
+                return next;
+              });
+              beginTurnTokenUsage(context);
+              yield* Ref.update(activeTurns, (current) => {
+                const updated = new Map(current);
+                updated.set(input.nativeTurnId, context);
+                return updated;
+              });
+              latestRootTurns.set(context.projectionThreadId, context);
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CODEX_PROVIDER,
+                threadId: input.turnInput.threadId,
+                providerTurn: {
+                  id: providerTurnId,
+                  providerThreadId: input.turnInput.providerThread.id,
+                  nodeId: input.turnInput.rootNodeId,
+                  runAttemptId: input.turnInput.attemptId,
+                  nativeTurnRef: {
+                    driver: CODEX_PROVIDER,
+                    nativeId: input.nativeTurnId,
+                    strength: "strong",
+                  },
+                  ordinal: input.turnInput.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: input.startedAt,
+                  completedAt: null,
                 },
-                ordinal: input.turnInput.providerTurnOrdinal,
-                status: "running",
-                startedAt: input.startedAt,
-                completedAt: null,
-              },
-            });
-            yield* rememberRootProviderThread(input.turnInput.providerThread);
-            return context;
+              });
+              yield* rememberRootProviderThread(input.turnInput.providerThread);
+              for (const nativeThreadId of (yield* Ref.get(pendingSubagentTurns)).keys()) {
+                yield* restoreSubagentThread(
+                  idAllocator.derive.threadFromProviderThread({
+                    driver: CODEX_PROVIDER,
+                    nativeThreadId,
+                  }),
+                  context,
+                );
+              }
+              return context;
+            }).pipe(Effect.ensuring(Deferred.succeed(subagentRecoveryReady, undefined)));
           });
 
         const findActiveTurnByNativeThreadId = (nativeThreadId: string) =>
@@ -2480,6 +2552,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               startedAt: turn.startedAt,
               itemPositions: new Map(),
             };
+            subagent.latestContext = activeContext;
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
               const updated = new Map(current);
@@ -2490,7 +2563,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent,
               status: "running",
               startedAt: turn.startedAt,
-              ...(providerTurnOrdinal > 1 ? { reopen: true, result: null } : {}),
+              ...(providerTurnOrdinal > 1 || subagent.restoredFromProjection
+                ? { reopen: true, result: null }
+                : {}),
             });
             const now = yield* DateTime.now;
             yield* emitProviderEvent({
@@ -2545,13 +2620,174 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             });
           });
 
+        // Only live activity reopens a saved child. Its launch item, not the
+        // current resume tool call, owns the durable thread and Lineage identity.
+        const restoreSubagentThread = Effect.fnUntraced(function* (
+          childThreadId: ThreadId,
+          rootContext: ActiveCodexTurnContext,
+          restoring: ReadonlySet<ThreadId> = new Set(),
+        ): Effect.fn.Return<CodexSubagentThreadContext | undefined, ProviderAdapterProtocolError> {
+          if (restoring.has(childThreadId) || rootContext.input.readSubagentThread === undefined)
+            return;
+          const saved = yield* rootContext.input.readSubagentThread(childThreadId).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.codex-subagent-restore-read-failed", {
+                childThreadId,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+          if (
+            saved === null ||
+            saved.subagent.driver !== CODEX_PROVIDER ||
+            saved.subagent.providerInstanceId !== adapterOptions.instanceId ||
+            saved.providerThread.driver !== CODEX_PROVIDER ||
+            saved.providerThread.providerInstanceId !== adapterOptions.instanceId ||
+            saved.providerThread.nativeThreadRef?.driver !== CODEX_PROVIDER ||
+            saved.providerThread.nativeThreadRef.nativeId === null ||
+            saved.providerThread.forkedFrom === null ||
+            saved.subagent.nativeTaskRef?.nativeId == null
+          )
+            return;
+          const nativeThreadId = saved.providerThread.nativeThreadRef.nativeId;
+          const existing = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
+          if (existing !== undefined) return existing;
+          if (
+            idAllocator.derive.threadFromProviderThread({
+              driver: CODEX_PROVIDER,
+              nativeThreadId,
+            }) !== childThreadId
+          )
+            return;
+
+          let parentContext = rootContext;
+          // A handoff replaces the root's provider thread, but its app thread
+          // still owns the children launched by the previous provider thread.
+          if (saved.subagent.threadId !== rootContext.projectionThreadId) {
+            if (saved.providerThread.forkedFrom.providerThreadId === rootContext.providerThread.id)
+              return;
+            const parent = yield* restoreSubagentThread(
+              saved.subagent.threadId,
+              rootContext,
+              new Set([...restoring, childThreadId]),
+            );
+            if (
+              parent?.latestContext === undefined ||
+              parent.providerThread.id !== saved.providerThread.forkedFrom.providerThreadId
+            )
+              return;
+            parentContext = parent.latestContext;
+          }
+
+          const nativeItemId = saved.subagent.nativeTaskRef.nativeId;
+          const providerThread = {
+            ...saved.providerThread,
+            providerSessionId: input.providerSessionId,
+          };
+          const subagent: CodexSubagentThreadContext = {
+            parentContext,
+            restoredFromProjection: true,
+            providerThread,
+            childThread: saved.childThread,
+            subagentNodeId: saved.subagent.id,
+            childRootNodeId: idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: `${nativeItemId}:thread-root`,
+            }),
+            childThreadId,
+            nativeToolCallId: nativeItemId,
+            ordinal: 1,
+            nativeTurnIds: new Set(
+              saved.providerTurns.flatMap((turn) =>
+                turn.nativeTurnRef?.nativeId == null ? [] : [turn.nativeTurnRef.nativeId],
+              ),
+            ),
+            startedAt: saved.subagent.startedAt ?? parentContext.startedAt,
+            turnItemId: saved.turnItem.id,
+            turnItemOrdinal: saved.turnItem.ordinal,
+            task: {
+              ...saved.subagent,
+              model: subagentModels.get(nativeThreadId) ?? saved.subagent.model,
+            },
+          };
+          const latestTurn = saved.latestProviderTurn;
+          if (latestTurn !== null) {
+            yield* Ref.update(nextProviderTurnOrdinals, (current) =>
+              new Map(current).set(String(providerThread.id), latestTurn.ordinal),
+            );
+            const nativeTurnId = latestTurn.nativeTurnRef?.nativeId;
+            if (nativeTurnId != null) {
+              subagent.nativeTurnIds.add(nativeTurnId);
+              subagent.latestContext = {
+                input: rootContext.input,
+                projectionAppThread: saved.childThread,
+                projectionThreadId: childThreadId,
+                projectionRunId: null,
+                nativeTurnId,
+                providerThread,
+                providerTurnId: latestTurn.id,
+                providerTurnOrdinal: latestTurn.ordinal,
+                providerNodeId: latestTurn.nodeId,
+                providerNodeKind: "root_turn",
+                providerNodeStartedAt: latestTurn.startedAt,
+                itemParentNodeId: latestTurn.nodeId,
+                rootNodeId: latestTurn.nodeId,
+                subagent,
+                startedAt: latestTurn.startedAt ?? subagent.startedAt,
+                itemPositions: new Map(),
+              };
+            }
+          }
+          yield* Ref.update(subagentThreads, (current) =>
+            new Map(current).set(nativeThreadId, subagent),
+          );
+          // Reannounce the saved metadata so the current run adopts nested
+          // child routes without recreating their titles, prompts or history.
+          yield* emitProviderEvent({
+            type: "app_thread.created",
+            driver: CODEX_PROVIDER,
+            appThread: saved.childThread,
+          });
+          const pendingTurns = yield* Ref.modify(pendingSubagentTurns, (current) => {
+            const pending = current.get(nativeThreadId) ?? [];
+            const updated = new Map(current);
+            updated.delete(nativeThreadId);
+            return [pending, updated];
+          });
+          if (!pendingSubagentEvents.has(nativeThreadId)) {
+            for (const turn of pendingTurns) yield* emitSubagentProviderTurnStarted(subagent, turn);
+          }
+          return subagent;
+        });
+
         const rememberSubagentTurnStarted = (input: {
           readonly nativeThreadId: string;
           readonly nativeTurnId: string;
           readonly startedAt: DateTime.Utc;
         }) =>
           Effect.gen(function* () {
-            const subagent = (yield* Ref.get(subagentThreads)).get(input.nativeThreadId);
+            let subagent = (yield* Ref.get(subagentThreads)).get(input.nativeThreadId);
+            if (subagent === undefined) {
+              const childThreadId = idAllocator.derive.threadFromProviderThread({
+                driver: CODEX_PROVIDER,
+                nativeThreadId: input.nativeThreadId,
+              });
+              const pendingRoots = Array.from((yield* Ref.get(pendingRootTurns)).values());
+              for (const rootContext of latestRootTurns.values()) {
+                // The next root must own recovered children, even if their
+                // notifications arrive before its turn/start reply.
+                if (
+                  pendingRoots.some(
+                    (pending) =>
+                      pending.threadId === rootContext.projectionThreadId &&
+                      pending.attemptId !== rootContext.input.attemptId,
+                  )
+                )
+                  continue;
+                subagent = yield* restoreSubagentThread(childThreadId, rootContext);
+                if (subagent !== undefined) break;
+              }
+            }
             if (subagent !== undefined) {
               yield* emitSubagentProviderTurnStarted(subagent, input);
               return;
@@ -2599,6 +2835,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (registeredSubagents.has(input.nativeThreadId)) {
               return;
             }
+            const restored = yield* restoreSubagentThread(
+              idAllocator.derive.threadFromProviderThread({
+                driver: CODEX_PROVIDER,
+                nativeThreadId: input.nativeThreadId,
+              }),
+              approvalOwnerCodexTurn(input.context).owner,
+            );
+            if (restored !== undefined) return;
 
             const now = yield* DateTime.now;
             const subagentNodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2802,8 +3046,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updated.delete(input.nativeThreadId);
               return [pending, updated];
             });
-            for (const pendingTurn of pendingTurns) {
-              yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
+            if (!pendingSubagentEvents.has(input.nativeThreadId)) {
+              for (const turn of pendingTurns)
+                yield* emitSubagentProviderTurnStarted(subagent, turn);
             }
             if (task.model === null) {
               yield* client.raw
@@ -3859,7 +4104,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return { node, request, turnItem };
           });
 
-        yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
+        yield* handleServerNotification("item/agentMessage/delta", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context !== undefined) {
@@ -3873,14 +4118,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }),
         );
 
-        yield* client.handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
+        yield* handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
           appendReasoning(payload, "summary", payload.summaryIndex),
         );
-        yield* client.handleServerNotification("item/reasoning/textDelta", (payload) =>
+        yield* handleServerNotification("item/reasoning/textDelta", (payload) =>
           appendReasoning(payload, "content", payload.contentIndex),
         );
 
-        yield* client.handleServerNotification("item/plan/delta", (payload) =>
+        yield* handleServerNotification("item/plan/delta", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -3913,7 +4158,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("turn/plan/updated", (payload) =>
+        yield* handleServerNotification("turn/plan/updated", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -3951,7 +4196,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
+        yield* handleServerNotification("account/rateLimits/updated", (payload) =>
           Effect.gen(function* () {
             yield* Ref.update(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
@@ -3982,7 +4227,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
+        yield* handleServerNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
             accumulateCodexTurnTokenUsage(
               usageStateForThread(payload.threadId),
@@ -4023,14 +4268,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("thread/settings/updated", (payload) =>
+        yield* handleServerNotification("thread/settings/updated", (payload) =>
           updateSubagentModel(payload.threadId, payload.threadSettings.model),
         );
-        yield* client.handleServerNotification("model/rerouted", (payload) =>
+        yield* handleServerNotification("model/rerouted", (payload) =>
           updateSubagentModel(payload.threadId, payload.toModel),
         );
 
-        yield* client.handleServerNotification("turn/started", (payload) =>
+        yield* handleServerNotification("turn/started", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context !== undefined) {
@@ -4134,7 +4379,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("error", (payload) =>
+        yield* handleServerNotification("error", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4256,7 +4501,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
         });
 
-        yield* client.handleServerNotification("item/started", (payload) =>
+        yield* handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
@@ -4382,7 +4627,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        yield* client.handleServerNotification("item/completed", (payload) =>
+        yield* handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
@@ -5614,11 +5859,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }),
           );
 
-        yield* client.handleServerNotification("turn/completed", (payload) =>
+        yield* handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
+            }
+            if (context.subagentRecoveryReady !== undefined) {
+              // The start reply can register a root while the reader receives
+              // its completion. Publish recovered children before closing the run.
+              yield* Deferred.await(context.subagentRecoveryReady);
+              yield* flushPendingSubagentEvents;
             }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
             const status =
@@ -5865,7 +6116,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   updated.delete(threadId);
                   return updated;
                 }),
-              ).pipe(Effect.ignore),
+              ).pipe(Effect.andThen(flushPendingSubagentEvents), Effect.ignore),
             ),
           );
 
