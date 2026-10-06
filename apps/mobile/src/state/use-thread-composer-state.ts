@@ -77,14 +77,11 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
-import {
-  resolveComposerDispatchMode,
-  type ActiveTurnComposerAction,
-} from "@t3tools/client-runtime/state/composer-dispatch";
+import { type ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
-import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
+import { DEFAULT_FOLLOW_UP_BEHAVIOR, resolveFollowUpDispatchMode } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
 import {
@@ -312,7 +309,6 @@ export function useThreadComposerState() {
           threadId: selectedThreadShell.id,
         }),
   );
-  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true;
   const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
   const composerDraftKey =
     selectedThreadKey === null
@@ -395,6 +391,9 @@ export function useThreadComposerState() {
     selectedThreadRuntime,
     selectedThreadVisibleTurnItems,
   ]);
+  // Compaction runs cannot take a steer, so the composer labels and sends
+  // follow-ups as queued behind it, matching the server's dispatch policy.
+  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
 
   const runlessWorkStartedAt = useMemo(
     () =>
@@ -659,16 +658,13 @@ export function useThreadComposerState() {
 
       // Resolved here rather than at drain time: the outbox can deliver minutes
       // later, and the choice belongs to the moment the user pressed send.
-      // Steering travels as "auto" so a turn that ends in the meantime degrades
-      // to a queued run on the server instead of failing the delivery and
-      // bouncing the message back into the draft.
-      const followUpAction = resolveComposerDispatchMode({
-        running: activeThreadBusy && canSteerActiveTurn,
-        alternateModifier: followUpOverride !== undefined && followUpOverride !== followUpBehavior,
-        activeTurnDefault: followUpBehavior,
+      const followUpDispatchMode = resolveFollowUpDispatchMode({
+        running: activeThreadBusy,
+        canSteer: canSteerActiveTurn,
+        isCompacting,
+        followUpBehavior,
+        ...(followUpOverride === undefined ? {} : { followUpOverride }),
       });
-      const followUpDispatchMode =
-        followUpAction === "auto" ? null : followUpAction === "queue" ? "queue" : "auto";
 
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
@@ -722,6 +718,7 @@ export function useThreadComposerState() {
       activeThreadBusy,
       canSteerActiveTurn,
       followUpBehavior,
+      isCompacting,
       saveQueuedRunEdit,
       selectedEnvironmentRuntime?.connectionState,
       selectedEnvironmentRuntime?.serverConfig,

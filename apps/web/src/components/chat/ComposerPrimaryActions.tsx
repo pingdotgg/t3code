@@ -31,6 +31,7 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   /** Stop can reach a run, including one still preparing or starting. */
   canInterrupt: boolean;
+  activeTurnIsCompaction?: boolean;
   followUpBehavior?: "queue" | "steer";
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -83,6 +84,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
+  activeTurnIsCompaction = false,
   followUpBehavior = "steer",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -112,9 +114,18 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
+      activeTurnIsCompaction,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
-  const alternateAction = alternateComposerDispatchAction(followUpBehavior);
+  const alternateAction = alternateComposerDispatchAction(followUpBehavior, activeTurnIsCompaction);
+  // What a plain click delivers while the turn runs: the configured default,
+  // except automatic follow-ups during compaction, which queue.
+  const effectiveDefaultAction = resolveComposerDispatchMode({
+    running: isRunning,
+    activeTurnDefault: followUpBehavior,
+    activeTurnIsCompaction,
+    alternateModifier: false,
+  });
   const isSendDisabled = sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -276,7 +287,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitTooltip =
     submitStatus ??
     (isRunning && !isEditingQueuedMessage
-      ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+      ? effectiveDefaultAction === alternateAction
+        ? `Click to ${effectiveDefaultAction}`
+        : `Click to ${effectiveDefaultAction}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
       : submitLabel);
 
   const sendButton = (
