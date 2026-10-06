@@ -275,6 +275,53 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems.map((row) => row.position)).toEqual([0, 1]);
   });
 
+  it.each([
+    { name: "keeps an item from a loaded run", itemRunId: runId, kept: true },
+    {
+      name: "drops an item from an unloaded run",
+      itemRunId: RunId.make("run-unloaded"),
+      kept: false,
+    },
+  ])("partial timeline: $name that arrives after a later sibling", ({ itemRunId, kept }) => {
+    // Only this run is loaded. Its later item already advanced the watermark.
+    const first = commandItem("item-first", "first", 11);
+    const later = commandItem("item-later", "later", 13);
+    const late = { ...commandItem("item-late", "late", 12), runId: itemRunId };
+    const projection = {
+      ...emptyProjection,
+      runs: [run, { ...run, id: RunId.make("run-unloaded") }],
+      turnItems: [first, later],
+      visibleTurnItems: [first, later].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    };
+    const event = {
+      id: "event-late-item",
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: late,
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(projection, event, {
+      partialTimeline: true,
+      latestLocalTurnOrdinal: later.ordinal,
+    });
+    if (kept) {
+      expect(next?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+        first.id,
+        late.id,
+        later.id,
+      ]);
+    } else {
+      expect(next).toBe(projection);
+    }
+  });
+
   it("removes only hidden local items while preserving inherited rows", () => {
     const inherited = commandItem("item-inherited");
     const local = commandItem("item-local");

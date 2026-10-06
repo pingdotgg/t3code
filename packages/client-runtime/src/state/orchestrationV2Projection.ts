@@ -94,6 +94,19 @@ function shouldDropMissingPartialTurnItem(
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
+  // A later item of the same run can raise the watermark first. Keep items
+  // that land inside a loaded run instead of treating them as old history.
+  if (
+    item.runId !== null &&
+    projection.visibleTurnItems.some(
+      (row) =>
+        row.visibility === "local" &&
+        row.item.runId === item.runId &&
+        row.item.ordinal <= item.ordinal,
+    )
+  ) {
+    return false;
+  }
   if (
     latestLocalTurnOrdinal !== null &&
     latestLocalTurnOrdinal !== undefined &&
