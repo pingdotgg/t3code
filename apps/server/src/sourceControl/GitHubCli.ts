@@ -23,6 +23,7 @@ import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import {
@@ -35,11 +36,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Server-local credential scope; never put its value in RPC payloads or cache keys. */
-export const PinnedGitHubCredential = Context.Reference<{
-  readonly host: string;
-  readonly token: Redacted.Redacted<string>;
-  readonly credentialFingerprint: string;
-} | null>("t3/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
+export const PinnedGitHubCredential = GitHubApi.PinnedGitHubCredential;
 
 export const AllowGitHubReserve = Context.Reference<boolean>(
   "t3/sourceControl/AllowGitHubReserve",
