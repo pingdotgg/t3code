@@ -16,6 +16,7 @@ import {
   type ChatAttachment,
   CommandId,
   isProviderNativeSubagentThread,
+  isOrchestrationV2WorkActive,
   MessageId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -8491,6 +8492,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "runtimeRequests",
             "turnItems",
             "providerThreads",
+            "providerTurns",
           ],
           {
             turnItemTypes: [
@@ -8512,6 +8514,129 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
         ),
       );
+      const turn = stopped.providerTurn;
+      if (
+        turn?.runAttemptId === null &&
+        turn.status === "running" &&
+        stopped.providerThread?.driver === "codex" &&
+        isProviderNativeSubagentThread(projection.thread)
+      ) {
+        const now = yield* DateTime.now;
+        const emitEvent = emit(events, command);
+        yield* emitEvent({
+          type: "provider-turn.updated",
+          threadId: command.threadId,
+          nodeId: turn.nodeId,
+          occurredAt: now,
+          payload: { ...turn, status: "interrupted", completedAt: now },
+        });
+        const newerTurn = projection.providerTurns.some(
+          (candidate) =>
+            candidate.providerThreadId === turn.providerThreadId &&
+            candidate.ordinal > turn.ordinal,
+        );
+        const parentThreadId = projection.thread.lineage.parentThreadId;
+        const parent =
+          parentThreadId === null || newerTurn
+            ? undefined
+            : yield* projectionStore
+                .getThreadRecords(parentThreadId, ["subagents", "nodes", "turnItems"], {
+                  turnItemTypes: ["subagent"],
+                  turnItemStatuses: ["pending", "running", "waiting"],
+                })
+                .pipe(mapDispatchError(command));
+        const task = parent?.subagents.find(
+          (candidate) =>
+            candidate.origin === "provider_native" &&
+            candidate.driver === "codex" &&
+            candidate.childThreadId === command.threadId &&
+            isOrchestrationV2WorkActive(candidate.status),
+        );
+        if (task !== undefined) {
+          yield* emitEvent({
+            type: "subagent.updated",
+            threadId: task.threadId,
+            ...(task.runId === null ? {} : { runId: task.runId }),
+            nodeId: task.id,
+            occurredAt: now,
+            payload: { ...task, status: "interrupted", completedAt: now, updatedAt: now },
+          });
+        }
+        if (!newerTurn && stopped.providerThread.status === "active") {
+          yield* emitEvent({
+            type: "provider-thread.updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...stopped.providerThread, status: "idle", updatedAt: now },
+          });
+        }
+        const nodes = [
+          ...projection.nodes.filter((node) => node.providerTurnId === turn.id),
+          ...(parent?.nodes.filter((node) => node.id === task?.id) ?? []),
+        ];
+        for (const node of nodes) {
+          if (!isOrchestrationV2WorkActive(node.status)) continue;
+          yield* emitEvent({
+            type: "node.updated",
+            threadId: node.threadId,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            occurredAt: now,
+            payload: { ...node, status: "interrupted", completedAt: now },
+          });
+        }
+        const items = [
+          ...projection.turnItems.filter((item) => item.providerTurnId === turn.id),
+          ...(parent?.turnItems.filter(
+            (item) => item.type === "subagent" && item.subagentId === task?.id,
+          ) ?? []),
+        ];
+        for (const item of items) {
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: item.threadId,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: {
+              ...item,
+              ...("streaming" in item ? { streaming: false } : {}),
+              status: "interrupted",
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+        const output = yield* projectionStore
+          .getThreadRecords(command.threadId, ["messages"], { messageRoles: ["assistant"] })
+          .pipe(mapDispatchError(command));
+        for (const message of output.messages) {
+          if (!message.streaming || !nodes.some((node) => node.id === message.nodeId)) continue;
+          yield* emitEvent({
+            type: "message.updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...message, streaming: false, updatedAt: now },
+          });
+        }
+        for (const request of projection.runtimeRequests) {
+          if (request.status !== "pending" || !nodes.some((node) => node.id === request.nodeId))
+            continue;
+          yield* emitEvent({
+            type: "runtime-request.updated",
+            threadId: command.threadId,
+            nodeId: request.nodeId,
+            occurredAt: now,
+            payload: {
+              ...request,
+              status: "cancelled",
+              resolvedAt: now,
+              responseCapability: { type: "not_resumable", reason: "The turn was interrupted." },
+            },
+          });
+        }
+        return;
+      }
       const stoppedRunId = projection.attempts.find(
         (attempt) => attempt.id === stopped.providerTurn?.runAttemptId,
       )?.runId;

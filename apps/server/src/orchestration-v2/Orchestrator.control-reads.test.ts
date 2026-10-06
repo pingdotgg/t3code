@@ -24,10 +24,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { makeSubagentChildThread } from "./SubagentProjection.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -79,6 +81,24 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
         creationSource: "web",
       });
     }
+    yield* projections.apply({
+      id: EventId.make("child:stop-subagent:lineage"),
+      type: "thread.metadata-updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: makeSubagentChildThread({
+        parentThread: yield* projections.getThread(parentThreadId),
+        childThreadId,
+        parentNodeId: subagentId,
+        activeProviderThreadId: providerThreadId,
+        providerInstanceId: instanceId,
+        modelSelection,
+        title: "Worker",
+        now,
+        createdBy: "agent",
+        creationSource: "provider",
+      }),
+    });
     const subagent = {
       id: subagentId,
       threadId: parentThreadId,
@@ -149,6 +169,126 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
       occurredAt: now,
       payload: providerTurn,
     });
+    for (const [threadId, nodeId, kind] of [
+      [parentThreadId, subagentId, "subagent"],
+      [childThreadId, providerTurn.nodeId, "root_turn"],
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`node:${nodeId}`),
+        type: "node.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind,
+          status: "running",
+          countsForRun: false,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+    }
+    const item = {
+      id: TurnItemId.make("item:stop-subagent"),
+      threadId: parentThreadId,
+      runId: null,
+      nodeId: subagentId,
+      providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running" as const,
+      title: subagent.title,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "subagent" as const,
+      subagentId,
+      origin: subagent.origin,
+      driver: subagent.driver,
+      providerInstanceId: instanceId,
+      childThreadId,
+      prompt: subagent.prompt,
+      result: null,
+    };
+    yield* projections.apply({
+      id: EventId.make("item:stop-subagent"),
+      type: "turn-item.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: item,
+    });
+    yield* projections.apply({
+      id: EventId.make("command:stop-subagent"),
+      type: "turn-item.updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("command:stop-subagent"),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: providerTurn.nodeId,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "sleep 100",
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("message:stop-subagent"),
+      type: "message.updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: {
+        id: MessageId.make("message:stop-subagent"),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: providerTurn.nodeId,
+        role: "assistant",
+        text: "Working",
+        attachments: [],
+        streaming: true,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("request:stop-subagent"),
+      type: "runtime-request.updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make("request:stop-subagent"),
+        nodeId: providerTurn.nodeId,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
     const commandId = CommandId.make("interrupt:stop-subagent");
     const accepted = yield* orchestrator.dispatch({
       type: "subagent.interrupt",
@@ -181,6 +321,116 @@ it.effect("interrupts only the selected running native Codex subagent", () =>
         },
       ],
     );
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* worker.drain();
+    const child = yield* projections.getThreadProjection(childThreadId);
+    const parent = yield* projections.getThreadProjection(parentThreadId);
+    assert.equal(child.providerTurns[0]?.status, "interrupted");
+    assert.equal(child.providerThreads[0]?.status, "idle");
+    assert.equal(child.nodes[0]?.status, "interrupted");
+    assert.equal(child.turnItems[0]?.status, "interrupted");
+    assert.equal(child.messages[0]?.streaming, false);
+    assert.equal(child.runtimeRequests[0]?.status, "cancelled");
+    assert.equal(parent.subagents[0]?.status, "interrupted");
+    assert.equal(parent.nodes[0]?.status, "interrupted");
+    assert.equal(parent.turnItems[0]?.status, "interrupted");
+    for (const race of [
+      "completed-turn",
+      "completed-task",
+      "waiting-task",
+      "newer-turn",
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`turn:${race}:running`),
+        type: "provider-turn.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: providerTurn,
+      });
+      yield* projections.apply({
+        id: EventId.make(`task:${race}:running`),
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: subagent,
+      });
+      yield* projections.apply({
+        id: EventId.make(`provider-thread:${race}:active`),
+        type: "provider-thread.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: providerThread,
+      });
+      yield* orchestrator.dispatch({
+        type: "subagent.interrupt",
+        commandId: CommandId.make(`interrupt:${race}`),
+        threadId: parentThreadId,
+        subagentId,
+      });
+      const newerTurnId = ProviderTurnId.make("turn:stop-subagent:newer");
+      if (race === "completed-turn" || race === "newer-turn") {
+        yield* projections.apply({
+          id: EventId.make(`turn:${race}:raced`),
+          type: "provider-turn.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload:
+            race === "newer-turn"
+              ? { ...providerTurn, id: newerTurnId, ordinal: 2 }
+              : { ...providerTurn, status: "completed", completedAt: now },
+        });
+      }
+      if (race !== "newer-turn") {
+        yield* projections.apply({
+          id: EventId.make(`task:${race}:completed`),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            ...subagent,
+            status: race === "waiting-task" ? "waiting" : "completed",
+            completedAt: race === "waiting-task" ? null : now,
+          },
+        });
+      }
+      yield* worker.drain();
+      const racedChild = yield* projections.getThreadProjection(childThreadId);
+      assert.equal(
+        racedChild.providerTurns.find((turn) => turn.id === providerTurnId)?.status,
+        race === "completed-turn" ? "completed" : "interrupted",
+      );
+      assert.equal(
+        (yield* projections.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        race === "newer-turn" ? "running" : race === "waiting-task" ? "interrupted" : "completed",
+      );
+      if (race === "newer-turn") {
+        assert.equal(
+          racedChild.providerTurns.find((turn) => turn.id === newerTurnId)?.status,
+          "running",
+        );
+        assert.equal(racedChild.providerThreads[0]?.status, "active");
+        yield* projections.apply({
+          id: EventId.make("turn:newer:completed"),
+          type: "provider-turn.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...providerTurn,
+            id: newerTurnId,
+            ordinal: 2,
+            status: "completed",
+            completedAt: now,
+          },
+        });
+      }
+    }
+    yield* projections.apply({
+      id: EventId.make("subagent:stop-subagent:running"),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: subagent,
+    });
     for (const missing of ["turn", "session"] as const) {
       yield* projections.apply({
         id: EventId.make(`provider-turn:stop-subagent:missing-${missing}`),
