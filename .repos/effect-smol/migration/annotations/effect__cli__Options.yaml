@@ -90,7 +90,7 @@
   note: "Use the moved combinator; it still returns Option."
 "@effect/cli/Options#Options":
   replacement: "Flag.Flag"
-  note: "Options was renamed to Flag in effect/unstable/cli."
+  note: "Options was renamed to Flag in effect/cli."
 "@effect/cli/Options#Options.BooleanOptionsConfig":
   replacement: "Flag.Boolean + Flag.withAlias + Flag.map"
   note: "The config object was removed; aliases and value inversion are combinators, while custom negation names need application logic."

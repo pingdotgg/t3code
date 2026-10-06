@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { main as runServiceLauncher } from "../serviceLauncher.ts";
 

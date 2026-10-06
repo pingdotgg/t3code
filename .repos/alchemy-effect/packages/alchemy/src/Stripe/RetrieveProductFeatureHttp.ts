@@ -17,6 +17,7 @@ import {
  * retrieve takes both `product` and `id`.
  *
  * @layer
+ * @product Product
  * @provides Stripe.RetrieveProductFeature
  */
 export const RetrieveProductFeatureHttp = Layer.effect(

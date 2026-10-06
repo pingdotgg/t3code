@@ -16,7 +16,7 @@ const makeSchema = () => {
   })
   const rating = v.object({
     id: v.number(),
-    stars: v.pipe(v.number(), v.minValue(1), v.maxValue(5)),
+    stars: v.pipe(v.number(), v.minValue(0), v.maxValue(5)),
     title: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
     text: v.pipe(v.string(), v.minLength(1), v.maxLength(1000)),
     images: v.array(image)
@@ -56,7 +56,10 @@ const parsingCase = (input, options, success) => () => {
   const schema = makeSchema()
   return {
     run: () => v.safeParse(schema, input, options),
-    validate: (result) => assert.equal(result.success, success)
+    validate: (result) => {
+      assert.equal(result.success, success)
+      if (success) assert.deepEqual(result.output, validData)
+    }
   }
 }
 
@@ -72,6 +75,7 @@ const standardCase = (input, success) => () => {
     validate: (result) => {
       assert.equal(typeof result?.then, "undefined")
       assert.equal(result.issues === undefined, success)
+      if (success) assert.deepEqual(result.value, validData)
     }
   }
 }

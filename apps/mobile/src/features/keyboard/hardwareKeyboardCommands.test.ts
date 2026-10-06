@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseActiveThreadPath } from "./hardwareKeyboardCommands";
+import { nextEnvironmentId, parseActiveThreadPath } from "./hardwareKeyboardCommands";
 
 describe("parseActiveThreadPath", () => {
   it("extracts the active thread from thread subroutes", () => {
@@ -24,5 +24,22 @@ describe("parseActiveThreadPath", () => {
 
   it("ignores malformed encoded route components", () => {
     expect(parseActiveThreadPath("/threads/%E0%A4%A/thread-1")).toBeNull();
+  });
+});
+
+describe("nextEnvironmentId", () => {
+  const environments = [{ environmentId: "a" }, { environmentId: "b" }, { environmentId: "c" }];
+
+  it.each([
+    ["the next machine", "a", "b"],
+    ["the first machine after the last", "c", "a"],
+    ["the first machine when the current one is not listed", "gone", "a"],
+    ["the first machine when there is no current one", null, "a"],
+  ])("returns %s", (_label, current, expected) => {
+    expect(nextEnvironmentId(environments, current)).toBe(expected);
+  });
+
+  it("returns null when there is nowhere else to go", () => {
+    expect(nextEnvironmentId([{ environmentId: "a" }], "a")).toBeNull();
   });
 });

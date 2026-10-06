@@ -14,12 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   makeApnsDeliveryJobPayload,
@@ -146,7 +141,7 @@ const target: LiveActivities.TargetRow = {
   last_live_activity_delivery_at: null,
 };
 
-function makeLayer(input: {
+function layerFor(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
   readonly queuedJobs?: Array<SignedApnsDeliveryJob>;
@@ -289,7 +284,7 @@ describe("ApnsDeliveries", () => {
       expect(attempts).toHaveLength(0);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           queuedJobs,
           config: { ...config, apns: null },
@@ -327,7 +322,7 @@ describe("ApnsDeliveries", () => {
       expect(queuedJobs).toEqual([]);
       expect(queuedStarts).toEqual([]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs, queuedStarts })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs, queuedStarts })));
   });
 
   it.effect("ends the armed card when nothing remains to show", () => {
@@ -367,7 +362,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("does not queue a remote start when Live Activities are disabled", () => {
@@ -391,7 +386,7 @@ describe("ApnsDeliveries", () => {
       expect(result).toBeNull();
       expect(queuedJobs).toEqual([]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("does not queue a duplicate remote start while a start is already queued", () => {
@@ -415,7 +410,7 @@ describe("ApnsDeliveries", () => {
       expect(result).toBeNull();
       expect(queuedJobs).toEqual([]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("queues bounded Live Activity aggregate payloads", () => {
@@ -454,7 +449,7 @@ describe("ApnsDeliveries", () => {
       expect(payloadAggregate?.activities[0]?.status.length).toBeLessThanOrEqual(40);
       expect(payloadAggregate?.activities[0]?.deepLink).toBe("/");
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("queues Live Activity jobs with the device's APNs routing", () => {
@@ -486,7 +481,7 @@ describe("ApnsDeliveries", () => {
           },
         },
       ]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("sends signed jobs to the device's APNs environment and bundle topic", () => {
@@ -526,7 +521,7 @@ describe("ApnsDeliveries", () => {
       );
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           currentTargets: [
             { ...target, bundle_id: "com.t3tools.t3code.preview", aps_environment: "sandbox" },
@@ -573,7 +568,7 @@ describe("ApnsDeliveries", () => {
         expect(result).toBeNull();
         expect(queuedJobs).toEqual([]);
         expect(attempts).toEqual([]);
-      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
 
@@ -617,7 +612,7 @@ describe("ApnsDeliveries", () => {
             },
           },
         ]);
-      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
 
@@ -646,7 +641,7 @@ describe("ApnsDeliveries", () => {
 
         expect(result).toBeNull();
         expect(queuedJobs).toEqual([]);
-      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
 
@@ -677,7 +672,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect(
@@ -737,7 +732,7 @@ describe("ApnsDeliveries", () => {
           },
         ]);
         expect(attempts).toEqual([]);
-      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
 
@@ -779,7 +774,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect(
@@ -832,7 +827,7 @@ describe("ApnsDeliveries", () => {
           },
         ]);
         expect(attempts).toEqual([]);
-      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
 
@@ -857,7 +852,7 @@ describe("ApnsDeliveries", () => {
       expect(result).toBeNull();
       expect(queuedJobs).toEqual([]);
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("queues bounded alert notification payloads", () => {
@@ -897,7 +892,7 @@ describe("ApnsDeliveries", () => {
       expect(notification?.body.length).toBeLessThanOrEqual(120);
       expect(notification?.deepLink).toBe("/");
       expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
   });
 
   it.effect("preserves the schema cause for invalid queue payloads", () => {
@@ -913,7 +908,7 @@ describe("ApnsDeliveries", () => {
         message: "Invalid APNs delivery queue job with object payload.",
       });
       expect(error.cause).toMatchObject({ _tag: "SchemaError" });
-    }).pipe(Effect.provide(makeLayer({ attempts })));
+    }).pipe(Effect.provide(layerFor({ attempts })));
   });
 
   it.effect("skips a queued start when the user no longer has live work", () => {
@@ -955,7 +950,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
       expect(clearedStarts).toMatchObject([{ userId: target.user_id, deviceId: target.device_id }]);
-    }).pipe(Effect.provide(makeLayer({ attempts, clearedStarts, activityStates: [] })));
+    }).pipe(Effect.provide(layerFor({ attempts, clearedStarts, activityStates: [] })));
   });
 
   it.effect("processes signed jobs through APNs and records attempts", () => {
@@ -1017,7 +1012,7 @@ describe("ApnsDeliveries", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          makeLayer({ attempts }),
+          layerFor({ attempts }),
           Logger.layer([logger], { mergeWithExisting: false }),
         ),
       ),
@@ -1052,7 +1047,7 @@ describe("ApnsDeliveries", () => {
       );
       const started = yield* Deferred.make<void>();
       const results: Array<{ deviceId: string; ok: boolean }> = [];
-      const layer = makeLayer({
+      const layer = layerFor({
         attempts,
         markedDeliveries,
         currentTargets: [target, secondTarget],
@@ -1143,7 +1138,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           currentTargets: [
             {
@@ -1202,7 +1197,7 @@ describe("ApnsDeliveries", () => {
       expect(attempts).toEqual([]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           sourceJobClaims: new Map([["job-push-duplicate", "completed"]]),
           config: signingConfig,
@@ -1256,7 +1251,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           config: signingConfig,
           execute,
@@ -1316,7 +1311,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           currentTargets: [
             {
@@ -1388,7 +1383,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           activityStates: [
             {
@@ -1457,7 +1452,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           currentTargets: [{ ...target, push_token: "apns-device-token" }],
           currentActivityStates: [
@@ -1517,7 +1512,7 @@ describe("ApnsDeliveries", () => {
       expect(attempts).toEqual([]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           sourceJobClaims: new Map([["job-push-in-flight", "in_flight"]]),
           config: signingConfig,
@@ -1578,7 +1573,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           invalidatedTokens,
           currentTargets: [
@@ -1628,7 +1623,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           clearedStarts,
           activityStates: [{ ...state, updatedAt: "9999-01-01T00:00:00.000Z" }],
@@ -1681,7 +1676,7 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layerFor({
           attempts,
           invalidatedTokens,
           activityStates: [{ ...state, updatedAt: "9999-01-01T00:00:00.000Z" }],
@@ -1735,7 +1730,7 @@ describe("ApnsDeliveries", () => {
         },
       ]);
     }).pipe(
-      Effect.provide(makeLayer({ attempts, invalidatedTokens, config: signingConfig, execute })),
+      Effect.provide(layerFor({ attempts, invalidatedTokens, config: signingConfig, execute })),
     );
   });
 });
@@ -1909,8 +1904,9 @@ describe("live activity alert decisions", () => {
 });
 
 describe("queued iOS alert policy", () => {
-  for (const scenario of ["enabled", "muted", "late"] as const) {
-    it.effect(`checks the current policy for a ${scenario} completion`, () => {
+  it.effect.each(["enabled", "muted", "late"] as const)(
+    "checks the current policy for a %s completion",
+    (scenario) => {
       let sent = 0;
       const completed = { ...state, phase: "completed" as const };
       const prefs = JSON.parse(enabledPreferences);
@@ -1942,7 +1938,7 @@ describe("queued iOS alert policy", () => {
         expect(sent).toBe(scenario === "enabled" ? 1 : 0);
       }).pipe(
         Effect.provide(
-          makeLayer({
+          layerFor({
             attempts: [],
             config: signingConfig,
             currentTargets: [
@@ -1957,8 +1953,8 @@ describe("queued iOS alert policy", () => {
           }),
         ),
       );
-    });
-  }
+    },
+  );
 });
 
 describe("fast completion delivery", () => {
@@ -1988,7 +1984,7 @@ describe("fast completion delivery", () => {
       expect(
         queuedJobs.some((x) => x.payload.alert !== null && x.payload.alert !== undefined),
       ).toBe(true);
-    }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs, currentTargets: [device] })));
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
   it.effect("replays a newly visible completion without alerting", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
@@ -2014,79 +2010,79 @@ describe("fast completion delivery", () => {
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
-    }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 });
 
 describe("signed APNs registration metadata", () => {
-  for (const kind of ["live_activity_update", "push_notification"] as const) {
-    for (const changed of ["bundle", "environment", "legacy"] as const) {
-      it.effect(`routes ${kind} using current registration with ${changed} job metadata`, () => {
-        const attempts: DeliveryAttempts.DeliveryAttemptInput[] = [];
-        const requests: HttpClientRequest.HttpClientRequest[] = [];
-        const payload = makeApnsDeliveryJobPayload({
-          kind,
-          userId: target.user_id,
-          deviceId: target.device_id,
-          token: "unchanged-token",
-          ...(changed === "legacy"
-            ? {}
-            : { bundleId: "com.t3tools.t3code.dev", apsEnvironment: "sandbox" as const }),
-          aggregate: kind === "live_activity_update" ? aggregate : null,
-          ...(kind === "push_notification"
-            ? {
-                notification: {
-                  title: "Thread",
-                  body: "Input: Project",
-                  environmentId: "env",
-                  threadId: "thread",
-                  deepLink: "/",
-                },
-              }
-            : {}),
-          createdAt: "1970-01-01T00:00:00.000Z",
-          expiresAt: "1970-01-01T00:10:00.000Z",
-          jobId: `metadata-${kind}-${changed}`,
-        });
-        const signed = signApnsDeliveryJob({
-          secret: config.apnsDeliveryJobSigningSecret,
-          payload,
-        });
-        return Effect.gen(function* () {
-          const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-          const result = yield* deliveries.processSignedJob(signed);
-          expect(result.ok).toBe(true);
-          expect(requests).toHaveLength(1);
-          expect(requests[0]?.url).toBe(
-            `${changed === "environment" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"}/3/device/unchanged-token`,
-          );
-          expect(requests[0]?.headers["apns-topic"]).toBe(
-            `${changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
-          );
-        }).pipe(
-          Effect.provide(
-            makeLayer({
-              attempts,
-              config: signingConfig,
-              currentTargets: [
-                {
-                  ...target,
-                  push_token: "unchanged-token",
-                  activity_push_token: "unchanged-token",
-                  bundle_id:
-                    changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev",
-                  aps_environment: changed === "environment" ? "production" : "sandbox",
-                },
-              ],
-              execute: (request) =>
-                Effect.sync(() => {
-                  requests.push(request);
-                  return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
-                }),
+  it.effect.each(
+    (["live_activity_update", "push_notification"] as const).flatMap((kind) =>
+      (["bundle", "environment", "legacy"] as const).map((changed) => ({ kind, changed })),
+    ),
+  )("routes $kind using current registration with $changed job metadata", ({ kind, changed }) => {
+    const attempts: DeliveryAttempts.DeliveryAttemptInput[] = [];
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const payload = makeApnsDeliveryJobPayload({
+      kind,
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: "unchanged-token",
+      ...(changed === "legacy"
+        ? {}
+        : { bundleId: "com.t3tools.t3code.dev", apsEnvironment: "sandbox" as const }),
+      aggregate: kind === "live_activity_update" ? aggregate : null,
+      ...(kind === "push_notification"
+        ? {
+            notification: {
+              title: "Thread",
+              body: "Input: Project",
+              environmentId: "env",
+              threadId: "thread",
+              deepLink: "/",
+            },
+          }
+        : {}),
+      createdAt: "1970-01-01T00:00:00.000Z",
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: `metadata-${kind}-${changed}`,
+    });
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload,
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+      expect(result.ok).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe(
+        `${changed === "environment" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"}/3/device/unchanged-token`,
+      );
+      expect(requests[0]?.headers["apns-topic"]).toBe(
+        `${changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
+      );
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          config: signingConfig,
+          currentTargets: [
+            {
+              ...target,
+              push_token: "unchanged-token",
+              activity_push_token: "unchanged-token",
+              bundle_id:
+                changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev",
+              aps_environment: changed === "environment" ? "production" : "sandbox",
+            },
+          ],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
             }),
-          ),
-        );
-      });
-    }
-  }
+        }),
+      ),
+    );
+  });
 });

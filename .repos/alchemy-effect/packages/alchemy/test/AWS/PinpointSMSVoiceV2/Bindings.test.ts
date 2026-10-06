@@ -6,8 +6,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import SmsVoiceOptOutTestFunctionLive, {
   SmsVoiceOptOutTestFunction,
   TEST_DESTINATION,
@@ -64,7 +64,10 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:pinpointsmsvoicev2", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -79,174 +82,195 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 60_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:pinpointsmsvoicev2",
+      "live",
+    ],
+    timeout: 60_000,
+  },
 );
 
-describe("PinpointSMSVoiceV2 Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "SmsVoice bindings setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+describe(
+  "PinpointSMSVoiceV2 Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:pinpointsmsvoicev2",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "SmsVoice bindings setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("SmsVoice bindings setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* SmsVoiceOptOutTestFunction;
-        }).pipe(Effect.provide(SmsVoiceOptOutTestFunctionLive)),
-      );
+        yield* Effect.logInfo("SmsVoice bindings setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* SmsVoiceOptOutTestFunction;
+          }).pipe(Effect.provide(SmsVoiceOptOutTestFunctionLive)),
+        );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-      const readinessUrl = `${baseUrl}/ping`;
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+        const readinessUrl = `${baseUrl}/ping`;
 
-      yield* Effect.logInfo(
-        `SmsVoice bindings setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `SmsVoice bindings setup: fixture not ready yet (${String(error)})`,
+        yield* Effect.logInfo(
+          `SmsVoice bindings setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `SmsVoice bindings setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+
+        // Freshly attached IAM role policies take a few seconds to
+        // propagate — hold the tests until the account-level grant works
+        // (the probe returns AccessDeniedException until then).
+        yield* post("/feedback-probe").pipe(
+          Effect.flatMap((r) => r.json),
+          Effect.repeat({
+            schedule: Schedule.spaced("3 seconds"),
+            until: (body): boolean =>
+              (body as { tag?: string }).tag !== "AccessDeniedException",
+            times: 20,
+          }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll.skipIf(!!process.env.NO_DESTROY)(sharedStack.destroy(), {
+      timeout: 120_000,
+    });
+
+    describe("PinpointSMSVoiceV2.PutOptedOutNumber", () => {
+      test.provider(
+        "opts a destination number out",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* post("/opt-out").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as { optedOutNumber?: string; endUserOptedOut?: boolean };
+
+            expect(response.optedOutNumber).toBe(TEST_DESTINATION);
+            // Manually opted out (by the API), not by the end user.
+            expect(response.endUserOptedOut).toBe(false);
+          }),
+        { timeout: 120_000 },
       );
+    });
 
-      // Freshly attached IAM role policies take a few seconds to
-      // propagate — hold the tests until the account-level grant works
-      // (the probe returns AccessDeniedException until then).
-      yield* post("/feedback-probe").pipe(
-        Effect.flatMap((r) => r.json),
-        Effect.repeat({
-          schedule: Schedule.spaced("3 seconds"),
-          until: (body): boolean =>
-            (body as { tag?: string }).tag !== "AccessDeniedException",
-          times: 20,
-        }),
+    describe("PinpointSMSVoiceV2.DescribeOptedOutNumbers", () => {
+      test.provider(
+        "finds the opted-out number",
+        (_stack) =>
+          Effect.gen(function* () {
+            // /opt-out is idempotent for a manually-opted-out number's
+            // presence — ensure it exists, then check.
+            yield* post("/opt-out");
+            const response = (yield* post("/opt-out-check").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as { count: number; numbers: string[] };
+
+            expect(response.count).toBe(1);
+            expect(response.numbers).toContain(TEST_DESTINATION);
+          }),
+        { timeout: 120_000 },
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll.skipIf(!!process.env.NO_DESTROY)(sharedStack.destroy(), {
-    timeout: 120_000,
-  });
+    describe("PinpointSMSVoiceV2.DeleteOptedOutNumber", () => {
+      test.provider(
+        "opts the number back in",
+        (_stack) =>
+          Effect.gen(function* () {
+            yield* post("/opt-out");
+            const deleted = (yield* post("/opt-out-delete").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as {
+              ok: boolean;
+              deleted?: string;
+              tag?: string;
+              message?: string;
+            };
+            expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+            expect(deleted.deleted).toBe(TEST_DESTINATION);
 
-  describe("PinpointSMSVoiceV2.PutOptedOutNumber", () => {
-    test.provider(
-      "opts a destination number out",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* post("/opt-out").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as { optedOutNumber?: string; endUserOptedOut?: boolean };
+            const after = (yield* post("/opt-out-check").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as { count: number };
+            expect(after.count).toBe(0);
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-          expect(response.optedOutNumber).toBe(TEST_DESTINATION);
-          // Manually opted out (by the API), not by the end user.
-          expect(response.endUserOptedOut).toBe(false);
-        }),
-      { timeout: 120_000 },
-    );
-  });
+    describe("PinpointSMSVoiceV2.CarrierLookup", () => {
+      test.provider(
+        "the grant allows the lookup",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* post("/carrier-lookup").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as {
+              ok: boolean;
+              e164PhoneNumber?: string;
+              phoneNumberType?: string;
+              tag?: string;
+              message?: string;
+            };
 
-  describe("PinpointSMSVoiceV2.DescribeOptedOutNumbers", () => {
-    test.provider(
-      "finds the opted-out number",
-      (_stack) =>
-        Effect.gen(function* () {
-          // /opt-out is idempotent for a manually-opted-out number's
-          // presence — ensure it exists, then check.
-          yield* post("/opt-out");
-          const response = (yield* post("/opt-out-check").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as { count: number; numbers: string[] };
+            // The simulator number may be rejected as unsupported by the
+            // lookup provider — the binding is proven as long as IAM let
+            // the call through.
+            expect(response.tag, JSON.stringify(response)).not.toBe(
+              "AccessDeniedException",
+            );
+            if (response.ok) {
+              expect(response.e164PhoneNumber).toBe(TEST_DESTINATION);
+              expect(response.phoneNumberType).toBeTruthy();
+            }
+          }),
+        { timeout: 120_000 },
+      );
+    });
 
-          expect(response.count).toBe(1);
-          expect(response.numbers).toContain(TEST_DESTINATION);
-        }),
-      { timeout: 120_000 },
-    );
-  });
+    describe("PinpointSMSVoiceV2.PutMessageFeedback", () => {
+      test.provider(
+        "surfaces the typed ResourceNotFoundException for an unknown message",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* post("/feedback-probe").pipe(
+              Effect.flatMap((r) => r.json),
+            )) as { ok: boolean; tag?: string; message?: string };
 
-  describe("PinpointSMSVoiceV2.DeleteOptedOutNumber", () => {
-    test.provider(
-      "opts the number back in",
-      (_stack) =>
-        Effect.gen(function* () {
-          yield* post("/opt-out");
-          const deleted = (yield* post("/opt-out-delete").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as {
-            ok: boolean;
-            deleted?: string;
-            tag?: string;
-            message?: string;
-          };
-          expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
-          expect(deleted.deleted).toBe(TEST_DESTINATION);
-
-          const after = (yield* post("/opt-out-check").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as { count: number };
-          expect(after.count).toBe(0);
-        }),
-      { timeout: 120_000 },
-    );
-  });
-
-  describe("PinpointSMSVoiceV2.CarrierLookup", () => {
-    test.provider(
-      "the grant allows the lookup",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* post("/carrier-lookup").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as {
-            ok: boolean;
-            e164PhoneNumber?: string;
-            phoneNumberType?: string;
-            tag?: string;
-            message?: string;
-          };
-
-          // The simulator number may be rejected as unsupported by the
-          // lookup provider — the binding is proven as long as IAM let
-          // the call through.
-          expect(response.tag, JSON.stringify(response)).not.toBe(
-            "AccessDeniedException",
-          );
-          if (response.ok) {
-            expect(response.e164PhoneNumber).toBe(TEST_DESTINATION);
-            expect(response.phoneNumberType).toBeTruthy();
-          }
-        }),
-      { timeout: 120_000 },
-    );
-  });
-
-  describe("PinpointSMSVoiceV2.PutMessageFeedback", () => {
-    test.provider(
-      "surfaces the typed ResourceNotFoundException for an unknown message",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* post("/feedback-probe").pipe(
-            Effect.flatMap((r) => r.json),
-          )) as { ok: boolean; tag?: string; message?: string };
-
-          // The grant is on `*`; an unknown MessageId must surface the
-          // typed not-found tag (AccessDenied would mean a broken grant).
-          expect(response.ok).toBe(false);
-          expect(response.tag, JSON.stringify(response)).toBe(
-            "ResourceNotFoundException",
-          );
-        }),
-      { timeout: 120_000 },
-    );
-  });
-});
+            // The grant is on `*`; an unknown MessageId must surface the
+            // typed not-found tag (AccessDenied would mean a broken grant).
+            expect(response.ok).toBe(false);
+            expect(response.tag, JSON.stringify(response)).toBe(
+              "ResourceNotFoundException",
+            );
+          }),
+        { timeout: 120_000 },
+      );
+    });
+  },
+);

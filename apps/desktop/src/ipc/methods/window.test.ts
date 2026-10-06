@@ -19,12 +19,12 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
+import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
@@ -72,6 +72,19 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
   waitForReady: () => Effect.succeed(true),
 };
 
+const backendConfigurationLayer = Layer.succeed(
+  DesktopBackendConfiguration.DesktopBackendConfiguration,
+  {
+    resolvePrimary: Effect.die("unexpected resolvePrimary"),
+    resolvePrimaryLabel: Effect.succeed("Windows"),
+    resolveWsl: () => Effect.die("unexpected resolveWsl"),
+    currentBootstrapToken: Effect.succeed("current-window-token"),
+  } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
+);
+
+const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
+  Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
+
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
     Effect.gen(function* () {
@@ -87,7 +100,39 @@ describe("getLocalEnvironmentBootstraps", () => {
           bootstrapToken: "bootstrap-token",
         },
       ]);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([defaultWslInstance]))),
+    }).pipe(Effect.provide(bootstrapsLayer([defaultWslInstance]))),
+  );
+
+  it.effect("hands out the current window's token to a backend launched with the secret", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          bootstrapToken: "current-window-token",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        bootstrapsLayer([
+          {
+            ...defaultWslInstance,
+            currentConfig: Effect.succeedSome({
+              ...readyWslConfig,
+              bootstrap: {
+                ...readyWslConfig.bootstrap,
+                desktopBootstrapSecret: "desktop-secret",
+              },
+            }),
+          },
+        ]),
+      ),
+    ),
   );
 
   it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
@@ -122,7 +167,7 @@ describe("getLocalEnvironmentBootstraps", () => {
           wsBaseUrl: null,
         },
       ]);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([retryingInstance])));
+    }).pipe(Effect.provide(bootstrapsLayer([retryingInstance])));
   });
 
   it.effect("omits a bounded transient bootstrap after retries stop", () => {
@@ -148,7 +193,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     return Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
       assert.deepEqual(result, []);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
+    }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
 });
 
@@ -213,7 +258,10 @@ describe("pasteAsText", () => {
 });
 
 describe("pickProjectFavicon", () => {
-  const pickerLayer = (pickFiles: () => Effect.Effect<Array<string>>, settings?: DesktopSettings) =>
+  const pickerLayer = (
+    pickFiles: () => Effect.Effect<Array<string>>,
+    settings?: DesktopAppSettings.DesktopSettings,
+  ) =>
     Layer.mergeAll(
       Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
       Layer.mock(ElectronWindow.ElectronWindow)({

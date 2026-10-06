@@ -1,0 +1,117 @@
+---
+title: Setup
+description: Connect alchemy to Google Cloud — project, service-account key, the APIs to enable, and Docker.
+---
+
+## What you need
+
+- **A GCP project** and its id.
+- **A service-account key** with enough IAM to create what you deploy.
+  A working starting point is Cloud Run Admin, Storage Admin, Pub/Sub
+  Admin, Service Account Admin (Alchemy mints a per-host `alch-*`
+  runtime account), and Project IAM Admin (it grants roles to that
+  account). Add the admin role for anything else you declare —
+  Firestore, BigQuery, Secret Manager.
+- **Docker running locally.** `GCP.Function`, `GCP.Run.Service`,
+  `GCP.Run.Job`, and `GCP.Run.WorkerPool` bundle your code and build a
+  container image before pushing it to Artifact Registry.
+- **The APIs enabled** on the project for whatever you use:
+  `run.googleapis.com`, `artifactregistry.googleapis.com`,
+  `iam.googleapis.com`, `cloudresourcemanager.googleapis.com`, plus the
+  service-specific ones (`firestore.googleapis.com`,
+  `secretmanager.googleapis.com`, `pubsub.googleapis.com`,
+  `bigquery.googleapis.com`, `redis.googleapis.com`).
+
+```sh
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+  iam.googleapis.com cloudresourcemanager.googleapis.com
+```
+
+## Credentials
+
+Run `alchemy profile edit --add GCP`, choose **Service account JSON**,
+and point at the key file. Alchemy stores it under
+`~/.alchemy/credentials/<profile>/`.
+
+In CI (`CI=true`), Alchemy skips profiles and reads the environment:
+
+- `GOOGLE_PROJECT_ID` — project id (`GOOGLE_CLOUD_PROJECT` is accepted
+  as an alias).
+- `GOOGLE_APPLICATION_CREDENTIALS` — path to the key file.
+
+Or `GOOGLE_ACCESS_TOKEN` plus `GOOGLE_PROJECT_ID` for a short-lived
+token. On GKE with Workload Identity, neither is needed — the metadata
+server is the last link in the chain.
+
+See [Profiles](/environments/profiles) for how credentials are stored
+and switched.
+
+## Register the provider
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "alchemy/GCP";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "App",
+  { providers: GCP.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    return {};
+  }),
+);
+```
+
+`GCP.providers()` merges next to any other cloud's providers, so a
+single stack can span GCP and Cloudflare or AWS.
+
+## Choose a region
+
+Regional resources created without a `location` / `region` prop land in
+the default region. It comes with the credential (the profile's
+`region`, which `alchemy profile` asks for), else `us-central1`. To pin
+a stack to a region regardless of the credential, provide
+`GCP.Region(...)`:
+
+```typescript
+export default Alchemy.Stack(
+  "App",
+  {
+    providers: GCP.providers().pipe(
+      Layer.provideMerge(GCP.Region("europe-west1")),
+    ),
+    state: Alchemy.localState(),
+  },
+  program,
+);
+```
+
+A resource that should live elsewhere takes an explicit `location`.
+Changing the stack region never moves a deployed resource: its recorded
+location wins.
+
+Requests for regional resources that Google only serves from a regional
+endpoint (Secret Manager, Parameter Manager) go to
+`{service}.{region}.rep.googleapis.com` automatically. For data
+residency, send every regional request to its regional endpoint:
+
+```typescript
+GCP.providers().pipe(
+  Layer.provideMerge(GCP.RegionalEndpoints("prefer")),
+);
+```
+
+## Cleaning up
+
+`alchemy destroy` removes what a stack created, including the per-host
+service accounts and their role grants. For a test project that has
+drifted, `pnpm nuke:gcp` deletes Alchemy-managed resources across the
+whole project — including every service account stamped
+`alchemy-host`. Do not point it at a project you care about.
+
+## Next steps
+
+- [GCP overview](/gcp) — hosts, resources, and bindings.
+- [Serve an API on Cloud Run](/gcp/guides/cloud-run-api) — the first
+  thing to build.

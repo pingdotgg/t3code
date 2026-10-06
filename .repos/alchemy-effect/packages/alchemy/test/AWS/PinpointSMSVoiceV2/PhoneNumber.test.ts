@@ -21,7 +21,10 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:pinpointsmsvoicev2", "live"],
+    timeout: 60_000,
+  },
 );
 
 const getById = (phoneNumberId: string) =>
@@ -113,5 +116,8 @@ test.provider.skipIf(!process.env.AWS_TEST_PINPOINT_SMS)(
       yield* stack.destroy();
       yield* assertPhoneNumberGone(created.phoneNumberId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:pinpointsmsvoicev2", "live"],
+    timeout: 240_000,
+  },
 );

@@ -20,7 +20,8 @@ describe("makeRunnerConfig", () => {
     const config = makeRunnerConfig("/app");
     expect(config).toEqual({
       appDir: "/app",
-      configPath: "open-next.config.ts",
+      configPath: undefined,
+      cache: "static-assets",
       compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
       skipNextBuild: false,
       minify: false,
@@ -34,6 +35,7 @@ describe("makeRunnerConfig", () => {
       vite: { compatibilityDate: "2026-01-01" },
       nextjs: {
         configPath: "custom.config.ts",
+        cache: "kv",
         buildCommand: "npx next build --debug",
         skipNextBuild: true,
         minify: true,
@@ -43,6 +45,7 @@ describe("makeRunnerConfig", () => {
     expect(config).toEqual({
       appDir: "/app",
       configPath: "custom.config.ts",
+      cache: "kv",
       compatibilityDate: "2026-01-01",
       skipNextBuild: true,
       minify: true,

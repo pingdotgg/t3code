@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, Latch, Schema } from "effect"
-import { ClusterSchema, Entity } from "effect/unstable/cluster"
-import { Rpc } from "effect/unstable/rpc"
+import { ClusterSchema, Entity } from "effect/cluster"
+import { Rpc } from "effect/rpc"
 import { type Backend, make } from "./harness.ts"
 
 const ResidencyEntity = Entity.make("ClusterIntegrationResidency", [

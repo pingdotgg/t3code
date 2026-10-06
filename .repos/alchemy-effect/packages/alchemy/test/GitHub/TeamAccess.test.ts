@@ -175,15 +175,26 @@ test.provider(
       );
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:repository",
+      "provider:github:teamaccess",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
-test.provider("list team access only within the authorized test org", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
-    expect(Array.isArray(yield* listTestOrgAccess)).toBe(true);
-    yield* stack.destroy();
-  }),
+test.provider(
+  "list team access only within the authorized test org",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      expect(Array.isArray(yield* listTestOrgAccess)).toBe(true);
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:github", "provider:github:teamaccess", "live"] },
 );
 
 const grants = new Map<string, string>();
@@ -335,6 +346,7 @@ unit.provider(
       yield* stack.destroy();
       expect(grants.size).toBe(0);
     }),
+  { tags: ["unit", "provider:github", "provider:github:teamaccess", "local"] },
 );
 
 unit(
@@ -348,4 +360,5 @@ unit(
     expect(testOwner("alchemy-run-test")).toBe("alchemy-run-test");
     expect(testOwner("alchemy-run-test-2")).toBe("alchemy-run-test-2");
   }),
+  { tags: ["unit", "provider:github", "provider:github:teamaccess", "local"] },
 );

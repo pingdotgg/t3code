@@ -1,6 +1,6 @@
 // Measures HttpApiBuilder.endpoint selection from one type-only group with 500 same-shaped endpoints.
 import { Effect, Schema } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Api } from "./_endpoint-selection-types.ts"
 
 Schema.String
