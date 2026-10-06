@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import * as ServerConfig from "../config.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -100,7 +101,22 @@ const make = Effect.gen(function* () {
     );
 
   const readable = yield* Effect.acquireRelease(
-    Effect.sync(() => NodeFS.createReadStream("", { fd: inputFd, autoClose: true })),
+    Effect.sync(() => {
+      // A filesystem pipe read blocks a libuv worker even after destroy(), and the
+      // desktop keeps this pipe open and mostly idle. Poll it so a crash can exit.
+      try {
+        return new NodeNet.Socket({ fd: inputFd, readable: true, writable: false });
+      } catch (cause) {
+        if (
+          !(cause instanceof Error) ||
+          !("code" in cause) ||
+          cause.code !== "ERR_INVALID_FD_TYPE"
+        ) {
+          throw cause;
+        }
+        return NodeFS.createReadStream("", { fd: inputFd, autoClose: true });
+      }
+    }),
     (stream) => Effect.sync(() => stream.destroy()),
   );
   yield* NodeStream.fromReadable<Uint8Array, Error>({
