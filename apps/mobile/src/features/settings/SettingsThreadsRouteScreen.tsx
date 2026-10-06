@@ -1,7 +1,7 @@
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -45,6 +45,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <AutoSettleSettingsRows />
+          <BetaSettingsSection />
           <LegacySettingsSection />
         </ScrollView>
       </SettingsScreen>
@@ -235,6 +236,35 @@ function AutoSettleSettingsRows() {
           </View>
         </SettingsSection>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * Device-local beta toggles, the counterpart of web's Working section (beta)
+ * in Settings → General.
+ */
+function BetaSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const workingShelfEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled === true;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta">
+        <SettingsSwitchRow
+          icon="bolt.circle"
+          label="Working section"
+          value={workingShelfEnabled}
+          onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Fold working and monitoring threads into a Working section. They return to the top of the
+        list when they need you. While this is on, active threads are ordered by time and cannot be
+        moved.
+      </Text>
     </View>
   );
 }

@@ -882,8 +882,10 @@ describe("getChangeRequest commits", () => {
     reviewThreads: [],
     commentCount: 0,
     truncated: false,
+    reviewThreadsTruncated: false,
     reactions: [],
     reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+    editedAtById: new Map<string, string>(),
     reviewers: [],
     avatarsByLogin: new Map<string, string>(),
     botLogins: new Set<string>(),
@@ -967,8 +969,10 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     reviewThreads: [],
     commentCount: 0,
     truncated: false,
+    reviewThreadsTruncated: false,
     reactions: [],
     reactionsById: new Map(),
+    editedAtById: new Map([["PRR_1", "2026-07-04T00:00:00Z"]]),
     reviewers: [],
     avatarsByLogin: new Map(),
     botLogins: new Set(["macroscopeapp"]),
@@ -1000,6 +1004,7 @@ describe("getChangeRequestActivity dismissed reviews", () => {
       Effect.map((activity) => {
         expect(activity.comments[0]?.body).toBe("Dismissing prior approval to re-evaluate 9b66581");
         expect(activity.comments[0]?.author?.isBot).toBe(true);
+        expect(activity.comments[0]?.editedAt).toBe("2026-07-04T00:00:00Z");
       }),
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),

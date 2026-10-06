@@ -19,10 +19,10 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-const projectionLayer = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-  SqlitePersistenceMemory,
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+const layerProjection = Layer.mergeAll(
+  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  SqlitePersistence.layerMemory,
   IdAllocator.layer,
 );
 it.effect("resolves the thread baseline after a second root run replaces scope ownership", () =>
@@ -205,7 +205,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     assert.equal(context.checkpointScopes.length, 1);
     assert.equal(context.checkpointScopes[0]?.runId, secondRunId);
 
-    const queryLayer = CheckpointDiffQuery.layer.pipe(
+    const layerQuery = CheckpointDiffQuery.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -231,7 +231,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     const result = yield* Effect.gen(function* () {
       const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       return yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
-    }).pipe(Effect.provide(queryLayer));
+    }).pipe(Effect.provide(layerQuery));
     assert.equal(result.diff, "two-run diff");
-  }).pipe(Effect.provide(projectionLayer)),
+  }).pipe(Effect.provide(layerProjection)),
 );

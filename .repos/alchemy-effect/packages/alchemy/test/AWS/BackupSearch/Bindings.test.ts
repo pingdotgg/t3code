@@ -6,8 +6,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import BackupSearchTestFunctionLive, {
   BackupSearchTestFunction,
   FIXTURE_SEARCH_JOB_NAME,
@@ -82,112 +82,125 @@ const stopLeakedSearchJobs = Effect.gen(function* () {
   );
 }).pipe(Effect.orDie);
 
-describe.skipIf(gated)("BackupSearch Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* sharedStack.destroy();
-      // Pre-clean: the scratch state is in-memory, so the destroy above
-      // cannot see a job leaked by a crashed prior run.
-      yield* Core.withProviders(
-        stopLeakedSearchJobs,
-        testOptions,
-        sharedStack.name,
-      );
+describe.skipIf(gated)(
+  "BackupSearch Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:backupsearch",
+      "provider:aws:lambda",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* sharedStack.destroy();
+        // Pre-clean: the scratch state is in-memory, so the destroy above
+        // cannot see a job leaked by a crashed prior run.
+        yield* Core.withProviders(
+          stopLeakedSearchJobs,
+          testOptions,
+          sharedStack.name,
+        );
 
-      const { functionUrl } = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* BackupSearchTestFunction;
-        }).pipe(Effect.provide(BackupSearchTestFunctionLive)),
-      );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* BackupSearchTestFunction;
+          }).pipe(Effect.provide(BackupSearchTestFunctionLive)),
+        );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
 
-      yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      );
-    }),
-    { timeout: 240_000 },
-  );
+        yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
 
-  afterAll(
-    sharedStack
-      .destroy()
-      .pipe(
-        Effect.ensuring(
-          Core.withProviders(
-            stopLeakedSearchJobs,
-            testOptions,
-            sharedStack.name,
+    afterAll(
+      sharedStack
+        .destroy()
+        .pipe(
+          Effect.ensuring(
+            Core.withProviders(
+              stopLeakedSearchJobs,
+              testOptions,
+              sharedStack.name,
+            ),
           ),
         ),
-      ),
-    { timeout: 120_000 },
-  );
-
-  describe("binding registration", () => {
-    test.provider("all capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/bindings`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).bound).toEqual([
-          "listSearchJobResults",
-          "listSearchJobBackups",
-          "getSearchJob",
-        ]);
-      }),
+      { timeout: 120_000 },
     );
-  });
 
-  describe("GetSearchJob", () => {
-    test.provider("reads the fixture search job's status", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/job`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect((response as any).name).toBe(FIXTURE_SEARCH_JOB_NAME);
-        expect([
-          "RUNNING",
-          "COMPLETED",
-          "STOPPING",
-          "STOPPED",
-          "FAILED",
-        ]).toContain((response as any).status);
-      }),
-    );
-  });
-
-  describe("ListSearchJobResults", () => {
-    test.provider("lists the fixture search job's results", (_stack) =>
-      Effect.gen(function* () {
-        // The fixture job matches nothing on purpose — assert the call
-        // round-trips (IAM grant + identifier injection) with a well-formed
-        // page rather than any particular hit count.
-        const response = yield* send(
-          HttpClientRequest.get(`${baseUrl}/results`),
-        ).pipe(Effect.flatMap((r) => r.json));
-        expect(typeof (response as any).count).toBe("number");
-      }),
-    );
-  });
-
-  describe("ListSearchJobBackups", () => {
-    test.provider(
-      "lists the recovery points the search job covered",
-      (_stack) =>
+    describe("binding registration", () => {
+      test.provider("all capabilities initialize in the runtime", (_stack) =>
         Effect.gen(function* () {
           const response = yield* send(
-            HttpClientRequest.get(`${baseUrl}/backups`),
+            HttpClientRequest.get(`${baseUrl}/bindings`),
+          ).pipe(Effect.flatMap((r) => r.json));
+          expect((response as any).bound).toEqual([
+            "listSearchJobResults",
+            "listSearchJobBackups",
+            "getSearchJob",
+          ]);
+        }),
+      );
+    });
+
+    describe("GetSearchJob", () => {
+      test.provider("reads the fixture search job's status", (_stack) =>
+        Effect.gen(function* () {
+          const response = yield* send(
+            HttpClientRequest.get(`${baseUrl}/job`),
+          ).pipe(Effect.flatMap((r) => r.json));
+          expect((response as any).name).toBe(FIXTURE_SEARCH_JOB_NAME);
+          expect([
+            "RUNNING",
+            "COMPLETED",
+            "STOPPING",
+            "STOPPED",
+            "FAILED",
+          ]).toContain((response as any).status);
+        }),
+      );
+    });
+
+    describe("ListSearchJobResults", () => {
+      test.provider("lists the fixture search job's results", (_stack) =>
+        Effect.gen(function* () {
+          // The fixture job matches nothing on purpose — assert the call
+          // round-trips (IAM grant + identifier injection) with a well-formed
+          // page rather than any particular hit count.
+          const response = yield* send(
+            HttpClientRequest.get(`${baseUrl}/results`),
           ).pipe(Effect.flatMap((r) => r.json));
           expect(typeof (response as any).count).toBe("number");
-          expect(Array.isArray((response as any).statuses)).toBe(true);
         }),
-    );
-  });
-});
+      );
+    });
+
+    describe("ListSearchJobBackups", () => {
+      test.provider(
+        "lists the recovery points the search job covered",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = yield* send(
+              HttpClientRequest.get(`${baseUrl}/backups`),
+            ).pipe(Effect.flatMap((r) => r.json));
+            expect(typeof (response as any).count).toBe("number");
+            expect(Array.isArray((response as any).statuses)).toBe(true);
+          }),
+      );
+    });
+  },
+);

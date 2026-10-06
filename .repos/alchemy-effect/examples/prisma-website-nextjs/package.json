@@ -1,0 +1,38 @@
+{
+  "name": "prisma-website-nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "@tailwindcss/postcss": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:nextjs",
+    "@vercel/nft": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-nextjs"
+  }
+}

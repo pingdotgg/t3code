@@ -9,8 +9,7 @@ export interface MiniflareModule {
     | "Text"
     | "Data"
     | "CompiledWasm"
-    | "PythonModule"
-    | "PythonRequirement";
+    | "PythonModule";
   contents?: string | Uint8Array<ArrayBuffer> | undefined;
 }
 

@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -73,6 +73,8 @@ export type AssetUrlState =
   | {
       readonly _tag: "Success";
       readonly url: string;
+      /** When the signed URL stops working, in epoch milliseconds. */
+      readonly expiresAt: number;
       /** The host path the server chose to serve, when it differs from what was asked for. */
       readonly sourcePath?: string;
       /** Pixel size from the image header, when the server could read one. */
@@ -90,6 +92,7 @@ export function assetUrlStateFromResult(
   return {
     _tag: "Success",
     url,
+    expiresAt: result.value.expiresAt,
     ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
     ...(result.value.imageDimensions !== undefined
       ? { imageDimensions: result.value.imageDimensions }

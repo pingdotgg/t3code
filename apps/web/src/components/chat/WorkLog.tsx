@@ -64,7 +64,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
 }
 
 const interactionClassName =
-  "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
 function useRowClassName(interactive: boolean) {
   const grouped = use(GroupedRows);
@@ -119,11 +119,11 @@ export function WorkLogDetails({
   return (
     <div
       className={cn(
-        "ms-7 cursor-auto",
+        "cursor-auto",
         kind === "text"
-          ? "flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
+          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
           : kind === "panel"
-            ? "mt-1 rounded-md bg-muted/40 px-3 py-2"
+            ? "mt-0.5 mb-1.5"
             : "mt-1",
       )}
       onClick={(event) => event.stopPropagation()}

@@ -1,18 +1,110 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PullRequestOperationError } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as ServerConfig from "../config.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
 
+/** Sets every file's mtime to `age` before the current test clock time. */
+const ageFiles = (directory: string, names: ReadonlyArray<string>, age: Duration.Duration) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const mtime = DateTime.toDateUtc(DateTime.subtractDuration(yield* DateTime.now, age));
+    for (const name of names) yield* fs.utimes(path.join(directory, name), mtime, mtime);
+  });
+
 it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
+  it.effect("prunes entry files written before the max age and keeps fresh ones", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-01T00:00:00Z")));
+      const cache = yield* cacheLayer(directory);
+      yield* cache.get("old", Effect.succeed("old"), ["pr"]);
+      yield* cache.invalidate("pr");
+      const [stale, revisions] = (yield* fs.readDirectory(directory)).toSorted();
+      assert.strictEqual(revisions, "revisions");
+      yield* cache.get("fresh", Effect.succeed("fresh"));
+      const fresh = (yield* fs.readDirectory(directory)).find(
+        (name) => name !== stale && name !== revisions,
+      );
+      const unrelated = "unrelated.json";
+      yield* fs.writeFileString(`${directory}/${unrelated}`, "{}");
+      // Starts with the store id but is not an entry file.
+      const prefixed = "pr-v2-backup.json";
+      yield* fs.writeFileString(`${directory}/${prefixed}`, "{}");
+      const justExpired = Duration.sum(
+        PullRequestReadCache.ENTRY_FILE_MAX_AGE,
+        Duration.seconds(1),
+      );
+      yield* ageFiles(directory, [stale!, revisions!, unrelated, prefixed], justExpired);
+      yield* ageFiles(directory, [fresh!], PullRequestReadCache.ENTRY_FILE_MAX_AGE);
+
+      yield* PullRequestReadCache.pruneExpiredEntryFiles(directory);
+
+      assert.deepStrictEqual(
+        (yield* fs.readDirectory(directory)).toSorted(),
+        [fresh!, revisions!, unrelated, prefixed].toSorted(),
+      );
+    }),
+  );
+
+  it.effect("sweeps the cache directory every hour once the layer is built", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
+      const directory = `${providerStatusCacheDir}/pull-requests`;
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-01T00:00:00Z")));
+      yield* (yield* cacheLayer(directory)).get("summary", Effect.succeed("cached"));
+      const [entry] = yield* fs.readDirectory(directory);
+      // Within the max age at the first two sweeps, past it at the third.
+      yield* ageFiles(
+        directory,
+        [entry!],
+        Duration.subtract(PullRequestReadCache.ENTRY_FILE_MAX_AGE, Duration.minutes(90)),
+      );
+      // A sweep's last file operation is the entry's stat when it keeps the
+      // entry, and its removal otherwise. Waiting for it means the sweep has
+      // finished before the clock moves.
+      const operations = yield* Queue.unbounded<string>();
+      const observedFs = FileSystem.FileSystem.of({
+        ...fs,
+        stat: (path) => fs.stat(path).pipe(Effect.tap(() => Queue.offer(operations, "stat"))),
+        remove: (path, options) =>
+          fs.remove(path, options).pipe(Effect.tap(() => Queue.offer(operations, "remove"))),
+      });
+      yield* Layer.build(
+        PullRequestReadCache.layer.pipe(
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, observedFs)),
+        ),
+      );
+      assert.strictEqual(yield* Queue.take(operations), "stat");
+      yield* TestClock.adjust("1 hour");
+      assert.strictEqual(yield* Queue.take(operations), "stat");
+      assert.deepStrictEqual(yield* fs.readDirectory(directory), [entry]);
+      yield* TestClock.adjust("1 hour");
+      assert.deepStrictEqual(yield* Queue.takeN(operations, 2), ["stat", "remove"]);
+      assert.deepStrictEqual(yield* fs.readDirectory(directory), []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-pr-cache-layer-" })),
+    ),
+  );
+
   it.effect("reuses files after restart and respects the original expiry", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

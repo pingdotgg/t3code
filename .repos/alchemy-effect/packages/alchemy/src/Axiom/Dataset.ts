@@ -130,6 +130,7 @@ export type Dataset = Resource<
  * ```
  *
  * @resource
+ * @product Dataset
  */
 export const Dataset = Resource<Dataset>("Axiom.Dataset");
 

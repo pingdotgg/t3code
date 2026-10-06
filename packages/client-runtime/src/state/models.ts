@@ -5,6 +5,7 @@ import type {
   EnvironmentId,
   MessageId,
   OrchestrationProjectShell,
+  OrchestrationV2ProviderGoal,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ThreadProjection,
@@ -102,6 +103,8 @@ export interface EnvironmentThreadShell {
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly latestUserMessageAt: string | null;
+  /** The last message the user wrote. `undefined` means the server predates it. */
+  readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly hasActionableProposedPlan: boolean;
@@ -110,6 +113,8 @@ export interface EnvironmentThreadShell {
   >;
   /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
+  /** Native `/goal` on the active provider thread. */
+  readonly goal: OrchestrationV2ProviderGoal | null;
   readonly itemCount: number;
   readonly visibleItemCount: number;
   readonly createdAt: string;
@@ -169,10 +174,13 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // latestRun keeps the latest run's status for history presentation.
 // A failed latest run outranks the roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
+  // A pull request watch can hold a thread that never ran.
+  if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
+    return null;
+  }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
     status,
@@ -241,6 +249,9 @@ export function presentThreadShell(
     latestRun,
     runtime: shellRuntime(thread),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
+    ...(thread.latestUserAuthoredMessageAt === undefined
+      ? {}
+      : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
@@ -249,6 +260,7 @@ export function presentThreadShell(
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
+    goal: thread.goal ?? null,
     itemCount: thread.itemCount,
     visibleItemCount: thread.visibleItemCount,
     createdAt: iso(thread.createdAt),

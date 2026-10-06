@@ -95,6 +95,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./KeyedLock": {
+      "types": "./src/KeyedLock.ts",
+      "import": "./src/KeyedLock.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
@@ -110,6 +114,10 @@
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
+    },
+    "./htmlRender": {
+      "types": "./src/htmlRender.ts",
+      "import": "./src/htmlRender.ts"
     },
     "./favicon": {
       "types": "./src/favicon.ts",
@@ -159,6 +167,10 @@
       "types": "./src/dpop.ts",
       "import": "./src/dpop.ts"
     },
+    "./desktopBootstrapToken": {
+      "types": "./src/desktopBootstrapToken.ts",
+      "import": "./src/desktopBootstrapToken.ts"
+    },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
@@ -194,6 +206,10 @@
     "./connectAuth": {
       "types": "./src/connectAuth.ts",
       "import": "./src/connectAuth.ts"
+    },
+    "./symlink": {
+      "types": "./src/symlink.ts",
+      "import": "./src/symlink.ts"
     },
     "./path": {
       "types": "./src/path.ts",

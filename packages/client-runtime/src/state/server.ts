@@ -21,7 +21,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -936,12 +936,17 @@ export function createServerEnvironmentAtoms<R, E>(
     }).pipe(Atom.withLabel(`environment-data:server:usage-prices:${environmentId}`)),
   );
   const usageScanSettingsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) =>
-      JSON.stringify([
+    Atom.make((get) => {
+      const settings = get(settingsValueAtom(environmentId));
+      const aliases = settings?.usageModelAliases ?? {};
+      return JSON.stringify([
         get(usagePricesAtom(environmentId)),
-        get(settingsValueAtom(environmentId))?.cursorKeychainUsageEnabled ?? false,
-      ]),
-    ).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
+        Object.keys(aliases)
+          .sort()
+          .map((model) => [model, aliases[model]]),
+        settings?.cursorKeychainUsageEnabled ?? false,
+      ]);
+    }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
   );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
@@ -1070,6 +1075,14 @@ export function createServerEnvironmentAtoms<R, E>(
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
+    }),
+    scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-task:webhook-deliveries",
+      tag: WS_METHODS.scheduledTasksListWebhookDeliveries,
+    }),
+    scheduledTaskWebhookDelivery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-task:webhook-delivery",
+      tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
     /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -1279,6 +1292,23 @@ export function createServerEnvironmentAtoms<R, E>(
     runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:run-now",
       tag: WS_METHODS.scheduledTasksRunNow,
+    }),
+    rotateScheduledTaskWebhookToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:rotate-webhook-token",
+      tag: WS_METHODS.scheduledTasksRotateWebhookToken,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Off the config lane: answering a card must not queue behind settings
+    // edits. One answer per card at a time.
+    answerSecretRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:secrets:answer-request",
+      tag: WS_METHODS.secretsAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
     }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",

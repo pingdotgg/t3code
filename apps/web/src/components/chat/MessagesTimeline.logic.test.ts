@@ -2684,8 +2684,10 @@ describe("deriveMessagesTimelineRows", () => {
   it("reuses one activity row for initial thinking and the latest tool", () => {
     const deriveRows = (
       toolLifecycleStatus: "inProgress" | "completed" | "failed" | "declined" | null,
+      expandedWorkGroupIds?: ReadonlySet<string>,
     ) =>
       deriveMessagesTimelineRows({
+        ...(expandedWorkGroupIds ? { expandedWorkGroupIds } : {}),
         timelineEntries:
           toolLifecycleStatus === null
             ? []
@@ -2733,6 +2735,19 @@ describe("deriveMessagesTimelineRows", () => {
     expect(completedActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(failedRows.some((row) => row.kind === "work-live")).toBe(false);
     expect(failedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
+    const failedThinkingRow = failedRows.at(-1);
+    const failedGroupId =
+      failedThinkingRow?.kind === "thinking" ? failedThinkingRow.groupId : undefined;
+    expect(failedGroupId).toBeDefined();
+    const expandedFailedRows = deriveRows("failed", new Set([failedGroupId!]));
+    expect(expandedFailedRows.slice(-2)).toMatchObject([
+      { kind: "thinking", id: "live-activity-row", expanded: true },
+      {
+        kind: "work",
+        isExpandedToolGroup: true,
+        groupedEntries: [{ id: "latest-command" }],
+      },
+    ]);
     expect(declinedRows.find((row) => row.kind === "work-live")).toMatchObject({ active: false });
     expect(declinedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
     expect(initialRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);

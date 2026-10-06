@@ -6,7 +6,15 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
-import { newCommandId, readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
+import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
+import {
+  newCommandId,
+  readCaller,
+  readFullAccessCaller,
+  readMutationCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -25,27 +33,30 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 const mutation = Effect.gen(function* () {
-  const { caller } = yield* readMutationCaller();
-  if (
-    caller.archivedAt !== null ||
-    caller.runtimeMode !== "full-access" ||
-    caller.interactionMode !== "default"
-  )
-    return yield* new OrchestratorMcpFailure({
-      code: "capability_denied",
-      message: "Project changes require a live full-access/default calling thread.",
-    });
+  yield* readFullAccessCaller(
+    "Project changes require a live full-access/default calling thread or a full-access client.",
+  );
   return yield* Project.ProjectService;
 });
-export const ProjectHandlersLive = ProjectToolkit.toLayer({
+export const layer = ProjectToolkit.toLayer({
   t3_thread_launch: (input) =>
     Effect.gen(function* () {
-      const { caller, scope } = yield* readMutationCaller();
-      if (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default")
+      const context = yield* readMutationCaller();
+      const { caller, limits } = context;
+      // A thread caller launches only as itself (full-access/default), as before. A client
+      // launches anything up to its ceiling.
+      if (
+        caller !== undefined &&
+        (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default")
+      )
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
           message: "Project launches require a full-access/default calling thread.",
         });
+      const runtimeMode = yield* resolveRuntimeMode(
+        limits.runtimeMode,
+        input.runtimeMode ?? caller?.runtimeMode,
+      );
       const commandId = yield* newCommandId();
       const threadId = ThreadId.make(commandId);
       const messageId = MessageId.make(commandId);
@@ -76,22 +87,38 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
                   }),
               ),
             )).projectId
-          : (input.projectId ?? caller.projectId);
+          : yield* resolveProjectId(context, input.projectId);
+      const modelSelection =
+        input.modelSelection ??
+        caller?.modelSelection ??
+        (yield* Project.ProjectService.pipe(
+          Effect.flatMap((projects) => projects.getById(projectId)),
+          Effect.mapError(unavailable),
+          Effect.map((project) =>
+            Option.getOrUndefined(Option.flatMapNullishOr(project, (p) => p.defaultModelSelection)),
+          ),
+        ));
+      if (modelSelection === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
+        });
       const result = yield* ThreadMessageIntake.launchThread({
         commandId,
         threadId,
         projectId,
         title: input.title,
-        modelSelection: input.modelSelection ?? caller.modelSelection,
-        runtimeMode: input.runtimeMode ?? caller.runtimeMode,
-        interactionMode: input.interactionMode ?? caller.interactionMode,
+        modelSelection,
+        runtimeMode,
+        interactionMode: input.interactionMode ?? caller?.interactionMode ?? "default",
         workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
         ...(input.message === undefined && attachments.length === 0
           ? {}
           : {
               initialMessage: {
                 messageId,
-                senderThreadId: scope.threadId,
+                ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                 text: input.message ?? "",
                 attachments,
               },

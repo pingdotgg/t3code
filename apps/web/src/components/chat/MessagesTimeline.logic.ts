@@ -48,6 +48,7 @@ import {
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -64,6 +65,7 @@ function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
+  if (entry.kind === "html-render") return entry.runId;
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -121,7 +123,7 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   }
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
-  if (entry.command) return commandDisplayText(entry.command);
+  if (entry.command?.trim()) return commandDisplayText(entry.command);
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
     // Adapters title file searches with their target; the item keeps only the pattern.
@@ -509,6 +511,9 @@ type MessagesTimelineRowContent =
       kind: "thinking";
       id: string;
       createdAt: string | null;
+      /** Tool calls this row stands in for after the latest one failed. */
+      groupId?: string;
+      expanded?: boolean;
     }
   | {
       kind: "work-toggle";
@@ -584,6 +589,12 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "html-render";
+      id: string;
+      createdAt: string;
+      htmlRender: HtmlRenderReference;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -705,6 +716,8 @@ function deriveSupersededAttemptFolds(
       entry.attempt?.status !== "superseded" ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
+      // A published page stays visible, as it does when its turn folds.
+      entry.kind === "html-render" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
     ) {
@@ -1603,6 +1616,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "html-render") {
+      nextRows.push({
+        kind: "html-render",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        htmlRender: timelineEntry.htmlRender,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "event") {
       const previous = nextRows.at(-1);
       if (
@@ -1737,11 +1760,35 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
-    nextRows.push({
-      kind: "thinking",
-      id: LIVE_ACTIVITY_ROW_ID,
-      createdAt: input.activeTurnStartedAt ?? null,
-    });
+    // A failed latest tool hands the row back to thinking, but its group
+    // stays reachable through the same disclosure the live row offers.
+    const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
+    if (failedGroupAnchor) {
+      const groupId = workGroupId(failedGroupAnchor.id);
+      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      nextRows.push({
+        kind: "thinking",
+        id: LIVE_ACTIVITY_ROW_ID,
+        createdAt: input.activeTurnStartedAt ?? null,
+        groupId,
+        expanded,
+      });
+      if (expanded) {
+        nextRows.push(
+          expandedWorkGroupRow(
+            groupId,
+            failedGroupAnchor.createdAt,
+            visibleActiveToolEntries.map((entry) => entry.entry),
+          ),
+        );
+      }
+    } else {
+      nextRows.push({
+        kind: "thinking",
+        id: LIVE_ACTIVITY_ROW_ID,
+        createdAt: input.activeTurnStartedAt ?? null,
+      });
+    }
   }
 
   const result = attachTrailingToolGroupsToAssistant(
@@ -1952,8 +1999,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
   switch (a.kind) {
     case "working":
-    case "thinking":
       return a.createdAt === (b as typeof a).createdAt;
+    case "thinking": {
+      const bt = b as typeof a;
+      return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
+    }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
 
@@ -1985,6 +2035,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "html-render": {
+      // Entries rebuild on any tool update; an equal page must keep its mounted frame.
+      const bh = b as typeof a;
+      return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+    }
 
     case "event":
       return (

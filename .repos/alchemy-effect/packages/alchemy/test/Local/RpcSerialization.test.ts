@@ -46,7 +46,7 @@ const roundTrip = <T extends Record<string, any>>(
   return unwrapRpcHandlers<T>(piped, streamKeys) as T;
 };
 
-describe("Local.RpcSerialization", () => {
+describe("Local.RpcSerialization", { tags: ["unit", "local"] }, () => {
   describe("argument serialization", () => {
     it.effect("round-trips a top-level Redacted argument", () =>
       Effect.gen(function* () {

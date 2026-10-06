@@ -1,7 +1,7 @@
 import { NodeClusterSocket, NodeSocketServer } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { BigDecimal, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, PrimaryKey, Schema } from "effect"
-import type { Sharding } from "effect/unstable/cluster"
+import type { Sharding } from "effect/cluster"
 import {
   ClusterSchema,
   Entity,
@@ -11,9 +11,9 @@ import {
   RunnerStorage,
   ShardingConfig,
   SocketRunner
-} from "effect/unstable/cluster"
-import { Rpc, RpcSerialization } from "effect/unstable/rpc"
-import * as SocketServer from "effect/unstable/socket/SocketServer"
+} from "effect/cluster"
+import { Rpc, RpcSerialization } from "effect/rpc"
+import * as SocketServer from "effect/socket/SocketServer"
 
 const HOST = "127.0.0.1"
 

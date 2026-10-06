@@ -41,9 +41,9 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { spawnSync } from "node:child_process";
 
 const FLOCI_ENDPOINT = "http://localhost:4566";
@@ -219,7 +219,10 @@ test.provider.skipIf(!dockerAvailable)(
         ) ?? false,
       ).toBe(false);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3", "provider:aws:sqs", "local"],
+    timeout: 240_000,
+  },
 );
 
 /**
@@ -247,16 +250,18 @@ const noCredsProfile: ProfileStoreService = {
 /**
  * The test runner exports CI=true, but the CI contract for the
  * credential-demand seam is "use env-var credentials" — a different behavior
- * than the one under test. Mask the CI key (delegating everything else) so
- * the demand seam sees a plain developer shell: `ci: false` → the typed
- * failure.
+ * than the one under test. Mask CI and AWS credentials at the demand seam
+ * as well as provider construction, so fake-profile wrappers and .env files
+ * cannot turn the missing-credentials assertion into an environment login.
  */
-const maskCi = Layer.effect(
+const maskCredentialDemand = Layer.effect(
   ConfigProvider.ConfigProvider,
   Effect.gen(function* () {
     const base = yield* ConfigProvider.ConfigProvider;
     return ConfigProvider.make((path) =>
-      path.length === 1 && path[0] === "CI"
+      path.length === 1 &&
+      typeof path[0] === "string" &&
+      (path[0] === "CI" || MASKED_AWS_KEYS.has(path[0]))
         ? Effect.succeed(undefined)
         : base.load(path),
     );
@@ -285,9 +290,9 @@ test.provider(
             }),
           )
           .pipe(
-            // Hermetic view for the demand seam: no profile on disk, no CI.
+            // No saved profile, CI mode, or ambient AWS credentials.
             Effect.provideService(ProfileStore, noCredsProfile),
-            Effect.provide(maskCi),
+            Effect.provide(maskCredentialDemand),
           ),
       );
 
@@ -308,5 +313,5 @@ test.provider(
         expect(error.message).toContain("Alchemy.remote()");
       }
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:s3", "local"], timeout: 60_000 },
 );

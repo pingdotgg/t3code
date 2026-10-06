@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Argument from "effect/unstable/cli/Argument";
-import * as Flag from "effect/unstable/cli/Flag";
+import * as Argument from "effect/cli/Argument";
+import * as Flag from "effect/cli/Flag";
 import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
 import { UserInputError } from "./errors.ts";
 
@@ -103,6 +103,40 @@ export const force = Flag.Boolean("force").pipe(
   ),
   Flag.withDefault(false),
 );
+
+/** One pattern per occurrence; commas and whitespace are preserved. */
+const selectionFlag = (name: "include" | "exclude", description: string) =>
+  Flag.String(name).pipe(
+    Flag.withDescription(description),
+    Flag.atLeast(0),
+    Flag.map((values) => (values.length === 0 ? undefined : values)),
+  );
+
+export const include = selectionFlag(
+  "include",
+  "Include exact FQNs, unique logical IDs, or FQN globs and their dependencies (repeatable, one pattern per flag). Quote globs: --include 'App/**'. Other rows and stack outputs are preserved; the whole declaration still runs.",
+);
+
+export const exclude = selectionFlag(
+  "exclude",
+  "Exclude exact FQNs, unique logical IDs, or FQN globs (repeatable, one pattern per flag). Quote globs: --exclude 'App/Legacy/**'. Required excluded dependencies fail planning, even when unchanged.",
+);
+
+export const validateSelectionOptions = (options: {
+  readonly include?: ReadonlyArray<string>;
+  readonly exclude?: ReadonlyArray<string>;
+  readonly destroy?: boolean;
+  readonly detectDrift?: boolean;
+}) =>
+  (options.include !== undefined || options.exclude !== undefined) &&
+  (options.destroy || options.detectDrift)
+    ? Effect.fail(
+        new UserInputError({
+          message:
+            "--include/--exclude cannot be combined with destroy or --detect-drift.",
+        }),
+      )
+    : Effect.void;
 
 export const config = Flag.File("config", { mustExist: true }).pipe(
   Flag.withDescription("Alchemy entrypoint file (default: alchemy.run.ts)"),

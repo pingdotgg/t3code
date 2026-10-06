@@ -1,5 +1,5 @@
 import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
@@ -43,6 +43,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       // Scripts are immutable per run: cache generously.
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
+    }),
+    // Keyed by the item revision, so a live row refetches as its output grows.
+    turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:turn-item",
+      tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
     }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",

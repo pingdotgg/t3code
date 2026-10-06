@@ -50,8 +50,9 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
+import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -801,10 +802,14 @@ const make = Effect.gen(function* () {
     return migrated;
   });
 
-  const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
-    capacity: 1,
-    lookup: () => loadSettingsFromDisk,
-  });
+  // A failed read is not kept: the next read retries instead of replaying the failure.
+  const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
+    () => loadSettingsFromDisk,
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
@@ -1181,10 +1186,24 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const watchFileChanges = (filePath: string) => {
+    const directory = pathService.dirname(filePath);
+    const fileName = pathService.basename(filePath);
+    const resolvedFilePath = pathService.resolve(filePath);
+    return fs
+      .watch(directory)
+      .pipe(
+        Stream.filter(
+          (event) =>
+            event.path === fileName ||
+            event.path === filePath ||
+            pathService.resolve(directory, event.path) === resolvedFilePath,
+        ),
+      );
+  };
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
-    const settingsFile = pathService.basename(settingsPath);
-    const settingsPathResolved = pathService.resolve(settingsPath);
 
     yield* fs.makeDirectory(settingsDir, { recursive: true }).pipe(
       Effect.mapError(
@@ -1199,19 +1218,43 @@ const make = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
+    // A symlinked settings file is rewritten in its destination's directory,
+    // which a watch on the link's directory never sees. The link is resolved
+    // again whenever it changes, so repointing it moves the watch along.
+    const watchLinkTarget = Effect.gen(function* () {
+      const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
+      if (linkTargetPath === pathService.resolve(settingsPath)) {
+        return Option.none<string>();
+      }
+      yield* fs
+        .makeDirectory(pathService.dirname(linkTargetPath), { recursive: true })
+        .pipe(Effect.ignore({ log: true }));
+      return Option.some(linkTargetPath);
+    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+    const initialLinkTarget = yield* watchLinkTarget;
+    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
+      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
+      Stream.changes,
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: (linkTargetPath) =>
+            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+        }),
+      ),
+    );
+
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
-      Stream.filter((event) => {
-        return (
-          event.path === settingsFile ||
-          event.path === settingsPath ||
-          pathService.resolve(settingsDir, event.path) === settingsPathResolved
-        );
-      }),
-      Stream.debounce(Duration.millis(100)),
-    );
+    const debouncedSettingsEvents = Stream.merge(
+      watchFileChanges(settingsPath),
+      linkTargetEvents,
+    ).pipe(Stream.debounce(Duration.millis(100)));
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
       Effect.ignoreCause({ log: true }),

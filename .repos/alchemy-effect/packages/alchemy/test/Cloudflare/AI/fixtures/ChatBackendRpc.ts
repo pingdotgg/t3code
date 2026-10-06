@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { Chat } from "effect/unstable/ai";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import { Chat } from "effect/ai";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as RpcServer from "effect/rpc/RpcServer";
 import { ChatBackendRpcs } from "./ChatRpcs.ts";
 import { Gateway } from "./Gateway.ts";
 

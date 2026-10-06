@@ -19,13 +19,16 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
-import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";
+import {
+  resolveAntigravityReleaseAsset,
+  type AntigravityReleaseAsset,
+} from "./antigravityRelease.ts";
 
 import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
 
@@ -945,4 +948,28 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(requests).toEqual([]);
     }),
   );
+
+  it("resolves all supported platform release assets including Intel Mac", () => {
+    const supportedPlatforms: Array<{ readonly platform: NodeJS.Platform; readonly arch: string }> =
+      [
+        { platform: "darwin", arch: "arm64" },
+        { platform: "darwin", arch: "x64" },
+        { platform: "linux", arch: "x64" },
+        { platform: "linux", arch: "arm64" },
+        { platform: "win32", arch: "x64" },
+        { platform: "win32", arch: "arm64" },
+      ];
+
+    for (const { platform, arch } of supportedPlatforms) {
+      const asset = resolveAntigravityReleaseAsset(platform, arch);
+      expect(asset).not.toBeNull();
+      expect(asset?.version).toBe("1.3.0");
+      expect(asset?.url).toContain("1.3.0");
+      expect(asset?.archiveBytes).toBeGreaterThan(0);
+      expect(asset?.executable.bytes).toBeGreaterThan(0);
+      expect(asset?.harness.bytes).toBeGreaterThan(0);
+    }
+
+    expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
+  });
 });

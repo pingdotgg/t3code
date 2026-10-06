@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
@@ -156,6 +156,8 @@ export interface CreateWorktreeOptions {
    * own t3.json.
    */
   readonly submodules?: WorktreeSubmodules | null;
+  /** The `worktreesDirectory` setting, used when the input has no explicit path. */
+  readonly worktreesDirectory?: string;
 }
 
 export interface GitCommitProgress {
@@ -174,6 +176,8 @@ export interface GitCommitProgress {
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
+  /** Stage the current working tree immediately before committing. */
+  readonly stage?: { readonly filePaths?: readonly string[] };
 }
 
 export interface GitDeleteLocalBranchInput {
@@ -1253,5 +1257,5 @@ export const make = Effect.gen(function* () {
   return GitVcsDriver.of(git);
 });
 
-export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
+export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
 export const layer = Layer.effect(GitVcsDriver, make);

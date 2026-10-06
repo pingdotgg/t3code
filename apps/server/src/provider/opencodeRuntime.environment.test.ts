@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
@@ -227,7 +227,7 @@ server.listen(0, "127.0.0.1", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide([
-          OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+          OpenCodeRuntime.layer.pipe(
             Layer.provide(OpenCodeServerLedger.layerTest),
             Layer.provideMerge(NodeServices.layer),
           ),

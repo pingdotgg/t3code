@@ -7,12 +7,16 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
   RPC_REQUIRED_SCOPES,
   requiredScopeForRpcMethod,
   requiredScopeForDeviceList,
 } from "./RpcAuthorization.ts";
+import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -32,6 +36,16 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.subscribeBackgroundPolicy)).toBe(
       AuthOrchestrationReadScope,
     );
+  });
+
+  it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
+    for (const method of [
+      WS_METHODS.scheduledTasksListWebhookDeliveries,
+      WS_METHODS.scheduledTasksGetWebhookDelivery,
+      WS_METHODS.scheduledTasksRotateWebhookToken,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
   });
 
   it("allows relay status reads without granting relay installation access", () => {
@@ -115,4 +129,40 @@ it("requires operate permission for tool updates even alongside a read-only chec
     AuthOrchestrationOperateScope,
   );
   expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
+});
+
+describe("RPC scope middleware", () => {
+  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+
+  it.effect("checks each RPC's declared scope before its handler runs", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
+            group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
+              Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+
+      expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
+      expect(
+        yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthOrchestrationOperateScope,
+      });
+      expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
 });

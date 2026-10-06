@@ -23,7 +23,7 @@ is the program that runs in it.
 // src/ping.ts
 import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Site } from "./project.ts";
 
 export default class Ping extends Railway.Function<Ping>()(

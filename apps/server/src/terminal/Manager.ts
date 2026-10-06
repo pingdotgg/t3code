@@ -40,6 +40,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
 
@@ -48,7 +49,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -58,14 +59,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   increment,
@@ -1228,11 +1228,11 @@ function legacySafeThreadId(threadId: string): string {
 }
 
 function toSafeThreadId(threadId: string): string {
-  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
+  return `terminal_${Base64Url.encode(threadId)}`;
 }
 
 function toSafeTerminalId(terminalId: string): string {
-  return Encoding.encodeBase64Url(terminalId);
+  return Base64Url.encode(terminalId);
 }
 
 function toSessionKey(threadId: string, terminalId: string): string {
@@ -1569,7 +1569,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     sessions: new Map(),
     killFibers: new Map(),
   });
-  const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+  const threadLocks = yield* KeyedLock.make<string>();
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
@@ -1598,29 +1598,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     f: (state: TerminalManagerState) => readonly [A, TerminalManagerState],
   ) => SynchronizedRef.modify(managerStateRef, f);
 
-  const getThreadSemaphore = (threadId: string) =>
-    SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
-      const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
-        current.get(threadId),
-      );
-      return Option.match(existing, {
-        onNone: () =>
-          Semaphore.make(1).pipe(
-            Effect.map((semaphore) => {
-              const next = new Map(current);
-              next.set(threadId, semaphore);
-              return [semaphore, next] as const;
-            }),
-          ),
-        onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
-      });
-    });
-
   const withThreadLock = <A, E, R>(
     threadId: string,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+  ): Effect.Effect<A, E, R> => threadLocks.withLock(threadId, effect);
 
   const clearKillFiber = Effect.fn("terminal.clearKillFiber")(function* (
     process: PtyAdapter.PtyProcess | null,

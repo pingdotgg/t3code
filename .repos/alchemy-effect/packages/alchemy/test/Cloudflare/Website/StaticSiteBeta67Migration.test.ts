@@ -28,7 +28,7 @@ import {
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const repoRoot = pathe.resolve(import.meta.dirname, "../../../../..");
-const workspaceCli = pathe.join(repoRoot, "packages/alchemy/bin/alchemy.ts");
+const workspaceCli = pathe.join(repoRoot, "packages/alchemy/bin/alchemy.js");
 
 const STACK = "B67MigrationTest";
 const STAGE = "b67mig";
@@ -248,5 +248,13 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* waitForWorkerToBeDeleted(workerName, accountId);
       yield* fs.remove(dir, { recursive: true });
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

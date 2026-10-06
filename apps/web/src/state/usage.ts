@@ -10,12 +10,13 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type UsageBucket,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
@@ -79,6 +80,33 @@ export interface UsageView {
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
+/**
+ * Merges every environment that has answered. `keepBucket` narrows the merge,
+ * for example to one model; source ownership still applies, so the result
+ * matches that slice of the full merge. Session counts are per directory and
+ * are not narrowed.
+ */
+export function mergeAnsweredUsage(
+  environments: readonly EnvironmentUsageStatus[],
+  keepBucket?: (bucket: UsageBucket) => boolean,
+): MergedUsage {
+  const answered: EnvironmentUsage[] = environments.flatMap(({ environmentId, label, summary }) =>
+    summary === null
+      ? []
+      : [
+          {
+            environmentId,
+            label,
+            summary:
+              keepBucket === undefined
+                ? summary
+                : { ...summary, buckets: summary.buckets.filter(keepBucket) },
+          },
+        ],
+  );
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
@@ -126,20 +154,7 @@ export function useUsage(
     [selectedEnvironments, windowKey],
   );
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+  const merged = useMemo(() => mergeAnsweredUsage(selectedEnvironments), [selectedEnvironments]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,

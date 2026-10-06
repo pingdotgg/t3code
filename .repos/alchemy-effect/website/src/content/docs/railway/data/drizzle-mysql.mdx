@@ -1,0 +1,148 @@
+---
+title: Drizzle MySQL on Railway
+description: Connect an Effect-native Railway Service to MySQL and deploy committed Drizzle migrations.
+---
+
+Run Drizzle in a Railway container beside [Railway MySQL](/railway/data/mysql). Start with [Railway setup](/railway/setup), the [Service tutorial](/railway/tutorial/part-2), and a `src/schema.ts` exporting a MySQL `Users` table from the [MySQL client guide](/sql/drizzle/mysql).
+
+## Install the database dependencies
+
+```sh
+pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-mysql2 mysql2
+pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+```
+
+The Drizzle versions match the repository's Effect integration.
+
+## Configure migrations
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "mysql",
+  schema: "./src/schema.ts",
+  out: "./drizzle",
+  dbCredentials: { url: process.env.DATABASE_URL! },
+});
+```
+
+`DATABASE_URL` here is a MySQL URL for the migration runner, separate from the Service's bound `MYSQL_URL`.
+
+## Generate after changing the schema
+
+```sh
+pnpm exec drizzle-kit generate
+```
+
+Review the generated SQL and snapshots, including any rename decisions, before applying them.
+
+## Commit the migration
+
+```sh
+git add src/schema.ts drizzle.config.ts drizzle
+git diff --cached
+```
+
+```sh
+git commit -m "Add users migration"
+```
+
+Commit the schema, SQL, and snapshots together; deployment must consume the reviewed history.
+
+## Declare MySQL
+
+```typescript
+// src/db.ts
+import * as Railway from "alchemy/Railway";
+import { Site } from "./project.ts";
+
+export const Db = Railway.MySQL("Db", { project: Site });
+```
+
+This creates the MySQL service, persistent volume, and a public TCP proxy by default; keep the database and application in the same Railway environment.
+
+## Install the driver in the Service image
+
+```diff lang="typescript"
+ // src/api.ts
+ {
+   project: Site,
+   main: import.meta.url,
++  build: { install: ["mysql2"] },
+ }
+```
+
+Use the container-backed `Railway.Service` packaging path, not the single-file Canvas `Railway.Function` path.
+
+## Bind MySQL
+
+```diff lang="typescript"
++import { Db } from "./db.ts";
+
+ Effect.gen(function* () {
++  const conn = yield* Railway.ConnectMySQL(Db);
+   return {
+     fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
+   };
+-}),
++}).pipe(Effect.provide(Railway.ConnectMySQLHttp)),
+```
+
+The binding supplies an Effect-valued, redacted private connection string rather than a SQL query method. These excerpts use the tutorial's minimal text handler until the database is migrated.
+
+## Provision before the first migration
+
+```sh
+pnpm alchemy deploy
+```
+
+Keep `yield* Api` in the tutorial's Stack with `Railway.providers()`. The initial handler does not query tables, so the database can be provisioned before its first migration.
+
+## Apply the committed SQL
+
+```sh
+pnpm exec drizzle-kit migrate
+```
+
+Supply `publicConnectionUri` as secret `DATABASE_URL` for an external runner, or run inside the same Railway environment with `connectionUri` when `public: false`. Configure and verify TLS for any public database traffic; do not disable certificate verification to make a migration connect.
+
+## Open the runtime client
+
+```diff lang="typescript"
++import * as Drizzle from "alchemy/Drizzle/MySQL";
+
+ const conn = yield* Railway.ConnectMySQL(Db);
++const db = yield* Drizzle.MySQL(conn.connectionString);
+```
+
+The application uses Railway's private MySQL endpoint, not the public TCP proxy.
+
+## Query from the Service
+
+```diff lang="typescript"
++import { Users } from "./schema.ts";
+
+ return {
+-  fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
++  fetch: Effect.gen(function* () {
++    const users = yield* db.select().from(Users).pipe(Effect.orDie);
++    return yield* HttpServerResponse.json({ users });
++  }),
+ };
+```
+
+Use MySQL query semantics; PostgreSQL's `.returning()` is not part of this example.
+
+## Deploy the application
+
+```sh
+pnpm alchemy deploy
+```
+
+For later changes, generate, review, and commit the schema, SQL, and snapshots before applying migrations and deploying compatible code. `Railway.MySQL` has no `migrations` prop, so `alchemy deploy` does not replace `drizzle-kit migrate`.
+
+## Continue
+
+See the [SQL database comparison](/sql/databases), [portable MySQL queries](/sql/drizzle/mysql), and [migration workflow](/sql/drizzle/migrations). The [MySQL database guide](/railway/data/mysql) covers the resource's image, volume, private hostname, and public proxy.

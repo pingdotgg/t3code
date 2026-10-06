@@ -115,6 +115,7 @@ export function gitHubProviderFailure(
   if (error._tag === "SourceControlRateLimitPausedError") {
     return { reason: "rate-limited", retryAt: error.retryAt };
   }
+  if (error._tag === "GitHubPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 
@@ -359,6 +360,11 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getPullRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
@@ -408,9 +414,11 @@ export const make = Effect.gen(function* () {
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
               reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+              editedAtById: new Map<string, string>(),
               reviewThreads: [],
               commentCount: 0,
               truncated: true,
+              reviewThreadsTruncated: true,
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
@@ -473,12 +481,14 @@ export const make = Effect.gen(function* () {
               // A comment out of `gh pr view --json` carries none of its own: that read
               // reports no reaction at all, so they arrive from the GraphQL page by node id.
               reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
             }))
             .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
           // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
           // are always whole and only the thread walk can stop short of the host.
           commentCount: pullRequest.comments.length + reviewThreads.commentCount,
           commentsTruncated: reviewThreads.truncated,
+          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
           reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
             ...thread,
             comments: thread.comments.map((comment) => ({
@@ -579,6 +589,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
           ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
           ...(input.expectedStackHeads === undefined
             ? {}

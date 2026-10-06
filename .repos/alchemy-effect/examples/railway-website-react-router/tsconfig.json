@@ -11,5 +11,6 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["alchemy.run.ts", "test"]
+  "include": ["alchemy.run.ts", "test"],
+  "references": [{ "path": "../../packages/alchemy" }]
 }

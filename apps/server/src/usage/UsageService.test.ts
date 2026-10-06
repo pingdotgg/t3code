@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
 // transcript trees on disk, outside the service's Effect FileSystem.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -26,7 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -77,7 +78,7 @@ const setup = Effect.gen(function* () {
   };
 });
 
-const serviceLayers = (input: {
+const layerService = (input: {
   readonly prefix: string;
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
@@ -116,6 +117,41 @@ const serviceLayers = (input: {
       }),
     ),
   );
+
+/** Outside `NARROW_WINDOW`, inside `WINDOW`. Seconds, as `utimes` takes them. */
+const BEFORE_NARROW_WINDOW = Date.parse("2026-08-01T10:00:00Z") / 1000;
+const NARROW_WINDOW: UsageSummaryInput = {
+  timeZone: "UTC",
+  sinceDay: UsageDay.make("2026-09-01"),
+  untilDay: UsageDay.make("2026-09-02"),
+};
+
+/**
+ * A FIFO named like a transcript. A scan's read of it waits in `open` until
+ * `openGate`, then fails at once, so a gate holds that scan's directory reads
+ * in flight. Each waiting gate holds one libuv pool thread; keep at most three.
+ */
+const makeGate = (path: string, lastWriteSeconds?: number) =>
+  Effect.promise(async () => {
+    NodeChildProcess.execFileSync("mkfifo", [path]);
+    if (lastWriteSeconds !== undefined) {
+      await NodeFSP.utimes(path, lastWriteSeconds, lastWriteSeconds);
+    }
+  });
+
+/**
+ * Returns once a scan has opened the gate. A scan opens every file of a
+ * directory at once, so it then holds the directory's transcripts open too.
+ */
+const openGate = (path: string) =>
+  Effect.promise(async () => (await NodeFSP.open(path, "w")).close());
+
+/** Replaces a file by rename, so a scan holding the old one keeps reading it. */
+const replaceFile = (path: string, content: string) =>
+  Effect.promise(async () => {
+    await NodeFSP.writeFile(path + ".next", content);
+    await NodeFSP.rename(path + ".next", path);
+  });
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
@@ -161,7 +197,7 @@ describe("UsageService", () => {
           return yield* service.readSummary(WINDOW);
         }).pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: "usage-managed-accounts",
               home,
               settings: {
@@ -218,7 +254,7 @@ describe("UsageService", () => {
       for (const platform of ["linux", "win32", "darwin"] as const) {
         const service = yield* UsageService.make.pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: `usage-service-cursor-no-login-${platform}`,
               home,
               settings,
@@ -243,7 +279,7 @@ describe("UsageService", () => {
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({ prefix: "usage-service-cursor-invalid-login", home, settings }),
+          layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
         ),
       );
       const summary = yield* service.readSummary(WINDOW);
@@ -257,7 +293,7 @@ describe("UsageService", () => {
       const { settings, home } = yield* setup;
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-cursor-keychain-disabled",
             home,
             settings,
@@ -303,7 +339,7 @@ describe("UsageService", () => {
         });
         const service = yield* UsageService.make.pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: `usage-service-cursor-store-${index}`,
               home,
               settings,
@@ -359,7 +395,7 @@ describe("UsageService", () => {
           }
         });
         const service = yield* UsageService.make.pipe(
-          Effect.provide(serviceLayers({ prefix: "usage-service-opencode", home, settings })),
+          Effect.provide(layerService({ prefix: "usage-service-opencode", home, settings })),
         );
         const summary = yield* service.readSummary(WINDOW);
         assert.strictEqual(summary.buckets[0]?.provider, "opencode");
@@ -405,7 +441,7 @@ describe("UsageService", () => {
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-aliased-roots-test",
             home,
             settings,
@@ -485,7 +521,7 @@ describe("UsageService", () => {
       });
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-accounts-test",
             home,
             settings: {
@@ -607,7 +643,7 @@ describe("UsageService", () => {
           );
         }).pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: "usage-service-home-refresh-test",
               home,
               environment: { CLAUDE_CONFIG_DIR: NodePath.join(home, "host-ignored") },
@@ -637,7 +673,7 @@ describe("UsageService", () => {
         yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
         const service = yield* UsageService.make.pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: "usage-service-inherited-homes-test",
               home,
               environment: {
@@ -712,7 +748,7 @@ describe("UsageService", () => {
         assert.deepStrictEqual(restored.buckets, original.buckets);
       }).pipe(
         Effect.provide(
-          serviceLayers({ prefix: "usage-service-price-overrides-test", home, settings }),
+          layerService({ prefix: "usage-service-price-overrides-test", home, settings }),
         ),
       );
     }).pipe(Effect.scoped),
@@ -724,7 +760,7 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
 
       const service = yield* UsageService.make.pipe(
-        Effect.provide(serviceLayers({ prefix: "usage-service-grow-test", home, settings })),
+        Effect.provide(layerService({ prefix: "usage-service-grow-test", home, settings })),
       );
 
       const first = yield* service.readSummary(WINDOW);
@@ -776,7 +812,7 @@ describe("UsageService", () => {
           );
         }).pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: "usage-service-large-record-test",
               home,
               settings,
@@ -863,7 +899,7 @@ describe("UsageService", () => {
           );
         }).pipe(
           Effect.provide(
-            serviceLayers({
+            layerService({
               prefix: "usage-service-v4-upgrade-test",
               home,
               settings,
@@ -959,7 +995,7 @@ describe("UsageService", () => {
         assert.strictEqual(outsideWindow.sources[0]?.distinctSessions, 0);
       }).pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-cleanup-test",
             home,
             settings: { providers: { ...settings.providers, claudeAgent: { homePath: alias } } },
@@ -969,6 +1005,153 @@ describe("UsageService", () => {
           }),
         ),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("credits the same copy of a duplicate after its transcripts are deleted", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const dir = NodePath.dirname(transcript);
+      // The walk-first file is the original, padded so it finishes parsing
+      // after the small fork copy that repeats its record under a new session.
+      const [first = "", second = ""] = yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+        return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
+      });
+      const forked = (line: string) => line.replace('"session-1"', '"session-2"');
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          first,
+          claudeLine(1, 5).replace(
+            '"message":',
+            '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
+          ),
+        );
+        await NodeFSP.writeFile(second, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const live = yield* service.readSummary(WINDOW);
+        assert.strictEqual(live.buckets[0]?.sessions, 2);
+
+        yield* Effect.promise(() => Promise.all([NodeFSP.rm(first), NodeFSP.rm(second)]));
+        const saved = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(saved.buckets, live.buckets);
+        assert.deepStrictEqual(saved.sources, live.sources);
+        const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, live.buckets);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-copy-order-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps a newer cached read when a slower scan of another window finishes later",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const dir = NodePath.dirname(transcript);
+        const probe = NodePath.join(dir, "probe.jsonl");
+        const hold = NodePath.join(dir, "hold.jsonl");
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* makeGate(probe, BEFORE_NARROW_WINDOW);
+        yield* makeGate(hold, BEFORE_NARROW_WINDOW);
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+          yield* openGate(probe);
+          yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+          // The narrow scan caches the newer read while the wide one waits.
+          yield* service.readSummary(NARROW_WINDOW);
+          yield* openGate(hold);
+          yield* Fiber.join(wide);
+
+          yield* Effect.promise(() =>
+            Promise.all([transcript, probe, hold].map((path) => NodeFSP.rm(path))),
+          );
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-stale-read-test", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps the later read when a scan that read earlier finishes first",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const dir = NodePath.dirname(transcript);
+        const gate = (name: string) => NodePath.join(dir, `${name}.jsonl`);
+        const wideProbe = gate("wide-probe");
+        const wideHold = gate("wide-hold");
+        const narrowProbe = gate("narrow-probe");
+        const narrowHold = gate("narrow-hold");
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* makeGate(wideProbe, BEFORE_NARROW_WINDOW);
+        yield* makeGate(wideHold, BEFORE_NARROW_WINDOW);
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+          yield* openGate(wideProbe);
+          yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+          // Made after the wide scan's walk, so only the narrow scan waits on them.
+          yield* makeGate(narrowProbe);
+          yield* makeGate(narrowHold);
+          const narrow = yield* service.readSummary(NARROW_WINDOW).pipe(Effect.forkChild);
+          yield* openGate(narrowProbe);
+          // Both scans started from an empty cache entry; the earlier read lands first.
+          yield* openGate(wideHold);
+          yield* Fiber.join(wide);
+          yield* openGate(narrowHold);
+          yield* Fiber.join(narrow);
+
+          yield* Effect.promise(() =>
+            Promise.all(
+              [transcript, wideProbe, wideHold, narrowProbe, narrowHold].map((path) =>
+                NodeFSP.rm(path),
+              ),
+            ),
+          );
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-late-read-test", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("reports saved usage of a removed directory only for windows it reaches", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-saved-window-test", home, settings })),
+      );
+      const first = yield* service.readSummary(WINDOW);
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+
+      const reached = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(reached.buckets, first.buckets);
+      assert.strictEqual(reached.sources[0]?.status, "ok");
+
+      // A missing source cannot claim this directory from another environment
+      // that still reads it, so it adds nothing to a window after its last write.
+      const later = yield* service.readSummary({
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-10"),
+        untilDay: UsageDay.make("2026-08-12"),
+      });
+      assert.deepStrictEqual(later.buckets, []);
+      assert.strictEqual(later.sources[0]?.status, "missing");
+      assert.strictEqual(later.sources[0]?.scannedFiles, 0);
     }).pipe(Effect.scoped),
   );
 
@@ -1028,7 +1211,7 @@ describe("UsageService", () => {
         assert.strictEqual(original.buckets[0]?.costUsd, 0);
         assert.closeTo(updated.buckets[0]?.costUsd ?? -1, 0.00006, 1e-12);
       }).pipe(
-        Effect.provide(serviceLayers({ prefix: "usage-service-price-race-test", home, settings })),
+        Effect.provide(layerService({ prefix: "usage-service-price-race-test", home, settings })),
       );
     }).pipe(Effect.scoped),
   );
@@ -1041,7 +1224,7 @@ describe("UsageService", () => {
       let ratesFetches = 0;
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-flight-test",
             home,
             settings,
@@ -1073,7 +1256,7 @@ describe("UsageService", () => {
       let ratesFetches = 0;
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({
+          layerService({
             prefix: "usage-service-rates-refresh-test",
             home,
             settings,
@@ -1111,9 +1294,7 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          serviceLayers({ prefix: "usage-service-interruption-test", home, settings }),
-        ),
+        Effect.provide(layerService({ prefix: "usage-service-interruption-test", home, settings })),
       );
 
       let orphanedAt: number | undefined;

@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
 import { DPOP_UNKNOWN_HINT } from "./errorPresentation.ts";

@@ -57,7 +57,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 
 const driver = ProviderDriverKind.make("codex");
 
-const RunExecutionTestLayer = RunExecutionService.layer.pipe(
+const layerRunExecutionTest = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -588,7 +588,7 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
 
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
-  }).pipe(Effect.provide(RunExecutionTestLayer)),
+  }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
 it.effect("fails the run when its ownership check cannot be read before calling the provider", () =>
@@ -600,7 +600,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
     const runId = RunId.make("run:run-execution-start-guard-read");
     const attemptId = RunAttemptId.make("attempt:run-execution-start-guard-read");
     const providerInstanceId = ProviderInstanceId.make("codex");
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -686,7 +686,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
@@ -778,7 +778,7 @@ it.effect(
         calls,
         cases.map((testCase) => testCase.expected),
       );
-    }).pipe(Effect.provide(RunExecutionTestLayer)),
+    }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
 it.effect("refreshes MCP credential liveness before calling the provider", () =>
@@ -849,7 +849,7 @@ it.effect("refreshes MCP credential liveness before calling the provider", () =>
       .pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
 
     assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
-  }).pipe(Effect.provide(RunExecutionTestLayer)),
+  }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
@@ -873,7 +873,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
         effects: ReadonlyArray<PendingOrchestrationEffectV2>;
       }>
     >([]);
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -950,7 +950,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     assert.equal(yield* Ref.get(providerStarts), 1);
 
@@ -990,7 +990,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
       const writes = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>([]);
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -1092,7 +1092,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
             },
           },
         });
-      }).pipe(Effect.provide(testLayer), Effect.exit);
+      }).pipe(Effect.provide(layerTest), Effect.exit);
 
       assert.equal(yield* Ref.get(providerStarts), 0);
       const events = (yield* Ref.get(writes)).flat();
@@ -1160,7 +1160,7 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
     const subagentNodeId = NodeId.make("node:run-execution-late-child:subagent");
     const childMessageIngested = yield* Deferred.make<void>();
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -1337,7 +1337,7 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     const observed = yield* Deferred.await(childMessageIngested).pipe(
       Effect.timeoutOption("2 seconds"),
@@ -1585,7 +1585,7 @@ it.effect(
         }>
       >([]);
       const ingestionDone = yield* Deferred.make<void>();
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -1750,7 +1750,7 @@ it.effect(
             },
           },
         });
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(Option.isSome(closed), "event subscription did not release");
@@ -1802,7 +1802,7 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
         readonly committed: boolean;
       }>
     >([]);
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -1966,7 +1966,7 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
     assert.isTrue(
@@ -2006,7 +2006,7 @@ it.effect(
       // Probe stays true forever; open background items must pin the stream
       // past ownership-loss so late turn_item completions still land.
       const ingestionDone = yield* Deferred.make<void>();
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -2149,7 +2149,7 @@ it.effect(
             },
           },
         });
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(
@@ -2177,7 +2177,7 @@ it.effect(
       const observed = yield* Ref.make<ReadonlyArray<string>>([]);
       const ingestionDone = yield* Deferred.make<void>();
       const scopedProbeArgs = yield* Ref.make<ReadonlyArray<ProviderThreadId>>([]);
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -2319,7 +2319,7 @@ it.effect(
             },
           },
         });
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(Option.isSome(closed), "event subscription did not release");
@@ -2346,7 +2346,7 @@ it.effect(
       const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapterV2Event>>([]);
       const ingestionDone = yield* Deferred.make<void>();
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -2559,7 +2559,7 @@ it.effect(
             },
           },
         });
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
@@ -2719,7 +2719,7 @@ it.effect(
       const providerInstanceId = ProviderInstanceId.make("codex");
       const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const ingestionDone = yield* Deferred.make<void>();
-      const testLayer = RunExecutionService.layer.pipe(
+      const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
@@ -2889,7 +2889,7 @@ it.effect(
             },
           },
         });
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
@@ -3416,7 +3416,7 @@ function captureRootRunTermination(input: {
           }
         }
       });
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -3540,7 +3540,7 @@ function captureRootRunTermination(input: {
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     yield* Deferred.await(ingestionDone);
     return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
@@ -3876,7 +3876,7 @@ function runBackgroundItemScenario(
     const providerInstanceId = ProviderInstanceId.make("codex");
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
-    const testLayer = RunExecutionService.layer.pipe(
+    const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -3986,7 +3986,7 @@ function runBackgroundItemScenario(
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
 
     const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
     assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");

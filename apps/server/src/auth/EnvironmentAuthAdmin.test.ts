@@ -5,12 +5,12 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 
-const makeServerConfigLayer = (
+const layerServerConfig = (
   overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
 ) =>
   Layer.effect(
@@ -30,14 +30,14 @@ const makeServerConfigLayer = (
     ),
   );
 
-const makeEnvironmentAuthLayer = (
+const layerEnvironmentAuth = (
   overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
 ) =>
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provide(ServerEnvironment.identityLayer),
-    Layer.provide(makeServerConfigLayer(overrides)),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provide(ServerEnvironment.layerIdentity),
+    Layer.provide(layerServerConfig(overrides)),
   );
 
 it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) => {
@@ -62,7 +62,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       expect(listedBeforeRevoke[0]).not.toHaveProperty("credential");
       expect(revoked).toBe(true);
       expect(listedAfterRevoke).toHaveLength(0);
-    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
   it.effect("issues bearer access token sessions without exposing raw tokens", () =>
@@ -108,7 +108,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       expect("token" in (listedBeforeRevoke[0] ?? {})).toBe(false);
       expect(revoked).toBe(true);
       expect(listedAfterRevoke).toHaveLength(0);
-    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
   it.effect("surfaces lastConnectedAt through the listed session view", () =>
@@ -125,6 +125,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
 
       expect(beforeConnect[0]?.lastConnectedAt).toBeNull();
       expect(afterConnect[0]?.lastConnectedAt).not.toBeNull();
-    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 });

@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import * as RpcClient from "effect/rpc/RpcClient";
 import { WorkerRpcs } from "./fixtures/rpc-http/group.ts";
 import Stack from "./fixtures/rpc-http/stack.ts";
 
@@ -129,7 +129,10 @@ test(
       expect(result.n).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -151,7 +154,10 @@ test(
       expect(values).toEqual([1, 2, 3, 4, 5]);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -176,7 +182,10 @@ test(
       );
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -216,7 +225,10 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 60_000,
+  },
 );
 
 test(
@@ -259,7 +271,10 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 60_000,
+  },
 );
 
 // === Durable Object pathway ===
@@ -283,7 +298,10 @@ test(
       expect(result.n).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -302,7 +320,10 @@ test(
       expect(values).toEqual([1, 2, 3, 4, 5]);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -324,7 +345,10 @@ test(
       );
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -351,7 +375,10 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 60_000,
+  },
 );
 
 test(
@@ -384,5 +411,8 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );

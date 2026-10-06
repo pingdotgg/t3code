@@ -122,21 +122,24 @@ const getStatus = Effect.fn(function* (fqn: string) {
   return s?.status;
 });
 
-test.provider("initial snapshot starts from the Drizzle origin", (stack) =>
-  Effect.gen(function* () {
-    const ws = yield* stageWorkspace(SCHEMA_SOURCE);
+test.provider(
+  "initial snapshot starts from the Drizzle origin",
+  (stack) =>
+    Effect.gen(function* () {
+      const ws = yield* stageWorkspace(SCHEMA_SOURCE);
 
-    yield* stack.deploy(
-      Drizzle.Schema("app-schema", {
-        schema: ws.schemaPath,
-        out: ws.out,
-      }),
-    );
+      yield* stack.deploy(
+        Drizzle.Schema("app-schema", {
+          schema: ws.schemaPath,
+          out: ws.out,
+        }),
+      );
 
-    const snapshots = yield* readSnapshots(ws.out);
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]?.prevIds).toEqual([DRIZZLE_ORIGIN_UUID]);
-  }),
+      const snapshots = yield* readSnapshots(ws.out);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]?.prevIds).toEqual([DRIZZLE_ORIGIN_UUID]);
+    }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -166,6 +169,7 @@ test.provider(
       );
       expect(yield* getStatus("app-schema")).toEqual("created");
     }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -203,18 +207,22 @@ test.provider(
       expect(snapshots).toHaveLength(2);
       expect(snapshots[1]?.prevIds).toEqual([initialSnapshot?.id]);
     }),
+  { tags: ["unit", "local"] },
 );
 
-test.provider("list returns [] (non-listable local build artifact)", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list returns [] (non-listable local build artifact)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(Drizzle.Schema);
-    const all = yield* provider.list();
-    expect(all).toEqual([]);
+      const provider = yield* Provider.findProvider(Drizzle.Schema);
+      const all = yield* provider.list();
+      expect(all).toEqual([]);
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -242,6 +250,7 @@ test.provider(
       expect(snapshots).toHaveLength(1);
       expect(snapshots[0]?.prevIds).toEqual([DRIZZLE_ORIGIN_UUID]);
     }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -271,43 +280,50 @@ test.provider(
       expect(yield* getStatus("sqlite-schema")).toEqual("created");
       expect(yield* readMigrationDirs(ws.out)).toEqual(initialDirs);
     }),
+  { tags: ["unit", "local"] },
 );
 
-test.provider("sqlite CLI fallback updates after schema drift", (stack) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const ws = yield* stageWorkspace(SQLITE_SCHEMA_SOURCE);
+test.provider(
+  "sqlite CLI fallback updates after schema drift",
+  (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const ws = yield* stageWorkspace(SQLITE_SCHEMA_SOURCE);
 
-    yield* stack.deploy(
-      Drizzle.Schema("sqlite-schema", {
-        dialect: "sqlite",
-        schema: ws.schemaPath,
-        out: ws.out,
-      }),
-    );
-    const [initialSnapshot] = yield* readSnapshots(ws.out);
+      yield* stack.deploy(
+        Drizzle.Schema("sqlite-schema", {
+          dialect: "sqlite",
+          schema: ws.schemaPath,
+          out: ws.out,
+        }),
+      );
+      const [initialSnapshot] = yield* readSnapshots(ws.out);
 
-    const driftedSchemaPath = path.join(ws.root, "schema-sqlite-drifted.ts");
-    yield* fs.writeFileString(driftedSchemaPath, SQLITE_DRIFTED_SCHEMA_SOURCE);
+      const driftedSchemaPath = path.join(ws.root, "schema-sqlite-drifted.ts");
+      yield* fs.writeFileString(
+        driftedSchemaPath,
+        SQLITE_DRIFTED_SCHEMA_SOURCE,
+      );
 
-    yield* stack.deploy(
-      Drizzle.Schema("sqlite-schema", {
-        dialect: "sqlite",
-        schema: driftedSchemaPath,
-        out: ws.out,
-      }),
-    );
+      yield* stack.deploy(
+        Drizzle.Schema("sqlite-schema", {
+          dialect: "sqlite",
+          schema: driftedSchemaPath,
+          out: ws.out,
+        }),
+      );
 
-    expect(yield* getStatus("sqlite-schema")).toEqual("updated");
-    const dirs = yield* readMigrationDirs(ws.out);
-    expect(dirs).toHaveLength(2);
-    expect(dirs.every((dir) => !dir.endsWith("_migration"))).toBe(true);
+      expect(yield* getStatus("sqlite-schema")).toEqual("updated");
+      const dirs = yield* readMigrationDirs(ws.out);
+      expect(dirs).toHaveLength(2);
+      expect(dirs.every((dir) => !dir.endsWith("_migration"))).toBe(true);
 
-    const snapshots = yield* readSnapshots(ws.out);
-    expect(snapshots).toHaveLength(2);
-    expect(snapshots[1]?.prevIds).toEqual([initialSnapshot?.id]);
-  }),
+      const snapshots = yield* readSnapshots(ws.out);
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots[1]?.prevIds).toEqual([initialSnapshot?.id]);
+    }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -356,4 +372,5 @@ test.provider(
       // No migration was written for the undecided drift.
       expect(yield* readMigrationDirs(ws.out)).toEqual(initialDirs);
     }),
+  { tags: ["unit", "local"] },
 );
