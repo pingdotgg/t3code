@@ -140,6 +140,74 @@ it.effect("preserves a full-index warmup timeout as a structured error", () =>
   }),
 );
 
+it.effect("returns partial path results when the initial scan times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const mixedSearch = vi.fn(() => ({
+        ok: true as const,
+        value: {
+          items: [
+            {
+              type: "directory" as const,
+              item: { relativePath: "src", fileName: "src", fileCount: 1 },
+            },
+            { type: "file" as const, item: fileItem("src/index.ts") },
+          ],
+          scores: [],
+          totalMatched: 2,
+          totalFiles: 1,
+        },
+      }));
+      let scanning = true;
+      const finder = {
+        destroy: vi.fn(),
+        isScanning: vi.fn(() => scanning),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+        mixedSearch,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "paths");
+      const list = yield* searchIndex.list();
+      const search = yield* searchIndex.search("src", 10);
+      scanning = true;
+      mixedSearch.mockImplementationOnce(() => {
+        scanning = false;
+        return {
+          ok: true as const,
+          value: {
+            items: [
+              {
+                type: "directory" as const,
+                item: { relativePath: "src", fileName: "src", fileCount: 1 },
+              },
+              { type: "file" as const, item: fileItem("src/index.ts") },
+            ],
+            scores: [],
+            totalMatched: 2,
+            totalFiles: 1,
+          },
+        };
+      });
+      const searchCompletingDuringQuery = yield* searchIndex.search("src", 10);
+      scanning = false;
+      const completedSearch = yield* searchIndex.search("src", 10);
+
+      expect(list).toEqual({
+        entries: [
+          { kind: "directory", path: "src" },
+          { kind: "file", path: "src/index.ts" },
+        ],
+        truncated: true,
+      });
+      expect(search.truncated).toBe(true);
+      expect(searchCompletingDuringQuery.truncated).toBe(true);
+      expect(completedSearch.truncated).toBe(false);
+      expect(mixedSearch).toHaveBeenCalledTimes(4);
+    }),
+  ),
+);
+
 it.effect("preserves FileFinder destroy failures as structured defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native destroy failed");
