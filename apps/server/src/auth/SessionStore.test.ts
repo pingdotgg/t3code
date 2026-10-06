@@ -311,9 +311,9 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       Effect.provide(
         SessionStore.layer.pipe(
           Layer.provideMerge(ServerSecretStore.layer),
-          Layer.provide(SqlitePersistenceMemory),
-          Layer.provide(makeServerEnvironmentLayer(EnvironmentId.make("test-environment"))),
-          Layer.provide(makeServerConfigLayer()),
+          Layer.provide(SqlitePersistence.layerMemory),
+          Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+          Layer.provide(layerServerConfig()),
         ),
       ),
     ),
