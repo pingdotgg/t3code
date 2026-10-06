@@ -595,6 +595,11 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
               reason: "npm-invalid-request",
               registry: "https://user:pw@registry.test",
             },
+            {
+              name: "good",
+              reason: "npm-invalid-request",
+              registry: "http://registry.test",
+            },
           ];
           for (const testCase of cases) {
             testCase.publish?.();

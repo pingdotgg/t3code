@@ -13,8 +13,10 @@ cannot install or update them.
 such as `1.2.0`, or a dist-tag such as `latest`. Ranges such as `^1.2.0` are
 refused. T3 Code records the exact version the registry resolved, never the
 tag. `registry` is optional and defaults to the public npm registry; give
-another registry as an `http` or `https` URL without a user name, password,
-query or fragment. Registries that need a login are not supported, and
+another registry as an `https` URL without a user name, password, query or
+fragment. Plain `http` is accepted only for a registry on this machine
+(`localhost`, `127.0.0.1` or `[::1]`): over a network, whoever can change the
+traffic could replace both the published integrity and the tarball. Registries that need a login are not supported, and
 `.npmrc` is not read.
 
 Before anything is written, T3 Code checks that:

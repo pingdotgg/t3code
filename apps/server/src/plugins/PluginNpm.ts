@@ -201,11 +201,18 @@ const toPackage = (entry: Installed): PluginNpmPackage => ({
 });
 
 /** Registry base URL without a trailing slash; credentials, queries, and fragments are refused. */
+// Over plain http the registry's integrity and the tarball travel together, so
+// the digest check would authenticate nothing; only a loopback registry may use it.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 const normalizeRegistry = (input: string) => {
   const url = URL.parse(input);
   if (
     url === null ||
-    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !(
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+    ) ||
     url.username !== "" ||
     url.password !== "" ||
     url.search !== "" ||
@@ -214,7 +221,7 @@ const normalizeRegistry = (input: string) => {
     return Effect.fail(
       npmError(
         "npm-invalid-request",
-        "Enter the registry as an http or https URL without credentials, query, or fragment.",
+        "Enter the registry as an https URL (http only on this machine) without credentials, query, or fragment.",
       ),
     );
   return Effect.succeed(url.href.replace(/\/+$/, ""));
