@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 
 import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
-import { buildCodexInitializeParams } from "../src/provider/Layers/CodexProvider.ts";
+import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";

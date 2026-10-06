@@ -8,7 +8,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
 import { makeAcpNativeLoggerFactory } from "./AcpNativeLogging.ts";
 
 const nodeServicesIt = it.layer(NodeServices.layer);

@@ -21,7 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import type * as ProviderAuthService from "./Services/ProviderAuthService.ts";
+import type * as ProviderAuthService from "./ProviderAuthService.ts";
 
 export interface ProviderAuthFlowContext {
   readonly flowId: string;

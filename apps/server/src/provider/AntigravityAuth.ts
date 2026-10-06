@@ -28,7 +28,7 @@ import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
 } from "./antigravityCallback.ts";
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";

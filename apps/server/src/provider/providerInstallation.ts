@@ -15,9 +15,9 @@ import * as Stream from "effect/Stream";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
-import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
-import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");

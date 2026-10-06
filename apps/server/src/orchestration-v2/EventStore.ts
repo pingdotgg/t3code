@@ -12,9 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/sql/SqlClient";
-
-import * as OrchestrationEventStoreLayer from "../persistence/Layers/OrchestrationEventStore.ts";
-import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 
 export class EventStoreAppendEventsError extends Schema.TaggedError<EventStoreAppendEventsError>()(
   "EventStoreAppendEventsError",
@@ -150,7 +148,7 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
   );
 
 export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = layerBase.pipe(
-  Layer.provide(OrchestrationEventStoreLayer.layer),
+  Layer.provide(OrchestrationEventStore.layer),
 );
 
 export const layerFromOrchestrationEventStore = layerBase;
