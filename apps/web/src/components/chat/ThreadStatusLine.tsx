@@ -17,7 +17,7 @@ export function ThreadStatusLine(props: {
   return (
     <div
       data-chat-thread-status-line="true"
-      className="flex min-w-0 items-center gap-1.5 px-4 pb-2 text-muted-foreground text-xs [&_svg]:size-3.5 [&_svg]:shrink-0"
+      className="mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-4 pb-2 text-muted-foreground text-xs [&_svg]:size-3.5 [&_svg]:shrink-0"
     >
       {props.icon}
       <span className="min-w-0 truncate">{props.label}</span>
