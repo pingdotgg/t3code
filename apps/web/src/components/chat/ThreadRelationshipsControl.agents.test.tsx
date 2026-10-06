@@ -136,6 +136,32 @@ it("stops only active subagents from lineage without opening their thread", asyn
   });
   expect(state.navigate).not.toHaveBeenCalled();
 
+  for (const status of ["running", "waiting"] as const) {
+    state.shells = [
+      {
+        environmentId: "test",
+        source: {
+          ...child,
+          activityRunStatus: status,
+          activityRunStartedAt: DateTime.makeUnsafe("2026-09-16T12:05:00Z"),
+        },
+      },
+    ];
+    state.projection = {
+      ...projection,
+      subagents: [{ ...agent, origin: "provider_native", status: "completed" }],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
+    state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
+    await act(async () => renderer.update(cloneElement(panel)));
+    await act(async () => stopButton().props.onClick());
+    expect(state.command).toHaveBeenLastCalledWith({
+      environmentId: "test",
+      input: { threadId: "child" },
+    });
+  }
+  state.shells = [{ environmentId: "test", source: child }];
   state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
   await act(async () => renderer.update(cloneElement(panel)));
   expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);

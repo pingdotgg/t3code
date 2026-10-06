@@ -397,10 +397,9 @@ export function ThreadRelationshipsPanel(props: {
                   ? BotIcon
                   : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
-              const agent = liveSubagent(
-                isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined,
-                node?.thread,
-              );
+              const storedAgent =
+                isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
+              const agent = liveSubagent(storedAgent, node?.thread);
               const canStop =
                 agent?.startedAt &&
                 ((agent.origin === "app_owned" &&
@@ -408,6 +407,7 @@ export function ThreadRelationshipsPanel(props: {
                   (supportsSubagentInterrupt &&
                     agent.origin === "provider_native" &&
                     agent.driver === "codex" &&
+                    (storedAgent?.status === "running" || storedAgent?.status === "waiting") &&
                     (agent.status === "running" || agent.status === "waiting")));
               const threadTitle = relationshipThreadTitle({
                 title: node?.thread?.title ?? agent?.title ?? threadId,
