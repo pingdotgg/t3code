@@ -1068,6 +1068,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverCheckComputerUse,
       refreshTrigger: ({ environmentId }) => computerUseSettingAtom(environmentId),
     }),
+    /** Browsers on the host and whether Chrome DevTools MCP is installed. */
+    browserTabs: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:browser-tabs",
+      tag: WS_METHODS.serverCheckBrowserTabs,
+      staleTimeMs: 0,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -1274,6 +1280,11 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
       },
+    }),
+    runBrowserTabsAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-browser-tabs-action",
+      tag: WS_METHODS.serverRunBrowserTabsAction,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

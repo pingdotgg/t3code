@@ -656,6 +656,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Agent browser access"]
         : []),
       ...(settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? ["Computer use"] : []),
+      ...(settings.enableAgentBrowserTabs !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserTabs
+        ? ["Agent browser tabs"]
+        : []),
     ],
     [
       isTextGenerationModelDirty,
@@ -673,6 +676,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
       settings.enableCua,
+      settings.enableAgentBrowserTabs,
       settings.confirmQuit,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -851,6 +855,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
       enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua,
+      enableAgentBrowserTabs: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserTabs,
     });
     onRestored?.();
   }, [

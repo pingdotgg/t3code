@@ -76,3 +76,35 @@ export const CuaHostStatus = Schema.Struct({
   failure: Schema.optionalKey(Schema.String),
 });
 export type CuaHostStatus = typeof CuaHostStatus.Type;
+
+/** A Chromium browser on the environment's host that agents can attach to. */
+export const BrowserTabsBrowser = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  /** Where the user turns on remote debugging, such as `chrome://inspect/#remote-debugging`. */
+  inspectUrl: Schema.String,
+  /** The browser is running with remote debugging on right now. */
+  remoteDebugging: Schema.Boolean,
+});
+export type BrowserTabsBrowser = typeof BrowserTabsBrowser.Type;
+
+/** What browser tab setup shows. Checking never installs anything. */
+export const BrowserTabsStatus = Schema.Struct({
+  browsers: Schema.Array(BrowserTabsBrowser),
+  /** Chrome DevTools MCP is installed; setup installs it. */
+  toolInstalled: Schema.Boolean,
+});
+export type BrowserTabsStatus = typeof BrowserTabsStatus.Type;
+
+export const BrowserTabsAction = Schema.Literals(["install-tool"]);
+export type BrowserTabsAction = typeof BrowserTabsAction.Type;
+
+export class BrowserTabsError extends Schema.TaggedError<BrowserTabsError>()("BrowserTabsError", {
+  action: BrowserTabsAction,
+  /** The install failure. Never shown to users. */
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return "Chrome DevTools MCP did not install.";
+  }
+}

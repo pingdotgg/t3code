@@ -33,6 +33,46 @@ export interface McpProviderSessionConfig {
    * computer use instructions; a provider without an MCP client ignores it.
    */
   readonly cuaDriver?: CuaDriverMcpConfiguration;
+  /**
+   * Set when browser tab access is on: Chrome DevTools MCP attached to the
+   * user's running Chromium browser. Adapters attach it beside `cua-driver`.
+   */
+  readonly browserTabs?: {
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string>>;
+    readonly browserName: string;
+  };
+}
+
+/** Server name every provider sees for browser tab access. */
+export const BROWSER_TABS_MCP_SERVER_NAME = "chrome-devtools";
+
+/** Prompt text for a session with browser tab access. */
+export const browserTabsInstructions = (browserName: string) =>
+  `<browser_tabs>
+The chrome-devtools MCP server is attached to the user's own ${browserName}, with their open tabs and signed-in sessions. Use it only when the user asks you to work in their browser or the task needs their existing sign-ins. For other web work, use the t3-code preview tools. The browser asks the user to allow each connection; if it cannot connect, ask them to turn on remote debugging in the browser's inspect page.
+</browser_tabs>`;
+
+/** The local stdio servers a session attaches, Cua Driver and browser tabs, as name-command pairs. */
+function localStdioServers(config: McpProviderSessionConfig | undefined) {
+  const servers: Array<{
+    readonly name: string;
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string>>;
+  }> = [];
+  if (config?.cuaDriver) {
+    servers.push({
+      name: CUA_MCP_SERVER_NAME,
+      command: config.cuaDriver.command,
+      args: config.cuaDriver.args,
+      env: cuaEnvironment(config.cuaDriver),
+    });
+  }
+  if (config?.browserTabs)
+    servers.push({ name: BROWSER_TABS_MCP_SERVER_NAME, ...config.browserTabs });
+  return servers;
 }
 
 /** Server name every provider sees for the managed Cua Driver. */
@@ -41,34 +81,29 @@ export const CUA_MCP_SERVER_NAME = "cua-driver";
 const cuaEnvironment = (descriptor: CuaDriverMcpConfiguration) =>
   Object.fromEntries(descriptor.environment.map(({ name, value }) => [name, value]));
 
-/** Claude and Cursor SDK `mcpServers` entry for the session's Cua Driver, keyed by name. */
-export function cuaStdioMcpServers(config: McpProviderSessionConfig | undefined) {
-  const descriptor = config?.cuaDriver;
-  return descriptor === undefined
-    ? {}
-    : {
-        [CUA_MCP_SERVER_NAME]: {
-          type: "stdio" as const,
-          command: descriptor.command,
-          args: [...descriptor.args],
-          env: cuaEnvironment(descriptor),
-        },
-      };
+/** Claude and Cursor SDK `mcpServers` entries for the session's local servers, keyed by name. */
+export function localStdioMcpServers(config: McpProviderSessionConfig | undefined) {
+  return Object.fromEntries(
+    localStdioServers(config).map((server) => [
+      server.name,
+      {
+        type: "stdio" as const,
+        command: server.command,
+        args: [...server.args],
+        env: { ...server.env },
+      },
+    ]),
+  );
 }
 
-/** ACP stdio `mcpServers` entry for the session's Cua Driver. */
-export function cuaAcpMcpServers(config: McpProviderSessionConfig | undefined) {
-  const descriptor = config?.cuaDriver;
-  return descriptor === undefined
-    ? []
-    : [
-        {
-          name: CUA_MCP_SERVER_NAME,
-          command: descriptor.command,
-          args: [...descriptor.args],
-          env: descriptor.environment.map(({ name, value }) => ({ name, value })),
-        },
-      ];
+/** ACP stdio `mcpServers` entries for the session's local servers. */
+export function localAcpMcpServers(config: McpProviderSessionConfig | undefined) {
+  return localStdioServers(config).map((server) => ({
+    name: server.name,
+    command: server.command,
+    args: [...server.args],
+    env: Object.entries(server.env).map(([name, value]) => ({ name, value })),
+  }));
 }
 
 /** OpenCode `local` MCP config for the session's Cua Driver. */

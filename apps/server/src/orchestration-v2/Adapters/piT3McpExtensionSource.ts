@@ -8,6 +8,7 @@
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
+import { browserTabsInstructions } from "../../mcp/McpProviderSession.ts";
 import { COMPUTER_USE_INSTRUCTIONS } from "../../provider/RuntimeInstructions.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 
@@ -18,6 +19,8 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 /** The managed Cua Driver's stdio MCP command, as JSON `{ command, args, env }`. */
 export const T3_CUA_MCP_ENV = "T3_CUA_MCP";
+/** Browser tabs' stdio MCP command, as JSON `{ command, args, env, browserName }`. */
+export const T3_BROWSER_TABS_MCP_ENV = "T3_BROWSER_TABS_MCP";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -34,8 +37,11 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const CUA_ENV = ${JSON.stringify(T3_CUA_MCP_ENV)};
+const BROWSER_TABS_ENV = ${JSON.stringify(T3_BROWSER_TABS_MCP_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const COMPUTER_USE_INSTRUCTIONS = ${JSON.stringify(COMPUTER_USE_INSTRUCTIONS)};
+const BROWSER_TABS_INSTRUCTIONS = (browserName: string) =>
+  ${JSON.stringify(browserTabsInstructions("BROWSER_NAME"))}.replace("BROWSER_NAME", browserName);
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -323,16 +329,29 @@ function createStdioMcpClient(spec: { command: string; args: string[]; env: Reco
   };
 }
 
-function cuaSpec(): { command: string; args: string[]; env: Record<string, string> } | undefined {
-  const raw = env(CUA_ENV);
+type StdioSpec = {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  browserName?: string;
+};
+
+function stdioSpec(variable: string): StdioSpec | undefined {
+  const raw = env(variable);
   if (raw === undefined) return undefined;
   try {
-    const parsed = JSON.parse(raw) as { command?: unknown; args?: unknown; env?: unknown };
+    const parsed = JSON.parse(raw) as {
+      command?: unknown;
+      args?: unknown;
+      env?: unknown;
+      browserName?: unknown;
+    };
     if (typeof parsed.command !== "string" || !Array.isArray(parsed.args)) return undefined;
     return {
       command: parsed.command,
       args: parsed.args.map(String),
       env: (parsed.env ?? {}) as Record<string, string>,
+      ...(typeof parsed.browserName === "string" ? { browserName: parsed.browserName } : {}),
     };
   } catch {
     return undefined;
@@ -451,27 +470,26 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // The managed Cua Driver, registered as mcp__cua-driver__<tool> like other
-  // harnesses name it. Its screenshots pass through as image content.
-  const cua = cuaSpec();
-  let computerUse = false;
-  if (cua !== undefined) {
-    const cuaClient = createStdioMcpClient(cua);
-    pi.on("session_shutdown", () => cuaClient.close());
+  // Cua Driver and browser tabs, registered as mcp__<server>__<tool> like
+  // other harnesses name them. Screenshots pass through as image content.
+  const attach = async (server: string, spec: StdioSpec | undefined) => {
+    if (spec === undefined) return false;
+    const client = createStdioMcpClient(spec);
+    pi.on("session_shutdown", () => client.close());
     try {
       const signal = AbortSignal.timeout(20_000);
-      await cuaClient.connect(signal);
-      for (const tool of await cuaClient.listTools(signal)) {
+      await client.connect(signal);
+      for (const tool of await client.listTools(signal)) {
         const name = tool.name;
         const description = tool.description ?? name;
         pi.registerTool({
-          name: \`mcp__cua-driver__\${name}\`,
+          name: \`mcp__\${server}__\${name}\`,
           label: name,
           description,
           promptSnippet: description.split("\\n")[0] ?? name,
           parameters: jsonSchemaToTypebox(tool.inputSchema),
           async execute(_toolCallId, params, signal) {
-            const result = await cuaClient.callTool(
+            const result = await client.callTool(
               name,
               (params ?? {}) as Record<string, unknown>,
               signal,
@@ -479,20 +497,24 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
             const text = formatMcpContent(result);
             return {
               content: [...(text ? [{ type: "text" as const, text }] : []), ...mcpImages(result)],
-              details: { server: "cua-driver", tool: name },
+              details: { server, tool: name },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };
           },
         });
       }
-      computerUse = true;
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       pi.on("session_start", async (_event, ctx) => {
-        ctx.ui.notify(\`Cua Driver unavailable: \${message}\`, "warning");
+        ctx.ui.notify(\`\${server} unavailable: \${message}\`, "warning");
       });
+      return false;
     }
-  }
+  };
+  const computerUse = await attach("cua-driver", stdioSpec(CUA_ENV));
+  const tabs = stdioSpec(BROWSER_TABS_ENV);
+  const browserTabs = (await attach("chrome-devtools", tabs)) ? tabs?.browserName : undefined;
 
   // Deliver orchestration guidance through pi's real system-prompt channel.
   // Wrapping the first user message instead would stop it from starting
@@ -502,7 +524,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       event.systemPrompt +
       "\\n\\n" +
       ORCHESTRATION_INSTRUCTIONS +
-      (computerUse ? "\\n\\n" + COMPUTER_USE_INSTRUCTIONS : ""),
+      (computerUse ? "\\n\\n" + COMPUTER_USE_INSTRUCTIONS : "") +
+      (browserTabs ? "\\n\\n" + BROWSER_TABS_INSTRUCTIONS(browserTabs) : ""),
   }));
 }
 `;

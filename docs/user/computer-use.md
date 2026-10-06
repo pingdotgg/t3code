@@ -47,3 +47,15 @@ and refreshes while the turn runs, then keeps the last frame. The card follows
 stops the capture until the agent's next action. If the host cannot capture
 its screen, for example because Screen Recording is off on a Mac, the card
 says why.
+
+## Use your browser tabs
+
+**Agent browser tabs** lets agents work in the Chromium browser you already
+use on the host, with your open tabs and sign-ins, through Chrome DevTools
+MCP. It works with Chrome, Edge, Brave, Helium, and Chromium on every OS.
+
+Turn it on in **Settings → Integrations → Computer**. Setup lists the browsers
+it finds on the host. Open the browser's page it shows, such as
+`chrome://inspect/#remote-debugging`, and turn on remote debugging. Choosing
+**Done** installs Chrome DevTools MCP on the host. The browser asks to allow
+each connection, so someone at the host has to approve it.

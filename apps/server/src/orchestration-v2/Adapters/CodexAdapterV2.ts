@@ -730,6 +730,8 @@ export function buildCodexTurnStartParams(input: {
   readonly deviceToolsAvailable?: boolean;
   /** The managed `cua-driver` MCP server is attached to this thread. */
   readonly computerUse?: boolean;
+  /** The browser `chrome-devtools` drives, when browser tabs are attached. */
+  readonly browserTabs?: string;
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
 }) {
@@ -765,6 +767,7 @@ export function buildCodexTurnStartParams(input: {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
               computerUse: input.computerUse ?? false,
+              ...(input.browserTabs === undefined ? {} : { browserTabs: input.browserTabs }),
             },
           )
         : undefined;
@@ -1340,6 +1343,15 @@ export function codexThreadRuntimeParams(input: {
                       env: Object.fromEntries(
                         mcpSession.cuaDriver.environment.map(({ name, value }) => [name, value]),
                       ),
+                    },
+                  }),
+              ...(mcpSession.browserTabs === undefined
+                ? {}
+                : {
+                    [McpProviderSession.BROWSER_TABS_MCP_SERVER_NAME]: {
+                      command: mcpSession.browserTabs.command,
+                      args: [...mcpSession.browserTabs.args],
+                      env: { ...mcpSession.browserTabs.env },
                     },
                   }),
             },
@@ -5954,6 +5966,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               computerUse:
                 mcpSession?.cuaDriver !== undefined &&
                 !(yield* userCuaDriver(turnInput.threadId, turnInput.runtimePolicy.cwd)),
+              ...(mcpSession?.browserTabs === undefined
+                ? {}
+                : { browserTabs: mcpSession.browserTabs.browserName }),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
             });
             yield* Ref.update(pendingRootTurns, (current) => {

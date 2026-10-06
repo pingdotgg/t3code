@@ -183,6 +183,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as CuaDriver from "./cua/CuaDriver.ts";
+import * as BrowserTabs from "./mcp/BrowserTabs.ts";
 import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -2133,6 +2134,28 @@ const layerWsRpc = (
               return Option.isSome(driver)
                 ? yield* driver.value.status
                 : ({ platform: "other", running: false } as const);
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCheckBrowserTabs]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCheckBrowserTabs,
+            Effect.gen(function* () {
+              const tabs = yield* Effect.serviceOption(BrowserTabs.BrowserTabs);
+              return Option.isSome(tabs)
+                ? yield* tabs.value.status
+                : { browsers: [], toolInstalled: false };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRunBrowserTabsAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunBrowserTabsAction,
+            Effect.gen(function* () {
+              const tabs = yield* Effect.serviceOption(BrowserTabs.BrowserTabs);
+              return Option.isSome(tabs)
+                ? yield* tabs.value.runAction(input.action)
+                : { browsers: [], toolInstalled: false };
             }),
             { "rpc.aggregate": "server" },
           ),

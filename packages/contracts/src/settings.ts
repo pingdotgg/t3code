@@ -1282,6 +1282,12 @@ export const ServerSettings = Schema.Struct({
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Environment-owned opt-in for managed agent access to Cua Driver. */
   enableCua: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Whether agents get Chrome DevTools MCP attached to the user's running
+   * Chromium browser, with its open tabs and sign-ins. Applied when a provider
+   * session is prepared.
+   */
+  enableAgentBrowserTabs: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1673,6 +1679,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableCua: Schema.optionalKey(Schema.Boolean),
+  enableAgentBrowserTabs: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

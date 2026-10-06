@@ -16,6 +16,8 @@ export interface T3CodeToolAvailability {
   readonly device: boolean;
   /** The managed `cua-driver` MCP server is attached to this turn. */
   readonly computerUse?: boolean;
+  /** The browser `chrome-devtools` drives, when browser tabs are attached. */
+  readonly browserTabs?: string;
 }
 
 const normalizeAvailability = (
@@ -224,6 +226,7 @@ export function buildCodexAdditionalContext(
         harness: "Codex",
         ...runtime,
         computerUse: typeof toolsAvailable !== "boolean" && toolsAvailable.computerUse === true,
+        browserTabs: typeof toolsAvailable === "boolean" ? undefined : toolsAvailable.browserTabs,
       }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),

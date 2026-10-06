@@ -18,6 +18,7 @@ const NodeRuntimeFeature = Schema.Literals([
   "Device automation",
   "Antigravity",
   "Antigravity sign-in",
+  "Browser tab access",
 ]);
 
 export const nodeRuntimeUnavailableMessage = (feature: typeof NodeRuntimeFeature.Type): string =>

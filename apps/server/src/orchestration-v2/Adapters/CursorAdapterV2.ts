@@ -215,7 +215,7 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
         Authorization: session.authorizationHeader,
       },
     },
-    ...McpProviderSession.cuaStdioMcpServers(session),
+    ...McpProviderSession.localStdioMcpServers(session),
   };
 }
 
@@ -2184,7 +2184,7 @@ export function makeCursorAdapterV2(
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, computerUse: McpProviderSession.readMcpProviderSession(turnInput.threadId)?.cuaDriver !== undefined })}`;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, computerUse: McpProviderSession.readMcpProviderSession(turnInput.threadId)?.cuaDriver !== undefined, browserTabs: McpProviderSession.readMcpProviderSession(turnInput.threadId)?.browserTabs?.browserName })}`;
           return images.length === 0
             ? text
             : ({
