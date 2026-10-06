@@ -123,6 +123,19 @@ it("stops only active subagents from lineage without opening their thread", asyn
     input: { threadId: "parent", subagentId: "agent" },
   });
 
+  state.command.mockClear();
+  state.projection = {
+    ...projection,
+    subagents: [{ ...agent, origin: "provider_native", status: "waiting" }],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  await act(async () => stopButton().props.onClick());
+  expect(state.command).toHaveBeenCalledWith({
+    environmentId: "test",
+    input: { threadId: "parent", subagentId: "agent" },
+  });
+  expect(state.navigate).not.toHaveBeenCalled();
+
   state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
   await act(async () => renderer.update(cloneElement(panel)));
   expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);

@@ -408,7 +408,7 @@ export function ThreadRelationshipsPanel(props: {
                   (supportsSubagentInterrupt &&
                     agent.origin === "provider_native" &&
                     agent.driver === "codex" &&
-                    agent.status === "running"));
+                    (agent.status === "running" || agent.status === "waiting")));
               const threadTitle = relationshipThreadTitle({
                 title: node?.thread?.title ?? agent?.title ?? threadId,
                 isSubagent,
