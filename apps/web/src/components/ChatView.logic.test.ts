@@ -1786,6 +1786,26 @@ describe("proactive completed diff guard", () => {
       }),
     ).toBe("ignore");
   });
+
+  it("leaves an already open diff and its chosen scope alone", () => {
+    const largeCheckpoint = {
+      status: "ready",
+      files: Array.from({ length: 3 }, (_, index) => ({
+        path: `src/app-${index}.ts`,
+        kind: "modified" as const,
+        additions: 20,
+        deletions: 0,
+      })),
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: largeCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "diff",
+      }),
+    ).toBe("ignore");
+  });
 });
 
 describe("shouldRefocusComposerOnWindowFocus", () => {
