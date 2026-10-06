@@ -2697,15 +2697,16 @@ const layerWsRpc = (
                         status,
                       }),
                     ),
-                    Effect.catchTag("RelayClientInstallError", (error) =>
-                      Queue.fail(
-                        queue,
-                        new RelayClientInstallFailedError({
-                          reason: error.reason,
-                          message: error.message,
-                        }),
-                      ),
-                    ),
+                    Effect.catchTags({
+                      RelayClientInstallError: (error) =>
+                        Queue.fail(
+                          queue,
+                          new RelayClientInstallFailedError({
+                            reason: error.reason,
+                            message: error.message,
+                          }),
+                        ),
+                    }),
                     Effect.andThen(Queue.end(queue)),
                     Effect.forkScoped,
                   ),

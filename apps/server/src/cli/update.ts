@@ -384,7 +384,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     }
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({ message: "Install the preview build anyway?", initial: false }),
-    ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     if (!confirmed) {
       yield* Console.log("Left as is.");
       return;
@@ -473,7 +473,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           message: "Restart the background service once the download is verified?",
           initial: true,
         }),
-      ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+      ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     } else {
       yield* Console.log(
         "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run `t3 service restart` later.",

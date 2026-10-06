@@ -351,26 +351,28 @@ const make = Effect.gen(function* () {
     browsers.withPermits(1)(
       // Read once a permit is held, so a queued call sees a fallback learned meanwhile.
       Effect.suspend(() => run(noSandbox)).pipe(
-        Effect.catchTag("HtmlRenderSandboxUnavailableError", () =>
-          Effect.logInfo(
-            "Chrome's sandbox is unavailable on this host; launching it without one.",
-          ).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                noSandbox = true;
+        Effect.catchTags({
+          HtmlRenderSandboxUnavailableError: () =>
+            Effect.logInfo(
+              "Chrome's sandbox is unavailable on this host; launching it without one.",
+            ).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  noSandbox = true;
+                }),
+              ),
+              Effect.andThen(run(true)),
+            ),
+        }),
+        Effect.catchTags({
+          HtmlRenderSandboxUnavailableError: (cause) =>
+            Effect.fail(
+              new HeadlessChrome.HtmlRenderBrowserError({
+                reason: "the browser has no sandbox",
+                cause,
               }),
             ),
-            Effect.andThen(run(true)),
-          ),
-        ),
-        Effect.catchTag("HtmlRenderSandboxUnavailableError", (cause) =>
-          Effect.fail(
-            new HeadlessChrome.HtmlRenderBrowserError({
-              reason: "the browser has no sandbox",
-              cause,
-            }),
-          ),
-        ),
+        }),
       ),
     );
 

@@ -681,7 +681,7 @@ const make = Effect.gen(function* () {
       return proof satisfies RelayEnvironmentLinkProof;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
-    Effect.catchTag("PlatformError", internalError("generate-link-proof")),
+    Effect.catchTags({ PlatformError: internalError("generate-link-proof") }),
   );
 
   const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(
@@ -1546,7 +1546,7 @@ const make = Effect.gen(function* () {
       } satisfies RelayEnvironmentHealthResponse;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("answer-health")),
-    Effect.catchTag("PlatformError", internalError("answer-health")),
+    Effect.catchTags({ PlatformError: internalError("answer-health") }),
   );
 
   const mintCredential = Effect.fn("environment.cloud.mintCredential")(
@@ -1653,7 +1653,7 @@ const make = Effect.gen(function* () {
       } satisfies RelayEnvironmentMintResponse;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("issue-credential")),
-    Effect.catchTag("PlatformError", internalError("issue-credential")),
+    Effect.catchTags({ PlatformError: internalError("issue-credential") }),
   );
 
   return CloudLink.of({

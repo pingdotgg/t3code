@@ -376,13 +376,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         cause,
       }),
   ).pipe(
-    Effect.catchTag("WorkspaceSearchIndexScanTimedOut", (error) =>
-      variant === "paths"
-        ? Effect.sync(() => {
-            initialScanTimedOut = true;
-          })
-        : Effect.fail(error),
-    ),
+    Effect.catchTags({
+      WorkspaceSearchIndexScanTimedOut: (error) =>
+        variant === "paths"
+          ? Effect.sync(() => {
+              initialScanTimedOut = true;
+            })
+          : Effect.fail(error),
+    }),
   );
 
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
