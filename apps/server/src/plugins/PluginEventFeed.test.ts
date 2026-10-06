@@ -38,6 +38,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
 import * as PluginEventDelivery from "./PluginEventDelivery.ts";
 import * as PluginEventFeed from "./PluginEventFeed.ts";
+import * as PluginManifestLoader from "./PluginManifestLoader.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
@@ -779,6 +780,30 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
   });
 
   describe("plugin contract", () => {
+    it.effect("refuses the events capability without the proposed API opt-in", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-events-" });
+        yield* fs.writeFileString(
+          path.join(directory, "main.mjs"),
+          "export function activate() {}\n",
+        );
+        yield* fs.writeFileString(
+          path.join(directory, "t3-plugin.json"),
+          toJson({
+            id: "test.no-opt-in",
+            name: "test.no-opt-in",
+            version: "1.0.0",
+            apiVersion: 1,
+            entry: "main.mjs",
+            capabilities: ["events"],
+          }),
+        );
+        const error = yield* PluginManifestLoader.loadPluginDirectory(directory).pipe(Effect.flip);
+        expect(error.reason).toContain('"events" capability needs "proposedApi": true');
+      }).pipe(Effect.scoped),
+    );
     it.effect("fails delivery to a plugin that registered no onEvent handler", () =>
       withStores(
         Effect.gen(function* () {

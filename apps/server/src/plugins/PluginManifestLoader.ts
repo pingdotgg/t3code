@@ -74,6 +74,9 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   );
   if (unsupported.length > 0)
     return yield* fail(`this server does not support ${unsupported.join(", ")}.`);
+  // Events arrive through `context.proposed.onEvent`, which only exists with the opt-in.
+  if (manifest.capabilities.includes(PLUGIN_EVENTS_CAPABILITY) && !manifest.proposedApi)
+    return yield* fail(`the "${PLUGIN_EVENTS_CAPABILITY}" capability needs "proposedApi": true.`);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
