@@ -9,7 +9,9 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { persistClientSettingsUpdate } from "../hooks/useSettings";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import type { SnoozeFavorite } from "@t3tools/contracts/settings";
 import { Checkbox } from "./ui/checkbox";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
@@ -39,6 +41,21 @@ type SnoozeChoice = { readonly snoozedUntil: string };
 type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
+/**
+ * Edits the saved favorites against the newest settings, after hydration, so
+ * an early save or removal cannot overwrite favorites that have not loaded yet.
+ */
+export function updateSnoozeFavorites(
+  update: (favorites: ReadonlyArray<SnoozeFavorite>) => ReadonlyArray<SnoozeFavorite>,
+): void {
+  void persistClientSettingsUpdate((settings) => ({
+    ...settings,
+    snoozeFavorites: update(settings.snoozeFavorites),
+  })).catch((error) => {
+    console.error("[SNOOZE_FAVORITES] persist failed", safeErrorLogAttributes(error));
+  });
+}
+
 export function requestCustomSnooze(): Promise<SnoozeChoice | null> {
   useRequest.getState().request?.resolve(null);
   return new Promise((resolve) => useRequest.setState({ request: { resolve } }));
@@ -67,8 +84,6 @@ function CustomSnoozeDialog() {
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [saveAsFavorite, setSaveAsFavorite] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const favorites = useClientSettings((settings) => settings.snoozeFavorites);
-  const updateClientSettings = useUpdateClientSettings();
   const input: CustomSnoozeInput =
     mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
   return (
@@ -93,11 +108,9 @@ function CustomSnoozeDialog() {
               return;
             }
             if (input.mode === "duration" && saveAsFavorite) {
-              const next = addSnoozeFavorite(favorites, {
-                amount: Number(input.amount),
-                unit: input.unit,
-              });
-              if (next !== favorites) void updateClientSettings({ snoozeFavorites: next });
+              updateSnoozeFavorites((favorites) =>
+                addSnoozeFavorite(favorites, { amount: Number(input.amount), unit: input.unit }),
+              );
             }
             finish({ snoozedUntil });
           }}

@@ -8,7 +8,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
-import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestCustomSnooze, updateSnoozeFavorites } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -139,7 +139,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -552,7 +552,6 @@ function SnoozeMenuButton(props: {
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
   const snoozeFavorites = useClientSettings((s) => s.snoozeFavorites);
-  const updateClientSettings = useUpdateClientSettings();
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
@@ -611,9 +610,7 @@ function SnoozeMenuButton(props: {
                 className="size-7 justify-center px-0 text-muted-foreground"
                 onClick={(event) => {
                   event.stopPropagation();
-                  void updateClientSettings({
-                    snoozeFavorites: removeSnoozeFavorite(snoozeFavorites, favorite),
-                  });
+                  updateSnoozeFavorites((favorites) => removeSnoozeFavorite(favorites, favorite));
                 }}
               >
                 <XIcon className="size-3" />
