@@ -7466,7 +7466,19 @@ export function makeClaudeAdapterV2(
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt.pipe(Effect.timeoutOption("10 seconds"));
+            // Closing the query is what stops the CLI, so a rejected or
+            // unanswered interrupt still falls through to the close.
+            yield* existing.query.interrupt.pipe(
+              Effect.timeoutOption("10 seconds"),
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-query-interrupt-failed", {
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                  cause,
+                }),
+              ),
+            );
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
