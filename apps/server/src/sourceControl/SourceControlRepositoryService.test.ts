@@ -179,7 +179,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", "--progress", CLONE_URLS.url, "t3code"],
+          args: ["clone", "--progress", "--", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(
@@ -196,6 +196,43 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["--bare", "source.git"])(
+  "clones a local repository named %s as a working tree",
+  (repositoryName) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-options-" });
+      yield* git.execute({
+        operation: "test.init",
+        cwd: parent,
+        args: ["init", "--bare", path.join(parent, repositoryName)],
+      });
+      const destinationPath = path.join(parent, "checkout");
+      yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const result = yield* service.cloneRepository({
+          remoteUrl: repositoryName,
+          destinationPath,
+        });
+        assert.strictEqual(result.cwd, destinationPath);
+        assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
+      }).pipe(Effect.provide(makeLayer({ git: { execute: git.execute } })));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-clone-options-config-",
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
 );
 
 it.effect("reports clone progress from git's stderr and keeps its error text on failure", () =>
