@@ -1,3 +1,5 @@
+import * as NodeTimers from "node:timers/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -509,10 +511,7 @@ setInterval(() => {}, 1_000);
         {
           backupSpaceProbe: {
             // The child exits right after its request; outlast that.
-            readFreeBytes: () =>
-              Effect.runPromise(
-                Effect.sleep("500 millis").pipe(Effect.as(Number.MAX_SAFE_INTEGER)),
-              ),
+            readFreeBytes: () => NodeTimers.setTimeout(500, Number.MAX_SAFE_INTEGER),
           },
         },
       );
