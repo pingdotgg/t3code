@@ -138,6 +138,9 @@ through the pages you have visited, like a browser's back and forward buttons.
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
+Assign `chat.newOnBranch` in Settings → Keybindings → Add binding to start a blank
+thread on the active thread's branch and reuse its worktree. It has no default shortcut.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

@@ -1,3 +1,4 @@
+import { startNewThreadOnBranch } from "../lib/chatThreadActions";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { setThreadChangeRequestSnapshot } from "./ThreadStatusIndicators";
@@ -4520,15 +4521,8 @@ export default function Sidebar() {
             if (threadProjectGroup) openProjectSettings(threadProjectGroup);
             return;
           case "new-thread-on-branch": {
-            // Explicit branch carry-over: reuse the thread's worktree when it
-            // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
-                branch: thread.branch,
-                worktreePath: thread.worktreePath,
-                envMode: thread.worktreePath ? "worktree" : "local",
-                startFromOrigin: false,
-              }),
+              startNewThreadOnBranch(thread, handleNewThreadRef.current),
             );
             if (result._tag === "Failure") {
               const error = squashAtomCommandFailure(result);

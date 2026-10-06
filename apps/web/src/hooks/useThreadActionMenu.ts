@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { startNewThreadOnBranch } from "../lib/chatThreadActions";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import {
   type AtomCommandResult,
@@ -196,15 +196,8 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "new-thread-on-branch": {
-            // Explicit branch carry-over: reuse the thread's worktree when it
-            // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {
-                branch: thread.branch,
-                worktreePath: thread.worktreePath,
-                envMode: thread.worktreePath ? "worktree" : "local",
-                startFromOrigin: false,
-              }),
+              startNewThreadOnBranch(thread, handleNewThread),
             );
             if (result._tag === "Failure") {
               failureToast("Could not create thread", squashAtomCommandFailure(result));
