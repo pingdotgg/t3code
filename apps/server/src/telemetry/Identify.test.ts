@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 
 import * as ServerConfig from "../config.ts";
@@ -52,6 +53,45 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-telemetry-identify-anonymous-",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("leaves no torn anonymous id behind when its write fails midway", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tornWrites = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (filePath, data, options) =>
+          fileSystem
+            .writeFileString(filePath, data.slice(0, Math.floor(data.length / 2)), options)
+            .pipe(
+              Effect.andThen(
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "WriteZero",
+                    module: "FileSystem",
+                    method: "writeFileString",
+                    pathOrDescriptor: filePath,
+                  }),
+                ),
+              ),
+            ),
+      });
+
+      const identifier = yield* Identify.getTelemetryIdentifierForHome(
+        path.join(config.baseDir, "home"),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, tornWrites));
+
+      assert.isNull(identifier);
+      assert.isFalse(yield* fileSystem.exists(config.anonymousIdPath));
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-telemetry-identify-torn-",
         }),
       ),
     ),
