@@ -331,7 +331,7 @@ it.effect.each(["--bare", "source.git"])(
         });
         assert.strictEqual(result.cwd, destinationPath);
         assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
-      }).pipe(Effect.provide(makeLayer({ git: { execute: git.execute } })));
+      }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
     }).pipe(
       Effect.provide(
         GitVcsDriver.layer.pipe(
