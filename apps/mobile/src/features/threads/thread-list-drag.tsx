@@ -203,8 +203,14 @@ export function ThreadListDragSurface(props: {
   readonly listRef: RefObject<LegendListRef | null>;
   readonly items: readonly { readonly type: string; readonly key: string }[];
   readonly workingShelfEnabled: boolean;
-  /** Content hidden under translucent chrome, kept out of the auto-scroll edges. */
-  readonly edgeInsets?: { readonly top: number; readonly bottom: number };
+  /** Content hidden under translucent chrome, kept out of the auto-scroll edges.
+   * `scrollInsetTop` is how far above zero the list may scroll; it defaults to
+   * `top` for native automatic insets and is 0 when the list pads its content. */
+  readonly edgeInsets?: {
+    readonly top: number;
+    readonly bottom: number;
+    readonly scrollInsetTop?: number;
+  };
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
     destination: ThreadDropDestination,
@@ -351,7 +357,10 @@ export function ThreadListDragSurface(props: {
           grabY,
           anchor: source.offset + grabY - absoluteY - state.scroll,
           // iOS automatic insets rest the list at a negative offset.
-          minimumScroll: Math.min(state.scroll, -(latest.current.edgeInsets?.top ?? 0)),
+          minimumScroll: Math.min(
+            state.scroll,
+            -(latest.current.edgeInsets?.scrollInsetTop ?? latest.current.edgeInsets?.top ?? 0),
+          ),
           canDrop: createDropPolicy(thread, source.section, latest.current.workingShelfEnabled),
           rows: snapshot.rows,
           offsets: snapshot.offsets,

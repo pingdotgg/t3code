@@ -1017,6 +1017,12 @@ function ThreadNavigationSidebarPane(
               listRef={listRef}
               items={listItems}
               workingShelfEnabled={workingShelfEnabled}
+              // The iOS sticky header overlays the padded list.
+              edgeInsets={
+                Platform.OS === "ios"
+                  ? { top: stickyHeaderHeight, bottom: 0, scrollInsetTop: 0 }
+                  : undefined
+              }
               onMoveThread={moveThread}
             >
               {(dragListProps) => (

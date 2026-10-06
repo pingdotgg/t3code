@@ -131,6 +131,20 @@ describe("thread list drops into empty sections", () => {
       placement: "after",
     });
   });
+  it("does not pin or unpin a card lifted near its own edge", () => {
+    expect(drop(active, 10, active[0]!)).toBeNull();
+    expect(drop(active, -4, active[0]!)).toEqual({
+      section: "pinned",
+      targetId: null,
+      placement: "before",
+    });
+    expect(drop(pins, 150, pins[1]!)).toBeNull();
+    expect(drop(pins, 200, pins[1]!)).toEqual({
+      section: "active",
+      targetId: null,
+      placement: "before",
+    });
+  });
 });
 
 describe("drag geometry outside the render window", () => {

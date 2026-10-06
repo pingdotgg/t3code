@@ -71,19 +71,22 @@ export function resolveThreadDrop(input: {
   if (row === undefined || row.section === null || row.section === "snoozed") return null;
   const hasPins = input.rows.some((candidate) => candidate.section === "pinned");
   const hasActive = input.rows.some((candidate) => candidate.section === "active");
+  // Over the source card the bands shrink to its edges, so lifting a card
+  // near its own edge never pins or unpins it.
+  const band = row.threadKey === input.source.threadKey ? 0 : EMPTY_SECTION_BAND;
   let destination: ThreadDropDestination;
   if (
     !hasPins &&
     row.section === "active" &&
     row === input.rows.find((candidate) => candidate.section === "active") &&
-    input.contentY < row.offset + EMPTY_SECTION_BAND
+    input.contentY < row.offset + band
   ) {
     destination = { section: "pinned", targetId: null, placement: "before" };
   } else if (
     !hasActive &&
     row.section === "pinned" &&
     row === input.rows.findLast((candidate) => candidate.section === "pinned") &&
-    input.contentY >= row.offset + row.height - EMPTY_SECTION_BAND
+    input.contentY >= row.offset + row.height - band
   ) {
     destination = { section: "active", targetId: null, placement: "before" };
   } else if (row.section === "settled") {
