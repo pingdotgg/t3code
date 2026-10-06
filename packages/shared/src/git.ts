@@ -26,7 +26,7 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
 );
 
 /**
- * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
+ * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
  */
 export function sanitizeBranchFragment(raw: string): string {
@@ -66,7 +66,7 @@ export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOpti
 }
 
 /**
- * Sanitize a string into a `feature/…` refName name.
+ * Sanitize a string into a `feature/…` branch name.
  * Preserves an existing `feature/` prefix or slash-separated namespace.
  */
 export function sanitizeFeatureBranchName(raw: string): string {
@@ -80,8 +80,8 @@ export function sanitizeFeatureBranchName(raw: string): string {
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
 /**
- * Resolve a unique `feature/…` refName name that doesn't collide with
- * any existing refName. Appends a numeric suffix when needed.
+ * Resolve a unique `feature/…` branch name that doesn't collide with
+ * any existing branch. Appends a numeric suffix when needed.
  */
 export function resolveAutoFeatureBranchName(
   existingBranchNames: readonly string[],
@@ -382,6 +382,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
 function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
   return {
     isRepo: status.isRepo,
+    ...(status.vcs ? { vcs: status.vcs } : {}),
     ...(status.sourceControlProvider
       ? { sourceControlProvider: status.sourceControlProvider }
       : {}),

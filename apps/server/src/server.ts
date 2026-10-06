@@ -94,6 +94,8 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as JjWorkflow from "./jj/JjWorkflow.ts";
+import * as JjVcsDriver from "./vcs/JjVcsDriver.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
@@ -333,14 +335,26 @@ const layerGit = Layer.empty.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
 );
 
+const layerJjWorkflow = JjWorkflow.layer.pipe(
+  // Text generation settings resolve the acting thread's project.
+  Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+  Layer.provideMerge(JjVcsDriver.layer),
+  // Both for `branchPullRequest` and `resolvePullRequest`, which the jj lane runs against the
+  // colocated Git store. `layerGitManager` already merges `ProjectSetupScriptRunner`.
+  Layer.provideMerge(layerGitManager),
+);
+
 const layerGitWorkflow = GitWorkflowService.layer.pipe(
   Layer.provideMerge(layerVcsDriverRegistry),
   Layer.provideMerge(layerGit),
+  Layer.provideMerge(layerJjWorkflow),
 );
 
 const layerSourceControlRepositoryService = SourceControlRepositoryService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerSourceControlProviderRegistry),
+  Layer.provideMerge(layerVcsDriverRegistry),
+  Layer.provideMerge(layerJjWorkflow),
 );
 
 const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert } from "react-native";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -17,7 +18,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
 import { threadEnvironment } from "../state/threads";
-import { vcsActionManager, vcsEnvironment } from "../state/vcs";
+import { useVcsTerminology, vcsActionManager, vcsEnvironment } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
@@ -34,15 +35,24 @@ export function useSelectedThreadGitActions() {
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
+  const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const [pendingWorkspaceMetadataCleanup, setPendingWorkspaceMetadataCleanup] = useState<
+    string | null
+  >(null);
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
       cwd: selectedThreadCwd,
     }),
     { reportFailure: false },
+  );
+
+  const vcsTerminology = useVcsTerminology(
+    selectedThread?.environmentId ?? null,
+    selectedThreadCwd,
   );
 
   const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
@@ -105,14 +115,17 @@ export function useSelectedThreadGitActions() {
           );
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Failed to refresh git status.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Failed to refresh ${vcsTerminology.systemName} status.`;
         setPendingConnectionError(message);
         return null;
       }
       setPendingConnectionError(null);
       return result.value;
     },
-    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
+    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject, vcsTerminology],
   );
 
   useEffect(() => {
@@ -197,7 +210,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       await runSelectedThreadGitMutation(
         "switch_ref",
-        "Switching branch",
+        `Switching ${vcsTerminology.refNoun}`,
         async ({ thread, cwd }) => {
           const result = await switchRef({
             environmentId: thread.environmentId,
@@ -223,6 +236,7 @@ export function useSelectedThreadGitActions() {
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
       switchRef,
+      vcsTerminology,
     ],
   );
 
@@ -230,7 +244,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       await runSelectedThreadGitMutation(
         "create_ref",
-        "Creating branch",
+        `Creating ${vcsTerminology.refNoun}`,
         async ({ thread, cwd }) => {
           const result = await createRef({
             environmentId: thread.environmentId,
@@ -256,6 +270,7 @@ export function useSelectedThreadGitActions() {
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
       createRef,
+      vcsTerminology,
     ],
   );
 
@@ -263,7 +278,7 @@ export function useSelectedThreadGitActions() {
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
       await runSelectedThreadGitMutation(
         "create_worktree",
-        "Creating worktree",
+        `Creating ${vcsTerminology.workspaceNoun}`,
         async ({ thread, project }) => {
           const result = await createWorktree({
             environmentId: thread.environmentId,
@@ -289,8 +304,97 @@ export function useSelectedThreadGitActions() {
         },
       );
     },
-    [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState],
+    [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState, vcsTerminology],
   );
+
+  // Creating a workspace on a phone must have a way back out, or one made here
+  // could only be cleaned up from the web client.
+  const onRemoveSelectedThreadWorkspace = useCallback(async () => {
+    const thread = selectedThread;
+    const project = selectedThreadProject;
+    const worktreePath = selectedThreadWorktreePath;
+    if (!thread || !project || !worktreePath) {
+      return false;
+    }
+    if (pendingWorkspaceMetadataCleanup !== worktreePath) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          `Remove this ${vcsTerminology.workspaceNoun}?`,
+          `${worktreePath}\n\nThe thread stays; only the ${vcsTerminology.workspaceNoun} is deleted.`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Remove", style: "destructive", onPress: () => resolve(true) },
+          ],
+        );
+      });
+      if (!confirmed) return false;
+
+      let result = await removeWorktree({
+        environmentId: thread.environmentId,
+        input: { cwd: project.workspaceRoot, path: worktreePath, force: false },
+      });
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        const message = error instanceof Error ? error.message : "An error occurred.";
+        if (message.includes("uncommitted or unbookmarked changes")) {
+          const discard = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              `Discard changes and remove ${vcsTerminology.workspaceNoun}?`,
+              `Uncommitted or unbookmarked changes in ${worktreePath} will be lost.`,
+              [
+                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                { text: "Discard and remove", style: "destructive", onPress: () => resolve(true) },
+              ],
+            );
+          });
+          if (!discard) return false;
+          result = await removeWorktree({
+            environmentId: thread.environmentId,
+            input: { cwd: project.workspaceRoot, path: worktreePath, force: true },
+          });
+        }
+      }
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        showGitActionResult({
+          type: "error",
+          title: `Failed to remove ${vcsTerminology.workspaceNoun}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+        return false;
+      }
+    }
+    const syncResult = await syncSelectedThreadBranchState({
+      thread,
+      cwd: project.workspaceRoot,
+      nextThreadState: { worktreePath: null },
+    });
+    if (AsyncResult.isFailure(syncResult)) {
+      setPendingWorkspaceMetadataCleanup(worktreePath);
+      const error = Cause.squash(syncResult.cause);
+      showGitActionResult({
+        type: "error",
+        title: `${vcsTerminology.workspaceNounTitle} removed, but thread update failed`,
+        description:
+          error instanceof Error ? error.message : "Try clearing the thread workspace again.",
+      });
+      return false;
+    }
+    setPendingWorkspaceMetadataCleanup(null);
+    showGitActionResult({
+      type: "success",
+      title: `${vcsTerminology.workspaceNounTitle} removed`,
+    });
+    return true;
+  }, [
+    pendingWorkspaceMetadataCleanup,
+    removeWorktree,
+    selectedThread,
+    selectedThreadProject,
+    selectedThreadWorktreePath,
+    syncSelectedThreadBranchState,
+    vcsTerminology,
+  ]);
 
   const onPullSelectedThreadBranch = useCallback(async () => {
     await runSelectedThreadGitMutation(
@@ -380,6 +484,8 @@ export function useSelectedThreadGitActions() {
     onCheckoutSelectedThreadBranch,
     onCreateSelectedThreadBranch,
     onCreateSelectedThreadWorktree,
+    onRemoveSelectedThreadWorkspace,
+    pendingWorkspaceMetadataCleanup: pendingWorkspaceMetadataCleanup === selectedThreadWorktreePath,
     onPullSelectedThreadBranch,
     onRunSelectedThreadGitAction,
   };

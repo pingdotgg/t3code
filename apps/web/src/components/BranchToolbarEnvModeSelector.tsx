@@ -2,6 +2,7 @@ import { ThreadDetailsSelectControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import type { VcsTerminology } from "@t3tools/shared/vcs";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
@@ -43,6 +44,7 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  terminology: VcsTerminology;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -56,6 +58,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  terminology,
 }: BranchToolbarEnvModeSelectorProps) {
   const workspacePath = displayMode === "panel" ? (activeWorktreePath ?? workspaceRoot) : null;
   const workspaceDisplayName = resolveWorkspaceDisplayName(workspacePath);
@@ -70,14 +73,21 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     () => [
       {
         value: "local",
-        label: workspaceDisplayName ?? resolveCurrentWorkspaceLabel(activeWorktreePath),
+        label:
+          workspaceDisplayName ?? resolveCurrentWorkspaceLabel(activeWorktreePath, terminology),
       },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
+      { value: "worktree", label: resolveEnvModeLabel("worktree", terminology) },
       ...(showPreviousWorktree && previousWorktreeLabel
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
     ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree, workspaceDisplayName],
+    [
+      activeWorktreePath,
+      previousWorktreeLabel,
+      showPreviousWorktree,
+      workspaceDisplayName,
+      terminology,
+    ],
   );
 
   const handleWorkspaceContextMenu = (event: ReactMouseEvent) => {
@@ -147,9 +157,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         )}
         <ComposerContextLabel displayMode={displayMode}>
           {forceNewWorktree
-            ? resolveEnvModeLabel("worktree")
+            ? resolveEnvModeLabel("worktree", terminology)
             : (workspaceDisplayName ??
-              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
+              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode, terminology))}
         </ComposerContextLabel>
         {displayMode === "panel" && lockedWorkspaceKind ? (
           <span className="shrink-0 text-3xs font-normal text-muted-foreground/70">
@@ -164,8 +174,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <TooltipTrigger render={lockedRow} />
         <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
           {forceNewWorktree
-            ? "Each model starts in its own worktree."
-            : (workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
+            ? `Each model starts in its own ${terminology.workspaceNoun}.`
+            : (workspacePath ??
+              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode, terminology))}
         </TooltipPopup>
       </Tooltip>
     );
@@ -223,8 +234,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
           {workspacePath ??
             (effectiveEnvMode === "worktree"
-              ? resolveEnvModeLabel("worktree")
-              : resolveCurrentWorkspaceLabel(activeWorktreePath))}
+              ? resolveEnvModeLabel("worktree", terminology)
+              : resolveCurrentWorkspaceLabel(activeWorktreePath, terminology))}
         </TooltipPopup>
       </Tooltip>
       <SelectPopup
@@ -247,13 +258,13 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               ) : (
                 <FolderIcon className="size-3" />
               )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+              {resolveCurrentWorkspaceLabel(activeWorktreePath, terminology)}
             </span>
           </SelectItem>
           <SelectItem value="worktree">
             <span className="inline-flex items-center gap-1.5">
               <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
+              {resolveEnvModeLabel("worktree", terminology)}
             </span>
           </SelectItem>
           {showPreviousWorktree && previousWorktreeLabel ? (

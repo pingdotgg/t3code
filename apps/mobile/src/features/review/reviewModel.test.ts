@@ -146,6 +146,30 @@ describe("buildReviewSectionItems", () => {
     ]);
     expect(getDefaultReviewSectionId(items)).toBe("git:branch-range");
   });
+
+  it("names a missing base with the project's ref noun", () => {
+    const [section] = buildReviewSectionItems({
+      checkpoints: [],
+      gitSections: [
+        {
+          id: "branch-range",
+          kind: "branch-range",
+          title: "Bookmark changes",
+          baseRef: null,
+          headRef: null,
+          diff: "",
+          diffHash: "h",
+          truncated: false,
+        },
+      ],
+      turnDiffById: {},
+      loadingTurnIds: {},
+      loadingGitSections: false,
+      vcsKind: "jj",
+    });
+
+    expect(section?.subtitle).toBe("Base bookmark unavailable");
+  });
 });
 
 describe("buildReviewParsedDiff", () => {

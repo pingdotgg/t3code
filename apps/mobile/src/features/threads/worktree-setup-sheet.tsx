@@ -13,11 +13,12 @@ const NativeHeader = withUniwind(ScreenStackHeaderConfig, {
 
 export interface WorktreeSetupSheetProps {
   children: ReactElement;
+  title: string;
   height: number;
   onClose: () => void;
 }
 
-export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupSheetProps) {
+export function WorktreeSetupSheet({ children, height, onClose, title }: WorktreeSetupSheetProps) {
   const [headerHeight, setHeaderHeight] = useState(44);
   return (
     <Modal
@@ -40,7 +41,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
           >
             {children}
             <NativeHeader
-              title="Worktree setup"
+              title={title}
               titleColorClassName="accent-foreground"
               tintColorClassName="accent-foreground"
               backgroundColorClassName="bg-sheet-solid"

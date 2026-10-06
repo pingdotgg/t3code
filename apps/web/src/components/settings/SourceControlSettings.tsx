@@ -373,9 +373,10 @@ function GitFetchIntervalSettings() {
           <div className="flex min-w-0 items-center gap-1">
             <span className="text-xs font-medium text-foreground">{setting.title}</span>
             <PolicyTooltip>
-              This interval is configured for Git only. The shared Background activity policy still
-              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
-              Advanced in General settings.
+              This interval drives the background remote refresh for whichever version control
+              system a project uses. The shared Background activity policy still decides whether a
+              refresh may run when the timer fires. Custom intervals appear as Advanced in General
+              settings.
             </PolicyTooltip>
             <span
               className={cn(
@@ -399,7 +400,7 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
+            Refresh remote refs in the background. Set to 0 to avoid automatic remote prompts.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -575,10 +576,11 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
-                </DiscoveryItemRow>
+                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} />
               ))}
+              <div className="border-t border-border/60 px-3 py-3 sm:px-4">
+                <GitFetchIntervalSettings />
+              </div>
             </SettingsSection>
           ) : null}
 

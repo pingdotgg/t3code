@@ -9,7 +9,7 @@ const NativeBottomSheet = withUniwind(ModalBottomSheet, {
   containerColor: { fromClassName: "containerColorClassName", styleProperty: "accentColor" },
 });
 
-export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupSheetProps) {
+export function WorktreeSetupSheet({ children, height, onClose, title }: WorktreeSetupSheetProps) {
   const window = useWindowDimensions();
   return (
     <Host style={{ position: "absolute", width: 0, height: 0 }}>
@@ -26,7 +26,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
             }}
           >
             <AndroidSheetHeader
-              title="Worktree setup"
+              title={title}
               trailing={
                 <Pressable
                   accessibilityRole="button"

@@ -1,4 +1,5 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { useCallback, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -42,6 +43,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const busy = gitState.gitOperationLabel !== null;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
+  const vcsTerminology = resolveVcsTerminology(gitStatus.data);
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -110,9 +112,14 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 {gitStatus.data?.refName ?? "(detached HEAD)"}
               </Text>
             </View>
+            {gitStatus.data?.vcs?.kind === "jj" ? (
+              <Text className="text-xs leading-normal text-foreground-muted">
+                Jujutsu does not run Git hooks.
+              </Text>
+            ) : null}
             {isDefaultRef ? (
               <Text className="text-xs leading-normal text-warning-foreground">
-                Warning: this is the default branch.
+                {`Warning: this is the default ${vcsTerminology.refNoun}.`}
               </Text>
             ) : null}
           </View>
@@ -273,7 +280,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="ios:flex-1">
               <SheetActionButton
                 icon="arrow.branch"
-                label="Commit on new branch"
+                label={`${vcsTerminology.changeNounTitle} on new ${vcsTerminology.refNoun}`}
                 disabled={noneSelected || busy}
                 onPress={() => void runCommitAction(true)}
               />
