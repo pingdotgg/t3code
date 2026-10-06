@@ -42,7 +42,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
         Stream.suspend(() =>
           subscribe(WS_METHODS.terminalObserve, input).pipe(
-            Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
+            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
           ),
         ),
     }),
