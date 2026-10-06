@@ -500,17 +500,46 @@ export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
   );
 }
 
+const REJECTED_BOOTSTRAP_RETRY_INITIAL_MS = 60_000;
+const REJECTED_BOOTSTRAP_RETRY_MAX_MS = 30 * 60_000;
+
+/** A bootstrap token a backend rejected, and when the poll may try it again. */
+export interface RejectedSecondaryBootstrap {
+  readonly signature: string;
+  readonly retryAtEpochMs: number;
+  readonly delayMs: number;
+}
+
 /**
- * A backend that rejected a bootstrap token will keep rejecting it, so the
- * poll skips that exact signature until the desktop reports a new token or
- * endpoint instead of re-presenting a dead credential every few seconds.
+ * A backend that rejected a bootstrap token will usually keep rejecting it, so
+ * the poll backs off on that exact signature instead of re-presenting a dead
+ * credential every few seconds. It still retries on a capped backoff: a
+ * backend that restarts on the same port seeds a fresh grant for the same
+ * token, and nothing in the topology says it restarted. A new token or
+ * endpoint retries at once.
  */
 export function isRejectedSecondaryBootstrap(
-  rejected: ReadonlyMap<string, string>,
-  backendId: string,
+  rejected: RejectedSecondaryBootstrap | undefined,
   signature: string,
-): boolean {
-  return rejected.get(backendId) === signature;
+  nowEpochMs: number,
+): rejected is RejectedSecondaryBootstrap {
+  return (
+    rejected !== undefined &&
+    rejected.signature === signature &&
+    nowEpochMs < rejected.retryAtEpochMs
+  );
+}
+
+export function nextRejectedSecondaryBootstrap(
+  previous: RejectedSecondaryBootstrap | undefined,
+  signature: string,
+  nowEpochMs: number,
+): RejectedSecondaryBootstrap {
+  const delayMs =
+    previous?.signature === signature
+      ? Math.min(previous.delayMs * 2, REJECTED_BOOTSTRAP_RETRY_MAX_MS)
+      : REJECTED_BOOTSTRAP_RETRY_INITIAL_MS;
+  return { signature, retryAtEpochMs: nowEpochMs + delayMs, delayMs };
 }
 
 export function isRejectedBootstrapCredentialError(error: ConnectionAttemptError): boolean {
@@ -541,7 +570,7 @@ const layerPlatformConnectionSource = Layer.effect(
       });
     }
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
-    const rejectedRef = yield* Ref.make(new Map<string, string>());
+    const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
     // Resolve the full set of platform-managed environments the host currently
     // reports: the primary (same-origin cookie auth) plus any desktop-local
@@ -608,7 +637,7 @@ const layerPlatformConnectionSource = Layer.effect(
         });
       } else {
         const rejected = yield* Ref.get(rejectedRef);
-        const nextRejected = new Map<string, string>();
+        const nextRejected = new Map<string, RejectedSecondaryBootstrap>();
         for (const bootstrap of topologyRead.bootstraps) {
           const signature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}|${bootstrap.bootstrapToken ?? ""}`;
           const cached = previous.get(bootstrap.id);
@@ -620,8 +649,17 @@ const layerPlatformConnectionSource = Layer.effect(
             registrations.push(cached.registration);
             continue;
           }
-          if (isRejectedSecondaryBootstrap(rejected, bootstrap.id, signature)) {
-            nextRejected.set(bootstrap.id, signature);
+          const previouslyRejected = rejected.get(bootstrap.id);
+          if (isRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs)) {
+            nextRejected.set(bootstrap.id, previouslyRejected);
+            // The bearer minted before the token died is still good until it expires.
+            if (
+              cached !== undefined &&
+              canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, signature, nowEpochMs)
+            ) {
+              next.set(bootstrap.id, cached);
+              registrations.push(cached.registration);
+            }
             continue;
           }
           const built = yield* loadSecondaryConnectionRegistration(bootstrap).pipe(
@@ -633,7 +671,12 @@ const layerPlatformConnectionSource = Layer.effect(
             ),
             Effect.tapError((error) =>
               isRejectedBootstrapCredentialError(error)
-                ? Effect.sync(() => nextRejected.set(bootstrap.id, signature))
+                ? Effect.sync(() =>
+                    nextRejected.set(
+                      bootstrap.id,
+                      nextRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs),
+                    ),
+                  )
                 : Effect.void,
             ),
             Effect.option,

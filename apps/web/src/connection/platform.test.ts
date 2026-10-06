@@ -17,6 +17,7 @@ import {
   canReuseCachedPlatformRegistration,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
+  nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
@@ -209,17 +210,32 @@ describe("desktop-local bearer cache", () => {
 });
 
 describe("rejected desktop-local bootstrap tokens", () => {
-  it("skips only the exact rejected signature until the token or endpoint changes", () => {
-    const rejected = new Map([["wsl:ubuntu", "http://a|ws://a|old-token"]]);
+  it("backs off on a rejected signature and retries it on a growing, capped delay", () => {
+    const signature = "http://a|ws://a|old-token";
+    const first = nextRejectedSecondaryBootstrap(undefined, signature, 0);
 
-    expect(isRejectedSecondaryBootstrap(rejected, "wsl:ubuntu", "http://a|ws://a|old-token")).toBe(
-      true,
-    );
-    expect(isRejectedSecondaryBootstrap(rejected, "wsl:ubuntu", "http://a|ws://a|new-token")).toBe(
-      false,
-    );
-    expect(isRejectedSecondaryBootstrap(rejected, "wsl:debian", "http://a|ws://a|old-token")).toBe(
-      false,
+    expect(isRejectedSecondaryBootstrap(first, signature, 59_999)).toBe(true);
+    // A backend restarted on the same port accepts the same token again, so it is retried.
+    expect(isRejectedSecondaryBootstrap(first, signature, 60_000)).toBe(false);
+
+    const second = nextRejectedSecondaryBootstrap(first, signature, 60_000);
+    expect(second.retryAtEpochMs).toBe(180_000);
+
+    let backoff = second;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      backoff = nextRejectedSecondaryBootstrap(backoff, signature, 0);
+    }
+    expect(backoff.delayMs).toBe(30 * 60_000);
+  });
+
+  it("retries at once when the token or endpoint changes", () => {
+    const rejected = nextRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 0);
+
+    expect(isRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(rejected, "http://b|ws://b|old-token", 1)).toBe(false);
+    expect(isRejectedSecondaryBootstrap(undefined, "http://a|ws://a|old-token", 1)).toBe(false);
+    expect(nextRejectedSecondaryBootstrap(rejected, "http://a|ws://a|new-token", 1).delayMs).toBe(
+      60_000,
     );
   });
 
