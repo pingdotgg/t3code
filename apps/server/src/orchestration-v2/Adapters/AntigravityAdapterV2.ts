@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -88,6 +89,7 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
 }
 
 /**
@@ -133,12 +135,18 @@ export function makeAntigravityAcpAdapterFlavor(
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing a child of it, and the adapter respawns on the next turn.
       const scope = yield* Scope.fork(yield* Effect.scope);
+      const platform = yield* HostProcessPlatform;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
+            // Own the agent's process group so Stop also ends the commands it
+            // started, including ones still running after the prompt returned.
+            ownDetachedProcessGroup: true,
+            ownDescendantProcessGroups: platform === "linux",
+            processGroupPlatform: platform,
             additionalDirectories: [options.serverConfig.attachmentsDir],
           }),
         )
@@ -172,6 +180,14 @@ export function makeAntigravityAcpAdapterFlavor(
     // without the replay and is what the official client does.
     preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
+    // A command can keep running after Antigravity returns end_turn. Keep the
+    // turn open until the command's terminal update or an explicit Stop.
+    deferFinalizeForBackgroundWork: true,
+    extractBackgroundTaskId: (toolCall) =>
+      toolCall.kind === "execute" && toolCall.status !== undefined && toolCall.status !== "pending"
+        ? toolCall.toolCallId
+        : undefined,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: ({ runtime, modelSelection }) =>
       Effect.gen(function* () {
@@ -239,5 +255,6 @@ export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
 }
