@@ -1470,7 +1470,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("right-panel-layout")}
-          description="Show right panel surfaces one at a time as tabs, or side by side as columns you scroll through."
+          description="Show panels beside the chat as tabs, or lay the chat and every panel out side by side as columns you scroll through."
           resetAction={
             settings.rightPanelLayout !== DEFAULT_UNIFIED_SETTINGS.rightPanelLayout ? (
               <SettingResetButton

@@ -32,11 +32,11 @@ applies to the web and desktop clients.
 ## Right panel layout
 
 The right panel shows one surface at a time behind tabs. Set **Right panel layout** to
-**Scrolling columns** to place every open surface side by side instead, so you can keep a diff,
-terminal, and browser in view together. Scroll sideways to move between columns; selecting a tab
-brings its column into view. A browser column shows its page only while the whole column is in
-view. On narrow windows the panel opens as a sheet and keeps tabs. This preference applies to the
-web and desktop clients.
+**Scrolling columns** to lay the chat and every open surface out side by side as columns instead,
+so you can keep the conversation, a diff, a terminal, and a browser in view together. Scroll
+sideways to move between columns; selecting a surface brings its column into view. A browser
+column shows its page only while the whole column is in view. On narrow windows the panel opens
+as a sheet and keeps tabs. This preference applies to the web and desktop clients.
 
 ## Motion
 

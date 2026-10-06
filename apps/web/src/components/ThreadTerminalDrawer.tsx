@@ -533,11 +533,12 @@ export function TerminalViewport({
   useLayoutEffect(() => {
     visibleRef.current = painting;
     terminalRef.current?.setVisible(painting);
+    if (!canOperateTerminal) pendingFocusRef.current = false;
     if (painting && pendingFocusRef.current) {
       pendingFocusRef.current = false;
       terminalRef.current?.focus();
     }
-  }, [painting]);
+  }, [canOperateTerminal, painting]);
 
   useEffect(() => {
     const current = terminalFontRef.current;
@@ -1048,8 +1049,12 @@ export function TerminalViewport({
     pendingFocusRef.current = false;
     if (!autoFocus || !canOperateTerminal || !visible) return;
     // Claim focus when requested, then hand it to the terminal once ready only
-    // if the user has not focused something else in the meantime.
-    (terminalRef.current ?? containerRef.current)?.focus();
+    // if the user has not focused something else in the meantime. Claiming
+    // must not scroll: the drawer can sit in a scrolled-away chat column, and
+    // revealing it is the caller's decision.
+    const terminal = terminalRef.current;
+    if (terminal) terminal.focus();
+    else containerRef.current?.focus({ preventScroll: true });
     if (visibleRef.current) return;
     // Scrolled out of view, the surface refuses focus until it paints again;
     // keep the request until then unless the user focuses something else.
