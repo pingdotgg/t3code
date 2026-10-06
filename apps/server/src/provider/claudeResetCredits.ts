@@ -5,7 +5,7 @@
  * in its config directory. macOS keeps them in the keychain, so there the
  * feature is not offered.
  *
- * @module provider/Layers/claudeResetCredits
+ * @module provider/claudeResetCredits
  */
 import * as NodeOS from "node:os";
 import type {

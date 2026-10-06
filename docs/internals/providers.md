@@ -52,7 +52,7 @@ and removal must respect those leases instead of replacing executables under a r
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
-[Grok probes](../../apps/server/src/provider/Layers/GrokProvider.ts) avoid authentication and
+[Grok probes](../../apps/server/src/provider/GrokProvider.ts) avoid authentication and
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 

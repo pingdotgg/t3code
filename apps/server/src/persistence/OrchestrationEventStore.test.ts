@@ -23,16 +23,15 @@ import * as Statement from "effect/sql/Statement";
 import {
   LIVE_STREAM_MAX_ITEMS,
   LiveStreamBufferError,
-} from "../../orchestration-v2/LiveStreamBudget.ts";
-import { PersistenceDecodeError } from "../Errors.ts";
-import { toShellApplicationEvent } from "../../orchestration-v2/ShellStream.ts";
-import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
-import * as OrchestrationEventStoreLayer from "./OrchestrationEventStore.ts";
+} from "../orchestration-v2/LiveStreamBudget.ts";
+import { PersistenceDecodeError } from "./Errors.ts";
+import { toShellApplicationEvent } from "../orchestration-v2/ShellStream.ts";
+import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 
-const layerTest = OrchestrationEventStoreLayer.layer.pipe(
+const layerTest = OrchestrationEventStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const layer = it.layer(layerTest);

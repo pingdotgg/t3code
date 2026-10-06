@@ -27,7 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
-import * as SqlitePersistence from "./persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";

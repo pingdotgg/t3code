@@ -19,8 +19,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
-import type { ResourceAttribution } from "../../resourceTelemetry/ResourceAttribution.ts";
+import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
+import type { ResourceAttribution } from "../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1_000;

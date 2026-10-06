@@ -5,9 +5,9 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { runMigrations } from "../Migrations.ts";
-import { initializeV2Database } from "../initializeV2Database.ts";
-import * as ServerConfig from "../../config.ts";
+import { runMigrations } from "./Migrations.ts";
+import { initializeV2Database } from "./initializeV2Database.ts";
+import * as ServerConfig from "../config.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;

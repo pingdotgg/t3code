@@ -1,17 +1,112 @@
 import {
   ProviderSetupError,
+  type ChatGptReconnectProfile,
+  type ChatGptTransferredProfile,
+  type ProviderAuthRespondInput,
+  type ProviderAuthStartInput,
+  type ProviderAuthState,
   type ProviderInstanceId,
   type ProviderSessionId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
-import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import * as ProviderAuthService from "../Services/ProviderAuthService.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+
+export interface ProviderAuthController {
+  /** Equal keys mean these instances share credentials on this environment. */
+  readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
+  readonly reconnectProfile?: (
+    methodId: string,
+  ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
+  readonly importProfile?: (
+    profile: ChatGptTransferredProfile,
+    stopSessions: Effect.Effect<void, ProviderSetupError>,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly adoptCredentials?: (
+    update: Effect.Effect<void, ProviderSetupError>,
+    stopSessions: Effect.Effect<void, ProviderSetupError>,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly isChangingCredentials?: Effect.Effect<boolean>;
+  readonly invalidate?: Effect.Effect<void>;
+  readonly refreshMethods?: Effect.Effect<void>;
+  readonly withAccess?: <A, E, R>(
+    task: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
+  readonly start: (
+    ownerSessionId: string,
+    stopSessions?: Effect.Effect<void, ProviderSetupError>,
+    methodId?: string,
+    returnUrl?: string,
+    callbackMode?: "server" | "client",
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly complete: (
+    ownerSessionId: string,
+    input: { readonly flowId: string; readonly callbackUrl: string },
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly cancel: (
+    ownerSessionId: string,
+    flowId: string,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly respond?: (
+    ownerSessionId: string,
+    input: ProviderAuthRespondInput,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  /** The controller closes process admission before it stops routed sessions. */
+  readonly logout: (
+    stopSessions: Effect.Effect<void, ProviderSetupError>,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly subscribe: (ownerSessionId: string) => Stream.Stream<ProviderAuthState>;
+  readonly isLogoutPrompt?: (text: string, hasAttachments: boolean) => boolean;
+}
+
+interface ProviderAuthTarget {
+  readonly instanceId: ProviderInstanceId;
+}
+
+export class ProviderAuthService extends Context.Service<
+  ProviderAuthService,
+  {
+    readonly reconnectProfile: (
+      input: ProviderAuthTarget & { methodId: string },
+    ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
+    readonly importProfile: (
+      input: ProviderAuthTarget & { profile: ChatGptTransferredProfile },
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly start: (
+      input: ProviderAuthStartInput,
+      ownerSessionId: string,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly complete: (
+      input: ProviderAuthTarget & { readonly flowId: string; readonly callbackUrl: string },
+      ownerSessionId: string,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly respond: (
+      input: ProviderAuthRespondInput,
+      ownerSessionId: string,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly cancel: (
+      input: ProviderAuthTarget & { readonly flowId: string },
+      ownerSessionId: string,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly logout: (
+      input: ProviderAuthTarget,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly subscribe: (
+      input: ProviderAuthTarget,
+      ownerSessionId: string,
+    ) => Stream.Stream<ProviderAuthState, ProviderSetupError>;
+    readonly tryHandlePromptCommand: (
+      input: ProviderAuthTarget & { readonly text: string; readonly hasAttachments: boolean },
+    ) => Effect.Effect<boolean, ProviderSetupError>;
+  }
+>()("t3/provider/ProviderAuthService") {}
 
 export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -41,7 +136,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
   // when invalidating credentials for sign-in or sign-out.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
-    binding: ProviderAuthService.ProviderAuthController["credentialBinding"],
+    binding: ProviderAuthController["credentialBinding"],
   ) {
     const failure = (detail: string) =>
       new ProviderSetupError({ instanceId, operation: "stopSessions", detail });
@@ -122,7 +217,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
   const checkSharedBinding = Effect.fnUntraced(function* (
     instanceId: ProviderInstanceId,
     operation: "start" | "logout",
-    auth: ProviderAuthService.ProviderAuthController,
+    auth: ProviderAuthController,
   ) {
     const binding = auth.credentialBinding;
     if (!binding) return;
@@ -145,7 +240,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
     }
   });
 
-  return ProviderAuthService.ProviderAuthService.of({
+  return ProviderAuthService.of({
     reconnectProfile: Effect.fnUntraced(function* (input) {
       const auth = yield* getController(input.instanceId, "export");
       if (!auth.reconnectProfile)
@@ -250,4 +345,4 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProviderAuthService.ProviderAuthService, makeProviderAuthService);
+export const layer = Layer.effect(ProviderAuthService, makeProviderAuthService);

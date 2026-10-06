@@ -7,7 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { AuthenticationError, Cursor, CursorSdkError } from "../cursorSdk.ts";
+import { AuthenticationError, Cursor, CursorSdkError } from "./cursorSdk.ts";
 
 export interface CursorSdkCatalogSnapshot {
   readonly user: SDKUser;
@@ -33,7 +33,7 @@ export interface CursorSdkCatalogShape {
 }
 
 export class CursorSdkCatalog extends Context.Service<CursorSdkCatalog, CursorSdkCatalogShape>()(
-  "t3/provider/Layers/CursorSdkCatalog",
+  "t3/provider/CursorSdkCatalog",
 ) {}
 
 function isAuthenticationFailure(cause: unknown): boolean {

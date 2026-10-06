@@ -6,7 +6,7 @@
  * overlapping confirmations from any instance queue rather than spending two
  * credits, and a retry after a timeout re-sends the same attempt.
  *
- * @module provider/Layers/resetCreditCoordinator
+ * @module provider/resetCreditCoordinator
  */
 import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -38,7 +38,7 @@ export class ResetCreditCoordinator extends Context.Service<
       isSettled?: (error: E) => boolean,
     ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
   }
->()("t3/provider/Layers/resetCreditCoordinator") {}
+>()("t3/provider/resetCreditCoordinator") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

@@ -29,7 +29,7 @@
  * ----------
  * On layer build we:
  *   1. Read the current `ServerSettings` once and use it to seed the
- *      registry's initial state via `ProviderInstanceRegistryLive.layer`.
+ *      registry's initial state via `ProviderInstanceRegistry.layer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
  *      acquires `ServerSettingsService.subscribeChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
@@ -39,7 +39,7 @@
  * configs already round-trip through the registry's own "unavailable"
  * shadow bucket.
  *
- * @module provider/Layers/ProviderInstanceRegistryHydration
+ * @module provider/ProviderInstanceRegistryHydration
  */
 import {
   defaultInstanceIdForDriver,
@@ -51,20 +51,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import * as Settings from "../../serverSettings.ts";
-import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
-import * as ProviderInstanceRegistryLive from "./ProviderInstanceRegistryLive.ts";
-import { type ProviderOrchestrationAdapterInfrastructure } from "./ProviderOrchestrationAdapterInfrastructure.ts";
-import * as ProviderOrchestrationAdapterInfrastructureLayer from "./ProviderOrchestrationAdapterInfrastructure.ts";
-import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
-import * as AcpRegistryCatalogLayer from "./AcpRegistryCatalog.ts";
+import * as Settings from "../serverSettings.ts";
+import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as AcpRegistrySupport from "./acp/AcpRegistrySupport.ts";
+import * as AcpRegistryCatalog from "./AcpRegistryCatalog.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
       BuiltInDriversEnv,
-      ProviderOrchestrationAdapterInfrastructure | AcpRegistrySupport.AcpRegistryCatalog
+      | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
+      | AcpRegistrySupport.AcpRegistryCatalog
     >
   | Settings.ServerSettingsService;
 
@@ -150,7 +149,7 @@ const layerSettingsWatcher = Layer.effectDiscard(
  * sync with subsequent `streamChanges` emissions.
  *
  * The Layer's two halves:
- *   - `ProviderInstanceRegistryLive.layer` produces the registry +
+ *   - `ProviderInstanceRegistry.layer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
  *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
@@ -176,12 +175,12 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    const layerMutable = ProviderInstanceRegistryLive.layer({
+    const layerMutable = ProviderInstanceRegistry.layer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     }).pipe(
-      Layer.provide(ProviderOrchestrationAdapterInfrastructureLayer.layer),
-      Layer.provide(AcpRegistryCatalogLayer.layer),
+      Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
+      Layer.provide(AcpRegistryCatalog.layer),
     );
 
     return layerSettingsWatcher.pipe(Layer.provideMerge(layerMutable));

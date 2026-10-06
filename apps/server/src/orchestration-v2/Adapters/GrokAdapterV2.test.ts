@@ -24,9 +24,9 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../ProjectStore.ts";
-import { buildInitialGrokProviderSnapshot } from "../../provider/Layers/GrokProvider.ts";
+import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";

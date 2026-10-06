@@ -13,14 +13,14 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "../cursorSdkModel.ts";
+import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "./cursorSdkModel.ts";
 import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
   providerModelsFromSettings,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
+} from "./providerSnapshot.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {

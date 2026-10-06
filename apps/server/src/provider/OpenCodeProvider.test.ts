@@ -14,9 +14,9 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
-import * as ServerConfig from "../../config.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import * as ServerConfig from "../config.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
@@ -28,12 +28,12 @@ import {
   openCodeCommandsToServerProviderSlashCommands,
 } from "./OpenCodeProvider.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
-import { probeOpenCodeRuntime } from "../opencodeVersionProbe.ts";
+import { probeOpenCodeRuntime } from "./opencodeVersionProbe.ts";
 import {
   OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
-} from "../testFixtures/opencodeProbeResponses.ts";
+} from "./testFixtures/opencodeProbeResponses.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";

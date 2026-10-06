@@ -33,12 +33,12 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
-import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
-import type { ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
-import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+} from "./providerSnapshot.ts";
+import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
+import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import type { ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
+import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -49,7 +49,7 @@ import {
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
-} from "../ClaudeModelCatalog.ts";
+} from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

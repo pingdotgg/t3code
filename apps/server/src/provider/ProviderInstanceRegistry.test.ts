@@ -1,8 +1,8 @@
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import * as CodexInstallation from "../CodexInstallation.ts";
-import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as CodexInstallation from "./CodexInstallation.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 /**
- * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
+ * Multi-instance validation slices for the live `ProviderInstanceRegistry`.
  *
  * Two axes of the driver/registry refactor are exercised here:
  *
@@ -47,22 +47,22 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "../AntigravityInstallation.ts";
-import * as ServerConfig from "../../config.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
-import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
-import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
-import * as ModelManifest from "../ModelManifest.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import * as ServerConfig from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
+import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
+import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
+import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import * as ModelManifest from "./ModelManifest.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
-import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 
 const layerTestHttpClient = Layer.succeed(
@@ -146,7 +146,7 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
 });
 
 const makeTildeProviderFixtures = Effect.fn(
-  "ProviderInstanceRegistryLive.test.makeTildeProviderFixtures",
+  "ProviderInstanceRegistry.test.makeTildeProviderFixtures",
 )(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -159,7 +159,7 @@ const makeTildeProviderFixtures = Effect.fn(
   const claudePath = path.join(fixtureDir, "claude");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
-  const codexFixtureDir = path.join(import.meta.dirname, "../testFixtures");
+  const codexFixtureDir = path.join(import.meta.dirname, "testFixtures");
 
   yield* fileSystem.copyFile(path.join(codexFixtureDir, "codexCollabMockPeer.sh"), codexPath);
   yield* fileSystem.copyFile(
@@ -195,7 +195,7 @@ const makeTildeProviderFixtures = Effect.fn(
   };
 });
 
-describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
+describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   // `ServerConfig.layerTest` needs `FileSystem` to materialize its scratch
   // directory. `Layer.merge` just unions requirements, so we have to push
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
@@ -562,7 +562,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   );
 });
 
-describe("ProviderInstanceRegistryLive — all drivers slice", () => {
+describe("ProviderInstanceRegistry — all drivers slice", () => {
   // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
   // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
   // at construction time, so we wire `OpenCodeRuntimeLive` into the stack.

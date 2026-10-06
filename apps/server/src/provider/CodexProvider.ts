@@ -38,16 +38,16 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
-import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+} from "./providerSnapshot.ts";
+import { expandHomePath } from "../pathExpansion.ts";
+import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
-import packageJson from "../../../package.json" with { type: "json" };
+import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 

@@ -1,6 +1,6 @@
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import * as CodexInstallation from "../CodexInstallation.ts";
-import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as CodexInstallation from "./CodexInstallation.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -39,34 +39,27 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "../AntigravityInstallation.ts";
-import * as ModelManifest from "../ModelManifest.ts";
-import { applyProviderCompatibility } from "../providerCompatibility.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import * as ModelManifest from "./ModelManifest.ts";
+import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
-import {
-  mergeProviderSnapshot,
-  mergeProviderSnapshots,
-  selectProvidersByKind,
-  upsertProviderWorkspaceSnapshot,
-} from "./ProviderRegistry.ts";
-import * as ProviderRegistryLayer from "./ProviderRegistry.ts";
-import * as ServerConfig from "../../config.ts";
-import * as ServerSettingsModule from "../../serverSettings.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerSettingsModule from "../serverSettings.ts";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "../providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
-import type { ProviderInstance, ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+} from "./providerStatusCache.ts";
+import { COMPACT_SLASH_COMMAND } from "./providerSnapshot.ts";
+import type { ProviderInstance, ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -607,7 +600,7 @@ it.layer(
     );
   });
 
-  describe("ProviderRegistryLive", () => {
+  describe("ProviderRegistry.layer", () => {
     it("stores workspace skills and commands without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),
@@ -629,7 +622,11 @@ it.layer(
         skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
       } satisfies ServerProvider;
 
-      const result = upsertProviderWorkspaceSnapshot(provider, "/project", scopedSnapshot);
+      const result = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        provider,
+        "/project",
+        scopedSnapshot,
+      );
 
       assert.deepStrictEqual(result.slashCommands, provider.slashCommands);
       assert.deepStrictEqual(result.skills, provider.skills);
@@ -647,10 +644,14 @@ it.layer(
         slashCommands: [COMPACT_SLASH_COMMAND],
         slashCommandsPending: true,
       } satisfies ProviderWorkspaceSnapshot;
-      const partial = upsertProviderWorkspaceSnapshot(result, "/project", pendingSnapshot);
+      const partial = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        result,
+        "/project",
+        pendingSnapshot,
+      );
       assert.deepStrictEqual(partial.workspaceSnapshots?.[0]?.slashCommands, [{ name: "project" }]);
       assert.strictEqual(partial.workspaceSnapshots?.[0]?.slashCommandsPending, true);
-      const otherProject = upsertProviderWorkspaceSnapshot(
+      const otherProject = ProviderRegistry.upsertProviderWorkspaceSnapshot(
         partial,
         "/other-project",
         pendingSnapshot,
@@ -658,7 +659,7 @@ it.layer(
       assert.deepStrictEqual(otherProject.workspaceSnapshots?.[1]?.slashCommands, [
         COMPACT_SLASH_COMMAND,
       ]);
-      const recovered = upsertProviderWorkspaceSnapshot(partial, "/project", {
+      const recovered = ProviderRegistry.upsertProviderWorkspaceSnapshot(partial, "/project", {
         ...scopedSnapshot,
         slashCommands: [COMPACT_SLASH_COMMAND, { name: "replacement" }],
       });
@@ -713,14 +714,18 @@ it.layer(
         skills: [],
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...previousProvider.models,
-      ]);
       assert.deepStrictEqual(
-        mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...previousProvider.models],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
         [],
       );
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).skills, []);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+        [],
+      );
     });
 
     it("drops custom models the refreshed snapshot no longer carries", () => {
@@ -756,9 +761,10 @@ it.layer(
         models: [previousProvider.models[0]],
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...refreshedProvider.models,
-      ]);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...refreshedProvider.models],
+      );
     });
 
     it("drops stale ACP Registry models missing from a completed discovery probe", () => {
@@ -790,9 +796,10 @@ it.layer(
         models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null }],
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...refreshedProvider.models,
-      ]);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...refreshedProvider.models],
+      );
     });
 
     it("retains ACP Registry models while discovery has not completed", () => {
@@ -820,14 +827,20 @@ it.layer(
         status: "warning",
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, checkingProvider).models, [
-        { slug: "default", name: "Default", isCustom: false, capabilities: null },
-        { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-      ]);
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, failedProbeProvider).models, [
-        { slug: "default", name: "Default", isCustom: false, capabilities: null },
-        { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-      ]);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, checkingProvider).models,
+        [
+          { slug: "default", name: "Default", isCustom: false, capabilities: null },
+          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+        ],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProbeProvider).models,
+        [
+          { slug: "default", name: "Default", isCustom: false, capabilities: null },
+          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+        ],
+      );
     });
 
     it("drops stale OpenCode models missing from a successful refresh", () => {
@@ -873,9 +886,10 @@ it.layer(
         ],
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...refreshedProvider.models,
-      ]);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...refreshedProvider.models],
+      );
     });
 
     it("retains stale OpenCode models when a refresh fails", () => {
@@ -916,15 +930,16 @@ it.layer(
         message: "Failed to refresh OpenCode models.",
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...previousProvider.models,
-      ]);
       assert.deepStrictEqual(
-        mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...previousProvider.models],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
         previousProvider.slashCommands,
       );
       assert.deepStrictEqual(
-        mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
         previousProvider.skills,
       );
     });
@@ -1009,19 +1024,32 @@ it.layer(
         message: "Failed to refresh OpenCode models.",
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, pendingProvider).models, [
-        ...previousProvider.models,
-      ]);
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, loggedOutProvider).models, []);
       assert.deepStrictEqual(
-        mergeProviderSnapshot(previousProvider, loggedOutProvider).slashCommands,
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, pendingProvider).models,
+        [...previousProvider.models],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, loggedOutProvider).models,
         [],
       );
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, loggedOutProvider).skills, []);
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, missingProvider).models, []);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, loggedOutProvider).slashCommands,
+        [],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, loggedOutProvider).skills,
+        [],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, missingProvider).models,
+        [],
+      );
 
-      const afterRemoval = mergeProviderSnapshot(previousProvider, authoritativeProvider);
-      const afterFailure = mergeProviderSnapshot(afterRemoval, failedProvider);
+      const afterRemoval = ProviderRegistry.mergeProviderSnapshot(
+        previousProvider,
+        authoritativeProvider,
+      );
+      const afterFailure = ProviderRegistry.mergeProviderSnapshot(afterRemoval, failedProvider);
 
       assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
     });
@@ -1074,7 +1102,7 @@ it.layer(
       it("drops retired alpha models after discovery, including without OpenAI authentication", () => {
         for (const authStatus of ["authenticated", "unknown"] as const) {
           assert.deepStrictEqual(
-            mergeProviderSnapshot(cachedProvider, {
+            ProviderRegistry.mergeProviderSnapshot(cachedProvider, {
               ...refreshedProvider,
               auth: { status: authStatus },
             }).models,
@@ -1086,7 +1114,7 @@ it.layer(
       it("keeps discovered models during startup and failed probes without restoring removed custom models", () => {
         for (const provider of [pendingProvider, failedProvider]) {
           assert.deepStrictEqual(
-            mergeProviderSnapshot(
+            ProviderRegistry.mergeProviderSnapshot(
               {
                 ...cachedProvider,
                 models: [...cachedProvider.models, { ...customModel, slug: "removed-custom" }],
@@ -1110,7 +1138,7 @@ it.layer(
 
         for (const provider of clearedProviders) {
           assert.deepStrictEqual(
-            mergeProviderSnapshot(cachedProvider, provider).models,
+            ProviderRegistry.mergeProviderSnapshot(cachedProvider, provider).models,
             provider.models,
           );
         }
@@ -1188,9 +1216,7 @@ it.layer(
                 retainedModels,
               );
             }).pipe(
-              Effect.provide(
-                ProviderRegistryLayer.layer.pipe(Layer.provide(layerInstanceRegistry)),
-              ),
+              Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
               Effect.scoped,
             );
           }
@@ -1240,11 +1266,14 @@ it.layer(
             checkedAt: "2026-09-02T00:01:00.000Z",
             models: [previousProvider.models[1]],
           } satisfies ServerProvider;
-          const afterRefresh = mergeProviderSnapshot(previousProvider, refreshedProvider);
+          const afterRefresh = ProviderRegistry.mergeProviderSnapshot(
+            previousProvider,
+            refreshedProvider,
+          );
 
           assert.deepStrictEqual(afterRefresh.models, refreshedProvider.models);
 
-          const afterFailure = mergeProviderSnapshot(afterRefresh, {
+          const afterFailure = ProviderRegistry.mergeProviderSnapshot(afterRefresh, {
             ...refreshedProvider,
             status: "error",
             auth: { status: "unknown" },
@@ -1267,7 +1296,7 @@ it.layer(
           } satisfies ServerProvider;
 
           assert.deepStrictEqual(
-            mergeProviderSnapshot(previousProvider, pendingProvider).models,
+            ProviderRegistry.mergeProviderSnapshot(previousProvider, pendingProvider).models,
             previousProvider.models,
           );
         }
@@ -1282,7 +1311,7 @@ it.layer(
           } satisfies ServerProvider;
 
           assert.deepStrictEqual(
-            mergeProviderSnapshot(previousProvider, failedProvider).models,
+            ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProvider).models,
             previousProvider.models,
           );
         }
@@ -1304,10 +1333,10 @@ it.layer(
         ] satisfies ReadonlyArray<ServerProvider>;
 
         for (const provider of clearedProviders) {
-          const afterRemoval = mergeProviderSnapshot(previousProvider, provider);
+          const afterRemoval = ProviderRegistry.mergeProviderSnapshot(previousProvider, provider);
           assert.deepStrictEqual(afterRemoval.models, []);
 
-          const afterFailure = mergeProviderSnapshot(afterRemoval, {
+          const afterFailure = ProviderRegistry.mergeProviderSnapshot(afterRemoval, {
             ...emptyProvider,
             status: "error",
             auth: { status: "unknown" },
@@ -1350,7 +1379,7 @@ it.layer(
       } as const satisfies ServerProvider;
 
       it("keeps the saved Google account through restart health checks", () => {
-        const merged = mergeProviderSnapshot(signedIn, restartProbe);
+        const merged = ProviderRegistry.mergeProviderSnapshot(signedIn, restartProbe);
         const { message: _uncheckedMessage, ...probeWithoutMessage } = restartProbe;
         assert.deepStrictEqual(merged, {
           ...probeWithoutMessage,
@@ -1360,7 +1389,10 @@ it.layer(
         });
         assert.equal("message" in merged, false);
         // The next periodic probe reads the merged snapshot as its previous state.
-        assert.deepStrictEqual(mergeProviderSnapshot(merged, restartProbe), merged);
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(merged, restartProbe),
+          merged,
+        );
       });
 
       it("carries the account through the boot probe and a failed probe without hiding them", () => {
@@ -1370,7 +1402,7 @@ it.layer(
           version: null,
           message: "Checking Antigravity availability.",
         } satisfies ServerProvider;
-        assert.deepStrictEqual(mergeProviderSnapshot(signedIn, booting), {
+        assert.deepStrictEqual(ProviderRegistry.mergeProviderSnapshot(signedIn, booting), {
           ...booting,
           auth: signedIn.auth,
           models: signedIn.models,
@@ -1381,7 +1413,7 @@ it.layer(
           status: "error",
           message: "Antigravity did not respond to its local health check within 90 seconds.",
         } satisfies ServerProvider;
-        assert.deepStrictEqual(mergeProviderSnapshot(signedIn, failed), {
+        assert.deepStrictEqual(ProviderRegistry.mergeProviderSnapshot(signedIn, failed), {
           ...failed,
           auth: signedIn.auth,
           models: signedIn.models,
@@ -1398,24 +1430,27 @@ it.layer(
           { ...restartProbe, auth: { status: "unknown", type: "gemini-api-key" } },
         ] satisfies ReadonlyArray<ServerProvider>;
         for (const next of untouched) {
-          const merged = mergeProviderSnapshot(signedIn, next);
+          const merged = ProviderRegistry.mergeProviderSnapshot(signedIn, next);
           assert.deepStrictEqual(merged.auth, next.auth);
           assert.equal(merged.status, next.status);
           assert.equal(merged.message, next.message);
         }
         assert.deepStrictEqual(
-          mergeProviderSnapshot({ ...signedIn, auth: { status: "unknown" } }, restartProbe).auth,
+          ProviderRegistry.mergeProviderSnapshot(
+            { ...signedIn, auth: { status: "unknown" } },
+            restartProbe,
+          ).auth,
           { status: "unknown" },
         );
         assert.equal(
-          mergeProviderSnapshot(
+          ProviderRegistry.mergeProviderSnapshot(
             { ...signedIn, driver: ProviderDriverKind.make("codex") },
             restartProbe,
           ).auth.status,
           "unknown",
         );
         assert.deepStrictEqual(
-          mergeProviderSnapshot(signedIn, {
+          ProviderRegistry.mergeProviderSnapshot(signedIn, {
             ...restartProbe,
             auth: { status: "unknown", type: "oauth-personal" },
           }).auth,
@@ -1468,9 +1503,10 @@ it.layer(
         ],
       } satisfies ServerProvider;
 
-      assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-        ...previousProvider.models,
-      ]);
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...previousProvider.models],
+      );
     });
 
     it.effect("does not run provider probes during layer construction", () =>
@@ -1533,7 +1569,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1670,7 +1706,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1928,7 +1964,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2025,8 +2061,10 @@ it.layer(
         models: [],
       } satisfies ServerProvider;
 
-      const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
-      const persistedProviders = selectProvidersByKind(
+      const mergedProviders = ProviderRegistry.mergeProviderSnapshots(previousProviders, [
+        refreshedCursor,
+      ]);
+      const persistedProviders = ProviderRegistry.selectProvidersByKind(
         mergedProviders,
         new Set([ProviderDriverKind.make("cursor")]),
       );
@@ -2116,7 +2154,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2244,7 +2282,7 @@ it.layer(
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
-            ProviderRegistryLayer.layer.pipe(
+            ProviderRegistry.layer.pipe(
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -2347,7 +2385,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2463,7 +2501,7 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
-          ProviderRegistryLayer.layer.pipe(
+          ProviderRegistry.layer.pipe(
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2558,7 +2596,7 @@ it.layer(
         );
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const layerProviderRegistry = ProviderRegistryLayer.layer.pipe(
+        const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
@@ -2660,7 +2698,7 @@ it.layer(
         } satisfies ServerSettingsModule.ServerSettingsService["Service"];
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const layerProviderRegistry = ProviderRegistryLayer.layer.pipe(
+        const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
@@ -2779,7 +2817,7 @@ it.layer(
         );
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const layerProviderRegistry = ProviderRegistryLayer.layer.pipe(
+        const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
@@ -2844,7 +2882,7 @@ it.layer(
           let cursorSpawned = false;
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const layerProviderRegistry = ProviderRegistryLayer.layer.pipe(
+          const layerProviderRegistry = ProviderRegistry.layer.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
             Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
             Layer.provideMerge(

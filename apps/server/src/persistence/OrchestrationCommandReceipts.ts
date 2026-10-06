@@ -1,17 +1,78 @@
+/**
+ * OrchestrationCommandReceiptRepository - Repository interface for command receipts.
+ *
+ * Owns persistence operations for deduplication and status tracking of
+ * orchestration command handling.
+ *
+ * @module OrchestrationCommandReceiptRepository
+ */
+import { CommandId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import {
+  toPersistenceSqlError,
+  type OrchestrationCommandReceiptRepositoryError,
+} from "./Errors.ts";
 
-import * as OrchestrationCommandReceipts from "../Services/OrchestrationCommandReceipts.ts";
+export const OrchestrationCommandReceipt = Schema.Struct({
+  commandId: CommandId,
+  aggregateKind: Schema.Literals(["project", "thread"]),
+  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  commandType: Schema.String,
+  acceptedAt: IsoDateTime,
+  resultSequence: NonNegativeInt,
+  status: Schema.Literals(["accepted", "rejected"]),
+  error: Schema.NullOr(Schema.String),
+});
+export type OrchestrationCommandReceipt = typeof OrchestrationCommandReceipt.Type;
+
+export const GetByCommandIdInput = Schema.Struct({
+  commandId: CommandId,
+});
+export type GetByCommandIdInput = typeof GetByCommandIdInput.Type;
+
+/**
+ * OrchestrationCommandReceiptRepository - Service tag for command receipt persistence.
+ */
+export class OrchestrationCommandReceiptRepository extends Context.Service<
+  OrchestrationCommandReceiptRepository,
+  {
+    readonly insertIfAbsent: (
+      receipt: OrchestrationCommandReceipt,
+    ) => Effect.Effect<boolean, OrchestrationCommandReceiptRepositoryError>;
+
+    /**
+     * Insert or replace a command receipt row.
+     *
+     * Upserts by `commandId` for idempotent command-result tracking.
+     */
+    readonly upsert: (
+      receipt: OrchestrationCommandReceipt,
+    ) => Effect.Effect<void, OrchestrationCommandReceiptRepositoryError>;
+
+    /**
+     * Read a command receipt by command id.
+     */
+    readonly getByCommandId: (
+      input: GetByCommandIdInput,
+    ) => Effect.Effect<
+      Option.Option<OrchestrationCommandReceipt>,
+      OrchestrationCommandReceiptRepositoryError
+    >;
+  }
+>()("t3/persistence/OrchestrationCommandReceipts/OrchestrationCommandReceiptRepository") {}
 
 const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertReceiptRow = SqlSchema.void({
-    Request: OrchestrationCommandReceipts.OrchestrationCommandReceipt,
+    Request: OrchestrationCommandReceipt,
     execute: (receipt) =>
       sql`
         INSERT INTO orchestration_command_receipts (
@@ -47,8 +108,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   });
 
   const findReceiptByCommandId = SqlSchema.findOneOption({
-    Request: OrchestrationCommandReceipts.GetByCommandIdInput,
-    Result: OrchestrationCommandReceipts.OrchestrationCommandReceipt,
+    Request: GetByCommandIdInput,
+    Result: OrchestrationCommandReceipt,
     execute: ({ commandId }) =>
       sql`
         SELECT
@@ -65,17 +126,15 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
       `,
   });
 
-  const upsert: OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryShape["upsert"] =
-    (receipt) =>
-      upsertReceiptRow(receipt).pipe(
-        Effect.mapError(
-          toPersistenceSqlError("OrchestrationCommandReceiptRepository.upsert:query"),
-        ),
-      );
+  const upsert: OrchestrationCommandReceiptRepository["Service"]["upsert"] = (receipt) =>
+    upsertReceiptRow(receipt).pipe(
+      Effect.mapError(toPersistenceSqlError("OrchestrationCommandReceiptRepository.upsert:query")),
+    );
 
-  const insertIfAbsent: OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryShape["insertIfAbsent"] =
-    (receipt) =>
-      sql<{ readonly command_id: string }>`
+  const insertIfAbsent: OrchestrationCommandReceiptRepository["Service"]["insertIfAbsent"] = (
+    receipt,
+  ) =>
+    sql<{ readonly command_id: string }>`
       INSERT INTO orchestration_command_receipts (
         command_id,
         aggregate_kind,
@@ -99,28 +158,29 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
       ON CONFLICT(command_id) DO NOTHING
       RETURNING command_id
     `.pipe(
-        Effect.map((rows) => rows.length === 1),
-        Effect.mapError(
-          toPersistenceSqlError("OrchestrationCommandReceiptRepository.insertIfAbsent:query"),
-        ),
-      );
+      Effect.map((rows) => rows.length === 1),
+      Effect.mapError(
+        toPersistenceSqlError("OrchestrationCommandReceiptRepository.insertIfAbsent:query"),
+      ),
+    );
 
-  const getByCommandId: OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryShape["getByCommandId"] =
-    (input) =>
-      findReceiptByCommandId(input).pipe(
-        Effect.mapError(
-          toPersistenceSqlError("OrchestrationCommandReceiptRepository.getByCommandId:query"),
-        ),
-      );
+  const getByCommandId: OrchestrationCommandReceiptRepository["Service"]["getByCommandId"] = (
+    input,
+  ) =>
+    findReceiptByCommandId(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("OrchestrationCommandReceiptRepository.getByCommandId:query"),
+      ),
+    );
 
   return {
     insertIfAbsent,
     upsert,
     getByCommandId,
-  } satisfies OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryShape;
+  } satisfies OrchestrationCommandReceiptRepository["Service"];
 });
 
 export const layer = Layer.effect(
-  OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository,
+  OrchestrationCommandReceiptRepository,
   makeOrchestrationCommandReceiptRepository,
 );

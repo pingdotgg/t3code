@@ -1,5 +1,10 @@
 /**
- * ProviderRegistryLive — aggregates per-instance snapshot streams into a
+ * ProviderRegistry - Provider snapshot service.
+ *
+ * Owns provider install/auth/version/model snapshots and exposes the latest
+ * provider state to transport layers.
+ *
+ * The live layer aggregates per-instance snapshot streams into a
  * single materialized list.
  *
  * Historically this Layer composed four per-kind Live Layers
@@ -20,7 +25,7 @@
  * instance. Identity-less legacy cache contents are ignored and replaced by
  * the first live refresh.
  *
- * @module ProviderRegistryLive
+ * @module ProviderRegistry
  */
 import {
   defaultInstanceIdForDriver,
@@ -30,6 +35,7 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -40,11 +46,10 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import * as ModelManifest from "../ModelManifest.ts";
-import { applyProviderCompatibility } from "../providerCompatibility.ts";
-import * as ServerConfig from "../../config.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import * as ModelManifest from "./ModelManifest.ts";
+import { applyProviderCompatibility } from "./providerCompatibility.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -52,10 +57,91 @@ import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "../providerStatusCache.ts";
-import type { ProviderInstance, ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+} from "./providerStatusCache.ts";
+import type { ProviderInstance, ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
+import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "./providerMaintenance.ts";
+import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+
+export type ProviderMaintenanceActionKind = "update";
+
+export class ProviderRegistry extends Context.Service<
+  ProviderRegistry,
+  {
+    /**
+     * Read the latest provider snapshots for every configured instance.
+     * Multiple snapshots may share the same `provider` kind (multiple
+     * instances of the same driver) and disambiguate via `instanceId`.
+     */
+    readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Refresh all providers, or the default instance of the specified
+     * kind when supplied.
+     *
+     * Retained for back-compat with legacy call sites (WS refresh RPC,
+     * orchestration metrics). New code should prefer `refreshInstance`.
+     *
+     * @deprecated prefer `refreshInstance` for new call sites.
+     */
+    readonly refresh: (
+      provider?: ProviderDriverKind,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Refresh the specific configured instance. Returns the updated snapshot
+     * list. When the instance id is unknown the call resolves with the
+     * currently cached list (no error) — matching the legacy `refresh` shim
+     * behaviour so transport layers don't have to special-case unknowns.
+     */
+    readonly refreshInstance: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Fill the skills and slash commands snapshot for one cwd. A cwd that
+     * already has a snapshot is left alone unless `fresh` is set. A fresh scan
+     * also refreshes the instance's machine snapshot and drops other
+     * instances' snapshots for the cwd.
+     */
+    readonly refreshWorkspaceSnapshot: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+      readonly fresh?: boolean;
+    }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Resolve the maintenance capabilities owned by one live provider instance.
+     * Falls back to manual-only capabilities when the instance is not live.
+     * `fresh` re-derives ownership from the executable instead of the cache.
+     */
+    readonly getProviderMaintenanceCapabilitiesForInstance: (
+      instanceId: ProviderInstanceId,
+      provider: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
+    ) => Effect.Effect<ProviderMaintenanceCapabilities>;
+
+    /**
+     * Apply volatile maintenance-action state to one configured instance.
+     * This state is never persisted to disk. Today only update actions are
+     * projected onto `ServerProvider.updateState`; install/auth actions can
+     * extend this action map without adding driver-scoped APIs.
+     */
+    readonly setProviderMaintenanceActionState: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: ProviderMaintenanceActionKind;
+      readonly state: ServerProviderUpdateState | null;
+    }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Stream of provider snapshot updates — one emission per aggregated
+     * change. The array contains the full current state.
+     */
+    readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  }
+>()("t3/provider/ProviderRegistry") {}
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -327,7 +413,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
 });
 
 export const layer = Layer.effect(
-  ProviderRegistry.ProviderRegistry,
+  ProviderRegistry,
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
@@ -995,6 +1081,6 @@ export const layer = Layer.effect(
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },
-    } satisfies ProviderRegistry.ProviderRegistryShape;
+    } satisfies ProviderRegistry["Service"];
   }),
 );

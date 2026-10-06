@@ -18,17 +18,17 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
+} from "./providerMaintenance.ts";
 import {
   buildServerProvider,
   isCommandMissingCause,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
+} from "./providerSnapshot.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;

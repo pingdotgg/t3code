@@ -22,14 +22,14 @@
  *
  * Both fields are optional because observability must not prevent startup.
  *
- * @module provider/Layers/ProviderEventLoggers
+ * @module provider/ProviderEventLoggers
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as ServerConfig from "../../config.ts";
-import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
+import * as ServerConfig from "../config.ts";
+import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
 
 /**
@@ -46,7 +46,7 @@ export class ProviderEventLoggers extends Context.Service<
     readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
     readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
   }
->()("t3/provider/Layers/ProviderEventLoggers") {}
+>()("t3/provider/ProviderEventLoggers") {}
 
 /**
  * Constant value used by tests / boot layers that want to opt out of native

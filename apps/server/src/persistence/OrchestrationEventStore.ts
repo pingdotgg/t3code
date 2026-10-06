@@ -1,3 +1,15 @@
+/**
+ * Historical name for the shared application event store.
+ *
+ * Owns durable append/replay access for project events and V2 agent-thread
+ * events under one global sequence. It does not reduce events into read models
+ * or apply command validation rules.
+ *
+ * Uses Effect `Context.Service` for dependency injection and exposes typed
+ * persistence/decode errors for event append and replay operations.
+ *
+ * @module OrchestrationEventStore
+ */
 import {
   ApplicationEventMetadata,
   ApplicationProjectEvent,
@@ -13,6 +25,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -22,14 +35,111 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { replayAndBufferProjectedLiveEvents } from "../../orchestration-v2/LiveStreamBudget.ts";
+import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
 
 import {
   toPersistenceDecodeError,
   toPersistenceSqlError,
   type OrchestrationEventStoreError,
-} from "../Errors.ts";
-import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
+} from "./Errors.ts";
+
+/** A project event before the store assigns its sequence. */
+export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Event
+  ? Event extends ApplicationProjectEvent
+    ? Omit<Event, "sequence">
+    : never
+  : never;
+
+/** OrchestrationEventStore - Service tag for the shared application event log. */
+export class OrchestrationEventStore extends Context.Service<
+  OrchestrationEventStore,
+  {
+    /** Append one project event to the shared application log. */
+    readonly appendProjectEvent: (
+      event: UnsequencedProjectEvent,
+    ) => Effect.Effect<ApplicationProjectEvent, OrchestrationEventStoreError>;
+
+    /** Append V2 agent events to the same globally ordered application log. */
+    readonly appendAgentEvents: (input: {
+      readonly commandId?: CommandId;
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
+
+    /**
+     * Read only V2 thread events from the application log.
+     *
+     * Reads in fixed-size sequence pages until the filtered range is exhausted;
+     * `limit` caps the total emitted events across pages.
+     */
+    readonly readAgentEvents: (input?: {
+      readonly afterSequence?: number;
+      readonly throughSequence?: number;
+      readonly threadId?: ThreadId;
+      readonly commandId?: CommandId;
+      readonly eventType?: OrchestrationV2DomainEvent["type"];
+      readonly limit?: number;
+    }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
+
+    /** Measure one thread's bounded replay without loading or decoding its payloads. */
+    readonly getAgentReplayStats: (input: {
+      readonly threadId: ThreadId;
+      readonly afterSequence: number;
+      readonly throughSequence: number;
+      readonly maxEvents: number;
+    }) => Effect.Effect<
+      {
+        readonly eventCount: number;
+        /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
+        readonly rawPayloadBytes: number;
+        readonly hasCreateEvent: boolean;
+      },
+      OrchestrationEventStoreError
+    >;
+
+    /**
+     * Measure the retained application-event range `(afterSequence, throughSequence]`
+     * without loading or decoding its payloads.
+     */
+    readonly getReplayStats: (input: {
+      readonly afterSequence: number;
+      readonly throughSequence: number;
+    }) => Effect.Effect<
+      {
+        readonly eventCount: number;
+        /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
+        readonly rawPayloadBytes: number;
+      },
+      OrchestrationEventStoreError
+    >;
+
+    readonly latestAgentSequence: (
+      threadId?: ThreadId,
+    ) => Effect.Effect<number, OrchestrationEventStoreError>;
+
+    readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
+
+    /** Read the finite retained application-event range `(afterSequence, throughSequence]`. */
+    readonly readApplicationEvents: (input: {
+      readonly afterSequence: number;
+      readonly throughSequence: number;
+    }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
+
+    /** Publish only after the surrounding event/projection transaction commits. */
+    readonly publishCommitted: (
+      events: ReadonlyArray<ApplicationStoredEvent>,
+    ) => Effect.Effect<void>;
+
+    /** Race-free replay-to-live stream for project and V2 thread events. */
+    readonly streamApplicationEvents: (input?: {
+      readonly afterSequence?: number;
+    }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
+    /** Project transport events before bounding replay and the live tail. */
+    readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }>(input: {
+      readonly afterSequence?: number;
+      readonly project: (event: ApplicationStoredEvent) => A;
+    }) => Stream.Stream<A, OrchestrationEventStoreError>;
+  }
+>()("t3/persistence/OrchestrationEventStore") {}
 
 const encodeProjectIcon = Schema.encodeSync(StoredProjectIcon);
 const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);
@@ -156,9 +266,7 @@ function rowToApplicationStoredEvent(
   return row.aggregate_kind === "project" ? rowToProjectEvent(row) : rowToV2StoredEvent(row);
 }
 
-function inferActorKind(
-  event: OrchestrationEventStore.UnsequencedProjectEvent,
-): typeof ActorKind.Type {
+function inferActorKind(event: UnsequencedProjectEvent): typeof ActorKind.Type {
   if (event.commandId !== null && event.commandId.startsWith("provider:")) {
     return "provider";
   }
@@ -249,31 +357,30 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
-  const appendProjectEvent: OrchestrationEventStore.OrchestrationEventStoreShape["appendProjectEvent"] =
-    (event) =>
-      appendProjectEventRow({
-        eventId: event.eventId,
-        streamId: event.aggregateId,
-        type: event.type,
-        causationEventId: event.causationEventId,
-        correlationId: event.correlationId,
-        actorKind: inferActorKind(event),
-        occurredAt: event.occurredAt,
-        commandId: event.commandId,
-        payloadJson:
-          event.type === "project.deleted" || !event.payload.projectIcon
-            ? event.payload
-            : { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) },
-        metadataJson: event.metadata,
-      }).pipe(
-        Effect.flatMap((row) => decodeProjectEvent(row)),
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "OrchestrationEventStore.appendProjectEvent:insert",
-            "OrchestrationEventStore.appendProjectEvent:decode",
-          ),
+  const appendProjectEvent: OrchestrationEventStore["Service"]["appendProjectEvent"] = (event) =>
+    appendProjectEventRow({
+      eventId: event.eventId,
+      streamId: event.aggregateId,
+      type: event.type,
+      causationEventId: event.causationEventId,
+      correlationId: event.correlationId,
+      actorKind: inferActorKind(event),
+      occurredAt: event.occurredAt,
+      commandId: event.commandId,
+      payloadJson:
+        event.type === "project.deleted" || !event.payload.projectIcon
+          ? event.payload
+          : { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) },
+      metadataJson: event.metadata,
+    }).pipe(
+      Effect.flatMap((row) => decodeProjectEvent(row)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.appendProjectEvent:insert",
+          "OrchestrationEventStore.appendProjectEvent:decode",
         ),
-      );
+      ),
+    );
 
   const readApplicationRows = (input: {
     readonly afterSequence: number;
@@ -323,14 +430,13 @@ const makeEventStore = Effect.gen(function* () {
       LIMIT ${input.limit}
     `;
 
-  const appendAgentEvents: OrchestrationEventStore.OrchestrationEventStoreShape["appendAgentEvents"] =
-    (input) =>
-      Effect.forEach(
-        input.events,
-        (event) =>
-          Effect.gen(function* () {
-            const encoded = yield* encodeV2EventJson(event);
-            const rows = yield* sql<{ readonly sequence: number }>`
+  const appendAgentEvents: OrchestrationEventStore["Service"]["appendAgentEvents"] = (input) =>
+    Effect.forEach(
+      input.events,
+      (event) =>
+        Effect.gen(function* () {
+          const encoded = yield* encodeV2EventJson(event);
+          const rows = yield* sql<{ readonly sequence: number }>`
             INSERT INTO orchestration_events (
               event_id,
               aggregate_kind,
@@ -370,25 +476,23 @@ const makeEventStore = Effect.gen(function* () {
             )
             RETURNING sequence
           `;
-            return yield* decodeV2StoredEvent({
-              sequence: rows[0]?.sequence,
-              commandId: input.commandId ?? null,
-              event,
-            });
-          }),
-        { concurrency: 1 },
-      ).pipe(
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "OrchestrationEventStore.appendAgentEvents:insert",
-            "OrchestrationEventStore.appendAgentEvents:decode",
-          ),
+          return yield* decodeV2StoredEvent({
+            sequence: rows[0]?.sequence,
+            commandId: input.commandId ?? null,
+            event,
+          });
+        }),
+      { concurrency: 1 },
+    ).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.appendAgentEvents:insert",
+          "OrchestrationEventStore.appendAgentEvents:decode",
         ),
-      );
+      ),
+    );
 
-  const readAgentEvents: OrchestrationEventStore.OrchestrationEventStoreShape["readAgentEvents"] = (
-    input,
-  ) => {
+  const readAgentEvents: OrchestrationEventStore["Service"]["readAgentEvents"] = (input) => {
     const totalLimit =
       input?.limit === undefined ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.floor(input.limit));
     if (totalLimit === 0) {
@@ -436,13 +540,12 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
-  const getAgentReplayStats: OrchestrationEventStore.OrchestrationEventStoreShape["getAgentReplayStats"] =
-    (input) =>
-      sql<{
-        readonly eventCount: number;
-        readonly rawPayloadBytes: number;
-        readonly hasCreateEvent: number;
-      }>`
+  const getAgentReplayStats: OrchestrationEventStore["Service"]["getAgentReplayStats"] = (input) =>
+    sql<{
+      readonly eventCount: number;
+      readonly rawPayloadBytes: number;
+      readonly hasCreateEvent: number;
+    }>`
       SELECT
         COUNT(*) AS "eventCount",
         COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes",
@@ -459,17 +562,15 @@ const makeEventStore = Effect.gen(function* () {
         LIMIT ${Math.max(0, Math.floor(input.maxEvents)) + 1}
       )
     `.pipe(
-        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
-        Effect.map((rows) => ({
-          eventCount: rows[0]?.eventCount ?? 0,
-          rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
-          hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
-        })),
-      );
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
+      Effect.map((rows) => ({
+        eventCount: rows[0]?.eventCount ?? 0,
+        rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
+        hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
+      })),
+    );
 
-  const getReplayStats: OrchestrationEventStore.OrchestrationEventStoreShape["getReplayStats"] = (
-    input,
-  ) =>
+  const getReplayStats: OrchestrationEventStore["Service"]["getReplayStats"] = (input) =>
     sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
       SELECT
         COUNT(*) AS "eventCount",
@@ -489,9 +590,10 @@ const makeEventStore = Effect.gen(function* () {
       })),
     );
 
-  const latestAgentSequence: OrchestrationEventStore.OrchestrationEventStoreShape["latestAgentSequence"] =
-    (threadId) =>
-      sql<{ readonly sequence: number | null }>`
+  const latestAgentSequence: OrchestrationEventStore["Service"]["latestAgentSequence"] = (
+    threadId,
+  ) =>
+    sql<{ readonly sequence: number | null }>`
       SELECT MAX(sequence) AS sequence
       FROM orchestration_events
       ${
@@ -503,9 +605,9 @@ const makeEventStore = Effect.gen(function* () {
         AND aggregate_kind = 'thread'
         ${threadId === undefined ? sql`` : sql`AND stream_id = ${threadId}`}
     `.pipe(
-        Effect.map((rows) => rows[0]?.sequence ?? 0),
-        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
-      );
+      Effect.map((rows) => rows[0]?.sequence ?? 0),
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
+    );
 
   // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
@@ -568,7 +670,7 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
-  const streamProjectedApplicationEvents: OrchestrationEventStore.OrchestrationEventStoreShape["streamProjectedApplicationEvents"] =
+  const streamProjectedApplicationEvents: OrchestrationEventStore["Service"]["streamProjectedApplicationEvents"] =
     (input) =>
       replayAndBufferProjectedLiveEvents({
         subscribe: PubSub.subscribe(committedEvents),
@@ -588,8 +690,9 @@ const makeEventStore = Effect.gen(function* () {
         ),
       );
 
-  const streamApplicationEvents: OrchestrationEventStore.OrchestrationEventStoreShape["streamApplicationEvents"] =
-    (input) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
+  const streamApplicationEvents: OrchestrationEventStore["Service"]["streamApplicationEvents"] = (
+    input,
+  ) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
 
   return {
     appendProjectEvent,
@@ -603,7 +706,7 @@ const makeEventStore = Effect.gen(function* () {
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
     streamProjectedApplicationEvents,
-  } satisfies OrchestrationEventStore.OrchestrationEventStoreShape;
+  } satisfies OrchestrationEventStore["Service"];
 });
 
-export const layer = Layer.effect(OrchestrationEventStore.OrchestrationEventStore, makeEventStore);
+export const layer = Layer.effect(OrchestrationEventStore, makeEventStore);

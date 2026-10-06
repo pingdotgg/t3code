@@ -19,11 +19,11 @@ import {
   nonEmptyTrimmed,
   providerModelsFromSettings,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import type { ProbedOpenCode } from "../opencodeVersionProbe.ts";
+} from "./providerSnapshot.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import type { ProbedOpenCode } from "./opencodeVersionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
-import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",

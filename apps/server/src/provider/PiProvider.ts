@@ -29,12 +29,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   buildPiRpcLaunch,
   resolvePiLaunchArgs,
-} from "../../orchestration-v2/Adapters/piT3McpInjection.ts";
+} from "../orchestration-v2/Adapters/piT3McpInjection.ts";
 import {
   makePiRpcConnection,
   piRecordField as recordField,
   piRecordString as recordString,
-} from "../../orchestration-v2/Adapters/PiRpc.ts";
+} from "../orchestration-v2/Adapters/PiRpc.ts";
 import {
   buildServerProvider,
   isCommandMissingCause,
@@ -42,11 +42,11 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
+} from "./providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
+} from "./providerMaintenance.ts";
 import {
   EMPTY_PI_MODEL_CAPABILITIES,
   thinkingCapabilitiesForPiModel,
@@ -55,7 +55,7 @@ import {
   parsePiDiscoveredCommands,
   withPiBuiltinSlashCommands,
   type PiDiscoveredCommands,
-} from "../PiCommands.ts";
+} from "./PiCommands.ts";
 
 const PI_PRESENTATION = {
   displayName: "Pi",

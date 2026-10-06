@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as AuthPairingLinks from "./AuthPairingLinks.ts";
 import * as AuthSessions from "./AuthSessions.ts";
 import * as PersistenceErrors from "./Errors.ts";
-import * as SqlitePersistence from "./Layers/Sqlite.ts";
+import * as SqlitePersistence from "./Sqlite.ts";
 import * as ProviderSessionRuntime from "./ProviderSessionRuntime.ts";
 
 const issuedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");

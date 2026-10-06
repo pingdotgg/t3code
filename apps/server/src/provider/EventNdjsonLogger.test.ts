@@ -12,7 +12,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
+import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import {
   makeEventNdjsonLogger,
   makeEventNdjsonLogStore,

@@ -26,7 +26,7 @@
  * `reconcile` is idempotent: calling it with an unchanged config map is a
  * no-op (no scope churn, no pubsub emission).
  *
- * @module provider/Services/ProviderInstanceRegistryMutator
+ * @module provider/ProviderInstanceRegistryMutator
  */
 import type { ProviderInstanceConfigMap } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -49,4 +49,4 @@ export interface ProviderInstanceRegistryMutatorShape {
 export class ProviderInstanceRegistryMutator extends Context.Service<
   ProviderInstanceRegistryMutator,
   ProviderInstanceRegistryMutatorShape
->()("t3/provider/Services/ProviderInstanceRegistryMutator") {}
+>()("t3/provider/ProviderInstanceRegistryMutator") {}

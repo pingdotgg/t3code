@@ -10,10 +10,10 @@ import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpMetrics from "effect/observability/OtlpMetrics";
 import * as OtlpTracer from "effect/observability/OtlpTracer";
 
-import * as ServerConfig from "../../config.ts";
-import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
-import * as ServerLogger from "../../serverLogger.ts";
-import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
+import * as ServerConfig from "../config.ts";
+import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
+import * as ServerLogger from "../serverLogger.ts";
+import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {

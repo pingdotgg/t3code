@@ -4,7 +4,7 @@
  * one mapper serves the status probe and the turn-driven update; both emit
  * windows with the same ids so they merge onto the same rows.
  *
- * @module provider/Layers/codexUsageLimits
+ * @module provider/codexUsageLimits
  */
 import type {
   ProviderUsageLimitsUpdate,
@@ -16,7 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import type * as CodexErrors from "effect-codex-app-server/errors";
 
-import { clampPercent, makeUsageLimits } from "../providerUsageLimits.ts";
+import { clampPercent, makeUsageLimits } from "./providerUsageLimits.ts";
 
 interface CodexRateLimitWindow {
   readonly usedPercent: number;

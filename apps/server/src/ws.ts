@@ -158,21 +158,21 @@ import {
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
-import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import {
   observeRpcEffect,
   observeRpcStream,
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
-import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
-import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "./provider/acp/AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
-import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";

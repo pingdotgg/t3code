@@ -24,7 +24,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
 import * as ServerConfig from "../config.ts";
-import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";

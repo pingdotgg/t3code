@@ -30,20 +30,20 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
-} from "../providerSnapshot.ts";
+} from "./providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
+} from "./providerMaintenance.ts";
 import {
   GROK_DEFAULT_MODEL_SLUG,
   GROK_SUPPORTED_RUNTIME_MODES,
   isValidGrokReasoningEffortToken,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
-} from "../acp/GrokAcpSupport.ts";
-import { sessionModelStateFromInitialize } from "../acp/AcpRuntimeModel.ts";
-import { discoverGrokSkills } from "../Drivers/GrokSkills.ts";
+} from "./acp/GrokAcpSupport.ts";
+import { sessionModelStateFromInitialize } from "./acp/AcpRuntimeModel.ts";
+import { discoverGrokSkills } from "./Drivers/GrokSkills.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",

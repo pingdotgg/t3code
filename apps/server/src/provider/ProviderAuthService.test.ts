@@ -20,13 +20,12 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
-import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
-import type { ProviderAuthController } from "../Services/ProviderAuthService.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import { makeProviderAuthService } from "./ProviderAuthService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import { AcpProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/AcpAdapterV2.ts";
+import type { ProviderInstance } from "./ProviderDriver.ts";
+import * as ProviderAuthService from "./ProviderAuthService.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-personal");
 const otherInstanceId = ProviderInstanceId.make("antigravity-work");
@@ -56,7 +55,7 @@ const waitingAuthState: ProviderAuthState = {
 function makeInstance(input: {
   instanceId: ProviderInstanceId;
   enabled: boolean;
-  auth?: ProviderAuthController;
+  auth?: ProviderAuthService.ProviderAuthController;
 }): ProviderInstance {
   return {
     ...input,
@@ -169,7 +168,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     }
   });
 
-  const auth: ProviderAuthController = {
+  const auth: ProviderAuthService.ProviderAuthController = {
     ...(input.sharedCredentials
       ? { credentialBinding: { owner: "provider" as const, key: "shared" } }
       : {}),
@@ -243,7 +242,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
         ]
       : []),
   ];
-  const service = yield* makeProviderAuthService.pipe(
+  const service = yield* ProviderAuthService.makeProviderAuthService.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -320,7 +319,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
       assert.isAtLeast(index, 0);
       instances[index] = replacement;
     },
-    replaceAuth: (next: ProviderAuthController) => {
+    replaceAuth: (next: ProviderAuthService.ProviderAuthController) => {
       instances[0] = makeInstance({ instanceId, enabled: input.enabled ?? true, auth: next });
     },
   };
@@ -332,7 +331,7 @@ const makeStreamingController = Effect.fn("ProviderAuthService.test.makeStreamin
     const close = yield* Deferred.make<void>();
     const closedSubscriptions = yield* Queue.unbounded<string>();
     const unused = () => Effect.die("Unexpected auth operation in a subscription test.");
-    const auth: ProviderAuthController = {
+    const auth: ProviderAuthService.ProviderAuthController = {
       start: unused,
       complete: unused,
       cancel: unused,
@@ -359,7 +358,7 @@ const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscrip
     let current: ProviderInstance | undefined = initial;
     let pendingReplacement = replaceDuringFirstLookup;
     let subscribed = false;
-    const service = yield* makeProviderAuthService.pipe(
+    const service = yield* ProviderAuthService.makeProviderAuthService.pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({

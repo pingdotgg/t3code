@@ -8,13 +8,12 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { runMigrations } from "./Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
-import * as OrchestrationEventStoreLayer from "./OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
-const layerEventStore = OrchestrationEventStoreLayer.layer.pipe(
+const layerEventStore = OrchestrationEventStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const occurredAt = "2026-09-03T00:00:00.000Z";
@@ -267,7 +266,7 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
     }
   }).pipe(
     Effect.provide(
-      OrchestrationEventStoreLayer.layer.pipe(
+      OrchestrationEventStore.layer.pipe(
         Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
       ),
     ),

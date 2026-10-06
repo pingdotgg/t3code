@@ -17,7 +17,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
-import { codexAppServerArgs } from "./Layers/codexLaunchArgs.ts";
+import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));

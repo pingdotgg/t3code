@@ -18,7 +18,7 @@ import {
   grokSlashCommandsFromInitialize,
   parseGrokModelsCliOutput,
 } from "./GrokProvider.ts";
-import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 import { grokUsageResponseToLimits, readGrokAccount } from "./grokUsageLimits.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -407,7 +407,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
-      const mockAgentPath = NodePath.resolve(__dirname, "../../../scripts/acp-mock-agent.ts");
+      const mockAgentPath = NodePath.resolve(__dirname, "../../scripts/acp-mock-agent.ts");
       return writeFakeCli({
         directory: dir,
         name: "grok",

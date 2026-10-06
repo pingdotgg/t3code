@@ -17,9 +17,9 @@ import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
 import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,

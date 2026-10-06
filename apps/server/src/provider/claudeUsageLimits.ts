@@ -8,7 +8,7 @@
  * - `rate_limit_event` (streamed during a turn) names one window at a time
  *   with a 0–1 utilization fraction and an epoch-seconds reset.
  *
- * @module provider/Layers/claudeUsageLimits
+ * @module provider/claudeUsageLimits
  */
 import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -25,7 +25,7 @@ import {
   clampPercent,
   makeUnavailableUsageLimits,
   makeUsageLimits,
-} from "../providerUsageLimits.ts";
+} from "./providerUsageLimits.ts";
 
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
