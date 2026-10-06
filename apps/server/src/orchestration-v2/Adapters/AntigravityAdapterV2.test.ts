@@ -126,7 +126,7 @@ describe("AntigravityAdapterV2 flavor", () => {
   });
 });
 
-const sessionLayer = Layer.mergeAll(
+const layerSession = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-v2-adapter-" }).pipe(
@@ -284,7 +284,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
-    }).pipe(Effect.provide(sessionLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
@@ -419,7 +419,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         context,
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
-    }).pipe(Effect.provide(sessionLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
@@ -532,6 +532,6 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
         assert.isTrue(Exit.isFailure(outsideWrite), name);
         assert.isFalse(yield* fileSystem.exists(path.join(outside, "x.ts")), name);
       }
-    }).pipe(Effect.provide(sessionLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

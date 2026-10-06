@@ -12,7 +12,7 @@ const INFO_BODY = '{"version":"2.0.18","pid":4242,"urls":[],"paths":{"tmp":"/tmp
 /** Sends one request through the client and returns the Authorization header it carried. */
 const authorizationFor = (password: string | Redacted.Redacted) => {
   const seen: Array<string | undefined> = [];
-  const capturing = Layer.succeed(
+  const layerCapturing = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() => {
@@ -29,7 +29,7 @@ const authorizationFor = (password: string | Redacted.Redacted) => {
     const { client } = yield* opencode.connect({ baseUrl: "http://127.0.0.1:4096", password });
     yield* client.server.info();
     return seen[0];
-  }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(capturing))));
+  }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(layerCapturing))));
 };
 
 const utf8Basic = (password: string) =>

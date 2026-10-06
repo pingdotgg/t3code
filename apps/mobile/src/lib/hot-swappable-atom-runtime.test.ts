@@ -10,7 +10,7 @@ class RuntimeValue extends Context.Service<RuntimeValue, { readonly value: strin
   "t3/mobile/test/RuntimeValue",
 ) {}
 
-function runtimeLayer(value: string, events: string[]) {
+function layerRuntime(value: string, events: string[]) {
   return Layer.effect(
     RuntimeValue,
     Effect.acquireRelease(
@@ -26,7 +26,7 @@ function runtimeLayer(value: string, events: string[]) {
   );
 }
 
-function runtimeLayerWithRelease(
+function layerRuntimeWithRelease(
   value: string,
   events: string[],
   release: Effect.Effect<void> = Effect.sync(() => {
@@ -56,7 +56,7 @@ describe("hotSwappableAtomRuntime", () => {
       id,
       hotModule: { accept },
       registry,
-      layer: runtimeLayer("first", events),
+      layer: layerRuntime("first", events),
     });
     const valueAtom = runtime.atom(RuntimeValue.pipe(Effect.map((service) => service.value)));
     const values: string[] = [];
@@ -81,13 +81,13 @@ describe("hotSwappableAtomRuntime", () => {
       id,
       hotModule: { accept },
       registry,
-      layer: runtimeLayer("second", events),
+      layer: layerRuntime("second", events),
     });
     hotSwappableAtomRuntime({
       id,
       hotModule: { accept },
       registry,
-      layer: runtimeLayer("third", events),
+      layer: layerRuntime("third", events),
     });
     registry.set(unrelatedAtom, 8);
 
@@ -120,7 +120,7 @@ describe("hotSwappableAtomRuntime", () => {
     vi.stubGlobal("__DEV__", false);
     const registry = AtomRegistry.make();
     const accept = vi.fn();
-    const layer = runtimeLayer("production", []);
+    const layer = layerRuntime("production", []);
 
     const first = hotSwappableAtomRuntime({
       id: "production",
@@ -163,7 +163,7 @@ describe("hotSwappableAtomRuntime", () => {
       id,
       hotModule: { accept() {} },
       registry,
-      layer: runtimeLayerWithRelease("first", events, firstRelease),
+      layer: layerRuntimeWithRelease("first", events, firstRelease),
     });
     const valueAtom = runtime.atom(RuntimeValue.pipe(Effect.map((service) => service.value)));
     const values: string[] = [];
@@ -176,7 +176,7 @@ describe("hotSwappableAtomRuntime", () => {
       id,
       hotModule: { accept() {} },
       registry,
-      layer: runtimeLayer("second", events),
+      layer: layerRuntime("second", events),
     });
 
     expect(events).toEqual(["acquire:first", "release:start:first", "acquire:second"]);

@@ -59,7 +59,7 @@ function aggregateCacheSummary(
   };
 }
 
-const clientCacheRuntime = Atom.runtime(Runtime.runtimeContextLayer);
+const clientCacheRuntime = Atom.runtime(Runtime.layer);
 
 export const clientCacheSummaryAtom = clientCacheRuntime
   .atom(

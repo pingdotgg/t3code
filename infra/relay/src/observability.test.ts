@@ -10,7 +10,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { OtlpTracer } from "effect/observability";
 
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
-import { makeRelayTraceLayer } from "./observability.ts";
+import * as Observability from "./observability.ts";
 
 interface ExportedRequest {
   readonly authorization: string | undefined;
@@ -52,7 +52,7 @@ it.effect("exports schema error fields as span attributes", () =>
       Effect.withSpan("relay.test.schema_error"),
       Effect.exit,
       Effect.provide(
-        makeRelayTraceLayer({
+        Observability.layer({
           tracesEndpoint: "/v1/traces",
           tracesDatasetName: "relay-test-traces",
           ingestToken: Redacted.make("test-token"),

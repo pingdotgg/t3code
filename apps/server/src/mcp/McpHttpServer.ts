@@ -23,47 +23,38 @@ import * as PreviewBrowser from "../htmlRender/PreviewBrowser.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
-import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers.ts";
+import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
-import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
+import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
-import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
+import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
-import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
-import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
+import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
-import {
-  PreviewSnapshotToolkitHandlersLive,
-  PreviewStandardToolkitHandlersLive,
-} from "./toolkits/preview/handlers.ts";
+import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
-import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
+import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
-import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
+import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
-import {
-  DeviceScreenshotToolkitHandlersLive,
-  DeviceStandardToolkitHandlersLive,
-} from "./toolkits/device/handlers.ts";
+import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
-import {
-  HtmlPreviewToolkitHandlersLive,
-  HtmlRenderToolkitHandlersLive,
-} from "./toolkits/html/handlers.ts";
+import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
@@ -134,7 +125,7 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
   Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
 );
 
-const McpAuthMiddlewareLive = HttpRouter.middleware<{
+const layerMcpAuthMiddleware = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
 
@@ -687,89 +678,89 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
-export const HtmlToolkitRegistrationLive = Layer.mergeAll(
-  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlRenderToolkitHandlersLive)),
-  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlPreviewToolkitHandlersLive)),
+export const layerHtmlToolkit = Layer.mergeAll(
+  McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlHandlers.layerRender)),
+  Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlHandlers.layerPreview)),
 ).pipe(Layer.provide(HtmlRender.layer), Layer.provide(PreviewBrowser.layer));
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
-  Layer.provide(PreviewStandardToolkitHandlersLive),
+const layerPreviewStandardToolkitRegistration = McpServer.toolkit(PreviewStandardToolkit).pipe(
+  Layer.provide(PreviewHandlers.layerStandard),
 );
 
-const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
-  Layer.provide(PreviewSnapshotToolkitHandlersLive),
+const layerPreviewSnapshotRegistration = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
+  Layer.provide(PreviewHandlers.layerSnapshot),
 );
 
-export const PreviewToolkitRegistrationLive = Layer.mergeAll(
-  PreviewStandardToolkitRegistrationLive,
-  PreviewSnapshotRegistrationLive,
+export const layerPreviewToolkit = Layer.mergeAll(
+  layerPreviewStandardToolkitRegistration,
+  layerPreviewSnapshotRegistration,
 );
 
-export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
-  Layer.provide(OrchestratorToolkitHandlersLive),
+export const layerOrchestratorToolkit = McpServer.toolkit(OrchestratorToolkit).pipe(
+  Layer.provide(OrchestratorHandlers.layer),
   Layer.provide(OrchestratorMcpService.layer),
   Layer.provide(ThreadMetadataMcpService.layer),
 );
 
-export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pipe(
-  Layer.provide(ThreadToolkitHandlersLive),
+export const layerThreadToolkit = McpServer.toolkit(ThreadToolkit).pipe(
+  Layer.provide(ThreadHandlers.layer),
 );
 
-const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
-  Layer.provide(WorktreeToolkitHandlersLive),
+const layerWorktreeToolkitRegistration = McpServer.toolkit(WorktreeToolkit).pipe(
+  Layer.provide(WorktreeHandlers.layer),
   Layer.provide(WorktreeMcpService.layer),
 );
 
-const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit).pipe(
-  Layer.provide(PreviewControlsHandlersLive),
+const layerPreviewControlsRegistration = McpServer.toolkit(PreviewControlsToolkit).pipe(
+  Layer.provide(PreviewControlsHandlers.layer),
 );
 
-const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
-  Layer.provide(EnvironmentHandlersLive),
+const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
+  Layer.provide(EnvironmentHandlers.layer),
 );
 
-const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
-  Layer.provide(ProjectHandlersLive),
+const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
+  Layer.provide(ProjectHandlers.layer),
 );
 
-const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
-  Layer.provide(AttachmentHandlersLive),
+const layerAttachmentRegistration = McpServer.toolkit(AttachmentToolkit).pipe(
+  Layer.provide(AttachmentHandlers.layer),
 );
 
-export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
-  Layer.provide(PullRequestsToolkitHandlersLive),
+export const layerPullRequestsToolkit = McpServer.toolkit(PullRequestsToolkit).pipe(
+  Layer.provide(PullRequestsHandlers.layer),
 );
 
-const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
-  Layer.provide(DeviceStandardToolkitHandlersLive),
+const layerDeviceStandardToolkitRegistration = McpServer.toolkit(DeviceStandardToolkit).pipe(
+  Layer.provide(DeviceHandlers.layerStandard),
 );
 
-const DeviceScreenshotRegistrationLive = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
-  Layer.provide(DeviceScreenshotToolkitHandlersLive),
+const layerDeviceScreenshotRegistration = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
+  Layer.provide(DeviceHandlers.layerScreenshot),
 );
 
-export const DeviceToolkitRegistrationLive = Layer.mergeAll(
-  DeviceStandardToolkitRegistrationLive,
-  DeviceScreenshotRegistrationLive,
+export const layerDeviceToolkit = Layer.mergeAll(
+  layerDeviceStandardToolkitRegistration,
+  layerDeviceScreenshotRegistration,
 );
 
-const McpTransportLive = McpServer.layerHttp({
+const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+}).pipe(Layer.provide(layerMcpAuthMiddleware));
 
 export const layer = Layer.mergeAll(
-  PreviewToolkitRegistrationLive,
-  OrchestratorToolkitRegistrationLive,
-  ThreadToolkitRegistrationLive,
-  AttachmentRegistrationLive,
-  ProjectRegistrationLive,
-  EnvironmentRegistrationLive,
-  PreviewControlsRegistrationLive,
-  WorktreeToolkitRegistrationLive,
-  PullRequestsToolkitRegistrationLive,
-  DeviceToolkitRegistrationLive,
-  HtmlToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+  layerPreviewToolkit,
+  layerOrchestratorToolkit,
+  layerThreadToolkit,
+  layerAttachmentRegistration,
+  layerProjectRegistration,
+  layerEnvironmentRegistration,
+  layerPreviewControlsRegistration,
+  layerWorktreeToolkitRegistration,
+  layerPullRequestsToolkit,
+  layerDeviceToolkit,
+  layerHtmlToolkit,
+).pipe(Layer.provideMerge(layerMcpTransport));

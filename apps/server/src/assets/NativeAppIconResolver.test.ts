@@ -39,15 +39,15 @@ describe("resolveNativeAppIcon", () => {
         return emptyProcessHandle();
       }),
     );
-    const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+    const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-native-app-icon-test-",
     });
-    const dependencies = Layer.mergeAll(
-      configLayer,
+    const layerDependencies = Layer.mergeAll(
+      layerConfig,
       Layer.succeed(HostProcessPlatform, "darwin"),
       Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     ).pipe(Layer.provideMerge(NodeServices.layer));
-    const testLayer = NativeAppIconResolver.layer.pipe(Layer.provide(dependencies));
+    const layerTest = NativeAppIconResolver.layer.pipe(Layer.provide(layerDependencies));
     const app = { _tag: "display-name", displayName: "Review * App" } as const;
 
     return Effect.gen(function* () {
@@ -70,6 +70,6 @@ describe("resolveNativeAppIcon", () => {
       expect(commands).toHaveLength(257);
       expect(yield* resolver.resolve(app)).toBeNull();
       expect(commands).toHaveLength(258);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 });

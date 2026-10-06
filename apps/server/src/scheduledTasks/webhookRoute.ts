@@ -23,7 +23,7 @@ const WEBHOOK_OUTCOME_HEADER = "x-t3-hook-outcome";
 const json = (status: number, body: Record<string, string>, outcome: string) =>
   HttpServerResponse.jsonUnsafe(body, { status, headers: { [WEBHOOK_OUTCOME_HEADER]: outcome } });
 
-export const webhookHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "webhooks",
   Effect.fnUntraced(function* (handlers) {

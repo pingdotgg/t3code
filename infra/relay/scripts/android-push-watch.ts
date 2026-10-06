@@ -86,7 +86,7 @@ const main = Effect.gen(function* () {
   const connection = yield* readFile(connectionPath).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Connection))),
   );
-  const socketConstructor = Layer.succeed(
+  const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
     // Socket.makeWebSocket only ever passes its `protocols` option here.
     (url, protocols) =>
@@ -94,11 +94,13 @@ const main = Effect.gen(function* () {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
       }) as unknown as globalThis.WebSocket,
   );
-  const protocol = RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(Socket.layerWebSocket(connection.wsUrl).pipe(Layer.provide(socketConstructor))),
+  const layerProtocol = RpcClient.layerProtocolSocket().pipe(
+    Layer.provide(
+      Socket.layerWebSocket(connection.wsUrl).pipe(Layer.provide(layerSocketConstructor)),
+    ),
     Layer.provide(RpcSerialization.layerJson),
   );
-  const fcm = FcmClient.layer.pipe(
+  const layerFcm = FcmClient.layer.pipe(
     Layer.provide(
       FcmAssertionSigner.layer.pipe(
         Layer.provide(Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle })),
@@ -206,7 +208,7 @@ const main = Effect.gen(function* () {
         }),
       ),
     );
-  }).pipe(Effect.provide(Layer.mergeAll(protocol, fcm)));
+  }).pipe(Effect.provide(Layer.mergeAll(layerProtocol, layerFcm)));
 });
 
 NodeRuntime.runMain(

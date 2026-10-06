@@ -28,7 +28,7 @@ const invokeSetWslDistro = (distro: string | null) =>
 const invokeSetWslOnly = (enabled: boolean) =>
   setWslOnly.handler(enabled).pipe(Effect.flatMap(decodeWslState));
 
-function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void> } = {}) {
+function layerWslBackend(input: { readonly onReconcile?: Effect.Effect<void> } = {}) {
   return Layer.succeed(
     DesktopWslBackend.DesktopWslBackend,
     DesktopWslBackend.DesktopWslBackend.of({
@@ -38,7 +38,7 @@ function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void>
   );
 }
 
-function makeLifecycleLayer(relaunchReasons: Array<string>) {
+function layerLifecycle(relaunchReasons: Array<string>) {
   return Layer.succeed(
     DesktopLifecycle.DesktopLifecycle,
     DesktopLifecycle.DesktopLifecycle.of({
@@ -51,7 +51,7 @@ function makeLifecycleLayer(relaunchReasons: Array<string>) {
   );
 }
 
-const unusedLifecycleRuntimeLayer = Layer.mergeAll(
+const layerUnusedLifecycleRuntime = Layer.mergeAll(
   DesktopShutdown.layer,
   DesktopState.layer,
   Layer.succeed(
@@ -114,7 +114,7 @@ describe("WSL IPC", () => {
             wslOnly: true,
           }),
           DesktopWslEnvironment.layerTest(),
-          makeWslBackendLayer(),
+          layerWslBackend(),
         ),
       ),
     ),
@@ -129,9 +129,9 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer(),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerWslBackend(),
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -160,9 +160,9 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer(),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerWslBackend(),
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -197,13 +197,13 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -232,13 +232,13 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -261,13 +261,13 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -300,13 +300,13 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {

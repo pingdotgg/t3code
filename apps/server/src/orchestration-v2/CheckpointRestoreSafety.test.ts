@@ -98,7 +98,7 @@ it.effect.each([
       checkpointScopes: [{ id: scopeId, cwd }],
       runs: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
     } as unknown as OrchestrationV2ThreadProjection;
-    const testLayer = CheckpointRollbackService.layer.pipe(
+    const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           NodeServices.layer,
@@ -175,7 +175,7 @@ it.effect.each([
       ),
     );
     const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
     const restoreFiles = owner !== "conversation";
     const rejected = !["sibling", "stopped-provider", "shared-provider", "conversation"].includes(

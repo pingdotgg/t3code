@@ -38,7 +38,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
-import { bootServiceLayer } from "./service.ts";
+import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
@@ -267,7 +267,7 @@ export const updateCommand = Command.make("update", {
         assumeYes: flags.yes,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(bootServiceLayer(config), ProcessRunner.layer, FetchHttpClient.layer),
+          Layer.mergeAll(CliService.layer(config), ProcessRunner.layer, FetchHttpClient.layer),
         ),
       );
     }),

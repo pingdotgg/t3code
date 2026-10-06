@@ -87,7 +87,7 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(RunFinalizationService, make);
 
-export const observerLive = Layer.effect(
+export const layerObserver = Layer.effect(
   RunFinalizationObserver,
   Effect.gen(function* () {
     const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

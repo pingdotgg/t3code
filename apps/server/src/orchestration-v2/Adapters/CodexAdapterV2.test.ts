@@ -56,7 +56,7 @@ import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLogger
 import * as IdAllocator from "../IdAllocator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
@@ -67,11 +67,8 @@ import {
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import {
-  makeReplayServerConfig,
-  makeCodexProviderAdapterRegistryReplayLayer,
-  withCodexReplayChildMetadata,
-} from "./CodexAdapterV2.testkit.ts";
+import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -720,7 +717,7 @@ describe("CodexAdapterV2 process spawning", () => {
         );
       });
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
-        Effect.provide(CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer),
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -775,7 +772,7 @@ describe("CodexAdapterV2 process spawning", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
+            CodexAdapterV2.layerAppServerClientFactory,
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-binary-home-" }),
           ),
         ),
@@ -4238,9 +4235,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({
+              CodexAdapterV2Testkit.layer({
                 transcript: localTranscript,
                 driver: replayDriver,
               }),
@@ -4361,9 +4358,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "codex-background-stop-untracked", runtimePolicyOverride: { cwd } },
-              makeCodexProviderAdapterRegistryReplayLayer({ transcript: localTranscript }),
+              CodexAdapterV2Testkit.layer({ transcript: localTranscript }),
               { runEffectWorker: false },
             ),
           ),

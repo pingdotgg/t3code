@@ -79,7 +79,7 @@ export class ProviderTurnAnalytics extends Context.Reference<{
   defaultValue: () => ({ record: () => Effect.void }),
 }) {}
 
-export const analyticsLive = Layer.effect(
+export const layerAnalytics = Layer.effect(
   ProviderTurnAnalytics,
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;

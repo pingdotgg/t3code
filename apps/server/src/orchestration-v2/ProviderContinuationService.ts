@@ -57,7 +57,7 @@ function delegatedCompletionRetryKey(
  * the orchestrator selects native steering or queued delivery under its thread
  * lock. Adapter-buffered continuations still queue behind active work.
  */
-export const workerLive = Layer.effectDiscard(
+export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;

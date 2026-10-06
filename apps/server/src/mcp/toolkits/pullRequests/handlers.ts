@@ -379,4 +379,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const PullRequestsToolkitHandlersLive = PullRequestsToolkit.toLayer(make);
+export const layer = PullRequestsToolkit.toLayer(make);

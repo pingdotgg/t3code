@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { boundedThreadSnapshotLoaderLayer } from "./boundedThreadSnapshotHttp.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -110,7 +110,7 @@ describe("boundedThreadSnapshotLoader", () => {
       }
     }).pipe(
       Effect.provide(
-        Layer.provide(boundedThreadSnapshotLoaderLayer, remoteHttpClientLayer(fetchFn)),
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
       ),
     );
   });
@@ -138,7 +138,7 @@ describe("boundedThreadSnapshotLoader", () => {
       expect(result).toEqual({ _tag: "missing" });
     }).pipe(
       Effect.provide(
-        Layer.provide(boundedThreadSnapshotLoaderLayer, remoteHttpClientLayer(fetchFn)),
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
       ),
     );
   });
@@ -176,7 +176,7 @@ describe("boundedThreadSnapshotLoader", () => {
       expect(fullCalls).toBe(1);
     }).pipe(
       Effect.provide(
-        Layer.provide(boundedThreadSnapshotLoaderLayer, remoteHttpClientLayer(fetchFn)),
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
       ),
     );
   });
@@ -206,7 +206,7 @@ describe("boundedThreadSnapshotLoader", () => {
         expect(fullCalls).toBe(0);
       }).pipe(
         Effect.provide(
-          Layer.provide(boundedThreadSnapshotLoaderLayer, remoteHttpClientLayer(fetchFn)),
+          Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
         ),
       );
     },

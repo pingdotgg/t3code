@@ -229,7 +229,7 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
   });
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
-export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
     const requiredScope = requiredScopeForRpcMethod(rpc._tag);
     return scopes.includes(requiredScope)

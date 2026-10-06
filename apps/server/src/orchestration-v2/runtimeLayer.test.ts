@@ -43,7 +43,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -69,25 +69,20 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import {
-  OrchestrationEventInfrastructureLayerLive,
-  OrchestrationV2EventSinkLayerLive,
-  OrchestrationV2LayerLive,
-  ProjectServiceLayerLive,
-} from "./runtimeLayer.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
-const PlatformTestLayer = Layer.merge(
+const layerPlatformTest = Layer.merge(
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
 );
 
-const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
 });
 
@@ -97,20 +92,20 @@ const modelSelection = {
 } satisfies ModelSelection;
 const alternateInstanceId = ProviderInstanceId.make("codex_alternate");
 
-const VcsDriverRegistryTestLayer = VcsDriverRegistry.layer.pipe(
+const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(ServerConfigLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerPlatformTest),
 );
 
-const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
-  Layer.provide(VcsDriverRegistryTestLayer),
+const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
+  Layer.provide(layerVcsDriverRegistryTest),
 );
-const GitWorkflowTestLayer = Layer.mock(GitWorkflow.GitWorkflowService)({
+const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
   pruneWorktrees: () => Effect.void,
   createWorktree: () => Effect.succeed({} as never),
 });
-const ProjectServiceTestLayer = Layer.mock(ProjectService.ProjectService)({
+const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeed(Option.none()),
 });
 
@@ -150,7 +145,7 @@ const alternateProviderInstance = {
   },
 } satisfies ProviderInstance;
 
-const TestProviderInstanceRegistry = Layer.succeed(
+const layerTestProviderInstanceRegistry = Layer.succeed(
   ProviderInstanceRegistry.ProviderInstanceRegistry,
   {
     getInstance: (instanceId) =>
@@ -268,41 +263,41 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
     }),
   );
 
-const TestLayer = Layer.mergeAll(
-  OrchestrationV2LayerLive,
-  OrchestrationV2EventSinkLayerLive,
+const layerTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
   ProjectStore.layer,
   ProjectionStore.layer,
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(TestProviderInstanceRegistry),
-  Layer.provide(GitWorkflowTestLayer),
-  Layer.provide(ProjectServiceTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
 );
 
-const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
+const layerLegacyImportTest = RuntimeLayer.layer.pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(TestProviderInstanceRegistry),
-  Layer.provide(GitWorkflowTestLayer),
-  Layer.provide(ProjectServiceTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
 );
 
-const ProjectDeletionTestLayer = Layer.mergeAll(
-  OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
-  ProjectServiceLayerLive,
-  OrchestrationV2EventSinkLayerLive,
+const layerProjectDeletionTest = Layer.mergeAll(
+  RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+  RuntimeLayer.layerProjectService,
+  RuntimeLayer.layerEventSink,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -328,16 +323,16 @@ const ProjectDeletionTestLayer = Layer.mergeAll(
     }),
   ),
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(TestProviderInstanceRegistry),
-  Layer.provide(GitWorkflowTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerPlatformTest),
 );
 
-it.layer(ProjectDeletionTestLayer)("project deletion during thread commands", (it) => {
+it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
   it.effect("waits for an in-flight thread update before planning deletion", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
@@ -441,11 +436,11 @@ it.layer(ProjectDeletionTestLayer)("project deletion during thread commands", (i
   );
 });
 
-const SharedApplicationDataPlaneTestLayer = Layer.mergeAll(
-  OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
-  ProjectServiceLayerLive,
-  OrchestrationV2EventSinkLayerLive,
-  OrchestrationEventInfrastructureLayerLive,
+const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
+  RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+  RuntimeLayer.layerProjectService,
+  RuntimeLayer.layerEventSink,
+  RuntimeLayer.layerEventInfrastructure,
 ).pipe(
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -472,16 +467,16 @@ const SharedApplicationDataPlaneTestLayer = Layer.mergeAll(
     }),
   ),
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(TestProviderInstanceRegistry),
-  Layer.provide(GitWorkflowTestLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerPlatformTest),
 );
 
-it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
+it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
   it.effect("emits model updates separately from provider switches", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -837,7 +832,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
         }
       }
-    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("resolves delivery intent against the active run and starts after it completes", () =>
@@ -1478,7 +1473,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
   );
 });
 
-it.layer(LegacyImportTestLayer)("OrchestrationV2 legacy import", (it) => {
+it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
   it.effect("hydrates imported transcripts before commands and propagates hydration failures", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -1678,7 +1673,7 @@ it.layer(LegacyImportTestLayer)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
-it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
+it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4349,7 +4344,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 });
 
-it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (it) => {
+it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (it) => {
   it.effect("interrupts a pending provider start without launching provider work", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
@@ -4423,7 +4418,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (
   );
 });
 
-it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
+it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
   it.effect("carries snooze state through the V2 shell projection", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
@@ -4498,7 +4493,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
   );
 });
 
-it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {
+it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
   it.effect("carries the visited watermark through the V2 shell projection", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
@@ -4606,7 +4601,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {
   );
 });
 
-it.layer(SharedApplicationDataPlaneTestLayer)("shared application data plane", (it) => {
+it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (it) => {
   it.effect("orders retained project transactions and V2 thread transactions in one source", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
@@ -4681,7 +4676,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("shared application data plane", (
   );
 });
 
-it.layer(TestLayer)("usage-limit recovery", (it) => {
+it.layer(layerTest)("usage-limit recovery", (it) => {
   it.effect.each(["interrupted", "usage_limit"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>

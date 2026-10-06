@@ -113,8 +113,8 @@ describe("ssh command", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: "Pairing token creation failed\n" })),
     );
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner);
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -136,15 +136,15 @@ describe("ssh command", () => {
         assert.equal(result.failure.stdout, "Pairing token creation failed\n");
         assert.equal(result.failure.stderr, "");
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
 
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
     );
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner);
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -165,13 +165,13 @@ describe("ssh command", () => {
         assert.equal(result.failure.message, '{"credential":"[redacted]"}');
         assert.equal(result.failure.stdout, '{"credential":"[redacted]"}\n');
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
 
   it.effect("fails commands that never finish", () => {
     const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeNeverFinishingProcess()));
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
@@ -196,6 +196,6 @@ describe("ssh command", () => {
       if (Result.isFailure(result)) {
         assert.include(result.failure.message, "SSH command timed out after 1ms.");
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
 });

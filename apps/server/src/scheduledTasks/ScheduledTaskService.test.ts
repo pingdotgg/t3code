@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -154,7 +154,7 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       last_run_status: string;
     }>`SELECT last_run_status FROM scheduled_tasks WHERE task_id = 'running'`;
     assert.equal(running[0]?.last_run_status, "running");
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect(
@@ -268,7 +268,7 @@ it.effect(
       assert.isNull(byId.get("due-huge")?.next_run_at);
       assert.equal(byId.get("due-bad-date")?.last_run_status, "never");
       assert.equal(byId.get("due-bad-date")?.run_count, 0);
-    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect(
@@ -349,5 +349,5 @@ it.effect(
           yield* Deferred.succeed(releaseLast, undefined);
         }),
       );
-    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -197,7 +197,7 @@ describe("BrowserSession", () => {
       method: "digest",
       cause: nativeCause,
     });
-    const failingCryptoLayer = Layer.succeed(
+    const layerFailingCrypto = Layer.succeed(
       Crypto.Crypto,
       Crypto.make({
         randomBytes: (size) => new Uint8Array(size),
@@ -218,7 +218,7 @@ describe("BrowserSession", () => {
         "Failed to derive a desktop preview browser partition for scope environment-a.",
       );
       assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer))));
+    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(layerFailingCrypto))));
   });
 
   it.effect("preserves session scope, partition, and the Electron failure", () =>

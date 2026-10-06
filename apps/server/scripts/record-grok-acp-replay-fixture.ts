@@ -40,10 +40,8 @@ import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
-import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
-  makeReplayServerConfig,
-} from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { makeReplayServerConfig } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import { makeGrokAcpRuntime } from "../src/provider/acp/GrokAcpSupport.ts";
 import { buildRuntimeInstructions } from "../src/provider/RuntimeInstructions.ts";
@@ -444,7 +442,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
 
   const tee = makeWireTee();
   const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
-  const registryLayer = ProviderAdapterRegistry.makeLayerEffect(
+  const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const environment = yield* HostProcessEnvironment;
@@ -532,9 +530,9 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   const result = yield* runOrchestratorV2Scenario(scenario, { afterSteps: waitForGrokIdle }).pipe(
     Effect.provide(
-      makeOrchestratorV2ReplayLayerWithRegistry(
+      ProviderReplayHarness.layerWithRegistry(
         scenario,
-        registryLayer,
+        layerRegistry,
         variant.runContinuationWorker === true ? { runContinuationWorker: true } : {},
       ),
     ),

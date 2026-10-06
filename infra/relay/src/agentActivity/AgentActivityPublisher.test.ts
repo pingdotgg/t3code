@@ -10,7 +10,7 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
-const publisherLayer = AgentActivityPublisher.layer.pipe(
+const layerPublisher = AgentActivityPublisher.layer.pipe(
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -225,7 +225,7 @@ describe("AgentActivityPublisher", () => {
         });
       }).pipe(
         Effect.provide(
-          publisherLayer.pipe(
+          layerPublisher.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
@@ -298,7 +298,7 @@ describe("AgentActivityPublisher", () => {
         });
       }).pipe(
         Effect.provide(
-          publisherLayer.pipe(
+          layerPublisher.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(
@@ -392,7 +392,7 @@ describe("AgentActivityPublisher", () => {
         });
       }).pipe(
         Effect.provide(
-          publisherLayer.pipe(
+          layerPublisher.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(
@@ -498,7 +498,7 @@ describe("AgentActivityPublisher", () => {
         });
       }).pipe(
         Effect.provide(
-          publisherLayer.pipe(
+          layerPublisher.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(
@@ -610,7 +610,7 @@ describe("AgentActivityPublisher", () => {
           });
         }).pipe(
           Effect.provide(
-            publisherLayer.pipe(
+            layerPublisher.pipe(
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(

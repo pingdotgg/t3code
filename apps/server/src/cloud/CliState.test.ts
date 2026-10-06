@@ -29,7 +29,7 @@ const persistedCloudLinkSecrets = [
   PUBLISH_AGENT_ACTIVITY_SECRET,
 ] as const;
 
-const makeTestLayer = () =>
+const layerTest = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
@@ -56,7 +56,7 @@ it.layer(NodeServices.layer)("CliState", (it) => {
       for (const name of persistedCloudLinkSecrets) {
         assert.isTrue(Option.isNone(yield* secrets.get(name)));
       }
-    }).pipe(Effect.provide(makeTestLayer())),
+    }).pipe(Effect.provide(layerTest())),
   );
 
   it.effect("round-trips the desired link mode and defaults legacy links to managed", () =>
@@ -79,6 +79,6 @@ it.layer(NodeServices.layer)("CliState", (it) => {
 
       yield* CliState.setCliDesiredCloudLink(false);
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");
-    }).pipe(Effect.provide(makeTestLayer())),
+    }).pipe(Effect.provide(layerTest())),
   );
 });

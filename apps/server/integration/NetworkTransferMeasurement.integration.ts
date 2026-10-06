@@ -165,19 +165,19 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   };
 }
 
-function countingWsRpcProtocolLayer(input: {
+function layerCountingWsRpcProtocol(input: {
   readonly url: string;
   readonly cookie: string;
   readonly recorder: WebSocketTransferRecorder;
 }) {
   // Socket.makeWebSocket only ever passes its `protocols` option here.
-  const webSocketConstructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) =>
+  const layerWebSocketConstructor = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) =>
     input.recorder.connect(url, protocols as string | string[] | undefined, input.cookie),
   );
   return RpcClient.layerProtocolSocket().pipe(
     Layer.provide(
       Socket.layerWebSocket(input.url, { openTimeout: "10 seconds" }).pipe(
-        Layer.provide(webSocketConstructorLayer),
+        Layer.provide(layerWebSocketConstructor),
       ),
     ),
     Layer.provide(RpcSerialization.layerJson),
@@ -207,7 +207,7 @@ export const openMeasuredWsClient = Effect.fn("TransferBudget.openMeasuredWsClie
     const parent = yield* Effect.scope;
     const scope = yield* Scope.fork(parent);
     const protocol = yield* Layer.buildWithScope(
-      countingWsRpcProtocolLayer({ url: input.url, cookie: input.cookie, recorder }),
+      layerCountingWsRpcProtocol({ url: input.url, cookie: input.cookie, recorder }),
       scope,
     );
     const client = yield* makeCountingWsRpcClient.pipe(

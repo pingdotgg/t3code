@@ -61,7 +61,7 @@ const spawnInput = { shell: "powershell.exe", cwd: ".", cols: 80, rows: 24, env:
 
 const fakeNodePty = { spawn } as unknown as typeof import("node-pty");
 
-const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
+const layerTestFor = (platform: NodeJS.Platform = "win32") =>
   NodePtyAdapter.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -73,7 +73,7 @@ const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
     ),
   );
 
-const testLayer = makeTestLayer();
+const layerTest = layerTestFor();
 
 it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
@@ -107,7 +107,7 @@ it.effect("waits for the Windows PID without requiring output", () =>
     assert.deepEqual(exits, [{ exitCode: 0, signal: null }]);
     stopData();
     stopExit();
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["exit", "close", "error", "invalid-pid"] as const)(
@@ -129,7 +129,7 @@ it.effect.each(["exit", "close", "error", "invalid-pid"] as const)(
       assert.equal(nativeProcess._socket.listenerCount("close"), 0);
       assert.equal(nativeProcess.events.listenerCount("exit"), 0);
       assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("cancels the Windows connection without waiting for output", () =>
@@ -143,7 +143,7 @@ it.effect("cancels the Windows connection without waiting for output", () =>
     assert.equal(nativeProcess.kill.mock.calls.length, 0);
     assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reports an incompatible Windows readiness API instead of hanging", () =>
@@ -157,7 +157,7 @@ it.effect("reports an incompatible Windows readiness API instead of hanging", ()
     assert.instanceOf(error.cause, Error);
     assert.equal(error.cause.message, "Windows PTY readiness socket is unavailable.");
     assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["win32", "linux", "darwin"] as const)(
@@ -189,7 +189,7 @@ it.effect.each(["win32", "linux", "darwin"] as const)(
           ? [[undefined], [undefined], [undefined]]
           : [["SIGTERM"], ["SIGKILL"], [undefined]],
       );
-    }).pipe(Effect.provide(makeTestLayer(platform))),
+    }).pipe(Effect.provide(layerTestFor(platform))),
 );
 
 it.effect("spawns through the public adapter with the provided host references", () =>
@@ -218,7 +218,7 @@ it.effect("spawns through the public adapter with the provided host references",
         name: "xterm-256color",
       },
     ]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
@@ -245,7 +245,7 @@ it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
         name: "xterm-256color",
       },
     ]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reports native module load failures as structured startup defects", () =>
@@ -300,7 +300,7 @@ it.effect.each([2048, 8])(
       nativeProcess.events.emit("exit", { exitCode: 0 });
       yield* Fiber.join(fiber);
       assert.equal(exits.length, 1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("replays an exit to late subscribers and respects unsubscription", () =>
@@ -317,7 +317,7 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.equal(removed.mock.calls.length, 0);
     assert.deepEqual(late.mock.calls, [[{ exitCode: 7, signal: 2 }]]);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["spawn", "interrupt"] as const)(
@@ -361,5 +361,5 @@ it.effect.each(["spawn", "interrupt"] as const)(
       ]);
       assert.equal(nativeProcess.events.listenerCount("exit"), 0);
       assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
 );

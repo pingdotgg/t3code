@@ -314,7 +314,7 @@ it("keeps native and MCP commands while preserving compaction and separate skill
   );
 });
 
-const testLayer = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
+const layerTest = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -358,7 +358,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
   );
 });
 
-it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
+it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
@@ -657,7 +657,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   );
 });
 
-it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {
+it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (it) => {
   it.effect("does not send a local environment password to a configured server", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkProvider(

@@ -212,7 +212,7 @@ const withSchemaErrorAttributes = (delegate: Tracer.Tracer): Tracer.Tracer =>
     ...(delegate.context ? { context: delegate.context } : {}),
   });
 
-export const makeRelayTraceLayer = (input: {
+export const layer = (input: {
   readonly tracesEndpoint: string;
   readonly tracesDatasetName: string;
   readonly ingestToken: Redacted.Redacted<string>;

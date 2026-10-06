@@ -319,7 +319,7 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
     const commands: Parameters<
       ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
     >[0][] = [];
-    const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+    const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadRecords: () => Effect.succeed(projection),
       recoverDelegatedTask: () => Effect.void,
       dispatch: (command) => {
@@ -329,12 +329,16 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
         return Effect.succeed({} as never);
       },
     });
-    const enabled = Layer.merge(
-      threads,
+    const layerEnabled = Layer.merge(
+      layerThreads,
       ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
     );
-    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
-    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(layerEnabled),
+    );
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(layerEnabled),
+    );
     assert.lengthOf(commands, 1);
     assert.match(String(commands[0]!.commandId), /run:restart$/);
     if (commands[0]!.type === "message.dispatch")
@@ -352,12 +356,17 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
         },
       ],
     };
-    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(layerEnabled),
+    );
     assert.lengthOf(commands, 1);
     projection = { ...projection, runs: [projection.runs[0]!] };
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
       Effect.provide(
-        Layer.merge(threads, ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
+        Layer.merge(
+          layerThreads,
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+        ),
       ),
     );
     assert.lengthOf(commands, 1);

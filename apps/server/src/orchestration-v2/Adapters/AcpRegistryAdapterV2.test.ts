@@ -43,11 +43,11 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-acp-registry-v2-adapter-",
 }).pipe(Layer.provide(NodeServices.layer));
 
-const registryLayer = Layer.succeed(
+const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
     Effect.succeed(
@@ -83,11 +83,11 @@ const registryLayer = Layer.succeed(
   ),
 );
 
-const testLayer = Layer.mergeAll(
+const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  serverConfigLayer,
-  registryLayer,
+  layerServerConfig,
+  layerRegistry,
   ServerSettings.layerTest(),
 );
 
@@ -247,7 +247,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_mode", {}),
         ],
         storedModePick: "autoEdit",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
     it.effect("switches a mode config option under its own id", () =>
@@ -262,7 +262,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
 
@@ -339,7 +339,7 @@ describe("AcpRegistryAdapterV2", () => {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
@@ -485,6 +485,6 @@ describe("AcpRegistryAdapterV2", () => {
         name: "Auto",
         description: null,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

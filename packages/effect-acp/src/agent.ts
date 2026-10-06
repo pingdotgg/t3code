@@ -316,7 +316,7 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
     method,
   });
 
-  const agentHandlerLayer = AcpRpcs.AgentRpcs.toLayer(
+  const layerAgentHandler = AcpRpcs.AgentRpcs.toLayer(
     AcpRpcs.AgentRpcs.of({
       [AGENT_METHODS.initialize]: (payload, { requestId }) =>
         runHandler(
@@ -423,7 +423,7 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
 
   yield* RpcServer.make(AcpRpcs.AgentRpcs).pipe(
     Effect.provideService(RpcServer.Protocol, transport.serverProtocol),
-    Effect.provide(agentHandlerLayer),
+    Effect.provide(layerAgentHandler),
     Effect.forkScoped,
   );
 

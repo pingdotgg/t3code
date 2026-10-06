@@ -21,7 +21,7 @@ import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import { Cursor } from "../cursorSdk.ts";
 
-const testLayer = ServerSecretStore.layer.pipe(
+const layerTest = ServerSecretStore.layer.pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-cursor-driver-copy-command-",
@@ -54,7 +54,7 @@ const testLayer = ServerSecretStore.layer.pipe(
   ),
 );
 
-it.layer(testLayer)("CursorDriver", (it) => {
+it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>

@@ -176,7 +176,7 @@ describe("checkCursorProviderStatus", () => {
         { CURSOR_API_KEY: "test-cursor-key" },
       ).pipe(
         Effect.provide(
-          CursorSdkCatalog.makeCursorSdkCatalogTestLayer((apiKey) => {
+          CursorSdkCatalog.layerTest((apiKey) => {
             expect(apiKey).toBe("test-cursor-key");
             return Effect.succeed({
               user: {
@@ -212,7 +212,7 @@ describe("checkCursorProviderStatus", () => {
         CURSOR_API_KEY: "invalid-test-key",
       }).pipe(
         Effect.provide(
-          CursorSdkCatalog.makeCursorSdkCatalogTestLayer(() =>
+          CursorSdkCatalog.layerTest(() =>
             Effect.fail(
               new CursorSdkCatalog.CursorSdkCatalogError({
                 authenticationFailure: true,
@@ -235,7 +235,7 @@ describe("checkCursorProviderStatus", () => {
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
         Effect.provide(
-          CursorSdkCatalog.makeCursorSdkCatalogTestLayer(() =>
+          CursorSdkCatalog.layerTest(() =>
             Effect.die("SDK catalog must not be used without CURSOR_API_KEY"),
           ),
         ),

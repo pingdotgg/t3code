@@ -39,7 +39,7 @@ function targetPersistenceError(
   });
 }
 
-export const connectionStorageLayer = Layer.effectContext(
+export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const catalog = yield* CatalogStore.make();
     const githubRoutingPermissions = yield* makeGitHubRoutingPermissions({

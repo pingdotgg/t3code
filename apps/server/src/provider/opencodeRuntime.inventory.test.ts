@@ -18,12 +18,12 @@ import {
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
-const testLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+const layerTest = OpenCodeRuntime.layer.pipe(
   Layer.provide(OpenCodeServerLedger.layerTest),
   Layer.provideMerge(NodeServices.layer),
 );
 
-it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
+it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
   it.effect("aborts pending SDK requests when inventory loading is interrupted", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;

@@ -27,7 +27,7 @@ const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
 
-export const browserCryptoLayer = Layer.succeed(
+export const layer = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),

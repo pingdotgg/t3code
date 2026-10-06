@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
+import * as OrchestrationCommandReceiptsLayer from "../persistence/Layers/OrchestrationCommandReceipts.ts";
 import * as OrchestrationCommandReceipts from "../persistence/Services/OrchestrationCommandReceipts.ts";
 
 /**
@@ -139,7 +139,7 @@ function toApplicationReceipt(
   };
 }
 
-const baseLayer: Layer.Layer<
+const layerBase: Layer.Layer<
   CommandReceiptStoreV2,
   never,
   OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository
@@ -209,6 +209,6 @@ const baseLayer: Layer.Layer<
   }),
 );
 
-export const layer = baseLayer.pipe(Layer.provide(OrchestrationCommandReceiptRepositoryLive));
+export const layer = layerBase.pipe(Layer.provide(OrchestrationCommandReceiptsLayer.layer));
 
-export const layerFromApplicationReceipts = baseLayer;
+export const layerFromApplicationReceipts = layerBase;

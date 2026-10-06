@@ -106,7 +106,7 @@ const expectedCommands = [
   { name: "logout", description: "Sign out of Google" },
 ];
 
-const testLayer = Layer.merge(
+const layerTest = Layer.merge(
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     shouldRunScopeWork: () => Effect.succeed(false),
   }),
@@ -216,7 +216,7 @@ describe("Antigravity model catalog", () => {
   });
 });
 
-it.layer(testLayer)("Antigravity provider snapshots", (it) => {
+it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

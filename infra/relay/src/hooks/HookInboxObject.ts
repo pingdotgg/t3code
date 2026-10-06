@@ -91,19 +91,19 @@ const deliver = (baseUrl: string, hook: HookInboxStore.HeldHook) =>
     Effect.provide(FetchHttpClient.layer),
   );
 
-export const HookInboxObjectLive = HookInboxObject.make(
+export const layer = HookInboxObject.make(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     // The init phase returns the per-instance Effect, which alchemy runs once
     // per object; only that inner Effect may touch storage.
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
-      const sql = SqliteClient.layer({ storage: state.raw.storage });
+      const layerSql = SqliteClient.layer({ storage: state.raw.storage });
       // Inboxes are opened by endpoint key, so spans line up with the
       // forward spans that held their requests.
       const inboxId = state.raw.id.name ?? state.raw.id.toString();
       const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        effect.pipe(Effect.provide(sql), Effect.orDie);
+        effect.pipe(Effect.provide(layerSql), Effect.orDie);
       yield* run(HookInboxStore.migrate);
 
       /** Moves the alarm to `at`, unless one is already due sooner. */

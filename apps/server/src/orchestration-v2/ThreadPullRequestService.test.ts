@@ -180,7 +180,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const reads = yield* Queue.unbounded<
           ThreadId | { readonly location?: string; readonly unsettledOnly?: boolean }
         >();
-        const dependencies = Layer.mergeAll(
+        const layerDependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromPubSub(events),
             getShellSnapshot: (options) =>
@@ -254,7 +254,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(yield* Queue.take(reads)).toBe(thread.id);
           yield* service.drain;
           expect(yield* Queue.size(reads)).toBe(0);
-        }).pipe(Effect.provide(dependencies));
+        }).pipe(Effect.provide(layerDependencies));
       }),
     ),
   );
@@ -273,7 +273,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           readonly location?: string;
           readonly unsettledOnly?: boolean;
         }>();
-        const dependencies = Layer.mergeAll(
+        const layerDependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.never,
             getShellSnapshot: (options) =>
@@ -315,7 +315,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* TestClock.adjust("1 minute");
           expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
           yield* service.drain;
-        }).pipe(Effect.provide(dependencies));
+        }).pipe(Effect.provide(layerDependencies));
       }),
     ),
   );

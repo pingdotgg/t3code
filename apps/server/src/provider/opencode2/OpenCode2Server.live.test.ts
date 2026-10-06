@@ -229,7 +229,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Server live", () => {
         Effect.provide(
           Layer.mergeAll(
             OpenCode2Client.layer,
-            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
         ),
       ),

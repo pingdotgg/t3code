@@ -25,7 +25,7 @@ import * as ServerSettingsService from "../serverSettings.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
 import * as ProjectService from "../project/ProjectService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -505,7 +505,7 @@ function makeService(input: {
         SourceControlRateLimit.layer,
         // The real store over a database of its own, so the environment-kept marks are exercised
         // through the SQL that holds them rather than through a stand-in that agrees with itself.
-        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
           Layer.provide(KeyValueStore.layerMemory),
           Layer.provide(NodeServices.layer),

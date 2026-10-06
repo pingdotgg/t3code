@@ -66,7 +66,7 @@ const withService = <A, E>(
     allocationFor("user_1", ownKey, options.ownReady ?? true),
     allocationFor("user_2", otherKey, true),
   ];
-  const dependencies = Layer.mergeAll(
+  const layerDependencies = Layer.mergeAll(
     Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
     Layer.mock(EnvironmentLinks.EnvironmentLinks, {
       findActiveManagedForEnvironment: (input) =>
@@ -103,7 +103,7 @@ const withService = <A, E>(
   return Effect.gen(function* () {
     const heldHooks = yield* HeldHooks.HeldHooks;
     return yield* body({ heldHooks, cleared, woken });
-  }).pipe(Effect.provide(HeldHooks.layer.pipe(Layer.provide(dependencies))));
+  }).pipe(Effect.provide(HeldHooks.layer.pipe(Layer.provide(layerDependencies))));
 };
 
 describe("HeldHooks", () => {

@@ -184,7 +184,7 @@ function makeRegistry(
   };
 }
 
-export function makeLayer(
+export function layerFromAdapters(
   adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Shape>,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
   return Layer.succeed(
@@ -193,7 +193,7 @@ export function makeLayer(
   );
 }
 
-export function makeLayerEffect<R, E>(
+export function layerFromAdaptersEffect<R, E>(
   adapters: Effect.Effect<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Shape>, E, R>,
 ): Layer.Layer<ProviderAdapterRegistryV2, E, R> {
   return Layer.effect(
@@ -202,10 +202,10 @@ export function makeLayerEffect<R, E>(
   );
 }
 
-export function makeSingleLayer(
+export function layerSingle(
   adapter: ProviderAdapter.ProviderAdapterV2Shape,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
-  return makeLayer([adapter]);
+  return layerFromAdapters([adapter]);
 }
 
 const decodedConfigEnabled = (config: unknown): boolean | undefined => {
@@ -338,7 +338,7 @@ export function makeRegistryFromConfigMap<R>(input: {
   });
 }
 
-export function makeDriverLayer<R>(input: {
+export function layerFromDrivers<R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Layer.Layer<ProviderAdapterRegistryV2, ProviderAdapterRegistryBuildError, R> {

@@ -35,8 +35,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       const messageDeltas = yield* Ref.make<Array<unknown>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(clientLayer, scope);
+      const layerClient = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerClient, scope);
 
       const result = yield* Effect.gen(function* () {
         const client = yield* CodexClient.CodexAppServerClient;
@@ -130,8 +130,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
         CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),
       });
       const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(clientLayer, scope);
+      const layerClient = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerClient, scope);
 
       const initialized = yield* Effect.gen(function* () {
         const client = yield* CodexClient.CodexAppServerClient;

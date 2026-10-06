@@ -30,10 +30,10 @@ const run = (input: VcsProcess.VcsProcessInput) =>
     return yield* process.run(input);
   });
 
-const liveLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerLive = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
-  effect.pipe(Effect.provide(liveLayer));
+  effect.pipe(Effect.provide(layerLive));
 
 const baseInput = {
   operation: "test.process-boundary",

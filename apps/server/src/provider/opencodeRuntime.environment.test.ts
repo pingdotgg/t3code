@@ -227,7 +227,7 @@ server.listen(0, "127.0.0.1", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide([
-          OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+          OpenCodeRuntime.layer.pipe(
             Layer.provide(OpenCodeServerLedger.layerTest),
             Layer.provideMerge(NodeServices.layer),
           ),

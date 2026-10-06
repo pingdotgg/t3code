@@ -457,7 +457,7 @@ export function makeBrowserGitHubRoutingPermissions(
   });
 }
 
-export const connectionStorageLayer = Layer.effectContext(
+export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
       Effect.sync(() => database.close()),

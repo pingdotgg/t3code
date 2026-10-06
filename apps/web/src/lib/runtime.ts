@@ -3,13 +3,13 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import * as RelayTracing from "@t3tools/shared/relayTracing";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
-import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 
-import { browserCryptoLayer } from "../cloud/dpop";
-import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
+import * as Dpop from "../cloud/dpop";
+import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
 import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
 import * as ClientTracer from "../observability/clientTracer";
 
@@ -17,24 +17,24 @@ function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
-const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
-const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
+const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
+const layerRelayTracing = RelayTracing.layer(resolveRelayTracingConfig(), {
   serviceName: "t3code-web",
   serviceVersion: import.meta.env.APP_VERSION,
   runtime: "browser",
   client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
-}).pipe(Layer.provide(httpClientLayer));
+}).pipe(Layer.provide(layerHttpClient));
 
 type RuntimeLayerSource =
-  | typeof httpClientLayer
-  | typeof browserCryptoLayer
+  | typeof layerHttpClient
+  | typeof Dpop.layer
   | typeof Socket.layerWebSocketConstructorGlobal
-  | typeof relayTracingLayer
+  | typeof layerRelayTracing
   | typeof ClientTracer.layer
-  | ReturnType<typeof managedRelayClientLayer>;
+  | ReturnType<typeof ManagedRelayLayer.layer>;
 
 const primaryHttpRuntime = ManagedRuntime.make(
-  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(PrimaryEnvironmentHttpLayer.layer)),
 );
 
 export type PrimaryHttpEffectRunner = <A, E>(
@@ -54,23 +54,23 @@ export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner)
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
 
-const runtimeLayer = Layer.mergeAll(
-  httpClientLayer,
-  browserCryptoLayer,
+const layerRuntime = Layer.mergeAll(
+  layerHttpClient,
+  Dpop.layer,
   Socket.layerWebSocketConstructorGlobal,
   ClientTracer.layer,
-  relayTracingLayer,
-  managedRelayClientLayer(configuredRelayUrl()).pipe(
-    Layer.provide(Layer.mergeAll(httpClientLayer, browserCryptoLayer)),
+  layerRelayTracing,
+  ManagedRelayLayer.layer(configuredRelayUrl()).pipe(
+    Layer.provide(Layer.mergeAll(layerHttpClient, Dpop.layer)),
   ),
 );
 
 export const runtime: ManagedRuntime.ManagedRuntime<
   Layer.Success<RuntimeLayerSource>,
   Layer.Error<RuntimeLayerSource>
-> = ManagedRuntime.make(runtimeLayer);
+> = ManagedRuntime.make(layerRuntime);
 
-export const runtimeContextLayer: Layer.Layer<
+export const layer: Layer.Layer<
   Layer.Success<RuntimeLayerSource>,
   Layer.Error<RuntimeLayerSource>
 > = Layer.effectContext(runtime.contextEffect);

@@ -12,16 +12,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
 
-const TestLayer = Layer.mergeAll(
+const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
   ProjectionStore.layer,
   ProjectStore.layer,
-).pipe(Layer.provideMerge(SqlitePersistenceMemory));
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));
@@ -114,7 +114,7 @@ const message = (
   },
 });
 
-it.layer(TestLayer)("ThreadSearch", (it) => {
+it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("returns one finished user or assistant match per active thread", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;

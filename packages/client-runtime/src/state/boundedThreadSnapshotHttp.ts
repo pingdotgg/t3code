@@ -53,7 +53,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
  * endpoint still means missing. Transient failures report `unavailable` so the
  * socket path remains a last resort for connectivity issues.
  */
-export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
+export const layer: Layer.Layer<
   ThreadSnapshotLoader.ThreadSnapshotLoader,
   never,
   HttpClient.HttpClient

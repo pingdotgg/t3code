@@ -164,14 +164,14 @@ export function retainedBackgroundScopes(
   ).filter((scope): scope is BackgroundScope => scope !== null);
 }
 
-export const backgroundActivityObserverLayer = Layer.succeed(
+export const layerObserver = Layer.succeed(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
     observe: observeBackgroundActivitySubscription,
   }),
 );
 
-export const backgroundActivityReporterLayer = Layer.effectDiscard(
+export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     if (typeof window === "undefined" || typeof document === "undefined") {
       return;

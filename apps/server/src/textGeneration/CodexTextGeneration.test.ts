@@ -24,7 +24,7 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
   "gpt-5.4-mini",
 );
 
-const CodexTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -169,7 +169,7 @@ function withFakeCodexEnv<A, E, R>(
   }).pipe(Effect.scoped);
 }
 
-it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
+it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
     "dispatches the qualified live model for %s",
     (selectedModel) =>

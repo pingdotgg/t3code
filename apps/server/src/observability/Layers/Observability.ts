@@ -1,9 +1,6 @@
-import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
-import {
-  makeLocalFileTracer,
-  makeTraceSink,
-  otlpSerializationLayer,
-} from "@t3tools/shared/observability";
+import * as HttpObservability from "@t3tools/shared/httpObservability";
+import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,10 +12,10 @@ import * as OtlpTracer from "effect/observability/OtlpTracer";
 
 import * as ServerConfig from "../../config.ts";
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
-import { ServerLoggerLive } from "../../serverLogger.ts";
+import * as ServerLogger from "../../serverLogger.ts";
 import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
-export const ObservabilityLive = Layer.unwrap(
+export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
 
@@ -26,17 +23,17 @@ export const ObservabilityLive = Layer.unwrap(
     const metrics = config.otlpMetricsExport;
     // The trace serializer stays in the returned context because the browser
     // trace forwarder exports on the same signal.
-    const serializationLayer = otlpSerializationLayer(traces.protocol);
+    const layerSerialization = SharedObservability.layerOtlpSerialization(traces.protocol);
     const resource = ServerConfig.otlpResource(config);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
-    const traceReferencesLayer = Layer.mergeAll(
+    const layerTraceReferences = Layer.mergeAll(
       Layer.succeed(Tracer.MinimumTraceLevel, config.traceMinLevel),
       Layer.succeed(References.TracerTimingEnabled, config.traceTimingEnabled),
-      httpHeaderRedactionLayer,
+      HttpObservability.layer,
     );
 
-    const tracerLayer = Layer.unwrap(
+    const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
         const sink = yield* makeTraceSink({
           filePath: config.serverTracePath,
@@ -76,7 +73,7 @@ export const ObservabilityLive = Layer.unwrap(
           BrowserTraceCollector.layer(sink),
         );
       }),
-    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(serializationLayer));
+    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(layerSerialization));
 
     const metricsLayer =
       config.otlpMetricsUrl === undefined
@@ -86,16 +83,16 @@ export const ObservabilityLive = Layer.unwrap(
             exportInterval: `${metrics.exportIntervalMs} millis`,
             headers: metrics.headers,
             resource,
-          }).pipe(Layer.provide(otlpSerializationLayer(metrics.protocol)));
+          }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)));
 
     // Logged once the server's loggers are installed, so the warnings use them.
-    const otelWarningsLayer = Layer.effectDiscard(
+    const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
     );
 
-    return otelWarningsLayer.pipe(
+    return layerOtelWarnings.pipe(
       Layer.provideMerge(
-        Layer.mergeAll(ServerLoggerLive, traceReferencesLayer, tracerLayer, metricsLayer),
+        Layer.mergeAll(ServerLogger.layer, layerTraceReferences, layerTracer, metricsLayer),
       ),
       Layer.provide(
         OtelEnvironment.layerResourceAttributes(config.otelEnvironment.resourceAttributes),

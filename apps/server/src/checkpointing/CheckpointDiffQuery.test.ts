@@ -44,7 +44,7 @@ function makeProjection(): ProjectionCheckpointContext {
   };
 }
 
-function makeLayer(input: {
+function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
 }) {
@@ -66,7 +66,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed("diff --git a/file b/file"),
   );
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -92,7 +92,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
 });
 
 it.effect("preserves the typed missing-thread error contract", () => {
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.fail(new OrchestratorProjectionError({ threadId })),
   });
 
@@ -111,7 +111,7 @@ it.effect("preserves the typed missing-thread error contract", () => {
 });
 
 it.effect("preserves the typed unavailable-range error contract", () => {
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()) });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()) });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -132,7 +132,7 @@ it.effect("preserves the typed unavailable-range error contract", () => {
 
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       runs: projection.runs.map((run) =>
@@ -170,7 +170,7 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
 
 it.effect("preserves the typed missing-baseline-ref error contract", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       checkpointScopes: projection.checkpointScopes.map((scope) => ({

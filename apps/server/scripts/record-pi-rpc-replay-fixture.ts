@@ -23,12 +23,12 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
-  makePiProviderAdapterRegistryLayer,
   makePiRecordingSpawner,
   PI_REPLAY_ANY,
   PI_RPC_REPLAY_PROTOCOL,
   PiOrchestratorReplayHarness,
 } from "../src/orchestration-v2/Adapters/PiAdapterV2.testkit.ts";
+import * as PiAdapterV2Testkit from "../src/orchestration-v2/Adapters/PiAdapterV2.testkit.ts";
 import { PI_PROVIDER } from "../src/orchestration-v2/Adapters/PiAdapterV2.ts";
 import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
@@ -251,7 +251,7 @@ const record = Effect.gen(function* () {
     scenario: fixture.name,
     entries: [],
   } satisfies ProviderReplayTranscript;
-  const recordingSpawner = Layer.effect(
+  const layerRecordingSpawner = Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.map(Effect.service(ChildProcessSpawner.ChildProcessSpawner), (live) =>
       makePiRecordingSpawner(live, entries),
@@ -283,7 +283,7 @@ const record = Effect.gen(function* () {
         driver: PI_PROVIDER,
         decodeTranscript: Effect.succeed,
         makeProviderAdapterRegistryLayer: () =>
-          makePiProviderAdapterRegistryLayer({
+          PiAdapterV2Testkit.layer({
             scenario: fixture.name,
             binaryPath: piBinary,
             launchArgs,
@@ -291,7 +291,7 @@ const record = Effect.gen(function* () {
               { name: "PI_CODING_AGENT_SESSION_DIR", value: sessionDir, sensitive: false },
               { name: "PI_SKIP_VERSION_CHECK", value: "1", sensitive: false },
             ],
-            spawner: recordingSpawner,
+            spawner: layerRecordingSpawner,
           }),
       },
       continuationOptions,

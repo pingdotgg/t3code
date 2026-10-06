@@ -12,7 +12,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
-const TestLayer = Layer.empty.pipe(
+const layerTest = Layer.empty.pipe(
   Layer.provideMerge(
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
@@ -49,7 +49,7 @@ const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
     Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
 
-it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
+it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   describe("resolvePath", () => {
     it.effect("serves repeated resolves from cache instead of re-walking candidates", () =>
       Effect.gen(function* () {

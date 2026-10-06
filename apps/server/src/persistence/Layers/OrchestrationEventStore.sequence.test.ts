@@ -11,11 +11,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
-import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "./Sqlite.ts";
+import * as OrchestrationEventStoreLayer from "./OrchestrationEventStore.ts";
+import * as SqlitePersistence from "./Sqlite.ts";
 
-const eventStoreLayer = OrchestrationEventStoreLive.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerEventStore = OrchestrationEventStoreLayer.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const occurredAt = "2026-09-03T00:00:00.000Z";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -112,7 +112,7 @@ it.effect("keeps application and scoped agent high-water marks separate from leg
     assert.equal(yield* store.latestApplicationSequence, legacyProject.sequence);
     assert.equal(yield* store.latestAgentSequence(), 0);
     assert.equal(yield* store.latestAgentSequence(target), 0);
-  }).pipe(Effect.provide(Layer.fresh(eventStoreLayer))),
+  }).pipe(Effect.provide(Layer.fresh(layerEventStore))),
 );
 
 it.effect(
@@ -206,7 +206,7 @@ it.effect(
         [...catchUp.map((row) => row.sequence), liveSequence],
       );
       assert.isAbove(liveSequence, highWater);
-    }).pipe(Effect.provide(Layer.fresh(eventStoreLayer))),
+    }).pipe(Effect.provide(Layer.fresh(layerEventStore))),
 );
 
 it.effect("uses indexed high-water lookups for populated history without OR scans", () =>
@@ -267,7 +267,7 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
     }
   }).pipe(
     Effect.provide(
-      OrchestrationEventStoreLive.pipe(
+      OrchestrationEventStoreLayer.layer.pipe(
         Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
       ),
     ),

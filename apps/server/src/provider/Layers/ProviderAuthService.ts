@@ -250,7 +250,4 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 });
 
-export const ProviderAuthServiceLive = Layer.effect(
-  ProviderAuthService.ProviderAuthService,
-  makeProviderAuthService,
-);
+export const layer = Layer.effect(ProviderAuthService.ProviderAuthService, makeProviderAuthService);

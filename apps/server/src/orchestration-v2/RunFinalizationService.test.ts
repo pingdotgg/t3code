@@ -87,7 +87,7 @@ it.effect.each(
   const refreshed: string[] = [];
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
-  const layer = RunFinalization.observerLive.pipe(
+  const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),

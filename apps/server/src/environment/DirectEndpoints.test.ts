@@ -135,7 +135,7 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
 });
 
 /** `tailscale status --json` reporting a MagicDNS name. */
-const tailscaleUpLayer = Layer.succeed(
+const layerTailscaleUp = Layer.succeed(
   ChildProcessSpawner.ChildProcessSpawner,
   ChildProcessSpawner.make(() =>
     Effect.succeed(
@@ -157,7 +157,7 @@ const tailscaleUpLayer = Layer.succeed(
 );
 
 /** Answers the Serve probe with `status`. */
-const serveProbeLayer = (status: number) =>
+const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -166,7 +166,7 @@ const serveProbeLayer = (status: number) =>
   );
 
 /** A loopback-only server with Tailscale Serve on, so only the Serve name can be listed. */
-const serveConfigLayer = Layer.effect(
+const layerServeConfig = Layer.effect(
   ServerConfig.ServerConfig,
   Effect.map(ServerConfig.ServerConfig, (config) => ({
     ...config,
@@ -184,7 +184,7 @@ const resolveWithServe = (probeStatus: number) =>
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(serveConfigLayer, tailscaleUpLayer, serveProbeLayer(probeStatus)),
+          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),
