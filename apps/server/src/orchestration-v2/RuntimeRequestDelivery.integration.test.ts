@@ -29,7 +29,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -324,9 +324,9 @@ it.effect.each(["bound", "detached"] as const)(
           if (session === "bound") assert.equal(final.run?.status, "running");
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            layerWithRegistry(
               { name: `runtime-request-delivery-${session}` },
-              ProviderAdapterRegistry.makeSingleLayer(adapter),
+              ProviderAdapterRegistry.layerSingle(adapter),
               { runEffectWorker: false },
             ),
           ),
