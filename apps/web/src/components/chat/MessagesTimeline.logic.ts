@@ -369,6 +369,38 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
+/** Turn jumps land a prompt this far below the viewport top. */
+export const TIMELINE_TURN_JUMP_VIEW_OFFSET = 24;
+
+/**
+ * The prompt a turn jump should land on, relative to where the last jump
+ * would have placed one. Unlike the minimap's current marker, reading the
+ * tail of a long response and going "previous" returns to that response's
+ * own prompt first.
+ */
+export function resolveTimelineTurnJumpIndex(input: {
+  readonly direction: "previous" | "next";
+  readonly scrollTop: number;
+  readonly itemTops: ReadonlyArray<number | null>;
+}): number | null {
+  const anchor = input.scrollTop + TIMELINE_TURN_JUMP_VIEW_OFFSET;
+  // Sub-pixel slack so the prompt a jump just landed on counts as the anchor.
+  const tolerance = 1;
+  let previousIndex: number | null = null;
+  for (const [index, top] of input.itemTops.entries()) {
+    if (top === null) {
+      continue;
+    }
+    if (input.direction === "next" && top > anchor + tolerance) {
+      return index;
+    }
+    if (top < anchor - tolerance) {
+      previousIndex = index;
+    }
+  }
+  return input.direction === "previous" ? previousIndex : null;
+}
+
 /**
  * Side gutter between the viewport edge and the centered content column.
  * `contentWidth` is the rendered column width, which follows the Chat width

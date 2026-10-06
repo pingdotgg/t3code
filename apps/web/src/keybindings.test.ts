@@ -1387,6 +1387,36 @@ describe("composer and pull request shortcuts", () => {
     },
   );
 
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "jumps between turns with Mod+Alt+Arrow outside the terminal on %s",
+    (platform) => {
+      for (const [key, command] of [
+        ["ArrowUp", "thread.previousTurn"],
+        ["ArrowDown", "thread.nextTurn"],
+      ] as const) {
+        const input = event({
+          key,
+          altKey: true,
+          metaKey: platform === "MacIntel",
+          ctrlKey: platform !== "MacIntel",
+        });
+        assert.strictEqual(
+          resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { composerFocus: true },
+          }),
+          command,
+        );
+        assert.isNull(
+          resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { terminalFocus: true },
+          }),
+        );
+      }
+    },
+  );
+
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
     it.each([
       ["s", "thread.settle"],

@@ -31,6 +31,7 @@ import {
   shouldPreserveAssistantLineBreaks,
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
+  resolveTimelineTurnJumpIndex,
   workEntryDisplayLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
@@ -4888,4 +4889,41 @@ describe("failed turn transcript", () => {
       });
     },
   );
+});
+
+describe("resolveTimelineTurnJumpIndex", () => {
+  // Prompts at 0, 1000 and 3000; a jump lands a prompt 24px below the top.
+  const itemTops = [0, 1000, 3000];
+
+  it("returns to the current turn's prompt before earlier ones", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: 3500, itemTops })).toBe(
+      2,
+    );
+  });
+
+  it("steps past the prompt a jump just landed on", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: 976, itemTops })).toBe(
+      0,
+    );
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 976, itemTops })).toBe(2);
+  });
+
+  it("goes to the next prompt below the anchor", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 200, itemTops })).toBe(1);
+  });
+
+  it("returns null past either end", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: -24, itemTops })).toBe(
+      null,
+    );
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 2976, itemTops })).toBe(
+      null,
+    );
+  });
+
+  it("skips prompts without a measured position", () => {
+    expect(
+      resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 0, itemTops: [0, null, 3000] }),
+    ).toBe(2);
+  });
 });

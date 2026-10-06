@@ -70,6 +70,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -77,6 +78,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import {
   LegendList,
@@ -204,6 +206,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
+  resolveTimelineTurnJumpIndex,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
@@ -215,6 +218,7 @@ import {
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
+  TIMELINE_TURN_JUMP_VIEW_OFFSET,
   type TimelineLatestRun,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
@@ -406,6 +410,11 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // Props (public API)
 // ---------------------------------------------------------------------------
 
+export interface MessagesTimelineTurnNavigationHandle {
+  /** Scrolls to the previous or next user prompt. False when there is none. */
+  jumpToTurn: (direction: "previous" | "next") => boolean;
+}
+
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
@@ -436,6 +445,7 @@ interface MessagesTimelineProps {
   isCompacting?: boolean;
 
   listRef: React.RefObject<LegendListRef | null>;
+  turnNavigationRef?: Ref<MessagesTimelineTurnNavigationHandle>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
@@ -520,6 +530,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isPreparingWorktree = false,
   isCompacting = false,
   listRef,
+  turnNavigationRef,
   timelineEntries,
   latestRun,
   runningRunId = null,
@@ -803,6 +814,38 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const jumpToMinimapItem = useCallback(
+    (item: TimelineMinimapItem) => {
+      onManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: item.rowIndex,
+        animated: true,
+        viewOffset: TIMELINE_TURN_JUMP_VIEW_OFFSET,
+      });
+    },
+    [listRef, onManualNavigation],
+  );
+  useImperativeHandle(
+    turnNavigationRef,
+    () => ({
+      jumpToTurn: (direction) => {
+        const state = listRef.current?.getState?.();
+        if (!state || restoringThreadPosition || state.data !== rows) return false;
+        // At the end every later prompt is already on screen; there is nowhere to go.
+        if (direction === "next" && resolveTimelineIsAtEnd(state) === true) return false;
+        const index = resolveTimelineTurnJumpIndex({
+          direction,
+          scrollTop: state.scroll ?? 0,
+          itemTops: minimapItems.map((item) => resolveTimelineRowTop(state, item.rowIndex)),
+        });
+        const item = index === null ? undefined : minimapItems[index];
+        if (!item) return false;
+        jumpToMinimapItem(item);
+        return true;
+      },
+    }),
+    [jumpToMinimapItem, listRef, minimapItems, restoringThreadPosition, rows],
+  );
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -1387,14 +1430,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             hitStripWidth={minimapHitStripWidth}
             currentIndex={minimapCurrentIndex}
             stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
+            onSelect={jumpToMinimapItem}
           />
         </TooltipScrollDismissArea>
       </TimelineRowActivityCtx>
