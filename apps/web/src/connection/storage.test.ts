@@ -3,7 +3,7 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { ConnectionCatalogDocument, EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
+import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -16,7 +16,7 @@ import {
   makeBrowserGitHubRoutingPermissions,
   makeCatalogBackend,
   makeCatalogStore,
-  connectionStorageLayer,
+  layer as connectionStorageLayer,
 } from "./storage";
 
 const emptyCatalog = {
@@ -69,6 +69,11 @@ describe("makeCatalogStore", () => {
   );
 });
 
+const fixedHandle = (database: IDBDatabase) => ({
+  get: Effect.succeed(database),
+  invalidate: () => Effect.void,
+});
+
 describe("makeCatalogBackend", () => {
   it.effect("reports a closed IndexedDB connection as a typed read and write failure", () =>
     Effect.gen(function* () {
@@ -78,7 +83,7 @@ describe("makeCatalogBackend", () => {
           throw new DOMException("The database connection is closing.", "InvalidStateError");
         },
       } as unknown as IDBDatabase;
-      const backend = makeCatalogBackend(Effect.succeed(database));
+      const backend = makeCatalogBackend(fixedHandle(database));
 
       const readError = yield* Effect.flip(backend.read);
       const writeError = yield* Effect.flip(backend.write("{}"));
@@ -98,7 +103,7 @@ describe("makeCatalogBackend", () => {
           setConnectionCatalog,
         },
       });
-      const backend = makeCatalogBackend(Effect.succeed({} as IDBDatabase));
+      const backend = makeCatalogBackend(fixedHandle({} as IDBDatabase));
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
@@ -124,7 +129,7 @@ describe("makeCatalogBackend", () => {
         }),
       });
       const backend = makeCatalogBackend(
-        Effect.succeed({ transaction: () => transaction } as never),
+        fixedHandle({ transaction: () => transaction } as unknown as IDBDatabase),
       );
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
@@ -164,7 +169,7 @@ describe("environment cache removal", () => {
       });
 
       const [threadError, refsError] = yield* Effect.gen(function* () {
-        const cache = yield* EnvironmentCacheStore;
+        const cache = yield* Persistence.EnvironmentCacheStore;
         return [
           yield* Effect.flip(
             cache.removeThread(EnvironmentId.make("env"), ThreadId.make("thread")),
@@ -190,7 +195,7 @@ describe("IndexedDB connection recovery", () => {
       vi.stubGlobal("indexedDB", { open });
 
       yield* Effect.gen(function* () {
-        const cache = yield* EnvironmentCacheStore;
+        const cache = yield* Persistence.EnvironmentCacheStore;
         expect(open).not.toHaveBeenCalled();
         const error = yield* Effect.flip(
           cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread")),
@@ -236,7 +241,7 @@ describe("IndexedDB connection recovery", () => {
       vi.stubGlobal("indexedDB", { open });
 
       yield* Effect.gen(function* () {
-        const cache = yield* EnvironmentCacheStore;
+        const cache = yield* Persistence.EnvironmentCacheStore;
         const environmentId = EnvironmentId.make("env");
         const threadId = ThreadId.make("thread");
         expect(Option.isNone(yield* cache.loadThread(environmentId, threadId))).toBe(true);
@@ -253,6 +258,51 @@ describe("IndexedDB connection recovery", () => {
 
       expect(first.close).not.toHaveBeenCalled();
       expect(second.close).toHaveBeenCalledOnce();
+    }),
+  );
+});
+
+describe("IndexedDB connection closed without a close event", () => {
+  it.effect("reopens and retries the failing operation once", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const closing = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => {
+          // Chromium force-closed this connection; this tab never saw "close".
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      }) as unknown as IDBDatabase;
+      const fresh = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => ({
+          objectStore: () => ({
+            get: () => {
+              const request = Object.assign(new EventTarget(), { result: undefined, error: null });
+              queueMicrotask(() => request.dispatchEvent(new Event("success")));
+              return request;
+            },
+          }),
+        }),
+      }) as unknown as IDBDatabase;
+      const databases = [closing, fresh];
+      let openCount = 0;
+      const open = vi.fn(() => {
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
+        expect(Option.isNone(loaded)).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(connectionStorageLayer));
     }),
   );
 });

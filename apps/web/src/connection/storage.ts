@@ -149,13 +149,20 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
   });
 });
 
-type DatabaseHandle = Effect.Effect<IDBDatabase, ConnectionTransientError>;
+interface DatabaseHandle {
+  readonly get: Effect.Effect<IDBDatabase, ConnectionTransientError>;
+  /** Forget `database` if it is still the shared connection, so the next access reopens. */
+  readonly invalidate: (database: IDBDatabase) => Effect.Effect<void>;
+}
 
 /** Share a connection until the browser closes it; the next access reopens it. */
 const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")(function* () {
   const lock = yield* Semaphore.make(1);
   let current: IDBDatabase | null = null;
-  const get: DatabaseHandle = Effect.suspend(() =>
+  const forget = (database: IDBDatabase) => {
+    if (current === database) current = null;
+  };
+  const get = Effect.suspend(() =>
     current !== null
       ? Effect.succeed(current)
       : lock.withPermits(1)(
@@ -163,8 +170,11 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
             if (current !== null) return current;
             const opened = yield* openDatabase();
             current = opened;
-            opened.addEventListener("close", () => {
-              if (current === opened) current = null;
+            opened.addEventListener("close", () => forget(opened));
+            // Another tab upgrading the schema waits on this connection.
+            opened.addEventListener("versionchange", () => {
+              forget(opened);
+              opened.close();
             });
             return opened;
           }),
@@ -176,8 +186,44 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
       current = null;
     }),
   );
-  return { get, close };
+  const handle: DatabaseHandle = {
+    get,
+    invalidate: (database) => Effect.sync(() => forget(database)),
+  };
+  return { handle, close };
 });
+
+/**
+ * Runs `use` on the shared connection. A connection the browser already closed
+ * throws InvalidStateError even when no close event reached this tab, so drop
+ * it and retry once on a fresh one instead of failing every later operation.
+ */
+function withDatabase<A>(
+  database: DatabaseHandle,
+  use: (opened: IDBDatabase) => Effect.Effect<A, ConnectionTransientError>,
+) {
+  // Only a connection that opened and then failed is stale; a failing open is
+  // storage being unavailable, which a retry would not fix.
+  const closedConnection = Symbol("closedConnection");
+  const attempt = Effect.flatMap(database.get, (opened) =>
+    use(opened).pipe(
+      Effect.catchIf(
+        (error) => error.detail.includes("InvalidStateError"),
+        (error) =>
+          database
+            .invalidate(opened)
+            .pipe(Effect.andThen(Effect.fail({ [closedConnection]: error } as const))),
+      ),
+    ),
+  );
+  return attempt.pipe(
+    Effect.catchIf(
+      (error): error is { readonly [closedConnection]: ConnectionTransientError } =>
+        closedConnection in error,
+      () => Effect.flatMap(database.get, use),
+    ),
+  );
+}
 
 function readDatabaseValueOnConnection(database: IDBDatabase, storeName: string, key: IDBValidKey) {
   return Effect.callback<unknown, ConnectionTransientError>((resume) => {
@@ -289,9 +335,7 @@ function removeDatabaseValuesInRangeOnConnection(
 }
 
 function readDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
-  return Effect.flatMap(database, (opened) =>
-    readDatabaseValueOnConnection(opened, storeName, key),
-  );
+  return withDatabase(database, (opened) => readDatabaseValueOnConnection(opened, storeName, key));
 }
 
 function writeDatabaseValue(
@@ -300,13 +344,13 @@ function writeDatabaseValue(
   key: IDBValidKey,
   value: unknown,
 ) {
-  return Effect.flatMap(database, (opened) =>
+  return withDatabase(database, (opened) =>
     writeDatabaseValueOnConnection(opened, storeName, key, value),
   );
 }
 
 function removeDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
-  return Effect.flatMap(database, (opened) =>
+  return withDatabase(database, (opened) =>
     removeDatabaseValueOnConnection(opened, storeName, key),
   );
 }
@@ -316,7 +360,7 @@ function removeDatabaseValuesInRange(
   storeName: string,
   range: IDBKeyRange,
 ) {
-  return Effect.flatMap(database, (opened) =>
+  return withDatabase(database, (opened) =>
     removeDatabaseValuesInRangeOnConnection(opened, storeName, range),
   );
 }
@@ -558,11 +602,10 @@ export function makeBrowserGitHubRoutingPermissions(
 
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
-    const databaseHandle = yield* Effect.acquireRelease(
+    const { handle: database } = yield* Effect.acquireRelease(
       makeDatabaseHandle(),
-      (handle) => handle.close,
+      (owned) => owned.close,
     );
-    const database = databaseHandle.get;
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
