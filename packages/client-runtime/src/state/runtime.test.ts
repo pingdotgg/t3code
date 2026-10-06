@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -81,6 +81,10 @@ function queryConnectionState(
 
 const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness")(function* <A, E>(
   execute: Effect.Effect<A, E>,
+  {
+    refreshTrigger,
+    idleTtlMs,
+  }: { readonly refreshTrigger?: Atom.Atom<unknown>; readonly idleTtlMs?: number } = {},
 ) {
   const supervisorState = yield* SubscriptionRef.make(queryConnectionState());
   const supervisorSession = yield* SubscriptionRef.make(Option.some(QUERY_RPC_SESSION));
@@ -111,6 +115,8 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     label: "test.environment-query",
     staleTimeMs: 60_000,
     execute: () => execute,
+    ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
+    ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
   });
 
   return {
@@ -119,6 +125,18 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     supervisorState,
   };
 });
+
+/**
+ * Reads a query's settled value without leaving it mounted. `getResult` resumes from inside the
+ * query's listener, so it only unsubscribes once the reader yields.
+ */
+const readEnvironmentQuery = <A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) =>
+  AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }).pipe(
+    Effect.tap(() => Effect.yieldNow),
+  );
 
 const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
@@ -545,6 +563,92 @@ describe("environment query lifecycle", () => {
             suspendOnWaiting: true,
           }),
         ).toBe("updated");
+      }),
+    ),
+  );
+
+  it.effect("refreshes on its trigger while read, and once on its next read when idle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (executions += 1)),
+          { refreshTrigger: trigger },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe(1);
+        registry.set(trigger, 1);
+        expect(yield* read).toBe(2);
+
+        // Unmounted, the query stays alive on its idle TTL, but nothing reads it.
+        unmount();
+        registry.set(trigger, 2);
+        registry.set(trigger, 3);
+        expect(executions).toBe(2);
+
+        expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("keeps an idle query when its trigger recomputes to the same value", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        const settings = Atom.make({ theme: "dark" }).pipe(Atom.keepAlive);
+        const trigger = Atom.make((get) => JSON.stringify([get(settings) !== null]));
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (executions += 1)),
+          { refreshTrigger: trigger },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe(1);
+        unmount();
+        registry.set(settings, { theme: "light" });
+        expect(yield* read).toBe(1);
+        expect(executions).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect("refreshes an idle query the registry swept and rebuilt after its trigger moved", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Only the registry's idle-TTL sweeps run on these; effects keep their own scheduler.
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (executions += 1)),
+          { refreshTrigger: trigger, idleTtlMs: 1_000 },
+        );
+        const registry = AtomRegistry.make({ timeoutResolution: 100 });
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe(1);
+        unmount();
+        // Lets the registry start the query node's idle TTL.
+        yield* Effect.yieldNow;
+        vi.advanceTimersByTime(500);
+        registry.set(trigger, 1);
+        yield* Effect.yieldNow;
+        // Sweeps the query node but not the data it read, whose idle TTL started with the trigger.
+        vi.advanceTimersByTime(700);
+        expect(executions).toBe(1);
+
+        expect(yield* read).toBe(2);
       }),
     ),
   );
