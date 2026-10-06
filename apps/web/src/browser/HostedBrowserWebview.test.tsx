@@ -174,7 +174,7 @@ describe("HostedBrowserWebview settings hydration", () => {
       await retry;
     });
 
-    expect(acquire).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
+    expect(acquire).toHaveBeenCalledExactlyOnceWith(runtimeTabId, undefined);
     expect(mocks.getPreviewConfig).toHaveBeenCalledExactlyOnceWith(threadRef.environmentId, "work");
     expect(createGuest).toHaveBeenCalledOnce();
     expect(createGuest).toHaveBeenCalledWith(

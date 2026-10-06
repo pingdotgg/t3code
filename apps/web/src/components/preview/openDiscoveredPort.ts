@@ -9,13 +9,18 @@ import type { BrowserSettingsReadError, OpenPreviewMutation } from "~/browser/op
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { openPreviewSession } from "./openPreviewSession";
+import { previewRuntimeFor } from "~/browser/previewRuntime";
 
 export async function openDiscoveredPort<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly port: DiscoveredLocalServer;
   readonly openPreview: OpenPreviewMutation<E>;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
-  const resolvedUrl = resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
+  // A server tab runs on the environment, where loopback is already right.
+  const resolvedUrl =
+    previewRuntimeFor(input.threadRef.environmentId) === "server"
+      ? input.port.url
+      : resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,

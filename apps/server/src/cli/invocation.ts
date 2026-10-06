@@ -145,3 +145,29 @@ export const resolveCliCommand = (subcommand: string) =>
       version: packageJson.version,
     }),
   );
+
+/**
+ * `t3 <subcommand>` as root, for setup a person runs once on the host. `sudo`
+ * resets PATH on most distributions, which drops a user-installed Node (nvm,
+ * fnm, a tarball) and with it `npx` or a global `t3`, so the command carries
+ * PATH through unless Node is on root's PATH too.
+ */
+export const resolveRootCliCommand = (subcommand: string) =>
+  Effect.gen(function* () {
+    const command = yield* resolveCliCommand(subcommand);
+    const executablePath = yield* HostProcessExecutablePath;
+    const systemNode = ROOT_PATH_DIRECTORIES.some((directory) =>
+      executablePath.startsWith(`${directory}/`),
+    );
+    return systemNode ? `sudo ${command}` : `sudo env "PATH=$PATH" ${command}`;
+  });
+
+/** Debian and Ubuntu's sudo `secure_path`, minus snap. */
+const ROOT_PATH_DIRECTORIES = [
+  "/usr/local/sbin",
+  "/usr/local/bin",
+  "/usr/sbin",
+  "/usr/bin",
+  "/sbin",
+  "/bin",
+];

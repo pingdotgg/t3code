@@ -13,6 +13,7 @@ import {
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
+  type PreviewAutomationSelectResult,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
@@ -188,6 +189,7 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 });
 
 const handlers = {
+  preview_dialog: (input) => invokeTargeted<PreviewAutomationStatus>("dialog", input),
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
@@ -204,6 +206,11 @@ const handlers = {
   },
   preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
   preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
+  preview_hover: (input) => invokeTargeted<object>("hover", input, input.timeoutMs),
+  preview_select: (input) =>
+    invokeTargeted<PreviewAutomationSelectResult>("select", input, input.timeoutMs),
+  preview_drag: (input) => invokeTargeted<object>("drag", input, input.timeoutMs),
+  preview_upload: (input) => invokeTargeted<object>("upload", input, input.timeoutMs),
   preview_press: (input) => invokeTargeted<object>("press", input),
   preview_scroll: (input) => invokeTargeted<object>("scroll", input),
   preview_evaluate: ({ tabId, ...input }) =>

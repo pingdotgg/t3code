@@ -52,13 +52,6 @@ describe("requestLatencyState", () => {
     expect(getSlowRpcAckRequests()).toEqual([]);
   });
 
-  it("ignores the long-lived preview automation connection", () => {
-    trackRpcRequestSent("1", WS_METHODS.previewAutomationConnect);
-    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
-
-    expect(getSlowRpcAckRequests()).toEqual([]);
-  });
-
   it("ignores usage summary requests", () => {
     trackRpcRequestSent("1", WS_METHODS.serverGetUsageSummary);
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
@@ -79,8 +72,8 @@ describe("requestLatencyState", () => {
   it("keeps ignoring untracked methods when a display tag is supplied", () => {
     trackRpcRequestSent(
       "1",
-      WS_METHODS.previewAutomationConnect,
-      `${WS_METHODS.previewAutomationConnect} · env-1`,
+      WS_METHODS.serverGetUsageSummary,
+      `${WS_METHODS.serverGetUsageSummary} · env-1`,
     );
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
 

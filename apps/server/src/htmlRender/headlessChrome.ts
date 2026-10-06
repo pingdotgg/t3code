@@ -14,24 +14,19 @@ import { publicProxy } from "./publicProxy.ts";
 
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
   "HtmlRenderBrowserError",
-  { reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    /** The end of the browser's stderr when it exited, for diagnosing host setup. */
+    output: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
     return `Headless Chrome could not render the page: ${this.reason}.`;
   }
 }
 
-/** The browser died at startup because this host cannot give it a sandbox. */
-export class HtmlRenderSandboxUnavailableError extends Schema.TaggedError<HtmlRenderSandboxUnavailableError>()(
-  "HtmlRenderSandboxUnavailableError",
-  {},
-) {
-  override get message(): string {
-    return "Chrome's sandbox is unavailable on this host.";
-  }
-}
-
-type BrowserFailure = HtmlRenderBrowserError | HtmlRenderSandboxUnavailableError;
+type BrowserFailure = HtmlRenderBrowserError;
 
 export interface ConsoleMessage {
   readonly level: "log" | "info" | "warning" | "error";
@@ -67,9 +62,6 @@ const textEncoder = new TextEncoder();
  */
 const pageBody = (html: string) =>
   Buffer.from(Buffer.from(html, "utf8").toString("base64"), "latin1");
-// What Chrome prints before aborting when it cannot sandbox itself, e.g. on
-// Ubuntu 23.10+ where AppArmor restricts unprivileged user namespaces.
-const NO_SANDBOX_SIGNATURE = "No usable sandbox";
 
 const CdpMessage = Schema.fromJsonString(
   Schema.Struct({
@@ -239,13 +231,11 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
 
   let stderrTail = "";
-  let sandboxUnavailable = false;
   const stderrReader = yield* child.stderr.pipe(
     Stream.decodeText(),
     Stream.runForEach((text) =>
       Effect.sync(() => {
-        stderrTail = (stderrTail + text).slice(-1_024);
-        if (stderrTail.includes(NO_SANDBOX_SIGNATURE)) sandboxUnavailable = true;
+        stderrTail = (stderrTail + text).slice(-2_048);
       }),
     ),
     Effect.ignore,
@@ -340,13 +330,14 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     return Effect.void;
   };
 
-  // The pipe closes when the browser exits. A sandbox abort says why on
-  // stderr, which may still be draining, so give it a moment.
+  // The pipe closes when the browser exits. A startup abort, such as a missing
+  // sandbox, says why on stderr, which may still be draining, so give it a moment.
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
-    const error = sandboxUnavailable
-      ? new HtmlRenderSandboxUnavailableError()
-      : new HtmlRenderBrowserError({ reason: "the browser exited unexpectedly" });
+    const error = new HtmlRenderBrowserError({
+      reason: "the browser exited unexpectedly",
+      output: stderrTail,
+    });
     disconnected = error;
     const waiters = [...pending.values()];
     pending.clear();
@@ -396,8 +387,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return yield* Deferred.await(reply).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(result)),
         Effect.mapError((error) =>
-          error._tag === "HtmlRenderBrowserError" ||
-          error._tag === "HtmlRenderSandboxUnavailableError"
+          error._tag === "HtmlRenderBrowserError"
             ? error
             : new HtmlRenderBrowserError({
                 reason: `${method} returned an unexpected result`,

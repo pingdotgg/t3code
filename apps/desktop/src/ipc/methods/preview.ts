@@ -1,13 +1,6 @@
 import {
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
-  DesktopPreviewAutomationClickInputSchema,
-  DesktopPreviewAutomationEvaluateInputSchema,
-  DesktopPreviewAutomationPressInputSchema,
-  DesktopPreviewAutomationScrollInputSchema,
-  DesktopPreviewAutomationStatusSchema,
-  DesktopPreviewAutomationTypeInputSchema,
-  DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
@@ -16,6 +9,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
   BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
@@ -24,7 +18,6 @@ import {
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
-  PreviewAutomationSnapshot,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
 } from "@t3tools/contracts";
@@ -68,9 +61,10 @@ export const createTab = DesktopIpc.makeIpcMethod({
     tabId,
     zoomFactor,
     colorScheme,
+    serverTab,
   }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId, { zoomFactor, colorScheme });
+    yield* manager.createTab(tabId, { zoomFactor, colorScheme, serverTab });
   }),
 });
 
@@ -157,6 +151,15 @@ export const hardReload = tabMethod(
   "desktop.ipc.preview.hardReload",
   (manager, tabId) => manager.hardReload(tabId),
 );
+export const setZoomFactor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ZOOM_FACTOR_CHANNEL,
+  payload: DesktopPreviewSetZoomFactorInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setZoomFactor")(function* ({ tabId, zoomFactor }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setZoomFactor(tabId, zoomFactor);
+  }),
+});
 export const setColorScheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
   payload: DesktopPreviewSetColorSchemeInputSchema,
@@ -392,86 +395,6 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const automationStatus = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
-  result: DesktopPreviewAutomationStatusSchema,
-  handler: Effect.fn("desktop.ipc.preview.automationStatus")(function* ({ tabId }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationStatus(tabId);
-  }),
-});
-
-export const automationSnapshot = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
-  result: PreviewAutomationSnapshot,
-  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({ tabId }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationSnapshot(tabId);
-  }),
-});
-
-export const automationClick = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
-  payload: DesktopPreviewAutomationClickInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationClick")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationClick(tabId, input);
-  }),
-});
-
-export const automationType = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL,
-  payload: DesktopPreviewAutomationTypeInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationType")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationType(tabId, input);
-  }),
-});
-
-export const automationPress = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL,
-  payload: DesktopPreviewAutomationPressInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationPress")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationPress(tabId, input);
-  }),
-});
-
-export const automationScroll = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL,
-  payload: DesktopPreviewAutomationScrollInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationScroll")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationScroll(tabId, input);
-  }),
-});
-
-export const automationEvaluate = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL,
-  payload: DesktopPreviewAutomationEvaluateInputSchema,
-  result: Schema.Unknown,
-  handler: Effect.fn("desktop.ipc.preview.automationEvaluate")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationEvaluate(tabId, input);
-  }),
-});
-
-export const automationWaitFor = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL,
-  payload: DesktopPreviewAutomationWaitForInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationWaitFor")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationWaitFor(tabId, input);
-  }),
-});
-
 export const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
@@ -495,6 +418,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setZoomFactor,
   setAudioMuted,
   openDevTools,
   clearCookies,
@@ -508,14 +432,6 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
-  automationStatus,
-  automationSnapshot,
-  automationClick,
-  automationType,
-  automationPress,
-  automationScroll,
-  automationEvaluate,
-  automationWaitFor,
   startRecording,
   stopRecording,
   saveRecording,

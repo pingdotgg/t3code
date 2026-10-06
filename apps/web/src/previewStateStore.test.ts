@@ -466,6 +466,19 @@ describe("previewStateStore (single-tab)", () => {
     reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 0 });
 
     expect(readThreadPreviewState(ref).sessions).toEqual({ [snapshot.tabId]: snapshot });
+    expect(readThreadPreviewState(ref).listLoaded).toBe(false);
+
+    const olderTab = makeSnapshot({ tabId: "tab_before_event" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [olderTab, snapshot],
+      serverEpoch,
+      revision: 2,
+    });
+    expect(readThreadPreviewState(ref).listLoaded).toBe(true);
+    expect(readThreadPreviewState(ref).sessions).toEqual({
+      [olderTab.tabId]: olderTab,
+      [snapshot.tabId]: snapshot,
+    });
   });
 
   it("does not resurrect a tab from an event older than its close", () => {

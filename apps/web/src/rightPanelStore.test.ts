@@ -1049,6 +1049,32 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("does not replace a stale surface with a hidden tab, but preserves explicit opens", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "stale-tab");
+    store.reconcileBrowserSurfaces(refA, ["hidden-tab"], new Set(["hidden-tab"]));
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+
+    store.openBrowser(refA, "hidden-tab");
+    store.reconcileBrowserSurfaces(
+      refA,
+      ["hidden-tab", "other-tab"],
+      new Set(["hidden-tab", "other-tab"]),
+    );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "browser:hidden-tab",
+      surfaces: [{ id: "browser:hidden-tab", kind: "preview", resourceId: "hidden-tab" }],
+    });
+  });
+
   it("reconciles browser surfaces without deleting other surface kinds", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().openBrowser(refA, "tab-a");

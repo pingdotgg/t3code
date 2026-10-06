@@ -24,7 +24,7 @@ import * as NodeURL from "node:url";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "./HtmlRender.ts";
-import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 
 // Real-browser tests run only when this names a chrome-headless-shell, for
 // example one T3 installed under <T3 home>/tools/chrome-headless-shell.

@@ -44,6 +44,13 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
       if (!AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
+      if (!result.waiting && !readThreadPreviewState(threadRef).listLoaded) {
+        // An event overtook the first list. Retry the authoritative baseline;
+        // do not declare a partial event-only index ready for surface cleanup.
+        queueMicrotask(() => {
+          if (!disposed) get.refresh(sessionsAtom);
+        });
+      }
     };
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
@@ -67,6 +74,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       eventsVersion += 1;
       applyLatestEvent(result);
     });
+    get.mount(sessionsAtom);
+    get.mount(eventsAtom);
     queueMicrotask(() => {
       if (disposed) return;
       // The cached list can predate an automation-created tab. Keep the local

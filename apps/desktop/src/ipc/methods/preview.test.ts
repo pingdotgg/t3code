@@ -128,32 +128,6 @@ describe("preview IPC methods", () => {
     ),
   );
 
-  effectIt.effect("returns automation status for long runtime tab ids", () =>
-    Effect.gen(function* () {
-      const tabId =
-        `["environment-1","thread:delegated-task:${"a".repeat(120)}",` +
-        `"server-epoch-1","preview-1"]`;
-      const status = {
-        available: false,
-        visible: true,
-        tabId,
-        url: null,
-        title: null,
-        loading: false,
-      };
-      const manager = PreviewManager.PreviewManager.of({
-        automationStatus: () => Effect.succeed(status),
-      } as unknown as PreviewManager.PreviewManager["Service"]);
-
-      expect(tabId.length).toBeGreaterThan(128);
-      expect(
-        yield* PreviewIpc.automationStatus
-          .handler({ tabId })
-          .pipe(Effect.provideService(PreviewManager.PreviewManager, manager)),
-      ).toEqual(status);
-    }),
-  );
-
   it("keeps the public automation status tab id limit", () => {
     const encode = Schema.encodeUnknownSync(PreviewAutomationStatus);
     const tabId = "t".repeat(129);
