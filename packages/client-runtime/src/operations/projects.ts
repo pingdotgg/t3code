@@ -9,7 +9,7 @@ import type {
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { isWindowsAbsolutePath, newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -23,6 +23,7 @@ import {
   isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
+  isWindowsPlatform,
   normalizeProjectPathForComparison,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
@@ -376,7 +377,11 @@ export function resolveNewProjectParentDirectory(input: {
   if (
     isExplicitRelativeProjectPath(resolved.path) ||
     !isFilesystemBrowseQuery(resolved.path, input.platform) ||
-    /^[a-z]:$/i.test(resolved.path)
+    /^[a-z]:$/i.test(resolved.path) ||
+    (isWindowsPlatform(input.platform) &&
+      !resolved.path.startsWith("~/") &&
+      !resolved.path.startsWith("~\\") &&
+      !isWindowsAbsolutePath(resolved.path))
   ) {
     return { ok: false, error: "Choose an absolute or home-relative parent folder." };
   }

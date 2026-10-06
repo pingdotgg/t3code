@@ -2541,22 +2541,23 @@ function OpenCommandPaletteDialog(props: {
   const supportsNewProjectFolder =
     browseEnvironment?.serverConfig?.newProjectParentDirectory === true &&
     browseEnvironment.serverConfig.environment.platform.os !== "unknown";
-  const newProjectParentInput =
-    newProjectFlow?.parentDirectory ??
-    (supportsNewProjectFolder
-      ? browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory.trim() || newProjectsRoot
-      : newProjectsRoot);
+  const newProjectParentInput = supportsNewProjectFolder
+    ? (newProjectFlow?.parentDirectory ??
+      (browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory.trim() || newProjectsRoot))
+    : newProjectsRoot;
   const resolvedNewProjectParent =
-    newProjectParentInput === null
+    !supportsNewProjectFolder || newProjectParentInput === null
       ? null
       : resolveNewProjectParentDirectory({
           rawPath: newProjectParentInput,
           currentProjectCwd: currentProjectCwdForBrowse,
           platform: browseEnvironmentPlatform,
         });
-  const newProjectParentDirectory = resolvedNewProjectParent?.ok
-    ? resolvedNewProjectParent.path
-    : null;
+  const newProjectParentDirectory = supportsNewProjectFolder
+    ? resolvedNewProjectParent?.ok
+      ? resolvedNewProjectParent.path
+      : null
+    : newProjectParentInput;
   const canSubmitNewProject =
     newProjectFlow !== null &&
     !isChoosingNewProjectFolder &&

@@ -1019,14 +1019,19 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
         })
       : null,
   );
-  const resolvedParent = environment
-    ? resolveNewProjectParentDirectory({
-        rawPath: pathInput,
-        currentProjectCwd,
-        platform: environment.platform,
-      })
-    : null;
-  const parentDirectory = resolvedParent?.ok ? resolvedParent.path : null;
+  const resolvedParent =
+    environment && supportsNewProjectFolder
+      ? resolveNewProjectParentDirectory({
+          rawPath: pathInput,
+          currentProjectCwd,
+          platform: environment.platform,
+        })
+      : null;
+  const parentDirectory = supportsNewProjectFolder
+    ? resolvedParent?.ok
+      ? resolvedParent.path
+      : null
+    : (environment?.newProjectsRoot ?? null);
   const isDefaultFolder = isDefaultCloneParentDirectory({
     parentDirectory,
     baseDirectory: environment?.baseDirectory?.trim() || environment?.newProjectsRoot,
@@ -1118,7 +1123,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       isChoosingFolder
     )
       return;
-    if (!resolvedParent?.ok) {
+    if (supportsNewProjectFolder && !resolvedParent?.ok) {
       setError(resolvedParent?.error ?? "Choose a parent folder.");
       return;
     }
@@ -1130,7 +1135,9 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
         environmentId: environment.environmentId,
         input: {
           name: trimmedName,
-          ...(supportsNewProjectFolder ? { parentDirectory: resolvedParent.path } : {}),
+          ...(supportsNewProjectFolder && resolvedParent?.ok
+            ? { parentDirectory: resolvedParent.path }
+            : {}),
         },
       });
       if (AsyncResult.isFailure(result)) {
@@ -1221,7 +1228,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                     />
                   }
                   isFirst
-                  disabled={isSubmitting || isSavingFolder}
+                  disabled={isSubmitting || isSavingFolder || isBrowseNavigating}
                   onPress={() => setIsChoosingFolder((choosing) => !choosing)}
                   right={<Text className="text-sm text-foreground-muted">Change folder</Text>}
                 />
@@ -1236,7 +1243,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                     onChangeText={setPathInput}
                     placeholder="~/Code"
                     onSubmit={() => {
-                      if (resolvedParent?.ok) setIsChoosingFolder(false);
+                      if (resolvedParent?.ok && !isBrowseNavigating) setIsChoosingFolder(false);
                     }}
                   />
                   <FolderBrowser

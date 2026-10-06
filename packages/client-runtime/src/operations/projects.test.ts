@@ -45,6 +45,25 @@ describe("add project shared logic", () => {
     expect(
       resolveNewProjectParentDirectory({ rawPath: "C:\\Coding Stuff", platform: "Win32" }),
     ).toEqual({ ok: true, path: "C:\\Coding Stuff" });
+    expect(resolveNewProjectParentDirectory({ rawPath: "C:/Code", platform: "Win32" })).toEqual({
+      ok: true,
+      path: "C:/Code",
+    });
+    expect(resolveNewProjectParentDirectory({ rawPath: "~/Code", platform: "Win32" })).toEqual({
+      ok: true,
+      path: "~/Code",
+    });
+    expect(resolveNewProjectParentDirectory({ rawPath: "~\\Code", platform: "Win32" })).toEqual({
+      ok: true,
+      path: "~\\Code",
+    });
+    expect(
+      resolveNewProjectParentDirectory({
+        rawPath: "../Code",
+        currentProjectCwd: "C:\\work\\app",
+        platform: "Win32",
+      }),
+    ).toEqual({ ok: true, path: "C:\\work\\Code" });
     expect(
       resolveNewProjectParentDirectory({ rawPath: "\\\\server\\share\\Code", platform: "Win32" })
         .ok,
@@ -57,6 +76,25 @@ describe("add project shared logic", () => {
     for (const rawPath of ["C:", "C:Code", "\\Code"]) {
       expect(resolveNewProjectParentDirectory({ rawPath, platform: "Win32" }).ok).toBe(false);
     }
+  });
+  it("rejects Windows new-project parents without a drive or network share", () => {
+    for (const rawPath of ["/Code", "/", "//server/share/Code"]) {
+      expect(resolveNewProjectParentDirectory({ rawPath, platform: "Win32" })).toEqual({
+        ok: false,
+        error: "Choose an absolute or home-relative parent folder.",
+      });
+    }
+    expect(
+      resolveNewProjectParentDirectory({
+        rawPath: "../Code",
+        currentProjectCwd: "/work/app",
+        platform: "Win32",
+      }).ok,
+    ).toBe(false);
+    expect(resolveNewProjectParentDirectory({ rawPath: "/Code", platform: "Linux" })).toEqual({
+      ok: true,
+      path: "/Code",
+    });
   });
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
