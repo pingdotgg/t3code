@@ -586,6 +586,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.1
         version: 4.0.1(patch_hash=359f6fb2f7b3ec145bb72208edb9034f02489791aa2491a55cdbd69bd56ee0d2)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.6.5)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
