@@ -245,6 +245,38 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
+  // ChatGPT.app ships its own Codex CLI and updates it with the app; the
+  // bundled `codex update` exits with "Could not detect the Codex installation
+  // method", so an app-owned executable must stay manual-only.
+  it.effect("stays manual-only for an executable inside a macOS app bundle", () =>
+    Effect.gen(function* () {
+      const bundledPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("codex"),
+          npmPackageName: "@openai/codex",
+          nativeUpdate: {
+            args: ["update"],
+            isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+          },
+        },
+        {
+          binaryPath: bundledPath,
+          resolvedCommandPath: bundledPath,
+          realCommandPath: bundledPath,
+          env: {},
+          platform: "darwin",
+        },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities).toEqual({
+        provider: driver("codex"),
+        packageName: "@openai/codex",
+        update: null,
+      });
+    }),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "pins npm updates to the global prefix that owns the package",
     () =>

@@ -261,6 +261,11 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
+/** A provider executable shipped inside a macOS app bundle (`Foo.app/Contents/…`). */
+function isMacAppBundleCommandPath(commandPath: string): boolean {
+  return normalizeCommandPath(commandPath).includes(".app/contents/");
+}
+
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -414,6 +419,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+
+  // A macOS app bundle ships and updates its own executables, and a bundled
+  // provider updater cannot detect that installation (ChatGPT.app's `codex
+  // update` refuses to run), so an app-owned executable stays manual-only.
+  if (commandPaths.some(isMacAppBundleCommandPath)) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
