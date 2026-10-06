@@ -87,7 +87,10 @@ function AccountAvatar({
         accentColor={account.accentColor}
         icon={account.icon}
         badgeLabel={account.badgeLabel}
-        showBadge={Boolean(account.displayName) && account.icon !== PROVIDER_INSTANCE_INITIALS_ICON}
+        showBadge={
+          Boolean(account.displayName || account.badgeLabel) &&
+          account.icon !== PROVIDER_INSTANCE_INITIALS_ICON
+        }
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"
