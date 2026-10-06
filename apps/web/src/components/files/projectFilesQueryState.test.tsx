@@ -5,7 +5,7 @@ import {
   type ProjectReadFileResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const projectMocks = vi.hoisted(() => ({

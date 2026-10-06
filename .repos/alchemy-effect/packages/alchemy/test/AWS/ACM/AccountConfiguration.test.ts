@@ -80,5 +80,5 @@ test.provider(
       yield* stack.destroy();
       expect(yield* getDays).toBe(45);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:acm", "live"], timeout: 120_000 },
 );

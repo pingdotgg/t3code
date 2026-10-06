@@ -254,7 +254,7 @@ test.provider(
 
       expect(found).toBe(true);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:route53", "live"], timeout: 240_000 },
 );
 
 const inferredRecordName = `inferred-record.${zoneName}`;
@@ -318,7 +318,7 @@ test.provider(
         );
       expect(gone).toBe(true);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:route53", "live"], timeout: 240_000 },
 );
 
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
@@ -458,5 +458,5 @@ test.provider(
       // Route53-clean.
       Effect.ensuring(teardownZone),
     ),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:route53", "live"], timeout: 240_000 },
 );

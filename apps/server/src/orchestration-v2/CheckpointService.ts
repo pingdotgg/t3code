@@ -13,11 +13,10 @@ import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -164,7 +163,7 @@ export function checkpointRefForScopeOrdinal(input: {
 }): CheckpointRef {
   const scopeKey = NodeCrypto.createHash("sha256").update(input.scopeId).digest("hex").slice(0, 32);
   return CheckpointRef.make(
-    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
+    `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
   );
 }
 
@@ -249,29 +248,9 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const workspaceSemaphores = yield* Ref.make(new Map<string, Semaphore.Semaphore>());
-
-    const getWorkspaceSemaphore = (cwd: string) =>
-      Effect.gen(function* () {
-        const existing = (yield* Ref.get(workspaceSemaphores)).get(cwd);
-        if (existing !== undefined) {
-          return existing;
-        }
-
-        const created = yield* Semaphore.make(1);
-        return yield* Ref.modify(workspaceSemaphores, (current) => {
-          const concurrent = current.get(cwd);
-          if (concurrent !== undefined) {
-            return [concurrent, current];
-          }
-          const updated = new Map(current);
-          updated.set(cwd, created);
-          return [created, updated];
-        });
-      });
-
+    const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getWorkspaceSemaphore(cwd), (semaphore) => semaphore.withPermits(1)(effect));
+      workspaceLocks.withLock(cwd, effect);
 
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));

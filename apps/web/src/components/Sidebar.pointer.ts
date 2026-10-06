@@ -137,7 +137,8 @@ export class SidebarPointerSensor {
     // Cancellation can precede release by an arbitrary amount of time. Consume
     // that release click, or let a fresh pointerdown end suppression if release
     // happened outside the document. Ordinary clicks never install this guard.
-    if (!aborted) {
+    if (!aborted || cancelled) {
+      this.document.addEventListener("click", this.suppressClick, { capture: true });
       this.document.addEventListener("pointerdown", this.clearClickSuppression, { capture: true });
     }
     try {

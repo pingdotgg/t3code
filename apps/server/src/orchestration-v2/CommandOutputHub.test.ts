@@ -24,24 +24,24 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-const TestDatabaseLayer = SqlitePersistenceMemory;
-const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(TestDatabaseLayer),
+const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provide(layerTestDatabase),
 );
-const TestEventSinkLayer = EventSink.layer.pipe(
-  Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
+const layerTestEventSink = EventSink.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
-const TestLayer = Layer.mergeAll(
-  TestEventSinkLayer,
+const layerTest = Layer.mergeAll(
+  layerTestEventSink,
   IdAllocator.layer,
-  CommandOutputHub.layer.pipe(Layer.provide(Layer.merge(TestEventSinkLayer, TestStoresLayer))),
+  CommandOutputHub.layer.pipe(Layer.provide(Layer.merge(layerTestEventSink, layerTestStores))),
 );
 
 const modelSelection = {
@@ -171,7 +171,7 @@ const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ende
     ),
   );
 
-const layer = it.layer(TestLayer);
+const layer = it.layer(layerTest);
 
 layer("CommandOutputHub", (it) => {
   it.effect(

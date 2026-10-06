@@ -7,7 +7,7 @@ import { expect, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 
 /**
  * The side-effect-free Cloudflare barrel exposes Flagship through a nested
@@ -99,5 +99,6 @@ layer(NodeServices.layer)("Bundle namespace initialization", (it) => {
           yield* fs.remove(root, { recursive: true }).pipe(Effect.ignore);
         }
       }),
+    { tags: ["unit", "provider:aws", "provider:aws:lambda", "local"] },
   );
 });

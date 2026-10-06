@@ -3,9 +3,13 @@ import {
   PullRequestRef,
   PullRequestInvalidateInput,
   type EnvironmentId,
+  type PullRequestRoutingResult,
+  type PullRequestRoutingIdentityResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -18,6 +22,7 @@ import {
 } from "../connection/githubRoutingPermissions.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import {
   request,
   EnvironmentRpcUnavailableError,
@@ -77,6 +82,44 @@ const isUnregistered = Schema.is(EnvironmentRegistry.EnvironmentNotRegisteredErr
 const encodeKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String))),
 );
+type PendingMetadata<A> = WeakMap<RpcSession, Map<string, Deferred.Deferred<Exit.Exit<A>>>>;
+const pendingRouting: PendingMetadata<PullRequestRoutingResult | null> = new WeakMap();
+const pendingIdentities: PendingMetadata<PullRequestRoutingIdentityResult | null> = new WeakMap();
+
+/** Share only active read probes. Completed probes and mutations always read the current account. */
+function shareMetadataRead<A, R>(
+  pending: PendingMetadata<A>,
+  key: string,
+  probe: Effect.Effect<A, never, R>,
+): Effect.Effect<A, never, R | EnvironmentSupervisor.EnvironmentSupervisor> {
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const session = yield* SubscriptionRef.get(supervisor.session);
+      if (Option.isNone(session)) return yield* restore(probe);
+      const entries =
+        pending.get(session.value) ?? new Map<string, Deferred.Deferred<Exit.Exit<A>>>();
+      pending.set(session.value, entries);
+      const existing = entries.get(key);
+      if (existing !== undefined) {
+        const result = yield* restore(Deferred.await(existing));
+        // A cancelled first reader must not cancel the other readers waiting on its probe.
+        return yield* restore(
+          Exit.hasInterrupts(result) ? shareMetadataRead(pending, key, probe) : result,
+        );
+      }
+      const result = Deferred.makeUnsafe<Exit.Exit<A>>();
+      entries.set(key, result);
+      return yield* restore(probe).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => entries.delete(key)).pipe(
+            Effect.andThen(Deferred.succeed(result, exit)),
+          ),
+        ),
+      );
+    }),
+  );
+}
 
 function isLocal(entry: ConnectionCatalogEntry): boolean {
   const url =
@@ -276,12 +319,19 @@ export function createPullRequestRouter() {
     }
     if (alternatives.length === 0) return yield* finish(source);
 
-    const identity = yield* request(WS_METHODS.pullRequestsRouting, ref).pipe(
+    const identityProbe = request(WS_METHODS.pullRequestsRouting, ref).pipe(
       Effect.timeout("2 seconds"),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
       ),
     );
+    const identity = yield* reads.has(tag)
+      ? shareMetadataRead(
+          pendingRouting,
+          encodeKey([ref.projectId, ref.host?.toLowerCase() ?? null, ref.repository.toLowerCase()]),
+          identityProbe,
+        )
+      : identityProbe;
     // Old servers and unknown accounts retain the existing path.
     if (identity === null || identity.provider !== "github") return yield* finish(source);
 
@@ -338,8 +388,21 @@ export function createPullRequestRouter() {
           if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
             return yield* visit(index + 1);
           // An older server would discard expectedAccountId. Verify it implements the guard first.
+          const alternateProbe = request(WS_METHODS.pullRequestsRoutingIdentity, {
+            host: identity.host,
+          }).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
+            ),
+          );
           const alternate = yield* registry
-            .run(id, request(WS_METHODS.pullRequestsRoutingIdentity, { host: identity.host }))
+            .run(
+              id,
+              reads.has(tag)
+                ? shareMetadataRead(pendingIdentities, identity.host.toLowerCase(), alternateProbe)
+                : alternateProbe,
+            )
             .pipe(
               Effect.timeout("2 seconds"),
               Effect.catchCause((cause) =>

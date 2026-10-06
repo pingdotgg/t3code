@@ -5,7 +5,6 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
-import * as NodeCrypto from "node:crypto";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
@@ -49,6 +48,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -58,6 +58,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -66,6 +67,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
@@ -638,8 +640,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   pictureInPicturePreloadPath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const hostPlatform = yield* HostProcessPlatform;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
@@ -1332,6 +1336,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const semaphore = yield* Semaphore.make(1);
           const scope = yield* Scope.fork(parentScope, "sequential");
           const wcDebugger = wc.debugger;
+          const consoleReleases = yield* Queue.sliding<void>(1);
+          // Console message eviction does not release the debugger's strong
+          // object handles. We keep text only, so release the whole group,
+          // including its object-id bookkeeping. Coalesce bursts behind one
+          // command rather than queueing a command for every logged object.
+          yield* Effect.forkIn(
+            Effect.forever(
+              Queue.take(consoleReleases).pipe(
+                Effect.andThen(
+                  attemptPromise({ operation: "releaseConsoleObjects", webContentsId: wc.id }, () =>
+                    wcDebugger.sendCommand("Runtime.releaseObjectGroup", {
+                      objectGroup: "console",
+                    }),
+                  ).pipe(Effect.ignore),
+                ),
+              ),
+            ),
+            scope,
+          );
           const handleDebuggerMessage = Effect.fnUntraced(function* (
             method: string,
             params: Record<string, unknown>,
@@ -1378,6 +1401,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }
             }
             yield* captureDiagnosticMessage(wc.id, method, params);
+            if (method === "Runtime.consoleAPICalled" || method === "Runtime.exceptionThrown") {
+              yield* Queue.offer(consoleReleases, undefined);
+            }
           });
           const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
             runFork(handleDebuggerMessage(method, params));
@@ -1540,10 +1566,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           yield* checkControl;
           const result = yield* attemptPromise(
             { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
-            () =>
-              sessionId === undefined
-                ? control.debugger.sendCommand(method, commandParams)
-                : control.debugger.sendCommand(method, commandParams, sessionId),
+            async () => {
+              try {
+                return await (sessionId === undefined
+                  ? control.debugger.sendCommand(method, commandParams)
+                  : control.debugger.sendCommand(method, commandParams, sessionId));
+              } finally {
+                const objectGroup =
+                  method === "Runtime.evaluate" ? commandParams?.["objectGroup"] : undefined;
+                // Cancelling an Effect does not cancel the CDP promise. Release
+                // after it settles, even if the caller has already left, so a
+                // late result cannot recreate handles after an early cleanup.
+                if (typeof objectGroup === "string" && objectGroup.startsWith("t3-evaluation-")) {
+                  const params = { objectGroup };
+                  await (
+                    sessionId === undefined
+                      ? control.debugger.sendCommand("Runtime.releaseObjectGroup", params)
+                      : control.debugger.sendCommand(
+                          "Runtime.releaseObjectGroup",
+                          params,
+                          sessionId,
+                        )
+                  ).catch(() => undefined);
+                }
+              }
+            },
           );
           yield* checkControl;
           return result;
@@ -1611,28 +1658,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     returnByValue: boolean,
     awaitPromise = true,
   ): Effect.Effect<A, PreviewManagerError> =>
-    send("Runtime.evaluate", {
-      expression,
-      awaitPromise,
-      returnByValue,
-      userGesture: true,
-    }).pipe(
-      Effect.flatMap((rawResponse) => {
-        const response = rawResponse as CdpEvaluationResult;
-        if (!response.exceptionDetails) {
-          return Effect.succeed(response.result?.value as A);
-        }
-        const detail = previewAutomationEvaluationDetail(response.exceptionDetails);
-        return Effect.fail(
-          new PreviewAutomationEvaluationError({
-            tabId,
-            detailKind: detail.detailKind,
-            detailLength: detail.detail?.length ?? 0,
-            cause: response.exceptionDetails,
-          }),
-        );
-      }),
-    );
+    Effect.gen(function* () {
+      const objectGroup = `t3-evaluation-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+      return yield* send("Runtime.evaluate", {
+        expression,
+        awaitPromise,
+        returnByValue,
+        userGesture: true,
+        objectGroup,
+      }).pipe(
+        Effect.flatMap((rawResponse) => {
+          const response = rawResponse as CdpEvaluationResult;
+          if (!response.exceptionDetails) {
+            return Effect.succeed(response.result?.value as A);
+          }
+          const detail = previewAutomationEvaluationDetail(response.exceptionDetails);
+          return Effect.fail(
+            new PreviewAutomationEvaluationError({
+              tabId,
+              detailKind: detail.detailKind,
+              detailLength: detail.detail?.length ?? 0,
+              cause: response.exceptionDetails,
+            }),
+          );
+        }),
+      );
+    });
 
   const automationLocator = (input: {
     readonly selector?: string | undefined;
@@ -2281,6 +2332,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
+    yield* rendererHistory.register(wc, { surface: "preview", tabId });
     const attached = yield* Ref.get(attachedRef);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
@@ -2435,6 +2487,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
   ) {
+    yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
     // A guest destroyed before any tab claims it has no other cleanup path.
     wc.once("destroyed", () => {
@@ -3314,6 +3367,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               },
             }),
         );
+        yield* rendererHistory.register(pictureInPictureWindow.webContents, {
+          surface: "picture-in-picture",
+          tabId,
+        });
         const initializationScope = yield* Scope.fork(parentScope, "sequential");
         const ready = yield* Deferred.make<void, PreviewManagerError>();
         const session: PictureInPictureSession = {
@@ -4130,10 +4187,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const context = { operation: "automationPress.awaitNativeKey", tabId, webContentsId: wc.id };
     const evaluate = (frame: Electron.WebFrameMain, expression: string) =>
       attemptPromise(context, () => frame.executeJavaScript(expression));
+    const receiptId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     const { frames, receiptKey } = yield* Effect.acquireRelease(
       attempt(context, () => ({
         frames: wc.mainFrame.framesInSubtree,
-        receiptKey: JSON.stringify(`__t3NativeKey_${NodeCrypto.randomUUID()}`),
+        receiptKey: JSON.stringify(`__t3NativeKey_${receiptId}`),
       })),
       ({ frames, receiptKey }) =>
         Effect.forEach(
@@ -4389,10 +4447,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           keySequence,
           clipboardData,
         );
-        const selectionKey = yield* encodeJson(
-          context,
-          `__t3EditingSelection_${NodeCrypto.randomUUID()}`,
-        );
+        const selectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const selectionKey = yield* encodeJson(context, `__t3EditingSelection_${selectionId}`);
         // Editing requires an active document. Preserve the target
         // and selection across focus handlers without focusing the desktop.
         yield* Effect.acquireUseRelease(

@@ -1,3 +1,39 @@
+effect/Stream#bind:
+  include: true
+  replacement: "Stream.bind"
+  note: "The input must be a record. Start from Stream.Do or use Stream.bindTo(name) to wrap a non-record element. The field name may now re-bind an existing key; the resulting record type is Simplify<Omit<A, N> & Record<N, B>>."
+effect/Stream#bindEffect:
+  include: true
+  replacement: "Stream.bindEffect"
+  note: "The input must be a record. Start from Stream.Do or use Stream.bindTo(name) to wrap a non-record element. Existing keys may be re-bound, with the new value replacing the old field type. The callback still returns an Effect."
+effect/Stream#catchTags:
+  include: true
+  replacement: "Stream.catchTags"
+  note: "Only keys present in the tagged error union are accepted; remove handlers for tags the stream cannot fail with. Untagged errors remain in the error channel."
+effect/Stream#mapBoth:
+  include: true
+  replacement: "Stream.mapBoth"
+  note: "Rename the options onSuccess to onElement and onFailure to onError. The callbacks still transform emitted elements and typed errors respectively."
+effect/Stream#partition:
+  include: true
+  replacement: "Stream.partition"
+  note: "Pass a Result-returning Filter instead of a boolean predicate or refinement; Filter.fromPredicate(predicate) adapts existing predicates. The tuple order is now [passes, fails], the reverse of v3 [excluded, satisfying]. Rename bufferSize to capacity (default 16; also accepts \"unbounded\"). Acquisition is scoped and does not fail with E; the returned streams carry E."
+effect/Stream#scan:
+  include: true
+  replacement: "Stream.scan"
+  note: "Wrap the initial state in a thunk: Stream.scan(() => initial, step). The thunk is evaluated for each stream run; allocate mutable initial state inside it to avoid sharing state between runs."
+effect/Stream#scanEffect:
+  include: true
+  replacement: "Stream.scanEffect"
+  note: "Wrap the initial state in a thunk: Stream.scanEffect(() => initial, step). It is evaluated for each stream run; the step still returns an Effect."
+effect/Stream#runIntoPubSub:
+  include: true
+  replacement: "Stream.runIntoPubSub"
+  note: "Pass a PubSub of plain elements rather than Take wrappers. Both overloads return Effect<void, E, R>, so handle stream failures on the returned Effect instead of expecting them as PubSub messages. The optional shutdownOnEnd flag controls PubSub shutdown."
+effect/Stream#let:
+  include: true
+  replacement: "Stream.let"
+  note: "Retained in v4 and aligned with Effect.let: the field name may re-bind an existing key (the computed value replaces it) and the record type is Simplify<Omit<A, N> & Record<N, B>>."
 effect/Stream#Stream:
   replacement: "Stream"
   note: "The Stream<A, E, R> interface is unchanged in shape and keeps the effect/Stream import path; the type-id key is now the string literal \"~effect/Stream\" instead of a unique symbol."
@@ -29,8 +65,9 @@ effect/Stream#aggregateWithinEither:
   replacement: "Stream.aggregateWithin"
   note: "Either-emitting variant removed; v4 aggregateWithin(sink, schedule) emits only the sink outputs B (schedule outputs are no longer surfaced as Either.right)."
 effect/Stream#as:
-  replacement: "Stream.map(() => value)"
-  note: "Stream.as was removed; replace each element with a constant via Stream.map."
+  include: true
+  replacement: "Stream.as"
+  note: "Retained in v4 with the same signature; replaces every element with the provided constant value."
 effect/Stream#async:
   replacement: "Stream.callback"
   note: "Stream.callback((queue) => Effect | void, { bufferSize?, strategy? }) replaces the Emit-based async; push with Queue.offer/offerAll, end with Queue.end, fail with Queue.fail."
@@ -392,6 +429,7 @@ effect/Stream#toReadableStreamRuntime:
   replacement: "Stream.toReadableStreamWith"
   note: "Renamed; takes a `Context.Context<XR>` instead of a Runtime (v4 removed Runtime); options `{ strategy?: QueuingStrategy }` unchanged."
 effect/Stream#transduce:
+  include: true
   replacement: "Stream.transduce"
   note: "Unchanged name and Sink-based shape; chunks are plain arrays in v4."
 effect/Stream#unfoldChunk:

@@ -1,0 +1,148 @@
+---
+title: Custom domains
+description: Register a Function hostname, configure DNS and CAA, verify HTTPS, and retire the domain safely.
+---
+
+A Neon custom domain maps one hostname to one Function on one branch. Alchemy
+registers that mapping and returns the DNS target; your DNS provider and Neon
+certificate provisioning complete the setup. Start with [Setup](/neon/setup) and
+a Function whose native URL already works.
+
+## Prepare a hostname
+
+Use a domain you control and arrange permission to edit its DNS. Prefer a
+subdomain such as `api.example.com`: a standard CNAME cannot be placed at a zone
+apex without provider-specific flattening. Reserve a different hostname for each
+preview; custom domains are not inherited by child branches.
+
+Confirm whether another application already uses the hostname before changing
+its records. A hostname can belong to only one Function target at a time.
+
+## Register the Function domain
+
+Inside your stack, using an existing `api` Function:
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const domain = yield* Neon.CustomDomain("ApiDomain", {
+  function: api,
+  hostname: "api.example.com",
+});
+```
+
+Return `domain.cnameTarget` in the stack outputs so the DNS operator can copy the
+exact target after deployment. Registration intentionally does not wait for DNS,
+which lets you create the DNS record afterward.
+
+## Use the Website alternative
+
+For a Website, use its `domain` prop instead of declaring a second registration
+for the same hostname:
+
+```typescript
+const site = yield* Neon.Website.Vite("Web", {
+  branch,
+  rootDir: "./web",
+  domain: "app.example.com",
+});
+```
+
+The live Website exposes the registration as `site.domain` and its target as
+`site.domain.cnameTarget`. During native local development there is no domain
+registration; use the local dev URL. A returned custom URL is not proof that DNS
+or HTTPS is ready.
+
+## Publish a DNS-only CNAME
+
+At your DNS provider, configure:
+
+| Field | Value |
+| --- | --- |
+| Type | `CNAME` |
+| Name | `api` or `api.example.com`, according to the provider's UI |
+| Target | The exact `cnameTarget` output, without `https://` or a path |
+| Proxy | Disabled / DNS-only; on Cloudflare this is the grey cloud |
+| TTL | Your DNS provider's normal value |
+
+After reviewing their ownership, remove conflicting A, AAAA, or CNAME records for
+that hostname. A proxy can prevent Neon validation even when the browser appears
+to reach an edge server. Wait for the applicable DNS TTL before judging propagation.
+
+## Check certificate-authority restrictions
+
+If your domain or an applicable parent has CAA records, the policy must allow
+Let's Encrypt, the certificate authority Neon uses. Have the DNS/security owner
+approve the change, then authorize it as described in
+[Neon's domain guide](https://neon.com/docs/compute/functions/custom-domains#configure-dns):
+
+```text
+CAA 0 issue "letsencrypt.org"
+```
+
+A domain without a restrictive CAA policy does not need this extra record merely
+to satisfy Alchemy.
+
+## Check registration status
+
+In the Neon Console, select the project and branch, then open **Settings →
+Functions → Custom Domains**. Check the target Function, DNS status, and any
+reported reason. The resource also exposes `status`, `dnsStatus`, `bindingStatus`,
+and `statusReason` when returned by Neon.
+
+| Reported problem | Action |
+| --- | --- |
+| `cname-not-pointing-at-edge` | Correct the target, disable DNS proxying, remove conflicts, and allow propagation |
+| `caa-blocks-lets-encrypt` | Review CAA on the hostname and its parent domains; authorize Let's Encrypt |
+| `binding-missing` | Verify the intended Function still exists; contact Neon Support if internal routing remains missing |
+| Hostname already registered elsewhere | Resolve ownership of the existing mapping; do not bypass it with blanket adoption |
+
+## Verify HTTPS and application behavior
+
+Resolve the public CNAME:
+
+```sh
+dig +short CNAME api.example.com
+```
+
+Then request a known route that your Function implements:
+
+```sh
+curl --fail-with-body --max-time 30 https://api.example.com/health
+```
+
+Check the expected response, not only a successful status. Keep TLS verification
+enabled; `curl -k` would hide a certificate failure. Neon may issue the certificate
+on the first request. If the registration is active but HTTPS initially fails,
+allow a short issuance delay and retry once; persistent failures need diagnostics,
+not an unbounded retry loop.
+
+Open the application through the custom hostname and exercise sign-in, navigation,
+redirects, and any streaming/WebSocket features it uses. Registration status
+`active` establishes DNS/CAA/routing, not completed application acceptance.
+
+## Secure both URLs
+
+The native Neon Function URL remains public when a custom domain is added.
+Authenticate and authorize protected work on both entry points. Browser clients
+may also require application CORS configuration. For Auth redirects, register the
+custom application's origin separately using
+[Production Auth](/neon/guides/production-auth).
+
+## Retire the hostname
+
+Remove the DNS record first, then wait for public DNS to stop returning the Neon
+target. Only then remove the CustomDomain declaration and deploy, or destroy its
+owning stack. This avoids leaving a dangling CNAME after releasing the hostname.
+If DNS is managed in a separate stack or by another team, coordinate the ordering
+rather than assuming Function destruction also removes DNS.
+
+Confirm the custom URL no longer serves the retired application before reusing
+the hostname. Keep the original stack/stage state until cleanup finishes; see
+[State and recovery](/neon/guides/state-recovery).
+
+## Related guides
+
+- [CustomDomain reference](/providers/neon/customdomain) — inputs, outputs, and lifecycle.
+- [Neon custom domains](https://neon.com/docs/compute/functions/custom-domains) — current DNS, CAA, and status behavior.
+- [Setup](/neon/setup) — deployment prerequisites.

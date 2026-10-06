@@ -1,6 +1,6 @@
 import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { applyCommandOutputFrame, EMPTY_COMMAND_OUTPUT } from "./commandOutput.ts";
 
@@ -42,7 +42,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         tag: ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
         idleTtlMs: 0,
         transform: (frames) =>
-          frames.pipe(Stream.scan(EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame)),
+          frames.pipe(Stream.scan(() => EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame)),
       }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {

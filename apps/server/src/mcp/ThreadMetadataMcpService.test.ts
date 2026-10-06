@@ -12,14 +12,18 @@ import * as ThreadMetadataMcp from "./ThreadMetadataMcpService.ts";
 const threadId = ThreadId.make("thread:metadata-caller");
 const scope: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("environment:metadata-test"),
-  threadId,
-  providerSessionId: "provider-session:metadata-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session:metadata-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session:metadata-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["orchestration"]),
   issuedAt: 1,
 };
 
-function serviceLayer(
+function layerService(
   getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"],
 ) {
   return ThreadMetadataMcp.layer.pipe(
@@ -47,7 +51,7 @@ const updateCallingThread = Effect.gen(function* () {
 it.effect("reports an absent calling thread as thread_not_found", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
-      Effect.provide(serviceLayer(() => Effect.succeed(null))),
+      Effect.provide(layerService(() => Effect.succeed(null))),
       Effect.flip,
     );
 
@@ -59,7 +63,7 @@ it.effect("keeps calling-thread storage failures as orchestration errors", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
       Effect.provide(
-        serviceLayer(() =>
+        layerService(() =>
           Effect.fail(
             new OrchestratorProjectionError({
               threadId,
@@ -72,5 +76,93 @@ it.effect("keeps calling-thread storage failures as orchestration errors", () =>
     );
 
     expect(error.code).toBe("orchestration_error");
+  }),
+);
+
+it.effect("refuses to change a thread that runs above the caller's modes", () =>
+  Effect.gen(function* () {
+    const fullAccessThread = ThreadId.make("thread:metadata-full-access");
+    const shells = new Map([
+      [
+        threadId,
+        {
+          id: threadId,
+          projectId: "project",
+          runtimeMode: "auto",
+          interactionMode: "default",
+          activeRunId: "run-live",
+          archivedAt: null,
+          providerInstanceId: "codex",
+          deletedAt: null,
+        },
+      ],
+      [
+        fullAccessThread,
+        {
+          id: fullAccessThread,
+          projectId: "project",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          deletedAt: null,
+        },
+      ],
+    ]);
+    const error = yield* Effect.gen(function* () {
+      const service = yield* ThreadMetadataMcp.ThreadMetadataMcpService;
+      return yield* service.update(scope, {
+        threadId: fullAccessThread,
+        action: "rename",
+        title: "Renamed from a narrower thread",
+      });
+    }).pipe(
+      Effect.provide(layerService((id) => Effect.succeed((shells.get(id) ?? null) as never))),
+      Effect.flip,
+    );
+
+    expect(error.code).toBe("runtime_mode_escalation_denied");
+  }),
+);
+
+it.effect("refuses another thread's metadata to a thread caller whose run has ended", () =>
+  Effect.gen(function* () {
+    const otherThread = ThreadId.make("thread:metadata-other");
+    const shells = new Map([
+      [
+        threadId,
+        {
+          id: threadId,
+          projectId: "project",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          activeRunId: null,
+          archivedAt: null,
+          providerInstanceId: "codex",
+          deletedAt: null,
+        },
+      ],
+      [
+        otherThread,
+        {
+          id: otherThread,
+          projectId: "project",
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          deletedAt: null,
+        },
+      ],
+    ]);
+    const error = yield* Effect.gen(function* () {
+      const service = yield* ThreadMetadataMcp.ThreadMetadataMcpService;
+      return yield* service.update(scope, {
+        threadId: otherThread,
+        action: "rename",
+        title: "Renamed after the run ended",
+      });
+    }).pipe(
+      Effect.provide(layerService((id) => Effect.succeed((shells.get(id) ?? null) as never))),
+      Effect.flip,
+    );
+
+    expect(error.code).toBe("parent_not_active");
   }),
 );

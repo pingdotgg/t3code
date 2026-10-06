@@ -407,6 +407,21 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
+  if (props.status.kind === "goal") {
+    return (
+      <StatusLabelRow
+        key="goal"
+        accessibilityLabel={props.status.accessibilityLabel}
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
+        <SymbolView name="target" size={13} tintColorClassName="foreground" type="monochrome" />
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
+          {props.status.label}
+        </Text>
+      </StatusLabelRow>
+    );
+  }
   if (props.status.kind === "preparing") {
     return (
       <StatusLabelRow

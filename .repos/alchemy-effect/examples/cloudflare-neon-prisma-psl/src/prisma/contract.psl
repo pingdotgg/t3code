@@ -1,0 +1,14 @@
+model User {
+  id id.uuidv7Native()
+  email String @unique
+  name String
+  createdAt temporal.createdAtString()
+  posts Post[]
+}
+
+model Post {
+  id id.uuidv7Native()
+  title String
+  authorId Uuid
+  author User @relation(fields: [authorId], references: [id])
+}

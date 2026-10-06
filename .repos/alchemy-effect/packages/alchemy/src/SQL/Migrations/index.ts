@@ -23,6 +23,7 @@ export {
   quoteIdentifier,
   readDrizzleDirRecords,
   readFlatRecords,
+  readMigrationRecords,
   timestampPrefixMillis,
 } from "./Records.ts";
 export {

@@ -10,11 +10,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
@@ -42,11 +43,11 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-acp-registry-v2-adapter-",
 }).pipe(Layer.provide(NodeServices.layer));
 
-const registryLayer = Layer.succeed(
+const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
     Effect.succeed(
@@ -82,11 +83,12 @@ const registryLayer = Layer.succeed(
   ),
 );
 
-const testLayer = Layer.mergeAll(
+const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  serverConfigLayer,
-  registryLayer,
+  layerServerConfig,
+  layerRegistry,
+  ServerSettings.layerTest(),
 );
 
 describe("AcpRegistryAdapterV2", () => {
@@ -121,6 +123,8 @@ describe("AcpRegistryAdapterV2", () => {
     assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
     assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
     assert.deepEqual(AcpRegistryAdapterV2Driver.defaultConfig(), {
+      source: "registry",
+      commandArgs: [],
       enabled: true,
       agentId: "",
       commandPath: "",
@@ -243,7 +247,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_mode", {}),
         ],
         storedModePick: "autoEdit",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
     it.effect("switches a mode config option under its own id", () =>
@@ -258,7 +262,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
 
@@ -335,7 +339,7 @@ describe("AcpRegistryAdapterV2", () => {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
@@ -481,6 +485,6 @@ describe("AcpRegistryAdapterV2", () => {
         name: "Auto",
         description: null,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

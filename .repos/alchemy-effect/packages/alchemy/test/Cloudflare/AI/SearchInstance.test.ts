@@ -7,7 +7,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import AiSearchCrawlTargetWorker from "./fixtures/crawl-target-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
@@ -167,7 +167,16 @@ test.provider(
       // Destroy again — delete must be idempotent (already gone).
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -206,7 +215,16 @@ test.provider(
 
       yield* expectGone(accountId, replaced.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -248,7 +266,16 @@ test.provider(
 
       yield* expectGone(accountId, healed.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // Canonical `list()` test: instances are namespace-scoped, so `list()`
@@ -279,7 +306,16 @@ test.provider(
         deployed.instance.instanceId,
       );
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // A web-crawler source crawls a seed URL and needs no service token (unlike
@@ -345,7 +381,15 @@ test.provider(
 
       yield* expectGone(accountId, initial.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 // A program that places the instance in a custom namespace. The instance's
@@ -397,5 +441,14 @@ test.provider(
         initial.namespace.name,
       );
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

@@ -8,6 +8,7 @@ import {
   toolCallLines,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
+  turnItemOutputImages,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
@@ -21,10 +22,12 @@ import { useTurnItemDetail } from "../../state/queries";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { ShellCommandBlock } from "./ShellCommandBlock";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -37,6 +40,7 @@ interface V2ItemInspectorProps {
     readonly checkpointId: string;
     readonly scopeId: string;
   }) => void;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
 
 function JsonTokens({ text }: { readonly text: string }) {
@@ -120,6 +124,8 @@ function useFetchedTurnItem(
     item,
     output: {
       output: turnItemOutputText(item),
+      images: turnItemOutputImages(item),
+      environmentId,
       pending: item === wireItem && detail.isPending,
       error:
         item !== wireItem
@@ -134,32 +140,52 @@ function useFetchedTurnItem(
 
 interface ToolOutputState {
   readonly output: string | null;
+  readonly images: ReturnType<typeof turnItemOutputImages>;
+  readonly environmentId: EnvironmentId;
   readonly pending: boolean;
   readonly error: string | null;
   readonly empty: boolean;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
 
 function ToolOutput(props: ToolOutputState) {
-  return props.output ? (
+  const images = props.images.map((resource) => (
+    <ChatMarkdownAssetImage
+      key={resource.index}
+      environmentId={props.environmentId}
+      resource={resource}
+      alt="Tool output image"
+      maxHeightRem={16}
+      onImageExpand={props.onImageExpand}
+    />
+  ));
+  const text = props.output ? (
     <div className="max-h-80 overflow-auto text-muted-foreground">{props.output}</div>
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (
     <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
-  ) : props.empty ? (
+  ) : props.empty && images.length === 0 ? (
     <div className="text-muted-foreground italic">No output.</div>
   ) : null;
+  return (
+    <>
+      {images}
+      {text}
+    </>
+  );
 }
 
 /** Fetched output for rows that show their own plain text instead of the inspector. */
 export function FetchedToolOutput(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly environmentId: EnvironmentId;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId);
   return (
-    <div className={cn("mt-1.5", monoClassName)}>
-      <ToolOutput {...output} />
+    <div className={cn("mt-1.5 space-y-1.5", monoClassName)}>
+      <ToolOutput {...output} onImageExpand={props.onImageExpand} />
     </div>
   );
 }
@@ -177,7 +203,7 @@ function ToolCallBody(
   const call = toolCallLines({ command: props.command, args: props.args });
   return (
     <div className={cn("space-y-1.5", monoClassName)}>
-      {call.command ? <div className="text-foreground/85">{call.command}</div> : null}
+      {call.command ? <ShellCommandBlock command={call.command} /> : null}
       {call.args ? (
         <div className="text-foreground/85">
           {call.args.map(([key, value]) => (
@@ -231,6 +257,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           command={item.input}
           exitCode={item.exitCode}
           {...outputState}
+          onImageExpand={props.onImageExpand}
           outputSlot={
             streamsOutput ? (
               <CommandOutputPanel
@@ -337,7 +364,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? <ToolCallBody args={item.input} {...outputState} /> : null}
+      {item.type === "dynamic_tool" ? (
+        <ToolCallBody args={item.input} {...outputState} onImageExpand={props.onImageExpand} />
+      ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
       {item.type === "user_input_request" ? (

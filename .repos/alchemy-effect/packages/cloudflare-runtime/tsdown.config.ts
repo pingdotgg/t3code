@@ -39,6 +39,7 @@ const workerConfig = (
     InternalWorkerExportPlugin(),
   ] as unknown as UserConfig["plugins"],
   deps: {
+    neverBundle: [/^cloudflare-internal:/],
     alwaysBundle: [/.+/],
   },
   outputOptions: {

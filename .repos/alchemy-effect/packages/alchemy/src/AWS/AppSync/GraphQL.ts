@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
@@ -54,7 +55,7 @@ export interface GraphQLClient {
     request: GraphQLRequest,
   ): Effect.Effect<
     GraphQLResult<T>,
-    GraphQLApiError | Credentials.CredentialsError
+    GraphQLApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
 }
 
