@@ -1099,6 +1099,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("allow simulator emulator ios android drive tools sessions")],
   },
   {
+    id: "cua-computer-use",
+    title: "Computer use",
+    to: "/settings/devices",
+    targetId: "computer",
+    searchTerms: ["cua driver apps desktop screen click type agents control mac linux windows"],
+  },
+  {
     id: "device-hub",
     title: msg("Use devices"),
     to: "/settings/devices",

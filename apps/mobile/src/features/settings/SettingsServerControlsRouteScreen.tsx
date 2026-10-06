@@ -407,6 +407,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                   />
                 </SettingsSection>
+                <SettingsSection title={gt("Computer")}>
+                  <SettingsSwitchRow
+                    icon="desktopcomputer"
+                    label={gt("Computer use")}
+                    subtitle={managedSubtitle(
+                      "enableCua",
+                      gt(
+                        "Allow agents to use apps on this environment's computer through Cua Driver. On a Mac, grant Accessibility and Screen Recording from T3 Code on that Mac.",
+                      ),
+                    )}
+                    value={uniform("enableCua")}
+                    disabled={disabledFor("enableCua")}
+                    onValueChange={(value) => write({ enableCua: value })}
+                  />
+                </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
               </>
             ) : null}
