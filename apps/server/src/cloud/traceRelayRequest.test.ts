@@ -67,10 +67,14 @@ describe("relay request tracing", () => {
         Effect.provideService(RelayClientTracer, Option.some(productTracer)),
       );
 
-      expect(spans).toHaveLength(1);
-      const span = spans[0]!;
-      expect(span.traceId).toBe("0123456789abcdef0123456789abcdef");
-      expect(Option.getOrUndefined(span.parent)?.spanId).toBe("0123456789abcdef");
+      expect(spans.map((span) => span.name)).toEqual([
+        "environment.relay.request",
+        "relay.mint.handler",
+      ]);
+      const [relaySpan, handler] = spans;
+      expect(relaySpan!.traceId).toBe("0123456789abcdef0123456789abcdef");
+      expect(Option.getOrUndefined(relaySpan!.parent)?.spanId).toBe("0123456789abcdef");
+      expect(Option.getOrUndefined(handler!.parent)?.spanId).toBe(relaySpan!.spanId);
     }),
   );
 });
@@ -107,7 +111,10 @@ describe("relay request tracing boundary", () => {
         Effect.withTracer(collect(localSpans)),
       );
 
-      expect(productSpans).toEqual(["environment.orchestration.threadSnapshot"]);
+      expect(productSpans).toEqual([
+        "environment.relay.request",
+        "environment.orchestration.threadSnapshot",
+      ]);
       expect(localSpans).toEqual(["ServerSecretStore.get", "sql.execute"]);
     }),
   );

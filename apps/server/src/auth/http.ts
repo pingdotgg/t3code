@@ -36,7 +36,11 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
+import {
+  traceAuthenticatedRelayRequest,
+  traceLocalHandlerWork,
+  traceRelayRequest,
+} from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
@@ -203,8 +207,22 @@ export const layerAuthenticatedAuth = Layer.effect(
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     return (httpEffect) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
+      HttpServerRequest.HttpServerRequest.pipe(
+        Effect.flatMap((request) => {
+          const authenticated = authenticate(request, httpEffect);
+          // Only a T3 Connect session holds a DPoP credential.
+          return request.headers.authorization?.startsWith("DPoP ") === true
+            ? traceAuthenticatedRelayRequest(authenticated)
+            : authenticated;
+        }),
+        Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }),
+      );
+
+    function authenticate<A, E, R>(
+      request: HttpServerRequest.HttpServerRequest,
+      httpEffect: Effect.Effect<A, E, R>,
+    ) {
+      return Effect.gen(function* () {
         const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
@@ -221,9 +239,10 @@ export const layerAuthenticatedAuth = Layer.effect(
             ...session,
             scopes: new Set(session.scopes),
           }),
-          session.subject === "cloud-connect" ? traceAuthenticatedRelayRequest : identity,
+          session.subject === "cloud-connect" ? identity : traceLocalHandlerWork,
         );
-      }).pipe(Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }));
+      });
+    }
   }),
 );
 

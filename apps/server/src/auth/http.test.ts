@@ -1,12 +1,20 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  EnvironmentAuthenticatedAuth,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
+import { HttpServerRequest } from "effect/http";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -133,4 +141,63 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("exports authentication of T3 Connect requests and keeps other requests local", () =>
+  Effect.gen(function* () {
+    const productSpans: Array<string> = [];
+    const localSpans: Array<string> = [];
+    const collect = (into: Array<string>) =>
+      Tracer.make({
+        span: (options) => {
+          into.push(options.name);
+          return new Tracer.NativeSpan(options);
+        },
+      });
+    const environmentAuth = {
+      authenticateHttpRequest: (request: HttpServerRequest.HttpServerRequest) =>
+        Effect.succeed({
+          sessionId: AuthSessionId.make("session-1"),
+          subject: request.headers.authorization?.startsWith("DPoP ")
+            ? "cloud-connect"
+            : "cli-issued-session",
+          method: "bearer-access-token" as const,
+          scopes: ["orchestration:read" as const],
+        }).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest")),
+    } as unknown as EnvironmentAuth.EnvironmentAuth["Service"];
+    const middleware = yield* Layer.build(AuthHttp.layerAuthenticatedAuth).pipe(
+      Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
+      Effect.map(Context.get(EnvironmentAuthenticatedAuth)),
+    );
+    const handle = (authorization: string) =>
+      (
+        middleware as unknown as (
+          effect: Effect.Effect<void>,
+        ) => Effect.Effect<void, never, HttpServerRequest.HttpServerRequest>
+      )(Effect.void.pipe(Effect.withSpan("environment.handler"))).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request("https://environment.example.test/api/orchestration/shell", {
+              headers: { authorization },
+            }),
+          ),
+        ),
+        Effect.provideService(RelayClientTracer, Option.some(collect(productSpans))),
+        Effect.withTracer(collect(localSpans)),
+      );
+
+    yield* handle("DPoP access-token");
+    expect(productSpans).toEqual([
+      "environment.relay.request",
+      "EnvironmentAuth.authenticateHttpRequest",
+      "environment.handler",
+    ]);
+    expect(localSpans).toEqual([]);
+
+    productSpans.length = 0;
+    yield* handle("Bearer access-token");
+    expect(productSpans).toEqual([]);
+    expect(localSpans).toEqual(["EnvironmentAuth.authenticateHttpRequest", "environment.handler"]);
+  }).pipe(Effect.scoped),
 );

@@ -13,22 +13,27 @@ export const traceRelayRequest = <A, E, R>(
 ): Effect.Effect<A, E, R> => effect.pipe(withRelayClientTracing);
 
 /**
- * Traces a request that arrived over T3 Connect. The request, its
- * authentication and the handler's own span are exported, so their latency
- * and errors are visible; what the handler then does on the user's machine
- * (database reads, project indexing, processes) is not, unless the handler is
- * connection work and opts back in with {@link traceRelayRequest}.
+ * Traces a request that arrived over T3 Connect, continuing the client's
+ * trace. Its authentication and the handler's own span are exported, so their
+ * latency and errors are visible; what the handler then does on the user's
+ * machine (database reads, project indexing, processes) is not, unless the
+ * handler is connection work and opts back in with {@link traceRelayRequest}.
+ *
+ * It runs before authentication, so the caller decides from the request's
+ * DPoP credential, and passes local work through {@link traceLocalHandlerWork}
+ * once the session turns out not to be T3 Connect.
  */
 export const traceAuthenticatedRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
   HttpServerRequest.HttpServerRequest.pipe(
-    Effect.flatMap((request) =>
-      Option.match(HttpTraceContext.fromHeaders(request.headers), {
-        onNone: () => effect,
-        onSome: (parent) => effect.pipe(Effect.withParentSpan(parent)),
-      }),
-    ),
+    Effect.flatMap((request) => {
+      const traced = effect.pipe(Effect.withSpan("environment.relay.request"));
+      return Option.match(HttpTraceContext.fromHeaders(request.headers), {
+        onNone: () => traced,
+        onSome: (parent) => traced.pipe(Effect.withParentSpan(parent)),
+      });
+    }),
     withRelayClientTracing,
   );
 

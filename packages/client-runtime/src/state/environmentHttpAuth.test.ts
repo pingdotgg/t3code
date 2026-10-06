@@ -10,12 +10,14 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
 import type { HttpClient } from "effect/http";
 
@@ -649,6 +651,36 @@ describe("authenticated environment HTTP requests", () => {
         message: "No relay authorization service is available for the environment request.",
       });
       expect(harness.calls).toEqual([]);
+    }),
+  );
+});
+
+describe("relay request tracing", () => {
+  it.effect("starts an exported trace for a T3 Connect request", () =>
+    Effect.gen(function* () {
+      const productSpans: Array<{ readonly name: string; readonly root: boolean }> = [];
+      const productTracer = Tracer.make({
+        span: (options) => {
+          productSpans.push({ name: options.name, root: Option.isNone(options.parent) });
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      const harness = makeHarness(() => Response.json(DIFF_RESULT));
+
+      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(
+        Effect.withSpan("mobile.screen.local"),
+        Effect.provide(harness.httpLayer),
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+      );
+
+      expect(productSpans[0]).toEqual({
+        name: "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
+        root: true,
+      });
+      expect(productSpans.map((span) => span.name)).not.toContain("mobile.screen.local");
     }),
   );
 });
