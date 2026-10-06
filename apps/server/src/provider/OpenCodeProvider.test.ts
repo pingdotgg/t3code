@@ -797,11 +797,53 @@ it.effect("keeps the last OpenCode 2 model list while a fresh server's stays emp
   Effect.gen(function* () {
     let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
     const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => listed));
-    NodeAssert.deepEqual(yield* load, [bigPickle]);
+    // Settling takes two agreeing reads, so the first load needs the clock too.
+    const first = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(first), [bigPickle]);
     listed = [];
     const fiber = yield* load.pipe(Effect.forkChild);
     yield* TestClock.adjust("6 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("waits for a growing OpenCode 2 catalog to settle before caching it", () =>
+  Effect.gen(function* () {
+    // A cold server lists part of its catalog first (here the second row
+    // arrives one poll later). The loader must return the settled list, not
+    // the first non-empty one, or the registry caches the partial list and
+    // the picker marks the saved model Unavailable (#15994).
+    const first: OpenCode2Model = {
+      providerID: "opencode",
+      id: "first",
+      name: "First",
+      variants: [],
+    };
+    const second: OpenCode2Model = {
+      providerID: "opencode",
+      id: "second",
+      name: "Second",
+      variants: [],
+    };
+    const replies: Array<ReadonlyArray<OpenCode2Model>> = [
+      [first],
+      [first, second],
+      [first, second],
+    ];
+    let reads = 0;
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => {
+        reads += 1;
+        return replies.shift() ?? [first, second];
+      }),
+    );
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [first, second]);
+    // Settling takes exactly three reads here; a loader that never settles
+    // would poll ~20 times before the deadline instead.
+    NodeAssert.equal(reads, 3);
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

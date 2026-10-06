@@ -386,27 +386,54 @@ export interface OpenCode2Model {
   readonly variants: ReadonlyArray<{ readonly id: string }>;
 }
 
+const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>): string =>
+  models
+    .map((model) => `${model.providerID}/${model.id}\0${model.name}`)
+    .toSorted()
+    .join("\n");
+
 /**
  * A server loads its catalog lazily and lists nothing for its first few
  * hundred milliseconds, and a local instance starts a fresh server for each
- * status check. So an empty list is read again for a while, and the last
- * non-empty list stands in if the catalog still has not loaded.
+ * status check. Worse, the first non-empty list can still be partial: models
+ * whose provider activates later are missing, and the registry then caches
+ * that partial list with nothing scheduling another probe. So an empty list
+ * is read again for a while, a non-empty list is only accepted once two
+ * consecutive reads agree, and the last non-empty list stands in if the
+ * catalog still has not settled.
  */
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
-    return list.pipe(
-      Effect.repeat({
-        until: (models) => models.length > 0,
-        schedule: Schedule.spaced("250 millis"),
-      }),
+    // Agreement state resets on every probe: a first read that merely repeats
+    // the previous probe's list must not count as settled. `lastLoaded` stays
+    // per loader so a timed-out probe still falls back to the last good list.
+    const run = Effect.suspend(() => {
+      let previous: ReadonlyArray<OpenCode2Model> | undefined;
+      return list.pipe(
+        Effect.tap((models) =>
+          Effect.sync(() => {
+            if (models.length > 0) lastLoaded = models;
+          }),
+        ),
+        Effect.repeat({
+          until: (models) => {
+            const settled =
+              models.length > 0 &&
+              previous !== undefined &&
+              catalogFingerprint(previous) === catalogFingerprint(models);
+            previous = models;
+            return settled;
+          },
+          schedule: Schedule.spaced("250 millis"),
+        }),
+      );
+    });
+    return run.pipe(
       Effect.timeoutOption("5 seconds"),
-      Effect.map((loaded) => {
-        if (loaded._tag === "Some" && loaded.value.length > 0) lastLoaded = loaded.value;
-        return lastLoaded;
-      }),
+      Effect.map(() => lastLoaded),
     );
   });
 
