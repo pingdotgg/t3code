@@ -161,6 +161,31 @@ it.layer(NodeServices.layer)("PluginStatus", (it) => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("tells a plugin when the thread has no room for its status", () =>
+      Effect.gen(function* () {
+        const { store, set } = yield* start();
+        // Each plugin runs in its own process, so each gets its own lifetime.
+        for (const id of ["acme.a", "acme.b", "acme.c"])
+          yield* set(registrationFor(id), yield* Scope.make(), {
+            threadId: THREAD_A,
+            key: "k",
+            text: id,
+          });
+        const lifetime = yield* Scope.make();
+        const late = registrationFor("acme.d");
+        const dropped = yield* set(late, lifetime, {
+          threadId: THREAD_A,
+          key: "k",
+          text: "d",
+        }).pipe(Effect.flip);
+        assert.include(dropped.message, "was not shown");
+        assert.lengthOf((yield* store.snapshot).entries, 3);
+        // The refused status holds no slot: the same plugin can still show one elsewhere.
+        yield* set(late, lifetime, { threadId: THREAD_B, key: "k", text: "d" });
+        assert.lengthOf((yield* store.snapshot).entries, 4);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("refuses undeclared capability and malformed input", () =>
       Effect.gen(function* () {
         const { store, set, clear } = yield* start();

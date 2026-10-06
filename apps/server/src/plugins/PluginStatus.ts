@@ -63,7 +63,7 @@ const STOPPED = hostError("The plugin was stopped.");
 interface ThreadStatuses {
   readonly scope: Scope.Closeable;
   readonly handle: ContributionStatusSourceHandle;
-  /** Keys this process has shown on the thread; the store may still drop one at capacity. */
+  /** Keys this process has shown on the thread, as the store admitted them. */
   readonly keys: Set<string>;
 }
 
@@ -170,6 +170,18 @@ export const make = Effect.fn("PluginStatus.make")(function* () {
             ...(input.tone === undefined ? {} : { tone: input.tone }),
             ...(input.tooltip === undefined ? {} : { tooltip: input.tooltip }),
           });
+          // The store drops a new status when the thread already shows its
+          // most plugin sources or items; tell the plugin instead of claiming it shows.
+          if (!(yield* thread.handle.items).some((item) => item.key === input.key)) {
+            thread.keys.delete(input.key);
+            if (thread.keys.size === 0) {
+              generation.threads.delete(input.threadId);
+              yield* Scope.close(thread.scope, Exit.void);
+            }
+            return yield* hostError(
+              "The thread already shows as many plugin statuses as it can; this one was not shown.",
+            );
+          }
           thread.keys.add(input.key);
           return null;
         }),
