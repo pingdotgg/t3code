@@ -21,8 +21,8 @@ const sections = [
   description="How T3 Tools, Inc. handles information when you use T3 Code, app.t3.codes, and t3.codes."
   heading="T3 Code Privacy Policy"
   lede="This Privacy Policy describes how T3 Tools, Inc. collects, uses, and shares personal information when you use the T3 Code desktop, mobile, and hosted web applications, visit the t3.codes marketing site, or use the optional T3 Connect service."
-  effectiveDate="2026-07-14"
-  lastUpdated="2026-07-14"
+  effectiveDate="2026-10-06"
+  lastUpdated="2026-10-06"
   sections={sections}
 >
   <section id="introduction">
@@ -80,6 +80,12 @@ const sections = [
               Activities, we process push tokens and limited activity information needed to provide
               those features, such as project and thread titles, model name, status, and activity
               headline.
+            </li>
+            <li>
+              <strong>Product usage data.</strong> By default, T3 Code sends us anonymous usage
+              data, such as which provider and model a turn used, whether it succeeded, and your app
+              version and operating system. We use it to improve the product. You can turn this off
+              at any time; see “Product Usage Data” under Your Choices below.
             </li>
             <li>
               <strong>Information you provide to us.</strong> We collect information that you choose
@@ -157,8 +163,8 @@ const sections = [
             <li>To monitor reliability, prevent abuse, and investigate security incidents;</li>
             <li>To comply with applicable law and enforce the terms governing the Services; and</li>
             <li>
-              To analyze and improve T3 Code using aggregated, de-identified, or other anonymous
-              operational information.
+              To analyze and improve T3 Code using product usage data and aggregated,
+              de-identified, or other anonymous operational information.
             </li>
           </ul>
 
@@ -240,6 +246,13 @@ const sections = [
               >.
             </li>
             <li>
+              <strong>PostHog</strong> <em>(PostHog, Inc.)</em>.<br />
+              We use PostHog to receive and analyze product usage data.<br />
+              You can view PostHog's privacy policy here:{" "}<a href="https://posthog.com/privacy"
+                >https://posthog.com/privacy</a
+              >.
+            </li>
+            <li>
               <strong>Axiom</strong> <em>(Axiom, Inc.)</em>.<br />
               We use Axiom for operational diagnostics that help us maintain and troubleshoot the
               Services.<br />
@@ -264,7 +277,8 @@ const sections = [
             </li>
             <li>
               <strong>Google</strong> <em>(Google LLC)</em>.<br />
-              We use Google services for app distribution and optional authentication.<br />
+              We use Google services for app distribution, optional authentication, and Android
+              notifications.<br />
               You can view Google's privacy policy here:{" "}<a
                 href="https://policies.google.com/privacy">https://policies.google.com/privacy</a
               >.
@@ -326,6 +340,13 @@ const sections = [
             disconnect environments, sign out, disable optional notifications and Live Activities,
             and clear local caches from Settings. You can grant or revoke camera, photo, local-network,
             and notification permissions in your device settings.
+          </p>
+
+          <h3>Product Usage Data</h3>
+          <p>
+            To stop sending product usage data, set the environment variable{" "}
+            <code>T3CODE_TELEMETRY_ENABLED=false</code>{" "}where T3 Code runs, for example in your
+            shell profile, and restart T3 Code.
           </p>
 
           <h3>Cookies and Local Data</h3>
