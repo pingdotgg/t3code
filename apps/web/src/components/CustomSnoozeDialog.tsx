@@ -123,7 +123,7 @@ function CustomSnoozeDialog() {
               // Queued behind any pending removal; a duplicate writes nothing.
               updateSnoozeFavorites(
                 (favorites) => addSnoozeFavorite(favorites, favorite),
-                "Snoozed, but the favorite was not saved",
+                "Could not save the favorite",
               );
             }
             finish({ snoozedUntil });
