@@ -277,6 +277,38 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  // A launcher symlink can resolve outside the bundle while its target lives
+  // inside one; the real path alone must already make the install manual-only.
+  it.effect("stays manual-only when only the real path is inside a macOS app bundle", () =>
+    Effect.gen(function* () {
+      const bundledPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+      const visiblePath = "/Users/test/.codex/packages/standalone/current/bin/codex";
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("codex"),
+          npmPackageName: "@openai/codex",
+          nativeUpdate: {
+            args: ["update"],
+            isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+          },
+        },
+        {
+          binaryPath: visiblePath,
+          resolvedCommandPath: visiblePath,
+          realCommandPath: bundledPath,
+          env: {},
+          platform: "darwin",
+        },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities).toEqual({
+        provider: driver("codex"),
+        packageName: "@openai/codex",
+        update: null,
+      });
+    }),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "pins npm updates to the global prefix that owns the package",
     () =>
