@@ -1284,15 +1284,16 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([], [], [], {
         // Authentication fails while the old bearer is stored, as the server
         // would answer once that session was revoked.
-        prepareRoute: (target) => {
-          if (target._tag !== "BearerConnectionTarget" || storedCredentials === undefined) {
-            return undefined;
-          }
-          const current = Effect.runSync(Ref.get(storedCredentials)).get(target.connectionId);
-          return current?.token === "old-bearer"
-            ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
-            : undefined;
-        },
+        beforePrepareRoute: (target) =>
+          target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
+            ? Effect.succeed(undefined)
+            : Ref.get(storedCredentials).pipe(
+                Effect.map((current) =>
+                  current.get(target.connectionId)?.token === "old-bearer"
+                    ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
+                    : undefined,
+                ),
+              ),
       });
       storedCredentials = harness.storedCredentials;
 
