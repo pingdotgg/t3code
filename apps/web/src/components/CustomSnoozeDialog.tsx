@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
-import { persistClientSettingsUpdate } from "../hooks/useSettings";
+import { getClientSettings, persistClientSettingsUpdate } from "../hooks/useSettings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { SnoozeFavorite } from "@t3tools/contracts/settings";
 import { Checkbox } from "./ui/checkbox";
@@ -108,9 +108,12 @@ function CustomSnoozeDialog() {
               return;
             }
             if (input.mode === "duration" && saveAsFavorite) {
-              updateSnoozeFavorites((favorites) =>
-                addSnoozeFavorite(favorites, { amount: Number(input.amount), unit: input.unit }),
-              );
+              const favorite = { amount: Number(input.amount), unit: input.unit };
+              const saved = getClientSettings().snoozeFavorites;
+              // Saving a duplicate would only rewrite identical settings.
+              if (addSnoozeFavorite(saved, favorite) !== saved) {
+                updateSnoozeFavorites((favorites) => addSnoozeFavorite(favorites, favorite));
+              }
             }
             finish({ snoozedUntil });
           }}
