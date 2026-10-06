@@ -8,13 +8,33 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 }
 
 describe("resolveSnoozePresets", () => {
-  it("lists saved favorites after the built-in presets", () => {
+  it("orders favorites chronologically among the built-in presets", () => {
+    // Wednesday 2026-04-08 10:00 local.
     const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale", [
       { amount: 2, unit: "hours" },
+      { amount: 2, unit: "days" },
     ]);
-    expect(presets.at(-1)).toMatchObject({ id: "favorite:2-hours", label: "In 2 hours" });
-    expect(new Date(presets.at(-1)!.snoozedUntil).getHours()).toBe(12);
-    expect(presets.at(-1)!.whenLabel).not.toBe("");
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "hour",
+      "favorite:2-hours",
+      "three-hours",
+      "evening",
+      "tomorrow",
+      "favorite:2-days",
+      "next-week",
+    ]);
+    const twoHours = presets.find((preset) => preset.id === "favorite:2-hours");
+    expect(twoHours).toMatchObject({ label: "In 2 hours" });
+    expect(new Date(twoHours!.snoozedUntil).getHours()).toBe(12);
+    expect(twoHours!.whenLabel).not.toBe("");
+  });
+
+  it("keeps wake times ascending when evening falls before three hours", () => {
+    // 15:30: in 1 hour 16:30, this evening 18:00, in 3 hours 18:30.
+    const ids = resolveSnoozePresets(localDate(2026, 4, 8, 15, 30), "locale").map(
+      (preset) => preset.id,
+    );
+    expect(ids.slice(0, 3)).toEqual(["hour", "evening", "three-hours"]);
   });
 
   it("offers one hour, three hours, evening, tomorrow, and next week in the morning", () => {

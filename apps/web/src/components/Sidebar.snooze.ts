@@ -16,14 +16,15 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
   return formatShortTimestamp(date.toISOString(), timestampFormat);
 }
 
-/** The built-in presets followed by the user's saved custom durations. */
+/** The built-in presets and the user's saved custom durations, soonest wake first. */
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
   favorites: ReadonlyArray<SnoozeFavorite> = [],
 ): ReadonlyArray<SnoozePreset> {
-  return [...resolveSharedSnoozePresets(now), ...resolveSnoozeFavoritePresets(favorites, now)].map(
-    (preset) => {
+  return [...resolveSharedSnoozePresets(now), ...resolveSnoozeFavoritePresets(favorites, now)]
+    .sort((a, b) => Date.parse(a.snoozedUntil) - Date.parse(b.snoozedUntil))
+    .map((preset) => {
       const wake = parseTimestampDate(preset.snoozedUntil);
       if (wake === null) return preset;
       const time = timeOfDayLabel(wake, timestampFormat);
@@ -34,8 +35,7 @@ export function resolveSnoozePresets(
             ? `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
             : time,
       };
-    },
-  );
+    });
 }
 
 /**
