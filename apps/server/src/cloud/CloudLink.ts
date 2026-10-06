@@ -7,15 +7,9 @@
 import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
-  EnvironmentCloudEndpointUnavailableError,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpConflictError,
-  type EnvironmentHttpForbiddenError,
-  EnvironmentHttpInternalServerError,
-  EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
 import {
   RelayCloudEnvironmentHealthProofPayload,
@@ -106,7 +100,12 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
-import { filterRelayResponse, relayRequestError, shouldRetryCloudLink } from "./relayResponse.ts";
+import {
+  filterRelayResponse,
+  relayRequestError,
+  type RelayRequestError,
+  shouldRetryRelayRequest,
+} from "./relayResponse.ts";
 import {
   CLOUD_HEALTH_JTI_PREFIX,
   CLOUD_HEALTH_NONCE_PREFIX,
@@ -126,15 +125,187 @@ import {
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
 const MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT = Duration.minutes(2);
-const failEnvironmentCloudInternalError =
-  (message: string) =>
-  (cause: unknown): Effect.Effect<never, EnvironmentHttpInternalServerError> =>
-    Effect.logError(message, { cause }).pipe(
-      Effect.flatMap(() => Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
-    );
+const RELAY_CONFIG_FIELD_MESSAGES = {
+  relayUrl: "Relay URL must be a secure absolute HTTPS URL.",
+  relayIssuer: "Relay issuer must be a secure absolute HTTPS URL.",
+  environmentCredential: "Relay environment credential is required.",
+  cloudUserId: "Cloud user id is required.",
+  cloudMintPublicKey: "Cloud mint public key must be a valid Ed25519 public key.",
+} as const;
 
-const failCloudCliTokenManagerError = (error: CliTokenManager.CloudCliTokenManagerError) =>
-  failEnvironmentCloudInternalError(error.message)(error);
+/** The relay sent a link configuration this environment cannot install. */
+export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLinkRelayConfigInvalidError>()(
+  "CloudLinkRelayConfigInvalidError",
+  {
+    field: Schema.Literals([
+      "relayUrl",
+      "relayIssuer",
+      "environmentCredential",
+      "cloudUserId",
+      "cloudMintPublicKey",
+    ]),
+  },
+) {
+  override get message(): string {
+    return RELAY_CONFIG_FIELD_MESSAGES[this.field];
+  }
+}
+
+/**
+ * A link was asked to point at an origin it may not serve: a link proof request
+ * that did not reach this server directly on loopback (`endpoint`), or a local
+ * origin that is not a bare http(s) origin (`local`).
+ */
+export class CloudLinkOriginInvalidError extends Schema.TaggedError<CloudLinkOriginInvalidError>()(
+  "CloudLinkOriginInvalidError",
+  { origin: Schema.Literals(["endpoint", "local"]) },
+) {
+  override get message(): string {
+    return this.origin === "endpoint"
+      ? "Invalid managed endpoint origin."
+      : "Could not resolve local environment origin.";
+  }
+}
+
+export class CloudLinkNotLinkedError extends Schema.TaggedError<CloudLinkNotLinkedError>()(
+  "CloudLinkNotLinkedError",
+  {},
+) {
+  override get message(): string {
+    return "Link this environment to T3 Connect first.";
+  }
+}
+
+export class CloudLinkAccountMismatchError extends Schema.TaggedError<CloudLinkAccountMismatchError>()(
+  "CloudLinkAccountMismatchError",
+  {},
+) {
+  override get message(): string {
+    return "This environment is already linked to a different cloud account. Unlink it before switching accounts.";
+  }
+}
+
+/** Linking from the CLI needs the authorization `t3 connect link` stores. */
+export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<CloudLinkAuthorizationMissingError>()(
+  "CloudLinkAuthorizationMissingError",
+  {},
+) {
+  override get message(): string {
+    return "Run `t3 connect link` to authorize this environment.";
+  }
+}
+
+const SignedRelayRequest = Schema.Literals(["health", "mint"]);
+
+/** A signed relay request whose proof does not verify for this environment. */
+export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkProofRejectedError>()(
+  "CloudLinkProofRejectedError",
+  { request: SignedRelayRequest },
+) {
+  override get message(): string {
+    return `Invalid cloud ${this.request} request.`;
+  }
+}
+
+/** A signed relay request whose proof was already used once. */
+export class CloudLinkProofReplayedError extends Schema.TaggedError<CloudLinkProofReplayedError>()(
+  "CloudLinkProofReplayedError",
+  { request: SignedRelayRequest },
+) {
+  override get message(): string {
+    return `Cloud ${this.request} request was already consumed.`;
+  }
+}
+
+/** The stored tunnel changed while its registration was in flight. */
+export class CloudLinkTunnelSupersededError extends Schema.TaggedError<CloudLinkTunnelSupersededError>()(
+  "CloudLinkTunnelSupersededError",
+  {},
+) {
+  override get message(): string {
+    return "The managed tunnel configuration changed during registration.";
+  }
+}
+
+/**
+ * The managed tunnel is not serving: its connector did not start
+ * (`runtime-not-started`, with the runtime's status), or the relay never
+ * confirmed this server's origin (`origin-unconfirmed`).
+ */
+export class CloudLinkEndpointUnavailableError extends Schema.TaggedError<CloudLinkEndpointUnavailableError>()(
+  "CloudLinkEndpointUnavailableError",
+  {
+    reason: Schema.Literals(["runtime-not-started", "origin-unconfirmed"]),
+    endpointRuntimeStatus: Schema.Unknown,
+  },
+) {
+  override get message(): string {
+    return this.reason === "runtime-not-started"
+      ? "Managed endpoint runtime could not be started."
+      : "Managed endpoint origin could not be confirmed.";
+  }
+}
+
+const INTERNAL_OPERATION_MESSAGES = {
+  "relay-url-unconfigured":
+    "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+  "generate-link-proof": "Could not generate environment link proof.",
+  "persist-relay-config": "Could not persist environment relay configuration.",
+  "register-endpoint-origin": "Could not register the managed endpoint origin.",
+  "resolve-server-origin": "Could not resolve the local server origin.",
+  "persist-desired-link": "Could not persist desired T3 Connect link state.",
+  "sign-recovery-proof": "Could not sign the managed tunnel recovery request.",
+  "unsupported-recovered-tunnel":
+    "T3 Connect returned an unsupported managed tunnel configuration.",
+  "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
+  "read-relay-config": "Could not read environment relay configuration.",
+  "remove-relay-config": "Could not remove environment relay configuration.",
+  "update-webhook-settings": "Could not update T3 Connect webhook settings.",
+  "read-preferences": "Could not read environment cloud preferences.",
+  "persist-preferences": "Could not persist environment cloud preferences.",
+  "answer-health": "Could not answer cloud health request.",
+  "issue-credential": "Could not issue cloud connection credential.",
+} as const;
+
+/** A link step failed on this machine: storage, signing, or an unexpected relay answer. */
+export class CloudLinkInternalError extends Schema.TaggedError<CloudLinkInternalError>()(
+  "CloudLinkInternalError",
+  {
+    operation: Schema.Literals(
+      Object.keys(INTERNAL_OPERATION_MESSAGES) as [
+        keyof typeof INTERNAL_OPERATION_MESSAGES,
+        ...Array<keyof typeof INTERNAL_OPERATION_MESSAGES>,
+      ],
+    ),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return INTERNAL_OPERATION_MESSAGES[this.operation];
+  }
+}
+
+const internalError =
+  (operation: CloudLinkInternalError["operation"]) =>
+  (cause: unknown): Effect.Effect<never, CloudLinkInternalError> =>
+    Effect.fail(new CloudLinkInternalError({ operation, cause }));
+
+const isPermanentLinkError = Schema.is(
+  Schema.Union([
+    CloudLinkRelayConfigInvalidError,
+    CloudLinkOriginInvalidError,
+    CloudLinkNotLinkedError,
+    CloudLinkAccountMismatchError,
+    CloudLinkAuthorizationMissingError,
+    CloudLinkProofRejectedError,
+    CloudLinkProofReplayedError,
+    CloudLinkTunnelSupersededError,
+  ]),
+);
+
+/** Whether a failed link step may succeed on retry: not when the relay or this server refused it. */
+export const shouldRetryCloudLink = (error: unknown): boolean =>
+  shouldRetryRelayRequest(error) && !isPermanentLinkError(error);
 
 /** A failed rollback leaves a setting changed; it is logged, not hidden. */
 const rollbackFailed = (cause: unknown) =>
@@ -142,10 +313,7 @@ const rollbackFailed = (cause: unknown) =>
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
-    () =>
-      new EnvironmentHttpInternalServerError({
-        message: "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
-      }),
+    (cause) => new CloudLinkInternalError({ operation: "relay-url-unconfigured", cause }),
   ),
 );
 
@@ -159,58 +327,37 @@ function stringToBytes(value: string): Uint8Array {
 
 function validateCloudMintPublicKey(
   publicKey: string,
-): Effect.Effect<void, EnvironmentHttpBadRequestError> {
+): Effect.Effect<void, CloudLinkRelayConfigInvalidError> {
+  const invalid = new CloudLinkRelayConfigInvalidError({ field: "cloudMintPublicKey" });
   return Effect.try({
     try: () => NodeCrypto.createPublicKey(publicKey.replace(/\\n/g, "\n")),
-    catch: () =>
-      new EnvironmentHttpBadRequestError({
-        message: "Cloud mint public key must be a valid Ed25519 public key.",
-      }),
+    catch: () => invalid,
   }).pipe(
     Effect.flatMap((key) =>
-      key.asymmetricKeyType === "ed25519"
-        ? Effect.void
-        : Effect.fail(
-            new EnvironmentHttpBadRequestError({
-              message: "Cloud mint public key must be a valid Ed25519 public key.",
-            }),
-          ),
+      key.asymmetricKeyType === "ed25519" ? Effect.void : Effect.fail(invalid),
     ),
   );
 }
 
+function invalidRelayConfigField(
+  payload: RelayEnvironmentConfigRequest,
+): CloudLinkRelayConfigInvalidError["field"] | null {
+  if (!isSecureRelayUrl(payload.relayUrl)) return "relayUrl";
+  if (payload.relayIssuer !== undefined && !isSecureRelayUrl(payload.relayIssuer)) {
+    return "relayIssuer";
+  }
+  if (payload.environmentCredential.trim().length === 0) return "environmentCredential";
+  if (payload.cloudUserId.trim().length === 0) return "cloudUserId";
+  return null;
+}
+
 function validateRelayConfigPayload(
   payload: RelayEnvironmentConfigRequest,
-): Effect.Effect<void, EnvironmentHttpBadRequestError> {
-  if (!isSecureRelayUrl(payload.relayUrl)) {
-    return Effect.fail(
-      new EnvironmentHttpBadRequestError({
-        message: "Relay URL must be a secure absolute HTTPS URL.",
-      }),
-    );
-  }
-  if (payload.relayIssuer !== undefined && !isSecureRelayUrl(payload.relayIssuer)) {
-    return Effect.fail(
-      new EnvironmentHttpBadRequestError({
-        message: "Relay issuer must be a secure absolute HTTPS URL.",
-      }),
-    );
-  }
-  if (payload.environmentCredential.trim().length === 0) {
-    return Effect.fail(
-      new EnvironmentHttpBadRequestError({
-        message: "Relay environment credential is required.",
-      }),
-    );
-  }
-  if (payload.cloudUserId.trim().length === 0) {
-    return Effect.fail(
-      new EnvironmentHttpBadRequestError({
-        message: "Cloud user id is required.",
-      }),
-    );
-  }
-  return Effect.void;
+): Effect.Effect<void, CloudLinkRelayConfigInvalidError> {
+  const field = invalidRelayConfigField(payload);
+  return field === null
+    ? Effect.void
+    : Effect.fail(new CloudLinkRelayConfigInvalidError({ field }));
 }
 
 function normalizePemForSignedPayload(value: string): string {
@@ -233,13 +380,25 @@ type ManagedTunnelRecoveryProofInput = {
   | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
 );
 
-/** Failures of the link work that runs outside a request: startup, recovery and shutdown. */
+/** Every failure CloudLink constructs itself. */
+export type CloudLinkError =
+  | CloudLinkAccountMismatchError
+  | CloudLinkAuthorizationMissingError
+  | CloudLinkEndpointUnavailableError
+  | CloudLinkInternalError
+  | CloudLinkNotLinkedError
+  | CloudLinkOriginInvalidError
+  | CloudLinkProofRejectedError
+  | CloudLinkProofReplayedError
+  | CloudLinkRelayConfigInvalidError
+  | CloudLinkTunnelSupersededError;
+
+/** Failures of the link work that talks to the relay: linking, recovery and shutdown. */
 type CloudLinkBackgroundError =
-  | EnvironmentCloudEndpointUnavailableError
-  | EnvironmentHttpBadRequestError
-  | EnvironmentHttpForbiddenError
-  | EnvironmentHttpInternalServerError
-  | EnvironmentHttpUnauthorizedError
+  | CloudLinkEndpointUnavailableError
+  | CloudLinkInternalError
+  | CloudLinkOriginInvalidError
+  | RelayRequestError
   | ServerSecretStore.SecretStoreError
   | Schema.SchemaError
   | PlatformError.PlatformError;
@@ -264,29 +423,28 @@ export class CloudLink extends Context.Service<
       httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
-      EnvironmentHttpBadRequestError | EnvironmentHttpInternalServerError
+      CloudLinkOriginInvalidError | CloudLinkInternalError | EnvironmentAuth.ServerAuthInternalError
     >;
     /** Installs the link the relay returned and, for a managed tunnel, confirms its origin. */
     readonly applyRelayConfig: (
       payload: RelayEnvironmentConfigRequest,
     ) => Effect.Effect<
       EnvironmentCloudRelayConfigResult,
-      | EnvironmentCloudEndpointUnavailableError
-      | EnvironmentHttpBadRequestError
-      | EnvironmentHttpConflictError
-      | EnvironmentHttpForbiddenError
-      | EnvironmentHttpInternalServerError
-      | EnvironmentHttpUnauthorizedError
+      | CloudLinkAccountMismatchError
+      | CloudLinkEndpointUnavailableError
+      | CloudLinkInternalError
+      | CloudLinkOriginInvalidError
+      | CloudLinkRelayConfigInvalidError
+      | CloudLinkTunnelSupersededError
+      | EnvironmentAuth.ServerAuthInternalError
+      | RelayRequestError
     >;
     readonly linkState: () => Effect.Effect<
       EnvironmentCloudLinkStateResult,
-      EnvironmentHttpInternalServerError
+      CloudLinkInternalError
     >;
     /** Stops the tunnel and forgets the link, including the CLI's wish to keep it. */
-    readonly unlink: () => Effect.Effect<
-      EnvironmentCloudRelayConfigResult,
-      EnvironmentHttpInternalServerError
-    >;
+    readonly unlink: () => Effect.Effect<EnvironmentCloudRelayConfigResult, CloudLinkInternalError>;
     /**
      * Saves this environment's T3 Connect preferences, all or nothing, and
      * returns the link state. The activity setting is saved first. Holding
@@ -298,25 +456,27 @@ export class CloudLink extends Context.Service<
       input: EnvironmentCloudPreferencesRequest,
     ) => Effect.Effect<
       EnvironmentCloudLinkStateResult,
-      EnvironmentHttpBadRequestError | EnvironmentHttpInternalServerError
+      CloudLinkNotLinkedError | CloudLinkInternalError
     >;
     /** Answers the relay's signed health check once per proof. */
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
     ) => Effect.Effect<
       RelayEnvironmentHealthResponse,
-      | EnvironmentHttpConflictError
-      | EnvironmentHttpInternalServerError
-      | EnvironmentHttpUnauthorizedError
+      | CloudLinkProofRejectedError
+      | CloudLinkProofReplayedError
+      | CloudLinkInternalError
+      | EnvironmentAuth.ServerAuthInternalError
     >;
     /** Issues a short-lived pairing credential for a client the relay vouched for, once per proof. */
     readonly mintCredential: (
       request: RelayCloudMintCredentialRequest,
     ) => Effect.Effect<
       RelayEnvironmentMintResponse,
-      | EnvironmentHttpConflictError
-      | EnvironmentHttpInternalServerError
-      | EnvironmentHttpUnauthorizedError
+      | CloudLinkProofRejectedError
+      | CloudLinkProofReplayedError
+      | CloudLinkInternalError
+      | EnvironmentAuth.ServerAuthInternalError
     >;
     /** Links this environment with the stored CLI authorization and records the CLI's wish. */
     readonly reconcileDesiredLink: (
@@ -324,9 +484,11 @@ export class CloudLink extends Context.Service<
     ) => Effect.Effect<
       CliDesiredLinkMode,
       | CloudLinkBackgroundError
-      | EnvironmentHttpConflictError
+      | CloudLinkAccountMismatchError
+      | CloudLinkAuthorizationMissingError
+      | CloudLinkRelayConfigInvalidError
       | EnvironmentAuth.ServerAuthInternalError
-      | CliTokenManager.CloudCliAuthorizationDeniedError
+      | CliTokenManager.CloudCliTokenManagerError
     >;
     /** As `reconcileDesiredLink`, but returns null when the CLI no longer wants a link. */
     readonly reconcileDesiredLinkIfStillDesired: (
@@ -334,9 +496,11 @@ export class CloudLink extends Context.Service<
     ) => Effect.Effect<
       CliDesiredLinkMode | null,
       | CloudLinkBackgroundError
-      | EnvironmentHttpConflictError
+      | CloudLinkAccountMismatchError
+      | CloudLinkAuthorizationMissingError
+      | CloudLinkRelayConfigInvalidError
       | EnvironmentAuth.ServerAuthInternalError
-      | CliTokenManager.CloudCliAuthorizationDeniedError
+      | CliTokenManager.CloudCliTokenManagerError
     >;
     /** Tells the relay which local origin the stored tunnel serves, then starts it. */
     readonly registerManagedTunnelRecovery: (
@@ -359,8 +523,8 @@ export class CloudLink extends Context.Service<
       options?: { readonly requireConfirmedOrigin?: boolean },
     ) => Effect.Effect<
       boolean,
-      | EnvironmentCloudEndpointUnavailableError
-      | EnvironmentHttpBadRequestError
+      | CloudLinkEndpointUnavailableError
+      | CloudLinkOriginInvalidError
       | ServerSecretStore.SecretStoreError
     >;
     /** Deletes a CLI-managed tunnel when this server goes offline for good. */
@@ -399,7 +563,7 @@ const make = Effect.gen(function* () {
 
   const validateLinkedCloudUser = (
     cloudUserId: string,
-  ): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | EnvironmentHttpConflictError> =>
+  ): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | CloudLinkAccountMismatchError> =>
     secrets.get(CLOUD_LINKED_USER_ID).pipe(
       Effect.mapError(
         (cause) =>
@@ -414,12 +578,7 @@ const make = Effect.gen(function* () {
         const existingCloudUserId = bytesToString(existing.value);
         return existingCloudUserId === cloudUserId
           ? Effect.void
-          : Effect.fail(
-              new EnvironmentHttpConflictError({
-                message:
-                  "This environment is already linked to a different cloud account. Unlink it before switching accounts.",
-              }),
-            );
+          : Effect.fail(new CloudLinkAccountMismatchError({}));
       }),
     );
 
@@ -450,9 +609,7 @@ const make = Effect.gen(function* () {
         requestUrl,
       })
     ) {
-      return yield* new EnvironmentHttpBadRequestError({
-        message: "Invalid managed endpoint origin.",
-      });
+      return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
     const expiresAt = DateTime.add(now, { minutes: 5 });
@@ -491,24 +648,13 @@ const make = Effect.gen(function* () {
     function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
       const requestUrl = requestAbsoluteUrl(httpRequest);
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
-        return yield* new EnvironmentHttpBadRequestError({
-          message: "Invalid managed endpoint origin.",
-        });
+        return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
       const proof = yield* makeCloudLinkProof(request, requestUrl);
       return proof satisfies RelayEnvironmentLinkProof;
     },
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentCloudInternalError(error.message)(error),
-    ),
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not generate environment link proof."),
-    ),
-    Effect.catchTag(
-      "PlatformError",
-      failEnvironmentCloudInternalError("Could not generate environment link proof."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
+    Effect.catchTag("PlatformError", internalError("generate-link-proof")),
   );
 
   const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(
@@ -528,8 +674,8 @@ const make = Effect.gen(function* () {
           }
           const status = yield* endpointRuntime.applyConfig(input.config);
           if (status.status !== "running") {
-            return yield* new EnvironmentCloudEndpointUnavailableError({
-              message: "Managed endpoint runtime could not be started.",
+            return yield* new CloudLinkEndpointUnavailableError({
+              reason: "runtime-not-started",
               endpointRuntimeStatus: status,
             });
           }
@@ -557,7 +703,7 @@ const make = Effect.gen(function* () {
       ? activate.pipe(
           Effect.retry({
             while: (error) =>
-              error._tag === "EnvironmentCloudEndpointUnavailableError" &&
+              error._tag === "CloudLinkEndpointUnavailableError" &&
               ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
                 error.endpointRuntimeStatus,
               ),
@@ -578,10 +724,7 @@ const make = Effect.gen(function* () {
     const requireConfirmedOrigin = options?.requireConfirmedOrigin ?? true;
     const parsedOrigin = yield* Effect.try({
       try: () => parseManagedEndpointLocalOrigin(localOrigin),
-      catch: () =>
-        new EnvironmentHttpBadRequestError({
-          message: "Could not resolve local environment origin.",
-        }),
+      catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
     });
     return yield* endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
@@ -610,8 +753,8 @@ const make = Effect.gen(function* () {
         }
         const status = yield* endpointRuntime.applyConfig(config);
         if (status.status !== "running") {
-          return yield* new EnvironmentCloudEndpointUnavailableError({
-            message: "Managed endpoint runtime could not be started.",
+          return yield* new CloudLinkEndpointUnavailableError({
+            reason: "runtime-not-started",
             endpointRuntimeStatus: status,
           });
         }
@@ -637,8 +780,8 @@ const make = Effect.gen(function* () {
         payload.endpointRuntime !== null &&
         payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
       ) {
-        return yield* new EnvironmentCloudEndpointUnavailableError({
-          message: "Managed endpoint runtime could not be started.",
+        return yield* new CloudLinkEndpointUnavailableError({
+          reason: "runtime-not-started",
           endpointRuntimeStatus: {
             status: "unsupported",
             providerKind: payload.endpointRuntime.providerKind,
@@ -674,8 +817,8 @@ const make = Effect.gen(function* () {
       }
       const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(payload.endpointRuntime);
       if (endpointRuntimeStatus.status !== "running") {
-        return yield* new EnvironmentCloudEndpointUnavailableError({
-          message: "Managed endpoint runtime could not be started.",
+        return yield* new CloudLinkEndpointUnavailableError({
+          reason: "runtime-not-started",
           endpointRuntimeStatus,
         });
       }
@@ -711,20 +854,12 @@ const make = Effect.gen(function* () {
     function* (localOrigin: string) {
       const parsedOrigin = yield* Effect.try({
         try: () => parseManagedEndpointLocalOrigin(localOrigin),
-        catch: () =>
-          new EnvironmentHttpBadRequestError({
-            message: "Could not resolve local environment origin.",
-          }),
+        catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
       });
       const token = yield* cliTokenManager.getExisting.pipe(
         Effect.flatMap(
           Option.match({
-            onNone: () =>
-              Effect.fail(
-                new EnvironmentHttpUnauthorizedError({
-                  message: "Run `t3 connect link` to authorize this environment.",
-                }),
-              ),
+            onNone: () => Effect.fail(new CloudLinkAuthorizationMissingError({})),
             onSome: Effect.succeed,
           }),
         ),
@@ -786,17 +921,7 @@ const make = Effect.gen(function* () {
       // actually used, not from a value read before the relay round trip.
       return mode;
     },
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not persist desired T3 Connect link state."),
-    ),
-    Effect.catchTags({
-      CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
-      CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
-      CloudCliCredentialReadError: failCloudCliTokenManagerError,
-      CloudCliAuthorizationError: failCloudCliTokenManagerError,
-      CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
-    }),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-desired-link")),
   );
 
   const reconcileDesiredLink = Effect.fn("environment.cloud.reconcileDesiredLink")(function* (
@@ -853,10 +978,7 @@ const make = Effect.gen(function* () {
       payload,
     }).pipe(
       Effect.mapError(
-        () =>
-          new EnvironmentHttpInternalServerError({
-            message: "Could not sign the managed tunnel recovery request.",
-          }),
+        (cause) => new CloudLinkInternalError({ operation: "sign-recovery-proof", cause }),
       ),
     );
   });
@@ -886,10 +1008,7 @@ const make = Effect.gen(function* () {
 
     const parsedOrigin = yield* Effect.try({
       try: () => parseManagedEndpointLocalOrigin(localOrigin),
-      catch: () =>
-        new EnvironmentHttpBadRequestError({
-          message: "Could not resolve local environment origin.",
-        }),
+      catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
     });
     if (config.tunnelId === undefined) {
       return { status: "recovery_required" as const, config };
@@ -967,10 +1086,7 @@ const make = Effect.gen(function* () {
 
     const parsedOrigin = yield* Effect.try({
       try: () => parseManagedEndpointLocalOrigin(localOrigin),
-      catch: () =>
-        new EnvironmentHttpBadRequestError({
-          message: "Could not resolve local environment origin.",
-        }),
+      catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
     });
 
     const environmentId = yield* environment.getEnvironmentId;
@@ -996,17 +1112,12 @@ const make = Effect.gen(function* () {
       timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     });
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
-      return yield* new EnvironmentHttpInternalServerError({
-        message: "T3 Connect returned an unsupported managed tunnel configuration.",
-      });
+      return yield* new CloudLinkInternalError({ operation: "unsupported-recovered-tunnel" });
     }
 
     const encoded = yield* encodeEndpointRuntimeConfigJson(recovered.endpointRuntime).pipe(
       Effect.mapError(
-        () =>
-          new EnvironmentHttpInternalServerError({
-            message: "Could not persist the recovered managed tunnel configuration.",
-          }),
+        (cause) => new CloudLinkInternalError({ operation: "persist-recovered-tunnel", cause }),
       ),
     );
     const stored = yield* endpointRuntime.withLinkStateLock(
@@ -1041,9 +1152,7 @@ const make = Effect.gen(function* () {
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {
-          return yield* new EnvironmentHttpInternalServerError({
-            message: "Could not resolve the local server origin.",
-          });
+          return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
         }
         const registration = yield* registerManagedTunnelRecovery(
           `http://127.0.0.1:${address.port}`,
@@ -1051,21 +1160,18 @@ const make = Effect.gen(function* () {
           Effect.retry({
             times: 2,
             while: (error) =>
-              shouldRetryCloudLink(error) &&
-              error._tag !== "EnvironmentCloudEndpointUnavailableError",
+              shouldRetryCloudLink(error) && error._tag !== "CloudLinkEndpointUnavailableError",
           }),
         );
         if (registration.status === "superseded") {
-          return yield* new EnvironmentHttpConflictError({
-            message: "The managed tunnel configuration changed during registration.",
-          });
+          return yield* new CloudLinkTunnelSupersededError({});
         }
         if (registration.status === "recovery_required") {
           yield* endpointRuntime.requestRecovery(registration.config);
         }
         if (registration.status !== "ready") {
-          return yield* new EnvironmentCloudEndpointUnavailableError({
-            message: "Managed endpoint origin could not be confirmed.",
+          return yield* new CloudLinkEndpointUnavailableError({
+            reason: "origin-unconfirmed",
             endpointRuntimeStatus: { status: "disabled" },
           });
         }
@@ -1076,20 +1182,10 @@ const make = Effect.gen(function* () {
       }
       return result;
     },
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentCloudInternalError(error.message)(error),
-    ),
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-relay-config")),
     Effect.catchTags({
-      SchemaError: failEnvironmentCloudInternalError(
-        "Could not persist environment relay configuration.",
-      ),
-      PlatformError: failEnvironmentCloudInternalError(
-        "Could not register the managed endpoint origin.",
-      ),
+      SchemaError: internalError("persist-relay-config"),
+      PlatformError: internalError("register-endpoint-origin"),
     }),
   );
 
@@ -1216,10 +1312,7 @@ const make = Effect.gen(function* () {
     function* () {
       return yield* readCloudLinkState();
     },
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not read environment relay configuration."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );
 
   const unlink = Effect.fn("environment.cloud.unlink")(
@@ -1246,19 +1339,14 @@ const make = Effect.gen(function* () {
         }),
       );
     },
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not remove environment relay configuration."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("remove-relay-config")),
   );
 
   const pushHoldWebhooksWhileOffline = Effect.fn("CloudPreferences.pushHoldWebhooksWhileOffline")(
     function* (holdWebhooksWhileOffline: boolean) {
       const connection = yield* readRelayConnection.pipe(withSecrets);
       if (connection === null) {
-        return yield* new EnvironmentHttpBadRequestError({
-          message: "Link this environment to T3 Connect first.",
-        });
+        return yield* new CloudLinkNotLinkedError({});
       }
       const environmentId = yield* environment.getEnvironmentId;
       const client = yield* makeRelayEnvironmentClient(connection);
@@ -1267,23 +1355,14 @@ const make = Effect.gen(function* () {
           params: { environmentId },
           payload: { holdWebhooksWhileOffline },
         })
-        .pipe(
-          Effect.timeout("10 seconds"),
-          Effect.catch(
-            failEnvironmentCloudInternalError("Could not update T3 Connect webhook settings."),
-          ),
-        );
+        .pipe(Effect.timeout("10 seconds"), Effect.catch(internalError("update-webhook-settings")));
     },
   );
 
   const savePreference = (name: string, value: boolean) =>
     secrets
       .set(name, stringToBytes(String(value)))
-      .pipe(
-        Effect.catch(
-          failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
-        ),
-      );
+      .pipe(Effect.catch(internalError("persist-preferences")));
 
   // One update at a time, so two requests can't each leave one setting behind.
   const preferencesLock = yield* Semaphore.make(1);
@@ -1295,13 +1374,7 @@ const make = Effect.gen(function* () {
       // current values are read up front; a failed read stops here, before
       // anything changes, because a guessed value would be the rollback target.
       const readCurrent = (name: string) =>
-        secrets
-          .get(name)
-          .pipe(
-            Effect.catch(
-              failEnvironmentCloudInternalError("Could not read environment cloud preferences."),
-            ),
-          );
+        secrets.get(name).pipe(Effect.catch(internalError("read-preferences")));
       const previousActivity = yield* readCurrent(PUBLISH_AGENT_ACTIVITY_SECRET);
       const previousHold = yield* readCurrent(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET);
       yield* savePreference(PUBLISH_AGENT_ACTIVITY_SECRET, input.publishAgentActivity);
@@ -1342,10 +1415,7 @@ const make = Effect.gen(function* () {
       yield* savePreferences(input);
       return yield* readCloudLinkState();
     },
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not read environment cloud preferences."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-preferences")),
   );
 
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
@@ -1397,9 +1467,7 @@ const make = Effect.gen(function* () {
         !hasBoundedCloudProofLifetime({ ...proofOption.value, nowSeconds }) ||
         !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:status" })
       ) {
-        return yield* new EnvironmentHttpUnauthorizedError({
-          message: "Invalid cloud health request.",
-        });
+        return yield* new CloudLinkProofRejectedError({ request: "health" });
       }
       const proof = proofOption.value;
 
@@ -1411,9 +1479,7 @@ const make = Effect.gen(function* () {
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {
-        return yield* new EnvironmentHttpConflictError({
-          message: "Cloud health request was already consumed.",
-        });
+        return yield* new CloudLinkProofReplayedError({ request: "health" });
       }
 
       const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -1452,17 +1518,8 @@ const make = Effect.gen(function* () {
         proof: responseProof,
       } satisfies RelayEnvironmentHealthResponse;
     },
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentCloudInternalError(error.message)(error),
-    ),
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not answer cloud health request."),
-    ),
-    Effect.catchTag(
-      "PlatformError",
-      failEnvironmentCloudInternalError("Could not answer cloud health request."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("answer-health")),
+    Effect.catchTag("PlatformError", internalError("answer-health")),
   );
 
   const mintCredential = Effect.fn("environment.cloud.mintCredential")(
@@ -1515,9 +1572,7 @@ const make = Effect.gen(function* () {
         !hasBoundedCloudProofLifetime({ ...proofOption.value, nowSeconds }) ||
         !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:connect" })
       ) {
-        return yield* new EnvironmentHttpUnauthorizedError({
-          message: "Invalid cloud mint request.",
-        });
+        return yield* new CloudLinkProofRejectedError({ request: "mint" });
       }
       const proof = proofOption.value;
 
@@ -1529,9 +1584,7 @@ const make = Effect.gen(function* () {
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {
-        return yield* new EnvironmentHttpConflictError({
-          message: "Cloud mint request was already consumed.",
-        });
+        return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
 
       const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -1572,17 +1625,8 @@ const make = Effect.gen(function* () {
         proof: responseProof,
       } satisfies RelayEnvironmentMintResponse;
     },
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentCloudInternalError(error.message)(error),
-    ),
-    Effect.catchIf(
-      ServerSecretStore.isSecretStoreError,
-      failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
-    ),
-    Effect.catchTag(
-      "PlatformError",
-      failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
-    ),
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("issue-credential")),
+    Effect.catchTag("PlatformError", internalError("issue-credential")),
   );
 
   return CloudLink.of({
