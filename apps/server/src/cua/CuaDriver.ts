@@ -1,6 +1,11 @@
 import * as NodeModule from "node:module";
 
-import type { CuaDriverMcpConfiguration, DesktopCuaDriverReport } from "@t3tools/contracts";
+import type {
+  CuaDriverMcpConfiguration,
+  CuaHostStatus,
+  DesktopCuaDriverReport,
+} from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -144,6 +149,8 @@ export class CuaDriver extends Context.Service<
     readonly acquire: Effect.Effect<Option.Option<CuaDriverMcpConfiguration>>;
     /** Why the last start failed, until a later start succeeds. */
     readonly lastFailure: Effect.Effect<Option.Option<string>>;
+    /** What setup flows show: the host OS, and whether the driver runs or why not. */
+    readonly status: Effect.Effect<CuaHostStatus>;
   }
 >()("t3/cua/CuaDriver") {}
 
@@ -175,6 +182,8 @@ export const make = Effect.fn("CuaDriver.make")(function* (
     stopped?: boolean;
     /** Message of the typed error that ended this attempt, for the readiness signal. */
     failure?: string;
+    /** Set once the host reported its MCP descriptor. */
+    running?: boolean;
   };
   let current: Attempt | undefined;
   let closed = false;
@@ -241,6 +250,7 @@ export const make = Effect.fn("CuaDriver.make")(function* (
             return;
           }
           lastFailure = undefined;
+          attempt.running = true;
           yield* Deferred.succeed(attempt.ready, Option.some(mcp));
         }),
       );
@@ -290,10 +300,17 @@ export const make = Effect.fn("CuaDriver.make")(function* (
     return attempt ? yield* Deferred.await(attempt.ready) : Option.none();
   });
 
+  const platform = yield* HostProcessPlatform;
   return CuaDriver.of({
     enabled: enabled,
     acquire,
     lastFailure: Effect.sync(() => Option.fromNullishOr(lastFailure)),
+    status: Effect.sync(() => ({
+      platform:
+        platform === "darwin" || platform === "linux" || platform === "win32" ? platform : "other",
+      running: current?.running === true,
+      ...(lastFailure === undefined ? {} : { failure: lastFailure }),
+    })),
   });
 });
 

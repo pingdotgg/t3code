@@ -182,6 +182,7 @@ import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as CuaDriver from "./cua/CuaDriver.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -2123,6 +2124,17 @@ const layerWsRpc = (
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverCheckComputerUse]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCheckComputerUse,
+            Effect.gen(function* () {
+              const driver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
+              return Option.isSome(driver)
+                ? yield* driver.value.status
+                : ({ platform: "other", running: false } as const);
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetConfig,

@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { CuaSetupDialog } from "./CuaSetupDialog";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -37,6 +38,7 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
@@ -50,6 +52,8 @@ import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -876,6 +880,105 @@ function DeviceIntegrationControls({
   );
 }
 
+/**
+ * Cua computer use for the selected environment. The switch records intent;
+ * the host status shows whether the driver can actually start there.
+ */
+function ComputerUseSettings() {
+  const { environment: selected } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const [setupOpen, setSetupOpen] = useState(false);
+  const environmentId =
+    selected?.connection.phase === "connected" && selected.serverConfig !== null
+      ? selected.environmentId
+      : null;
+  const hostLabel = selected?.label ?? "this computer";
+  const { data: status, refresh } = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.computerUse({ environmentId, input: {} }),
+  );
+  const platform = status?.platform ?? "other";
+  // Only the Mac that runs the environment can grant it macOS permissions.
+  const localMac =
+    isElectron &&
+    platform === "darwin" &&
+    window.desktopBridge?.getClientPlatform?.() === "darwin" &&
+    typeof window.desktopBridge.checkSystemPermission === "function" &&
+    selected?.entry.target._tag === "PrimaryConnectionTarget";
+  const enabled = settings.enableCua;
+  const statusText = !enabled
+    ? null
+    : status?.running
+      ? "Running"
+      : status?.failure
+        ? status.failure
+        : "Starts with the next agent session";
+
+  return (
+    <SettingsSection id="computer" title="Computer">
+      <SettingsRow
+        {...searchableSetting("cua-computer-use")}
+        serverScoped
+        settingKeys={["enableCua"]}
+        description={`Let agents see and use apps on ${hostLabel} through Cua Driver, in the background without moving your cursor. Applies to agent sessions started afterwards.`}
+        status={statusText}
+        resetAction={
+          enabled !== DEFAULT_SERVER_SETTINGS.enableCua ? (
+            <SettingResetButton
+              label="computer use"
+              onClick={() => void updateSettings({ enableCua: DEFAULT_SERVER_SETTINGS.enableCua })}
+            />
+          ) : null
+        }
+        control={
+          <>
+            {enabled && platform !== "other" ? (
+              <Button size="xs" variant="outline" onClick={() => setSetupOpen(true)}>
+                Setup
+              </Button>
+            ) : null}
+            <ScopedSwitch
+              settingKeys={["enableCua"]}
+              checked={enabled || setupOpen}
+              disabled={environmentId === null || platform === "other"}
+              aria-label="Computer use"
+              onCheckedChange={(checked) => {
+                if (checked) setSetupOpen(true);
+                else void updateSettings({ enableCua: false });
+              }}
+            />
+          </>
+        }
+      />
+      {setupOpen ? (
+        <CuaSetupDialog
+          enabled={enabled}
+          hostLabel={hostLabel}
+          platform={platform}
+          localMac={localMac}
+          onCheck={(permission) =>
+            window.desktopBridge?.checkSystemPermission?.(permission) ?? Promise.resolve(false)
+          }
+          onAllow={async (permission) => {
+            const api = readLocalApi();
+            if (!api) throw new Error("Unable to open System Settings.");
+            await api.shell.openSystemSettings(permission);
+          }}
+          onEnable={async () => {
+            if (!enabled) await updateSettings({ enableCua: true });
+            // A driver started before the grants keeps macOS's cached denial.
+            if (localMac) await window.desktopBridge?.restartCuaDriver?.();
+          }}
+          onClose={() => {
+            setSetupOpen(false);
+            refresh();
+          }}
+        />
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdatePrimarySettings();
@@ -1533,6 +1636,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <ComputerUseSettings />
     </SettingsPageContainer>
   );
 }

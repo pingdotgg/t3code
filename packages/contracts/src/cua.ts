@@ -37,3 +37,17 @@ export const DesktopCuaDriverReport = Schema.Union([
   }),
 ]);
 export type DesktopCuaDriverReport = typeof DesktopCuaDriverReport.Type;
+
+/**
+ * Whether the environment's host can run computer use right now. Setup flows
+ * show it; the switch itself records intent and is not a readiness signal.
+ */
+export const CuaHostStatus = Schema.Struct({
+  /** The host's OS, which decides what the user must grant. */
+  platform: Schema.Literals(["darwin", "linux", "win32", "other"]),
+  /** The driver started for an agent session and is running. */
+  running: Schema.Boolean,
+  /** Why the last start failed, until a later start succeeds. */
+  failure: Schema.optionalKey(Schema.String),
+});
+export type CuaHostStatus = typeof CuaHostStatus.Type;
