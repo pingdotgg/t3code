@@ -5,11 +5,18 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { HttpClient, HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
-import * as CloudPreferences from "./CloudPreferences.ts";
+import * as CliTokenManager from "./CliTokenManager.ts";
+import * as CloudLink from "./CloudLink.ts";
+import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -34,7 +41,7 @@ const withService = <A, E>(
     };
   },
   body: (input: {
-    readonly preferences: CloudPreferences.CloudPreferences["Service"];
+    readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
   }) => Effect.Effect<A, E, never>,
@@ -88,12 +95,25 @@ const withService = <A, E>(
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
+      // Saving preferences touches none of the link's other dependencies.
+      Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
+      Layer.mock(HttpServer.HttpServer)({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+      }),
+      Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unused")),
+      ),
+      NodeServices.layer,
     );
     return yield* Effect.gen(function* () {
-      const preferences = yield* CloudPreferences.CloudPreferences;
-      return yield* body({ preferences, stored, relayCalls });
+      const link = yield* CloudLink.CloudLink;
+      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
     }).pipe(
-      Effect.provide(CloudPreferences.layer.pipe(Layer.provide(layerDependencies))),
+      Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
   });

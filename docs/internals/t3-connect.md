@@ -48,7 +48,7 @@ mint responses also bind the credential to the client proof key. The relay
 verifies those bindings before returning a credential. This prevents a different
 process behind the tunnel from impersonating the linked environment. The checks
 meet in the
-[environment cloud handlers](../../apps/server/src/cloud/http.ts) and
+[environment link service](../../apps/server/src/cloud/CloudLink.ts) and
 [relay connector](../../infra/relay/src/environments/EnvironmentConnector.ts).
 
 The relay holds the signing authority for mint requests. DPoP protects an honest
@@ -80,7 +80,7 @@ Two cases must retain the tunnel across shutdown. A link installed through a
 client has no startup provisioning path and depends on its stored connector
 token. An update handoff immediately starts a replacement server, and replacing
 the tunnel would add routing propagation delay to every update. These exceptions
-belong to [shutdown handling](../../apps/server/src/cloud/http.ts).
+belong to [shutdown handling](../../apps/server/src/cloud/CloudLink.ts).
 
 Release and unlink claim the allocation generation before deleting external
 resources. A delayed cleanup must not delete a tunnel reused by a concurrent
