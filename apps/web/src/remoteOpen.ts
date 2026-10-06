@@ -124,24 +124,36 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 
 /**
  * Editors offered in remote-link mode. The desktop app probes the machine the
- * renderer runs on; a browser cannot, so it offers VS Code only.
+ * renderer runs on. A browser cannot, so it offers every remote-capable
+ * editor and remembers the pick; VS Code leads as the default.
+ */
+export const BROWSER_REMOTE_EDITORS: ReadonlyArray<EditorId> = [
+  "vscode",
+  ...REMOTE_CAPABLE_EDITOR_IDS.filter((id) => id !== "vscode"),
+];
+
+/**
+ * Desktop fallback when the probe fails, finds nothing, or is missing from an
+ * older desktop shell (the bridge contract documents VS Code only there).
  */
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
+  const bridge = window.desktopBridge;
+  const unprobedEditors = bridge === undefined ? BROWSER_REMOTE_EDITORS : REMOTE_FALLBACK_EDITORS;
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
-    () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
+    () => cachedProbedEditors ?? unprobedEditors,
   );
 
   useEffect(() => {
     if (cachedProbedEditors !== null) {
       return;
     }
-    const probe = window.desktopBridge?.probeRemoteEditors;
+    const probe = bridge?.probeRemoteEditors;
     if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
+      cachedProbedEditors = unprobedEditors;
       return;
     }
     let cancelled = false;
@@ -160,7 +172,7 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bridge, unprobedEditors]);
 
   return editors;
 }
