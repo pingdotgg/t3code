@@ -26,7 +26,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
-import { OrchestrationV2LayerLive, ProjectServiceLayerLive } from "./runtimeLayer.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -117,27 +117,27 @@ const unusedEnrichment = {
 
 /** The production V2 runtime and project service against one file-backed database. */
 const makeRuntimeLayer = (dbPath: string) => {
-  const platform = Layer.merge(
+  const layerPlatform = Layer.merge(
     NodeServices.layer,
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
   );
-  const serverConfig = ServerConfig.layerTest(process.cwd(), {
+  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-project-upgrade-",
   });
-  const checkpointStore = CheckpointStore.layer.pipe(
+  const layerCheckpointStore = CheckpointStore.layer.pipe(
     Layer.provide(
       VcsDriverRegistry.layer.pipe(
         Layer.provide(VcsProcess.layer),
-        Layer.provide(serverConfig),
-        Layer.provide(platform),
+        Layer.provide(layerServerConfig),
+        Layer.provide(layerPlatform),
       ),
     ),
   );
   return Layer.mergeAll(
-    OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
-    ProjectServiceLayerLive,
+    RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+    RuntimeLayer.layerProjectService,
   ).pipe(
     Layer.provide(
       Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
@@ -153,8 +153,8 @@ const makeRuntimeLayer = (dbPath: string) => {
     ),
     Layer.provide(McpSessionRegistryTestkit.layer),
     Layer.provideMerge(makeSqlitePersistenceLive(dbPath)),
-    Layer.provide(checkpointStore),
-    Layer.provide(serverConfig),
+    Layer.provide(layerCheckpointStore),
+    Layer.provide(layerServerConfig),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -170,7 +170,7 @@ const makeRuntimeLayer = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
-    Layer.provide(platform),
+    Layer.provide(layerPlatform),
   );
 };
 

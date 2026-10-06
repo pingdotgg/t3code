@@ -559,7 +559,7 @@ const makeBackendOutputLogShape = (
       }),
   });
 
-const backendOutputLogFactoryLayer = Layer.effect(
+const layerBackendOutputLogFactory = Layer.effect(
   DesktopBackendOutputLogFactory,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -621,7 +621,7 @@ const backendOutputLogFactoryLayer = Layer.effect(
  * one read of the environment and Settings, and because a process gets exactly
  * one logger set.
  */
-const telemetryLayer = Layer.unwrap(
+const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
@@ -645,7 +645,7 @@ const telemetryLayer = Layer.unwrap(
     // while the OTLP logger carries every message as a log record stamped
     // with its trace and span ids. Keeping both would export every in-span
     // message twice.
-    const loggerLayer = Logger.layer(
+    const layerLogger = Logger.layer(
       endpoints.logs === undefined
         ? [Logger.consolePretty(), Logger.tracerLogger]
         : [
@@ -665,7 +665,7 @@ const telemetryLayer = Layer.unwrap(
       ),
     );
 
-    const tracerLayer = Layer.unwrap(
+    const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
         const tracePath = environment.path.join(environment.logDir, "desktop.trace.ndjson");
         const sink = yield* makeTraceSink({
@@ -713,20 +713,20 @@ const telemetryLayer = Layer.unwrap(
     //       }).pipe(Layer.provide(otlpSerializationLayer(endpoints.metrics.export.protocol)));
 
     // Logged once the loggers above are installed, so the warnings use them.
-    const otelWarningsLayer = Layer.effectDiscard(
+    const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
     );
 
-    return otelWarningsLayer.pipe(
-      Layer.provideMerge(Layer.mergeAll(loggerLayer, tracerLayer)),
+    return layerOtelWarnings.pipe(
+      Layer.provideMerge(Layer.mergeAll(layerLogger, layerTracer)),
       Layer.provide(OtelEnvironment.layerResourceAttributes(endpoints.resourceAttributes)),
     );
   }),
 );
 
 export const layer = Layer.mergeAll(
-  backendOutputLogFactoryLayer,
-  telemetryLayer,
+  layerBackendOutputLogFactory,
+  layerTelemetry,
   Layer.succeed(References.MinimumLogLevel, "Info"),
   Layer.succeed(Tracer.MinimumTraceLevel, "Info"),
   Layer.succeed(References.TracerTimingEnabled, true),

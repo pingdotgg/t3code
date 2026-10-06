@@ -251,7 +251,7 @@ const record = Effect.gen(function* () {
     scenario: fixture.name,
     entries: [],
   } satisfies ProviderReplayTranscript;
-  const recordingSpawner = Layer.effect(
+  const layerRecordingSpawner = Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.map(Effect.service(ChildProcessSpawner.ChildProcessSpawner), (live) =>
       makePiRecordingSpawner(live, entries),
@@ -291,7 +291,7 @@ const record = Effect.gen(function* () {
               { name: "PI_CODING_AGENT_SESSION_DIR", value: sessionDir, sensitive: false },
               { name: "PI_SKIP_VERSION_CHECK", value: "1", sensitive: false },
             ],
-            spawner: recordingSpawner,
+            spawner: layerRecordingSpawner,
           }),
       },
       continuationOptions,

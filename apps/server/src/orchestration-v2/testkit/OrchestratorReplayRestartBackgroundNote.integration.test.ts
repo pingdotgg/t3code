@@ -162,7 +162,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const phase1Steps = materialized.steps.slice(0, firstIdle + 1);
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
-  const databaseLayer = makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
+  const layerDatabase = makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
     Layer.provide(NodeServices.layer),
   );
   const scenario = (name: string, steps: typeof materialized.steps) => ({
@@ -176,7 +176,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const before = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("before-restart", phase1Steps), harness, {
-      databaseLayer,
+      databaseLayer: layerDatabase,
     }),
   );
   const settled = projectionFor(before, SCENARIO);
@@ -194,7 +194,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     }).pipe(
       Effect.provide(
         makeOrchestratorV2ProviderReplayLayer(restartScenario, harness, {
-          databaseLayer,
+          databaseLayer: layerDatabase,
           recoverOnStartup: true,
           continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
         }),
@@ -211,7 +211,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const after = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
-      databaseLayer,
+      databaseLayer: layerDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
     }),
   );

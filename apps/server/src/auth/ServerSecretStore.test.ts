@@ -18,7 +18,7 @@ const makeServerConfigLayer = () =>
 const makeServerSecretStoreLayer = () =>
   Layer.provide(ServerSecretStore.layer, makeServerConfigLayer());
 
-const PermissionDeniedFileSystemLayer = Layer.effect(
+const layerPermissionDeniedFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -42,10 +42,10 @@ const PermissionDeniedFileSystemLayer = Layer.effect(
 const makePermissionDeniedSecretStoreLayer = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(makeServerConfigLayer()),
-    Layer.provideMerge(PermissionDeniedFileSystemLayer),
+    Layer.provideMerge(layerPermissionDeniedFileSystem),
   );
 
-const RenameFailureFileSystemLayer = Layer.effect(
+const layerRenameFailureFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -69,10 +69,10 @@ const RenameFailureFileSystemLayer = Layer.effect(
 const makeRenameFailureSecretStoreLayer = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(makeServerConfigLayer()),
-    Layer.provideMerge(RenameFailureFileSystemLayer),
+    Layer.provideMerge(layerRenameFailureFileSystem),
   );
 
-const RemoveFailureFileSystemLayer = Layer.effect(
+const layerRemoveFailureFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -96,10 +96,10 @@ const RemoveFailureFileSystemLayer = Layer.effect(
 const makeRemoveFailureSecretStoreLayer = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(makeServerConfigLayer()),
-    Layer.provideMerge(RemoveFailureFileSystemLayer),
+    Layer.provideMerge(layerRemoveFailureFileSystem),
   );
 
-const ConcurrentReadMissFileSystemLayer = Layer.effect(
+const layerConcurrentReadMissFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -142,7 +142,7 @@ const ConcurrentReadMissFileSystemLayer = Layer.effect(
 const makeConcurrentCreateSecretStoreLayer = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(makeServerConfigLayer()),
-    Layer.provideMerge(ConcurrentReadMissFileSystemLayer),
+    Layer.provideMerge(layerConcurrentReadMissFileSystem),
   );
 
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
@@ -189,7 +189,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
   it.effect("uses restrictive permissions for the secret directory and files", () =>
     Effect.gen(function* () {
       const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
-      const recordingFileSystemLayer = Layer.effect(
+      const layerRecordingFileSystem = Layer.effect(
         FileSystem.FileSystem,
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -211,7 +211,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
         Effect.provide(
           ServerSecretStore.layer.pipe(
             Layer.provide(makeServerConfigLayer()),
-            Layer.provideMerge(recordingFileSystemLayer),
+            Layer.provideMerge(layerRecordingFileSystem),
           ),
         ),
       );

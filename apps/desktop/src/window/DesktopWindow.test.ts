@@ -151,15 +151,15 @@ function makeFakeBrowserWindow() {
   };
 }
 
-const desktopClientSettingsLayer = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
   get: Effect.succeedNone,
 });
 
-const electronAppLayer = Layer.mock(ElectronApp.ElectronApp)({
+const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
 });
 
-const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
+const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
     ico: Option.none<string>(),
     icns: Option.none<string>(),
@@ -168,7 +168,7 @@ const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
   resolveResourcePath: () => Effect.succeed(Option.none<string>()),
 } satisfies DesktopAssets.DesktopAssets["Service"]);
 
-const desktopServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
   backendConfig: Effect.succeed({
     port: 3773,
@@ -183,19 +183,19 @@ const desktopServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopSe
   getAdvertisedEndpoints: Effect.die("unexpected getAdvertisedEndpoints"),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
-const electronMenuLayer = Layer.succeed(ElectronMenu.ElectronMenu, {
+const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
   setApplicationMenu: () => Effect.void,
   popupTemplate: () => Effect.void,
   showContextMenu: () => Effect.succeedNone,
 } satisfies ElectronMenu.ElectronMenu["Service"]);
 
-const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
+const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
+const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
@@ -229,7 +229,7 @@ function makeTestLayer(input: {
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
-  const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+  const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
     setMainWindowBounds: (bounds, isMaximized) =>
@@ -263,7 +263,7 @@ function makeTestLayer(input: {
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
-  const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
+  const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: (options) =>
       Effect.sync(() => {
         input.createdWindowOptions?.push(options);
@@ -286,18 +286,18 @@ function makeTestLayer(input: {
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        desktopAssetsLayer,
+        layerDesktopAssets,
         Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
           register: () => Effect.void,
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
-        desktopEnvironmentLayer,
-        desktopAppSettingsLayer,
-        desktopClientSettingsLayer,
-        desktopServerExposureLayer,
+        layerDesktopEnvironment,
+        layerDesktopAppSettings,
+        layerDesktopClientSettings,
+        layerDesktopServerExposure,
         DesktopState.layer,
-        electronAppLayer,
+        layerElectronApp,
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
@@ -315,8 +315,8 @@ function makeTestLayer(input: {
               input.copiedTexts?.push(text);
             }),
         } satisfies ElectronShell.ElectronShell["Service"]),
-        electronThemeLayer,
-        electronWindowLayer,
+        layerElectronTheme,
+        layerElectronWindow,
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
@@ -406,24 +406,24 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const layer = DesktopWindow.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          desktopAssetsLayer,
+          layerDesktopAssets,
           Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
             register: () => Effect.void,
             recordMetrics: () => Effect.void,
             shutdown: Effect.void,
           }),
-          desktopEnvironmentLayer,
+          layerDesktopEnvironment,
           DesktopAppSettings.layerTest(),
-          desktopClientSettingsLayer,
-          desktopServerExposureLayer,
-          electronAppLayer,
-          electronMenuLayer,
+          layerDesktopClientSettings,
+          layerDesktopServerExposure,
+          layerElectronApp,
+          layerElectronMenu,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
             openSystemSettings: () => Effect.succeed(true),
             copyText: () => Effect.void,
           } satisfies ElectronShell.ElectronShell["Service"]),
-          electronThemeLayer,
+          layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),

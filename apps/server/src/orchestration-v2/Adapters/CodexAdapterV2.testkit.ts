@@ -181,14 +181,14 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
 }) {
-  const replayLayer =
+  const layerReplay =
     input.driver === undefined
       ? CodexReplay.layerReplay(input.transcript)
       : CodexReplay.layerReplayWithDriver(input.driver);
-  const replayClientFactoryLayer = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
+  const layerReplayClientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
     open: (openInput) =>
       Effect.gen(function* () {
-        const context = yield* Layer.build(replayLayer).pipe(
+        const context = yield* Layer.build(layerReplay).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({
@@ -204,11 +204,11 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
         );
       }),
   });
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  const registryLayer = ProviderAdapterRegistry.makeDriverLayer({
+  const layerRegistry = ProviderAdapterRegistry.makeDriverLayer({
     drivers: [CodexAdapterV2.CodexAdapterV2Driver],
     configMap: {
       [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
@@ -218,15 +218,15 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        replayClientFactoryLayer,
-        serverConfigLayer,
+        layerReplayClientFactory,
+        layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,
       ),
     ),
   );
 
-  return registryLayer;
+  return layerRegistry;
 }
 
 const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(

@@ -11,7 +11,7 @@ const makeEnvironmentAuthPolicyLayer = (
   overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
 ) =>
   EnvironmentAuthPolicy.layer.pipe(
-    Layer.provide(ServerEnvironment.identityLayer),
+    Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provide(
       Layer.effect(
         ServerConfig.ServerConfig,

@@ -585,18 +585,26 @@ const makeBootLayer = (input: {
   readonly workspace: string;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
 }) => {
-  const databaseLayer = makeSqlitePersistenceLive(input.dbPath).pipe(
+  const layerDatabase = makeSqlitePersistenceLive(input.dbPath).pipe(
     Layer.provide(NodeServices.layer),
   );
-  const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
-  const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
-  const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
-  const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
-  const importerProvided = LegacyV1ThreadImporter.layer.pipe(
-    Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+  const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
+  const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
+    Layer.provideMerge(layerDatabase),
   );
-  const maintenanceProvided = ProjectionMaintenance.layer.pipe(Layer.provide(storesProvided));
-  const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layerStoresProvided = Layer.mergeAll(
+    layerDatabase,
+    layerEventStoreProvided,
+    layerProjectionStoreProvided,
+  );
+  const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
+  const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
+  );
+  const layerMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+    Layer.provide(layerStoresProvided),
+  );
+  const layerOrchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
     {
       name: input.name,
       runtimePolicyOverride: {
@@ -610,14 +618,14 @@ const makeBootLayer = (input: {
       },
     },
     ProviderAdapterRegistry.makeSingleLayer(makeCodexAdapter(input.capturedTurns)),
-    { databaseLayer },
+    { databaseLayer: layerDatabase },
   );
   return Layer.mergeAll(
-    storesProvided,
-    eventSinkProvided,
-    importerProvided,
-    maintenanceProvided,
-    orchestratorProvided,
+    layerStoresProvided,
+    layerEventSinkProvided,
+    layerImporterProvided,
+    layerMaintenanceProvided,
+    layerOrchestratorProvided,
   );
 };
 

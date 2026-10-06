@@ -51,7 +51,7 @@ function makeLifecycleLayer(relaunchReasons: Array<string>) {
   );
 }
 
-const unusedLifecycleRuntimeLayer = Layer.mergeAll(
+const layerUnusedLifecycleRuntime = Layer.mergeAll(
   DesktopShutdown.layer,
   DesktopState.layer,
   Layer.succeed(
@@ -131,7 +131,7 @@ describe("WSL IPC", () => {
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
       makeWslBackendLayer(),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -162,7 +162,7 @@ describe("WSL IPC", () => {
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
       makeWslBackendLayer(),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -203,7 +203,7 @@ describe("WSL IPC", () => {
         }),
       }),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -238,7 +238,7 @@ describe("WSL IPC", () => {
         }),
       }),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -267,7 +267,7 @@ describe("WSL IPC", () => {
         }),
       }),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -306,7 +306,7 @@ describe("WSL IPC", () => {
         }),
       }),
       makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {

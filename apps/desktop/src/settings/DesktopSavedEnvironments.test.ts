@@ -107,7 +107,7 @@ function makeLayer(
   },
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
-  const environmentLayer = DesktopEnvironment.layer({
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -123,19 +123,19 @@ function makeLayer(
     ),
   );
 
-  const safeStorageLayer = makeSafeStorageLayer({
+  const layerSafeStorage = makeSafeStorageLayer({
     available: options?.availableSecretStorage ?? true,
     availabilityError: options?.availabilityError,
     decryptError: options?.decryptError,
   });
-  const dependencies = Layer.mergeAll(
-    environmentLayer,
-    safeStorageLayer,
+  const layerDependencies = Layer.mergeAll(
+    layerEnvironment,
+    layerSafeStorage,
     NodeServices.layer,
     fileSystemLayer,
   );
 
-  return DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(dependencies));
+  return DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(layerDependencies));
 }
 
 const withSavedEnvironments = <A, E, R>(
@@ -346,14 +346,14 @@ describe("DesktopSavedEnvironments", () => {
         method: "readFileString",
         pathOrDescriptor: registryPath,
       });
-      const fileSystemLayer = Layer.succeed(
+      const layerFileSystem = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: () => Effect.fail(permissionError),
         }),
       );
       const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments.pipe(
-        Effect.provide(makeLayer(baseDir, undefined, fileSystemLayer)),
+        Effect.provide(makeLayer(baseDir, undefined, layerFileSystem)),
       );
 
       const error = yield* savedEnvironments.getRegistry.pipe(Effect.flip);

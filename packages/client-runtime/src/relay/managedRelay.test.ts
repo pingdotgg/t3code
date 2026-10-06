@@ -24,8 +24,8 @@ function managedRelayTestLayer(
   relayUrl = "https://relay.example.test",
   accessTokenStore?: ManagedRelay.ManagedRelayAccessTokenStore,
 ) {
-  const httpClientLayer = remoteHttpClientLayer(fetchFn);
-  const signerLayer = Layer.succeed(
+  const layerHttpClient = remoteHttpClientLayer(fetchFn);
+  const layerSigner = Layer.succeed(
     ManagedRelay.ManagedRelayDpopSigner,
     ManagedRelay.ManagedRelayDpopSigner.of({
       thumbprint: Effect.succeed("client-thumbprint"),
@@ -37,7 +37,7 @@ function managedRelayTestLayer(
     relayUrl,
     clientId: "t3-mobile",
     ...(accessTokenStore ? { accessTokenStore } : {}),
-  }).pipe(Layer.provide(signerLayer), Layer.provide(httpClientLayer));
+  }).pipe(Layer.provide(layerSigner), Layer.provide(layerHttpClient));
 }
 
 function clerkToken(subject: string, nonce: string): string {

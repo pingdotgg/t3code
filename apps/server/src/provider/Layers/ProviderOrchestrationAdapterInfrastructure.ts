@@ -18,10 +18,10 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * reference the orchestration runtime provides to its continuation worker so
  * Effect layer memoization yields one shared queue.
  */
-export const ProviderOrchestrationAdapterInfrastructureLive = Layer.mergeAll(
-  ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer,
-  CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
-  CursorAgentSdk.cursorAgentSdkRunnerLiveLayer,
+export const layer = Layer.mergeAll(
+  ClaudeAdapterV2.layerQueryRunner,
+  CodexAdapterV2.layerAppServerClientFactory,
+  CursorAgentSdk.layer,
   IdAllocator.layer,
   ProviderContinuationRequests.layer,
 );

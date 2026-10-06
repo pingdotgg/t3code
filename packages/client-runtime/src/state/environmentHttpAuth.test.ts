@@ -33,10 +33,8 @@ import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
-import {
-  boundedThreadSnapshotLoaderLayer,
-  fetchEnvironmentBoundedThreadSnapshot,
-} from "./boundedThreadSnapshotHttp.ts";
+import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
+import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -360,7 +358,7 @@ describe("authenticated environment HTTP requests", () => {
           ? credentialRejectedResponse()
           : Response.json(encodeBoundedSnapshot(BOUNDED_THREAD)),
       );
-      const loaderLayer = boundedThreadSnapshotLoaderLayer.pipe(
+      const layerLoader = BoundedThreadSnapshotHttp.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -376,7 +374,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, THREAD.projection.thread.id);
       expect(result).toEqual({
@@ -398,7 +396,7 @@ describe("authenticated environment HTTP requests", () => {
   it.effect("uses the authorization service captured by the diff loader layer", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(DIFF_RESULT));
-      const loaderLayer = PullRequestDiffLoader.layer.pipe(
+      const layerLoader = PullRequestDiffLoader.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -414,7 +412,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, DIFF);
 

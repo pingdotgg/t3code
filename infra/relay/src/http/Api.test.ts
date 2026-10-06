@@ -42,22 +42,17 @@ import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@t3tools/shared
 import {
   RELAY_HTTP_ROUTER_CONFIG,
   RELAY_REQUEST_DEADLINE_MS,
-  clientApi,
-  relayCors,
-  relayDocsRedirectRoute,
-  relayEnvironmentAuthLayer,
-  relayNotFoundRoute,
   recoverEnvironmentTunnelRecord,
   registerEnvironmentTunnelRecovery,
   relayDpopFailureReason,
   revokeEnvironmentLinkRecord,
-  serverApi,
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
   verifyRelayClientBearerToken,
   verifyEnvironmentTunnelRecoveryProof,
   withoutCapturedParentSpan,
 } from "./Api.ts";
+import * as RelayHttpApi from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
@@ -119,7 +114,7 @@ describe("device listing compatibility", () => {
       iosMajorVersion: null,
       androidApiLevel: 36,
     };
-    const handlers = clientApi.pipe(
+    const layerHandlers = RelayHttpApi.layerClientApi.pipe(
       HttpRouter.provideRequest(
         Layer.mergeAll(
           Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
@@ -160,7 +155,7 @@ describe("device listing compatibility", () => {
         Effect.sync(() =>
           HttpRouter.toWebHandler(
             HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
-              Layer.provide(handlers),
+              Layer.provide(layerHandlers),
               Layer.provide(HttpServer.layerServices),
             ),
             { disableLogger: true },
@@ -301,7 +296,7 @@ describe("relay environment authentication", () => {
         route: {} as never,
       }),
       Effect.provide(
-        relayEnvironmentAuthLayer.pipe(
+        RelayHttpApi.layerEnvironmentAuth.pipe(
           Layer.provide(Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, credentials)),
         ),
       ),
@@ -1234,7 +1229,7 @@ describe("relay routing fallback", () => {
           EnvironmentPublishSignatures.EnvironmentPublishSignatures["Service"]["verify"]
         >[0]
       > = [];
-      const publisher = Layer.succeed(AgentActivityPublisher.AgentActivityPublisher, {
+      const layerPublisher = Layer.succeed(AgentActivityPublisher.AgentActivityPublisher, {
         publish: (input) =>
           Effect.sync(() => {
             published.push(input);
@@ -1242,13 +1237,16 @@ describe("relay routing fallback", () => {
           }),
         replayForLiveActivityRegistration: () => Effect.succeed(null),
       });
-      const signatures = Layer.succeed(EnvironmentPublishSignatures.EnvironmentPublishSignatures, {
-        verify: (input) =>
-          Effect.sync(() => {
-            verified.push(input);
-          }),
-      });
-      const auth = Layer.succeed(RelayEnvironmentAuth, {
+      const layerSignatures = Layer.succeed(
+        EnvironmentPublishSignatures.EnvironmentPublishSignatures,
+        {
+          verify: (input) =>
+            Effect.sync(() => {
+              verified.push(input);
+            }),
+        },
+      );
+      const layerAuth = Layer.succeed(RelayEnvironmentAuth, {
         environmentBearer: (effect) =>
           effect.pipe(
             Effect.provideService(RelayEnvironmentPrincipal, {
@@ -1257,11 +1255,11 @@ describe("relay routing fallback", () => {
             }),
           ),
       });
-      const routes = HttpApiBuilder.layer(
+      const layerRoutes = HttpApiBuilder.layer(
         HttpApi.make("RelayApi").add(RelayApi.groups.server),
       ).pipe(
         Layer.provide(
-          serverApi.pipe(
+          RelayHttpApi.layerServerApi.pipe(
             HttpRouter.provideRequest(
               Layer.mergeAll(
                 Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
@@ -1270,14 +1268,14 @@ describe("relay routing fallback", () => {
                 Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
               ),
             ),
-            Layer.provide([publisher, signatures, Layer.mock(HeldHooks.HeldHooks, {})]),
+            Layer.provide([layerPublisher, layerSignatures, Layer.mock(HeldHooks.HeldHooks, {})]),
           ),
         ),
-        Layer.provide(auth),
+        Layer.provide(layerAuth),
         Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),
       );
       const httpEffect = yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(routes, relayNotFoundRoute, relayCors),
+        Layer.mergeAll(layerRoutes, RelayHttpApi.layerNotFoundRoute, RelayHttpApi.layerCors),
       ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
       const threadIds = [
         "b7c8c522-d244-43dc-875f-7224fce79912",
@@ -1319,7 +1317,11 @@ describe("relay routing fallback", () => {
     Effect.gen(function* () {
       const request = HttpServerRequest.fromWeb(new Request("https://relay.test/"));
       const httpEffect = yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(relayDocsRedirectRoute, relayNotFoundRoute, relayCors),
+        Layer.mergeAll(
+          RelayHttpApi.layerDocsRedirectRoute,
+          RelayHttpApi.layerNotFoundRoute,
+          RelayHttpApi.layerCors,
+        ),
       );
       const response = yield* httpEffect.pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
@@ -1336,7 +1338,9 @@ describe("relay routing fallback", () => {
       const request = HttpServerRequest.fromWeb(
         new Request("https://relay.test/v1/environmentsd", { method: "GET" }),
       );
-      const httpEffect = yield* HttpRouter.toHttpEffect(Layer.merge(relayNotFoundRoute, relayCors));
+      const httpEffect = yield* HttpRouter.toHttpEffect(
+        Layer.merge(RelayHttpApi.layerNotFoundRoute, RelayHttpApi.layerCors),
+      );
       const response = yield* httpEffect.pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
       );

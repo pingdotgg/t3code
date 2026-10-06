@@ -37,7 +37,7 @@ import { expect } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -2447,7 +2447,7 @@ it.layer(
       Effect.provide(
         ServerSettings.layer.pipe(
           Layer.provide(ServerSecretStore.layer),
-          Layer.provide(SqlitePersistenceMemory),
+          Layer.provide(SqlitePersistence.layerMemory),
           Layer.provide(
             ServerConfig.layerTest(process.cwd(), { prefix: "t3code-terminal-provider-restart-" }),
           ),

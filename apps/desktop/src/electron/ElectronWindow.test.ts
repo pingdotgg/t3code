@@ -60,7 +60,7 @@ import * as ElectronWindow from "./ElectronWindow.ts";
 const testLayer = (platform: NodeJS.Platform) =>
   ElectronWindow.layer.pipe(Layer.provide(Layer.succeed(HostProcessPlatform, platform)));
 
-const TestLayer = testLayer("linux");
+const layerTest = testLayer("linux");
 
 function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
   return {
@@ -169,7 +169,7 @@ describe("ElectronWindow", () => {
       assert.equal(error.message, 'Failed to create Electron BrowserWindow "T3 Code" (1100x780).');
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(browserWindowMock.mock.calls, [[options]]);
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("skips windows destroyed before appearance sync runs", () =>
@@ -187,7 +187,7 @@ describe("ElectronWindow", () => {
       );
 
       assert.deepEqual(syncedWindows, [liveWindow]);
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves window enumeration failures as structured defects", () =>
@@ -211,7 +211,7 @@ describe("ElectronWindow", () => {
         assert.strictEqual(error.cause, cause);
         assert.notInclude(error.message, cause.message);
       }
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves reveal failures with the target window", () =>
@@ -238,7 +238,7 @@ describe("ElectronWindow", () => {
         assert.isNull(error.channel);
         assert.strictEqual(error.cause, cause);
       }
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("uses native Windows activation without querying the foreground window", () =>
@@ -500,7 +500,7 @@ describe("ElectronWindow", () => {
         assert.equal(error.channel, "desktop:update");
         assert.strictEqual(error.cause, cause);
       }
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves destroy failures and continues with later windows", () =>
@@ -531,7 +531,7 @@ describe("ElectronWindow", () => {
         assert.strictEqual(error.cause, cause);
       }
       assert.equal(vi.mocked(laterWindow.destroy).mock.calls.length, 1);
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
   it.effect("an ordinary reveal on Windows does not touch the Win32 foreground helpers", () =>
     Effect.gen(function* () {

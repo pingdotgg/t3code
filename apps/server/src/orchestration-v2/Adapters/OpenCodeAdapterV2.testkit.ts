@@ -457,7 +457,7 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
 }
 
 function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
@@ -473,7 +473,7 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
     Layer.provide(
       Layer.mergeAll(
         makeOpenCodeReplayRuntimeLayer(transcript),
-        serverConfigLayer,
+        layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(

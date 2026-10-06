@@ -76,7 +76,7 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const TestLayer = RuntimePolicy.layerFromProjectStore.pipe(
+const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -109,7 +109,7 @@ const TestLayer = RuntimePolicy.layerFromProjectStore.pipe(
   ),
 );
 
-it.layer(TestLayer)("RuntimePolicyV2", (it) => {
+it.layer(layerTest)("RuntimePolicyV2", (it) => {
   it.effect("uses the project root for local-checkout threads", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

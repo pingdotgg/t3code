@@ -33,25 +33,25 @@ function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpC
 export function makePrimaryEnvironmentHttpLayer() {
   return Layer.unwrap(
     Effect.sync(() => {
-      const baseLayer = remoteHttpClientLayer(globalThis.fetch);
+      const layerBase = remoteHttpClientLayer(globalThis.fetch);
       if (isSameOriginBrowserPrimary()) {
         return Layer.merge(
-          baseLayer,
+          layerBase,
           Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
         );
       }
 
-      const bearerClientLayer = Layer.effect(
+      const layerBearerClient = Layer.effect(
         HttpClient.HttpClient,
         Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
-      ).pipe(Layer.provide(baseLayer));
+      ).pipe(Layer.provide(layerBase));
 
       return Layer.merge(
-        bearerClientLayer,
+        layerBearerClient,
         Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
       );
     }),
   );
 }
 
-export const primaryEnvironmentHttpLayer = makePrimaryEnvironmentHttpLayer();
+export const layer = makePrimaryEnvironmentHttpLayer();

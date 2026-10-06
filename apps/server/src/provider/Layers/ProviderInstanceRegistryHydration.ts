@@ -56,12 +56,10 @@ import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
 import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
-import {
-  type ProviderOrchestrationAdapterInfrastructure,
-  ProviderOrchestrationAdapterInfrastructureLive,
-} from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import { type ProviderOrchestrationAdapterInfrastructure } from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as ProviderOrchestrationAdapterInfrastructureLayer from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
-import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
+import * as AcpRegistryCatalogLayer from "./AcpRegistryCatalog.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -127,7 +125,7 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const SettingsWatcherLive = Layer.effectDiscard(
+const layerSettingsWatcher = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
     const serverSettings = yield* Settings.ServerSettingsService;
@@ -163,7 +161,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
  * The mutator tag is technically also exposed; only this module imports
  * it, so the visibility leak is harmless in practice.
  */
-export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
+export const layer: Layer.Layer<
   ProviderInstanceRegistry.ProviderInstanceRegistry,
   never,
   ProviderInstanceRegistryHydrationEnv
@@ -178,15 +176,15 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    const mutableLayer = ProviderInstanceRegistryMutableLayer({
+    const layerMutable = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     }).pipe(
-      Layer.provide(ProviderOrchestrationAdapterInfrastructureLive),
-      Layer.provide(AcpRegistryCatalogLive),
+      Layer.provide(ProviderOrchestrationAdapterInfrastructureLayer.layer),
+      Layer.provide(AcpRegistryCatalogLayer.layer),
     );
 
-    return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
+    return layerSettingsWatcher.pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   ProviderInstanceRegistry.ProviderInstanceRegistry,

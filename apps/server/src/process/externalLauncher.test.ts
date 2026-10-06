@@ -66,7 +66,7 @@ const testLayer = (input: {
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
 }) => {
-  const spawnerLayer = Layer.succeed(
+  const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
@@ -84,7 +84,7 @@ const testLayer = (input: {
   );
 
   return Layer.mergeAll(
-    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
+    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
@@ -1130,7 +1130,7 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
-  const launcherLayer = ExternalLauncher.layer.pipe(
+  const layerLauncher = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
@@ -1171,7 +1171,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        launcherLayer,
+        layerLauncher,
         Layer.succeed(HostProcessPlatform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
@@ -1194,7 +1194,7 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   const release = Deferred.makeUnsafe<void>();
   let parkedStats = 0;
-  const launcherLayer = ExternalLauncher.layer.pipe(
+  const layerLauncher = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
@@ -1236,7 +1236,7 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        launcherLayer,
+        layerLauncher,
         Layer.succeed(HostProcessPlatform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({

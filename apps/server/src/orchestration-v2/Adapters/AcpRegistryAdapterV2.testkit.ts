@@ -37,7 +37,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(`acp-registry-${transcript.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
@@ -86,7 +86,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(

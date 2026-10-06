@@ -981,7 +981,7 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
@@ -998,7 +998,7 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
         makeClaudeAgentSdkReplayLayer(transcript, options),
         IdAllocator.layer,
         NodeServices.layer,
-        serverConfigLayer,
+        layerServerConfig,
       ),
     ),
   );

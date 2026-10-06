@@ -22,7 +22,7 @@ if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.tes
 
 type Read = { graphqlRequests: number; restRequests: number; cost: number; debug: string };
 const reads: Read[] = [];
-const measuredProcess = Layer.effect(
+const layerMeasuredProcess = Layer.effect(
   VcsProcess.VcsProcess,
   Effect.gen(function* () {
     const vcs = yield* VcsProcess.VcsProcess;
@@ -47,9 +47,9 @@ const measuredProcess = Layer.effect(
   }),
 ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer));
 
-const services = GitHubPullRequestCli.layer.pipe(
+const layerServices = GitHubPullRequestCli.layer.pipe(
   Layer.provide(GitHubCli.layer),
-  Layer.provideMerge(measuredProcess),
+  Layer.provideMerge(layerMeasuredProcess),
 );
 
 const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -122,7 +122,7 @@ for (const mode of ["detail", "preview"] as const) {
           }),
         );
       }),
-    ).pipe(Effect.provide(services)),
+    ).pipe(Effect.provide(layerServices)),
   );
   for (const row of rows) await Effect.runPromise(Console.log(encodeJson(row)));
 }

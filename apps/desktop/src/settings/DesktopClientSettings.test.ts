@@ -79,7 +79,7 @@ const decodeRecordJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 function makeLayer(baseDir: string) {
-  const environmentLayer = DesktopEnvironment.layer({
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -96,7 +96,7 @@ function makeLayer(baseDir: string) {
   );
 
   return DesktopClientSettings.layer.pipe(
-    Layer.provideMerge(environmentLayer),
+    Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(NodeServices.layer),
   );
 }

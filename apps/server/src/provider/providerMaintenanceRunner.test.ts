@@ -42,7 +42,7 @@ const encoder = new TextEncoder();
 // `{ command, args }` assertions below hold deterministically on any host
 // (including Windows). Windows-specific resolution is covered by the dedicated
 // win32 case at the end of this suite.
-const NonWindowsPlatform = Layer.succeed(HostProcessPlatform, "linux");
+const layerNonWindowsPlatform = Layer.succeed(HostProcessPlatform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
   if (provider === NATIVE_CLI_DRIVER) {
@@ -265,7 +265,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
@@ -294,7 +294,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer(() => ({ stdout: "updated" })),
         ),
@@ -321,7 +321,7 @@ describe("providerMaintenanceRunner", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            NonWindowsPlatform,
+            layerNonWindowsPlatform,
             latestVersionHttpClient("0.0.0"),
             mockSpawnerLayer(() => ({ stdout: "updated" })),
           ),
@@ -354,7 +354,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((_command, _args, options) => {
             seen.push(options.env);
@@ -395,7 +395,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
@@ -440,7 +440,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((command) => {
             calls.push(command);
@@ -490,7 +490,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
@@ -521,7 +521,7 @@ describe("providerMaintenanceRunner", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            NonWindowsPlatform,
+            layerNonWindowsPlatform,
             latestVersionHttpClient("0.0.0"),
             mockSpawnerLayer((command, args) => {
               calls.push({ command, args });
@@ -594,7 +594,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.124.0-alpha.3"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
@@ -619,7 +619,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer(() => ({ stderr: "permission denied", code: 1 })),
         ),
@@ -645,7 +645,7 @@ describe("providerMaintenanceRunner", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            NonWindowsPlatform,
+            layerNonWindowsPlatform,
             latestVersionHttpClient("9.9.9"),
             mockSpawnerLayer(() => ({ stdout: "updated" })),
           ),
@@ -684,7 +684,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer(() => {
             startedLatch.resolve();
@@ -761,7 +761,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("2.0.0"),
           mockSpawnerLayer((_command, args) => {
             calls.push(args.join(" "));
@@ -805,7 +805,7 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          NonWindowsPlatform,
+          layerNonWindowsPlatform,
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((_command, args) => {
             calls.push(args.join(" "));
@@ -860,7 +860,7 @@ describe("providerMaintenanceRunner", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            NonWindowsPlatform,
+            layerNonWindowsPlatform,
             latestVersionHttpClient("0.0.0"),
             mockSpawnerLayer(() => ({ stdout: "updated" })),
           ),
@@ -1009,7 +1009,7 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        NonWindowsPlatform,
+        layerNonWindowsPlatform,
         latestVersionHttpClient("3.0.0"),
         mockSpawnerLayer((_command, args) => {
           calls.push(args.join(" "));

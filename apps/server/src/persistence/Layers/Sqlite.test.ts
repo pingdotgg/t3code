@@ -10,11 +10,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import {
-  SqlitePersistenceMemory,
-  WAL_SIZE_LIMIT_BYTES,
-  makeSqlitePersistenceLive,
-} from "./Sqlite.ts";
+import { WAL_SIZE_LIMIT_BYTES, makeSqlitePersistenceLive } from "./Sqlite.ts";
+import * as SqlitePersistence from "./Sqlite.ts";
 
 const lockHolderSource = `
 const { DatabaseSync } = require("node:sqlite");
@@ -92,5 +89,5 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
     assert.equal(rows[0]?.timeout, 5000);
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

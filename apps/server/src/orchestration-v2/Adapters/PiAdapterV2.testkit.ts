@@ -414,7 +414,7 @@ export function makePiProviderAdapterRegistryLayer<E, R>(input: {
   readonly launchArgs: string;
   readonly environment?: ProviderInstanceEnvironment;
 }) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(`pi-${input.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
@@ -430,7 +430,7 @@ export function makePiProviderAdapterRegistryLayer<E, R>(input: {
     },
   }).pipe(
     Layer.provide(input.spawner),
-    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
   );
 }
 

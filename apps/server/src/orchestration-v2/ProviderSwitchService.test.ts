@@ -77,7 +77,7 @@ function testLayer(
     planSelectionTransition,
     openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
   });
-  const registry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+  const layerRegistry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
     get: (instanceId) =>
       metadata[instanceId] === undefined
         ? Effect.fail(
@@ -99,7 +99,7 @@ function testLayer(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(registry));
+  return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
 }
 
 it.effect(

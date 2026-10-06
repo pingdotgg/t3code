@@ -104,7 +104,7 @@ vi.mock("../../provider/cursorSdk.ts", () => ({
   },
 }));
 
-const testLayer = CursorAgentSdk.cursorAgentSdkRunnerLiveLayer.pipe(
+const layerTest = CursorAgentSdk.layer.pipe(
   Layer.provide(
     Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
       native: {
@@ -147,7 +147,7 @@ describe("CursorAgentSdkRunner", () => {
       yield* run.wait;
 
       assert.deepStrictEqual(cursorSdkMock.runOperations, ["run.start"]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>
@@ -188,7 +188,7 @@ describe("CursorAgentSdkRunner", () => {
           cwd: process.cwd(),
         },
       ]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("logs agent.close before invoking the Cursor SDK", () =>
@@ -221,7 +221,7 @@ describe("CursorAgentSdkRunner", () => {
         "sdk:agent.close",
       ]);
       assert.equal(cursorSdkMock.agentClose.mock.calls.length, 1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("logs agent.close even when the Cursor SDK close fails", () =>
@@ -259,7 +259,7 @@ describe("CursorAgentSdkRunner", () => {
       ]);
       assert.equal(cursorSdkMock.agentClose.mock.calls.length, 1);
       cursorSdkMock.setAgentCloseFailure(undefined);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("surfaces interaction callback failures through run.wait", () =>
@@ -299,6 +299,6 @@ describe("CursorAgentSdkRunner", () => {
       assert.equal(cursorSdkMock.create.mock.calls.length, 1);
       assert.equal(cursorSdkMock.send.mock.calls.length, 1);
       assert.equal(cursorSdkMock.runWait.mock.calls.length, 1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });

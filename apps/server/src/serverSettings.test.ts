@@ -27,7 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
-import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "./persistence/Layers/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
@@ -39,7 +39,7 @@ const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonStrin
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
-    Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
@@ -53,7 +53,7 @@ const makeServerSettingsLayer = () =>
 const makeServerSettingsLayerWithSecrets = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
@@ -253,15 +253,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       resource: "provider environment secret",
       cause: platformCause,
     });
-    const configLayer = Layer.fresh(
+    const layerConfig = Layer.fresh(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "t3code-server-settings-secret-failure-test-",
       }),
     );
-    const settingsLayer = ServerSettingsModule.layer.pipe(
+    const layerSettings = ServerSettingsModule.layer.pipe(
       Layer.provide(makeFailingSecretStoreLayer(cause)),
-      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
-      Layer.provideMerge(configLayer),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(layerConfig),
     );
 
     return Effect.gen(function* () {
@@ -283,7 +283,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
       assert.strictEqual(error.cause, cause);
       assert.notInclude(error.message, cause.message);
-    }).pipe(Effect.provide(settingsLayer));
+    }).pipe(Effect.provide(layerSettings));
   });
 
   it.effect("identifies provider history query failures", () =>
@@ -1307,16 +1307,16 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       resource: "provider environment secret",
       cause: new Error("Secret storage unavailable"),
     });
-    const secretLayer = Layer.effect(
+    const layerSecret = Layer.effect(
       ServerSecretStore.ServerSecretStore,
       Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
         ...store,
         set: () => Effect.fail(cause),
       })),
     ).pipe(Layer.provide(ServerSecretStore.layer));
-    const settingsLayer = ServerSettingsModule.layer.pipe(
-      Layer.provide(secretLayer),
-      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+    const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(layerSecret),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
         Layer.fresh(
           ServerConfig.layerTest(process.cwd(), {
@@ -1352,7 +1352,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         settings.providerInstances[instanceId]?.environment?.[0]?.value,
         "inline-test-token",
       );
-    }).pipe(Effect.provide(settingsLayer));
+    }).pipe(Effect.provide(layerSettings));
   });
 
   it.effect.each(
@@ -1691,7 +1691,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             : fileSystem.rename(fromPath, toPath),
       });
       const instanceId = ProviderInstanceId.make("codex_write_failure");
-      const settingsLayer = makeServerSettingsLayer().pipe(
+      const layerSettings = makeServerSettingsLayer().pipe(
         Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
       );
 
@@ -1736,7 +1736,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             ?.value,
           "sk-kept",
         );
-      }).pipe(Effect.provide(settingsLayer));
+      }).pipe(Effect.provide(layerSettings));
     }),
   );
 
@@ -1746,7 +1746,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const textDecoder = new TextDecoder();
       const secrets = new Map<string, Uint8Array>();
       let rejectNewSecret = false;
-      const secretStoreLayer = Layer.succeed(
+      const layerSecretStore = Layer.succeed(
         ServerSecretStore.ServerSecretStore,
         ServerSecretStore.ServerSecretStore.of({
           get: (name) =>
@@ -1799,9 +1799,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             }),
         }),
       );
-      const settingsLayer = ServerSettingsModule.layer.pipe(
-        Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
-        Layer.provide(secretStoreLayer),
+      const layerSettings = ServerSettingsModule.layer.pipe(
+        Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+        Layer.provide(layerSecretStore),
         Layer.provideMerge(
           Layer.fresh(
             ServerConfig.layerTest(process.cwd(), {
@@ -1844,7 +1844,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             ?.value,
           "sk-kept",
         );
-      }).pipe(Effect.provide(settingsLayer));
+      }).pipe(Effect.provide(layerSettings));
     },
   );
 

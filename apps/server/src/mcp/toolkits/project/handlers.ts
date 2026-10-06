@@ -38,7 +38,7 @@ const mutation = Effect.gen(function* () {
   );
   return yield* Project.ProjectService;
 });
-export const ProjectHandlersLive = ProjectToolkit.toLayer({
+export const layer = ProjectToolkit.toLayer({
   t3_thread_launch: (input) =>
     Effect.gen(function* () {
       const context = yield* readMutationCaller();

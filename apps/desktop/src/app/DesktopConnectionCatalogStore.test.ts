@@ -56,7 +56,7 @@ function makeLayer(
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
-  const environmentLayer = DesktopEnvironment.layer({
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -71,20 +71,20 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
-  const dependencies = Layer.mergeAll(
-    environmentLayer,
-    safeStorageLayer,
+  const layerSafeStorage = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
+  const layerDependencies = Layer.mergeAll(
+    layerEnvironment,
+    layerSafeStorage,
     NodeServices.layer,
     fileSystemLayer,
   );
-  const savedEnvironmentsLayer = DesktopSavedEnvironments.layer.pipe(
-    Layer.provideMerge(dependencies),
+  const layerSavedEnvironments = DesktopSavedEnvironments.layer.pipe(
+    Layer.provideMerge(layerDependencies),
   );
 
   return DesktopConnectionCatalogStore.layer.pipe(
-    Layer.provideMerge(savedEnvironmentsLayer),
-    Layer.provideMerge(dependencies),
+    Layer.provideMerge(layerSavedEnvironments),
+    Layer.provideMerge(layerDependencies),
   );
 }
 
@@ -280,14 +280,14 @@ describe("DesktopConnectionCatalogStore", () => {
         method: "readFileString",
         pathOrDescriptor: path.join(baseDir, "userdata", "connection-catalog.json"),
       });
-      const fileSystemLayer = Layer.succeed(
+      const layerFileSystem = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: () => Effect.fail(permissionError),
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
+        Effect.provide(makeLayer(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.get.pipe(Effect.flip);
@@ -318,14 +318,14 @@ describe("DesktopConnectionCatalogStore", () => {
         method: "makeDirectory",
         pathOrDescriptor: path.join(baseDir, "userdata"),
       });
-      const fileSystemLayer = Layer.succeed(
+      const layerFileSystem = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           makeDirectory: () => Effect.fail(permissionError),
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
+        Effect.provide(makeLayer(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.set("{}").pipe(Effect.flip);

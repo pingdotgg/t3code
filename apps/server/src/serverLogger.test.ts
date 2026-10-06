@@ -13,7 +13,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerConfig from "./config.ts";
-import { ServerLoggerLive } from "./serverLogger.ts";
+import * as ServerLogger from "./serverLogger.ts";
 
 interface ExportedRequest {
   readonly url: string;
@@ -93,7 +93,7 @@ const logThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
     const requests: Array<ExportedRequest> = [];
     yield* Effect.log("server logger under test").pipe(
       Effect.provide(
-        ServerLoggerLive.pipe(
+        ServerLogger.layer.pipe(
           Layer.provide(configLayer(overrides)),
           Layer.provide(collectorLayer(requests)),
         ),
@@ -110,7 +110,7 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
   Effect.gen(function* () {
     const requests: Array<ExportedRequest> = [];
     const spans: Array<Tracer.NativeSpan> = [];
-    const tracerLayer = Layer.succeed(
+    const layerTracer = Layer.succeed(
       Tracer.Tracer,
       Tracer.make({
         span: (spanOptions) => {
@@ -124,11 +124,11 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
       Effect.withSpan("server-logger-test"),
       Effect.provide(
         Layer.mergeAll(
-          ServerLoggerLive.pipe(
+          ServerLogger.layer.pipe(
             Layer.provide(configLayer(overrides)),
             Layer.provide(collectorLayer(requests)),
           ),
-          tracerLayer,
+          layerTracer,
         ),
       ),
     );

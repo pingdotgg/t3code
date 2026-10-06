@@ -53,7 +53,7 @@ vi.mock("./relayClientInstallDialog", () => ({
 }));
 
 const createProof = vi.fn(() => Effect.succeed("dpop-proof"));
-const dpopSignerLayer = Layer.succeed(
+const layerDpopSigner = Layer.succeed(
   ManagedRelay.ManagedRelayDpopSigner,
   ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("thumbprint"),
@@ -62,13 +62,13 @@ const dpopSignerLayer = Layer.succeed(
 );
 
 function relayLayer() {
-  const http = remoteHttpClientLayer(globalThis.fetch);
+  const layerHttp = remoteHttpClientLayer(globalThis.fetch);
   return Layer.mergeAll(
-    http,
+    layerHttp,
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
-    }).pipe(Layer.provideMerge(dpopSignerLayer), Layer.provide(http)),
+    }).pipe(Layer.provideMerge(layerDpopSigner), Layer.provide(layerHttp)),
   );
 }
 

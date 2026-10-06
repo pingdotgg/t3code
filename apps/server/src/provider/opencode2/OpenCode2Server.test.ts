@@ -129,18 +129,18 @@ describe("OpenCode2Server error details", () => {
       Effect.provide(
         Layer.mergeAll(
           OpenCode2Client.layer.pipe(Layer.provide(httpClient)),
-          OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
         ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     );
 
   it.effect("never include the server URL", () =>
     Effect.gen(function* () {
-      const hanging = Layer.succeed(
+      const layerHanging = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.never),
       );
-      const timedOut = yield* detailFor(hanging).pipe(Effect.forkChild);
+      const timedOut = yield* detailFor(layerHanging).pipe(Effect.forkChild);
       yield* TestClock.adjust("10 seconds");
       const details = [
         yield* detailFor(FetchHttpClient.layer),
@@ -244,7 +244,7 @@ describe("OpenCode2Server spawned server", () => {
         Effect.provide(
           Layer.mergeAll(
             OpenCode2Client.layer,
-            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
         ),
       ),

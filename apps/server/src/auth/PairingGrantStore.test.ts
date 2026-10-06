@@ -10,7 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
 const makeServerConfigLayer = (
@@ -33,7 +33,7 @@ const makePairingGrantStoreLayer = (
   overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
 ) =>
   PairingGrantStore.layer.pipe(
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 

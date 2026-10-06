@@ -444,7 +444,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
 
   const tee = makeWireTee();
   const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
-  const registryLayer = ProviderAdapterRegistry.makeLayerEffect(
+  const layerRegistry = ProviderAdapterRegistry.makeLayerEffect(
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const environment = yield* HostProcessEnvironment;
@@ -534,7 +534,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
     Effect.provide(
       makeOrchestratorV2ReplayLayerWithRegistry(
         scenario,
-        registryLayer,
+        layerRegistry,
         variant.runContinuationWorker === true ? { runContinuationWorker: true } : {},
       ),
     ),

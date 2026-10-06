@@ -530,7 +530,7 @@ it.effect("reports implemented tools separately from locally available executabl
       );
     },
   } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
-  const testLayer = SourceControlDiscovery.layer.pipe(
+  const layerTest = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-source-control-discovery-",
@@ -613,7 +613,7 @@ it.effect("reports implemented tools separately from locally available executabl
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
     assert.strictEqual(bitbucket.executable, undefined);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("probes provider authentication without exposing token details", () => {
@@ -681,7 +681,7 @@ Logged in to gitlab.com as gitlab-user
       );
     },
   } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
-  const testLayer = SourceControlDiscovery.layer.pipe(
+  const layerTest = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-source-control-auth-discovery-",
@@ -748,7 +748,7 @@ Logged in to gitlab.com as gitlab-user
         },
       ],
     );
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("discovers Forgejo accounts and retains the server port", () =>

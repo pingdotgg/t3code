@@ -20,7 +20,7 @@ interface LogRecord {
 const baseDir = "/virtual-home";
 
 function makeLayer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
-  const environmentLayer = DesktopEnvironment.layer({
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -37,7 +37,7 @@ function makeLayer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
   );
 
   return DesktopClientSettings.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(environmentLayer, NodeServices.layer, fileSystemLayer)),
+    Layer.provideMerge(Layer.mergeAll(layerEnvironment, NodeServices.layer, fileSystemLayer)),
   );
 }
 

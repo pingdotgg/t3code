@@ -36,7 +36,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -56,14 +56,14 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
-const TestDatabaseLayer = SqlitePersistenceMemory;
-const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(TestDatabaseLayer),
+const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provide(layerTestDatabase),
 );
-const TestEventSinkLayer = EventSink.layer.pipe(
-  Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
+const layerTestEventSink = EventSink.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
-const FailingReleaseEventSinkLayer = Layer.effect(
+const layerFailingReleaseEventSink = Layer.effect(
   EventSink.EventSinkV2,
   Effect.gen(function* () {
     const delegate = yield* EventSink.EventSinkV2;
@@ -79,7 +79,7 @@ const FailingReleaseEventSinkLayer = Layer.effect(
           : delegate.write(input),
     });
   }),
-).pipe(Layer.provide(TestEventSinkLayer));
+).pipe(Layer.provide(layerTestEventSink));
 
 interface FlakyReleaseWrites {
   /** Which release writes fail right now. */
@@ -125,7 +125,7 @@ const makeFlakyReleaseEventSinkLayer = (flaky: FlakyReleaseWrites) =>
           }),
       });
     }),
-  ).pipe(Layer.provide(TestEventSinkLayer));
+  ).pipe(Layer.provide(layerTestEventSink));
 
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
@@ -413,13 +413,13 @@ function makeTestLayer(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
-  const configuredEventSinkLayer =
+  const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
       ? makeFlakyReleaseEventSinkLayer(input.flakyReleaseWrites)
       : input.failReleaseEventWrites
-        ? FailingReleaseEventSinkLayer
-        : TestEventSinkLayer;
-  const registryLayer = ProviderAdapterRegistry.makeSingleLayer(
+        ? layerFailingReleaseEventSink
+        : layerTestEventSink;
+  const layerRegistry = ProviderAdapterRegistry.makeSingleLayer(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
@@ -434,33 +434,33 @@ function makeTestLayer(input: {
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
     }),
   );
-  const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
+  const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        configuredEventSinkLayer,
+        layerConfiguredEventSink,
         IdAllocator.layer,
-        TestStoresLayer,
+        layerTestStores,
         ThreadCommandExecutor.layer,
       ),
     ),
   );
   return Layer.mergeAll(
-    TestStoresLayer,
-    configuredEventSinkLayer,
+    layerTestStores,
+    layerConfiguredEventSink,
     IdAllocator.layer,
-    TestMcpRegistryLayer,
+    layerTestMcpRegistry,
     ProviderSessionManager.layerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
-          registryLayer,
-          configuredEventSinkLayer,
+          layerRegistry,
+          layerConfiguredEventSink,
           IdAllocator.layer,
-          providerEventIngestorTestLayer,
-          TestMcpRegistryLayer,
-          TestStoresLayer,
+          layerProviderEventIngestorTest,
+          layerTestMcpRegistry,
+          layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -479,7 +479,7 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const TestMcpRegistryLayer = Layer.effect(
+const layerTestMcpRegistry = Layer.effect(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.__testing.make(),
 ).pipe(
@@ -520,7 +520,7 @@ function runBrowserAccessScenario(input: {
     >([]);
     const projectId = ProjectId.make("project-provider-session-manager-browser-access");
     const threadId = ThreadId.make("thread-provider-session-manager-browser-access");
-    const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
+    const layerProjectService = Layer.mock(ProjectService.ProjectService)({
       getById: (requestedProjectId) =>
         Effect.succeed(
           input.projectExists === false
@@ -552,7 +552,7 @@ function runBrowserAccessScenario(input: {
           state,
           idleTimeoutMs: 1_000,
           mcpConfigs,
-          projectServiceLayer,
+          projectServiceLayer: layerProjectService,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
             projectSettingsOverrides: {

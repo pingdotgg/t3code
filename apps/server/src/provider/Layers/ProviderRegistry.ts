@@ -326,7 +326,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   streamChanges: instance.snapshot.streamChanges,
 });
 
-export const ProviderRegistryLive = Layer.effect(
+export const layer = Layer.effect(
   ProviderRegistry.ProviderRegistry,
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;

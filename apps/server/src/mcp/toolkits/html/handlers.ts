@@ -58,10 +58,10 @@ const handlers = {
     }),
 } satisfies Parameters<typeof HtmlToolkit.toLayer>[0];
 
-export const HtmlPreviewToolkitHandlersLive = HtmlPreviewToolkit.toLayer({
+export const layerPreview = HtmlPreviewToolkit.toLayer({
   html_preview: handlers.html_preview,
 });
 
-export const HtmlRenderToolkitHandlersLive = HtmlRenderToolkit.toLayer({
+export const layerRender = HtmlRenderToolkit.toLayer({
   html_render: handlers.html_render,
 });

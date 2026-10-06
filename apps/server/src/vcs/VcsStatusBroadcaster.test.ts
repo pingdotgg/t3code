@@ -162,7 +162,7 @@ describe("VcsStatusBroadcaster", () => {
         isDefaultRef: true,
         refName: "main",
       };
-      const testLayer = VcsStatusBroadcaster.layer.pipe(
+      const layerTest = VcsStatusBroadcaster.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(makeBackgroundPolicyLayer(() => true)),
         Layer.provide(
@@ -208,7 +208,7 @@ describe("VcsStatusBroadcaster", () => {
 
         assert.equal(pullCalls, 1);
         assert.equal(status.behindCount, 0);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
     },
   );
 
@@ -431,7 +431,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteInvalidationCalls: 0,
       failRemoteStatus: false,
     };
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
+    const layerTest = VcsStatusBroadcaster.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
@@ -490,7 +490,7 @@ describe("VcsStatusBroadcaster", () => {
 
       assert.isTrue(Exit.isFailure(refreshExit));
       assert.deepStrictEqual(cached, baseStatus);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("refreshes only the cached local snapshot when requested", () => {
@@ -541,7 +541,7 @@ describe("VcsStatusBroadcaster", () => {
         localInvalidationCalls: 0,
         remoteInvalidationCalls: 0,
       };
-      const testLayer = VcsStatusBroadcaster.layer.pipe(
+      const layerTest = VcsStatusBroadcaster.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(makeBackgroundPolicyLayer(() => true)),
         Layer.provide(
@@ -590,7 +590,7 @@ describe("VcsStatusBroadcaster", () => {
         assert.deepStrictEqual(seenCwds, [realPath, realPath]);
         assert.equal(state.localStatusCalls, 1);
         assert.equal(state.remoteStatusCalls, 1);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
     },
   );
 
@@ -706,7 +706,7 @@ describe("VcsStatusBroadcaster", () => {
       messages.push(message as ReadonlyArray<unknown>);
     });
     let firstRemoteAttemptDeferred: Deferred.Deferred<void> | null = null;
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
+    const layerTest = VcsStatusBroadcaster.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
@@ -803,7 +803,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          testLayer,
+          layerTest,
           TestClock.layer(),
           Logger.layer([logger], { mergeWithExisting: false }),
         ),
@@ -990,7 +990,7 @@ describe("VcsStatusBroadcaster", () => {
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
     };
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
+    const layerTest = VcsStatusBroadcaster.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => false)),
       Layer.provide(
@@ -1029,7 +1029,7 @@ describe("VcsStatusBroadcaster", () => {
       assert.isTrue(Option.isSome(snapshot));
       assert.equal(state.remoteStatusCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("stops the remote poller after the last stream subscriber disconnects", () => {
@@ -1043,7 +1043,7 @@ describe("VcsStatusBroadcaster", () => {
     };
     let remoteInterruptedDeferred: Deferred.Deferred<void, never> | null = null;
     let remoteStartedDeferred: Deferred.Deferred<void, never> | null = null;
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
+    const layerTest = VcsStatusBroadcaster.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
@@ -1115,6 +1115,6 @@ describe("VcsStatusBroadcaster", () => {
       yield* Scope.close(secondScope, Exit.void).pipe(Effect.forkScoped);
       yield* Deferred.await(remoteInterrupted);
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 });

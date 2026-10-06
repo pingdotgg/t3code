@@ -83,7 +83,7 @@ describe("macOS Chromium secrets", () => {
     keychainAccount: "Chrome",
     linuxSecretApplication: undefined,
   } as const;
-  const noProcesses = Layer.succeed(
+  const layerNoProcesses = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() => Effect.die("must not spawn")),
   );
@@ -93,7 +93,7 @@ describe("macOS Chromium secrets", () => {
       getPassword.mockReturnValue("macos-secret");
       const keys = yield* resolveChromiumKeys(request);
       expect(keys.cbcV10?.toString("hex")).toBe("3df7306fb1eac353289565a2f6b64f74");
-    }).pipe(Effect.provide(noProcesses)),
+    }).pipe(Effect.provide(layerNoProcesses)),
   );
 
   it.effect("reports a missing keychain entry", () =>
@@ -101,7 +101,7 @@ describe("macOS Chromium secrets", () => {
       getPassword.mockReturnValue(null);
       const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
       expect(error.reason).toBe("keychainItemMissing");
-    }).pipe(Effect.provide(noProcesses)),
+    }).pipe(Effect.provide(layerNoProcesses)),
   );
 
   it.effect("preserves a denied keychain approval", () =>
@@ -113,7 +113,7 @@ describe("macOS Chromium secrets", () => {
       const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
       expect(error.reason).toBe("needsKeychainApproval");
       expect(error.cause).toBe(denied);
-    }).pipe(Effect.provide(noProcesses)),
+    }).pipe(Effect.provide(layerNoProcesses)),
   );
 });
 

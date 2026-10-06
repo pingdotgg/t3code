@@ -117,7 +117,7 @@ describe("GitWorkflowService", () => {
     const remoteStatus = vi.fn();
     const status = vi.fn();
 
-    const testLayer = GitWorkflowService.layer.pipe(
+    const layerTest = GitWorkflowService.layer.pipe(
       Layer.provide(
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
           detect: () => Effect.succeed(null),
@@ -142,7 +142,7 @@ describe("GitWorkflowService", () => {
       assert.equal(localStatus.mock.calls.length, 0);
       assert.equal(remoteStatus.mock.calls.length, 0);
       assert.equal(status.mock.calls.length, 0);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("returns an empty ref list when no VCS repository is detected", () =>

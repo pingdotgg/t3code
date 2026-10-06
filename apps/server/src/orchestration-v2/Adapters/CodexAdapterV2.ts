@@ -1456,7 +1456,7 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
-export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
+export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
   ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers

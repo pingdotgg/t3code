@@ -59,7 +59,7 @@ function makeLayer(input: {
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
 }) {
-  const serviceLayer = SourceControlRepositoryService.layer.pipe(
+  const layerService = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
@@ -89,11 +89,11 @@ function makeLayer(input: {
   );
 
   return input.fileSystem
-    ? serviceLayer.pipe(
+    ? layerService.pipe(
         Layer.provide(Layer.succeed(FileSystem.FileSystem, input.fileSystem)),
         Layer.provideMerge(NodePath.layer),
       )
-    : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
+    : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
 
 it.effect("looks up repositories through the requested provider without search", () => {

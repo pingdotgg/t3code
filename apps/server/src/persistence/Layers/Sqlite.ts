@@ -12,7 +12,7 @@ import * as ServerConfig from "../../config.ts";
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
-const setup = Layer.effectDiscard(
+const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
@@ -34,7 +34,7 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
   return Layer.provideMerge(
-    setup,
+    layerSetup,
     NodeSqliteClient.layer({
       filename: dbPath,
       spanAttributes: {
@@ -45,8 +45,8 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   );
 }, Layer.unwrap);
 
-export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
+export const layerMemory = Layer.provideMerge(
+  layerSetup,
   NodeSqliteClient.layer({ filename: ":memory:" }),
 );
 

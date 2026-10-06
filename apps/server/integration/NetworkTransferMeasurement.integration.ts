@@ -171,13 +171,13 @@ function countingWsRpcProtocolLayer(input: {
   readonly recorder: WebSocketTransferRecorder;
 }) {
   // Socket.makeWebSocket only ever passes its `protocols` option here.
-  const webSocketConstructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) =>
+  const layerWebSocketConstructor = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) =>
     input.recorder.connect(url, protocols as string | string[] | undefined, input.cookie),
   );
   return RpcClient.layerProtocolSocket().pipe(
     Layer.provide(
       Socket.layerWebSocket(input.url, { openTimeout: "10 seconds" }).pipe(
-        Layer.provide(webSocketConstructorLayer),
+        Layer.provide(layerWebSocketConstructor),
       ),
     ),
     Layer.provide(RpcSerialization.layerJson),

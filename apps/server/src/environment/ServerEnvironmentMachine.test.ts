@@ -16,7 +16,7 @@ import {
 
 const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
 
-const ProcessRunnerTest = Layer.succeed(
+const layerProcessRunnerTest = Layer.succeed(
   ProcessRunner.ProcessRunner,
   ProcessRunner.ProcessRunner.of({ run: (input) => runMock(input) }),
 );
@@ -52,7 +52,7 @@ const dmiFileSystem = (files: Readonly<Record<string, string>>) =>
   });
 
 const withPlatform = (platform: NodeJS.Platform, fileSystem = FileSystem.layerNoop({})) =>
-  Layer.mergeAll(ProcessRunnerTest, fileSystem, Layer.succeed(HostProcessPlatform, platform));
+  Layer.mergeAll(layerProcessRunnerTest, fileSystem, Layer.succeed(HostProcessPlatform, platform));
 
 afterEach(() => {
   runMock.mockReset();

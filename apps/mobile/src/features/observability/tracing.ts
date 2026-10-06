@@ -32,7 +32,7 @@ export function makeTracingLayer(config: TracingConfig | null, resource: Tracing
   });
 }
 
-export const tracingLayer = makeTracingLayer(resolveTracingConfig(), {
+export const layer = makeTracingLayer(resolveTracingConfig(), {
   serviceVersion: Constants.expoConfig?.version,
   appVariant:
     typeof Constants.expoConfig?.extra?.appVariant === "string"

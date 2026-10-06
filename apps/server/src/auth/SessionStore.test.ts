@@ -15,10 +15,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../persistence/Layers/Sqlite.ts";
+import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -45,7 +43,7 @@ const makeSessionStoreLayer = (
   environmentId = EnvironmentId.make("test-environment"),
 ) =>
   SessionStore.layer.pipe(
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(makeServerEnvironmentLayer(environmentId)),
     Layer.provide(makeServerConfigLayer(overrides)),
@@ -68,9 +66,9 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
     baseDirIsExplicit: true,
   });
   yield* ServerConfig.ensureServerDirectories(paths);
-  const persistence = makeSqlitePersistenceLive(paths.dbPath);
+  const layerPersistence = makeSqlitePersistenceLive(paths.dbPath);
   return SessionStore.layer.pipe(
-    Layer.provide(persistence),
+    Layer.provide(layerPersistence),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(makeServerEnvironmentLayer(EnvironmentId.make(baseDir))),
     Layer.provide(
@@ -90,7 +88,7 @@ const repositoryFailure = new PersistenceSqlError({
   detail: "sqlite is unavailable",
 });
 
-const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessionRepository, {
+const layerFailingSessionLookupRepository = Layer.succeed(AuthSessions.AuthSessionRepository, {
   create: () => Effect.void,
   createReplacingActive: () => Effect.succeed([]),
   createIfAbsent: () => Effect.void,
@@ -102,13 +100,13 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
   setClientConnection: () => Effect.void,
 });
 
-const failingSessionLookupCredentialLayer = Layer.effect(
+const layerFailingSessionLookupCredential = Layer.effect(
   SessionStore.SessionStore,
   SessionStore.make,
 ).pipe(
-  Layer.provide(failingSessionLookupRepositoryLayer),
+  Layer.provide(layerFailingSessionLookupRepository),
   Layer.provide(ServerSecretStore.layer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(makeServerEnvironmentLayer(EnvironmentId.make("test-environment"))),
   Layer.provide(makeServerConfigLayer()),
 );
@@ -164,20 +162,20 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         );
       }).pipe(Effect.provide(layerB), Effect.scoped);
 
-      const reopenedB = yield* makeDiskSessionStoreLayer(baseB, token);
+      const layerReopenedB = yield* makeDiskSessionStoreLayer(baseB, token);
       yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         const dev = yield* sessions.verify(token);
         expect(dev.sessionId).toBe(fromA.dev.sessionId);
         const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
         expect((yield* sessions.verifyWebSocketToken(ticket.token)).sessionId).toBe(dev.sessionId);
-      }).pipe(Effect.provide(reopenedB), Effect.scoped);
+      }).pipe(Effect.provide(layerReopenedB), Effect.scoped);
 
-      const reopenedA = yield* makeDiskSessionStoreLayer(baseA, token);
+      const layerReopenedA = yield* makeDiskSessionStoreLayer(baseA, token);
       yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
-      }).pipe(Effect.provide(reopenedA), Effect.scoped);
+      }).pipe(Effect.provide(layerReopenedA), Effect.scoped);
     }),
   );
 
@@ -187,15 +185,15 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-rotation-" });
       const oldToken = "old-reusable-dev-auth-token-that-is-long-enough";
       const newToken = "new-reusable-dev-auth-token-that-is-long-enough";
-      const initialLayer = yield* makeDiskSessionStoreLayer(baseDir, oldToken);
+      const layerInitial = yield* makeDiskSessionStoreLayer(baseDir, oldToken);
       const old = yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         const dev = yield* sessions.verify(oldToken);
         const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
         return { dev, ticket };
-      }).pipe(Effect.provide(initialLayer), Effect.scoped);
+      }).pipe(Effect.provide(layerInitial), Effect.scoped);
 
-      const rotatedLayer = yield* makeDiskSessionStoreLayer(baseDir, newToken);
+      const layerRotated = yield* makeDiskSessionStoreLayer(baseDir, newToken);
       const rotated = yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         expect((yield* Effect.flip(sessions.verify(oldToken)))._tag).toBe(
@@ -210,9 +208,9 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         const dev = yield* sessions.verify(newToken);
         const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
         return { dev, ticket };
-      }).pipe(Effect.provide(rotatedLayer), Effect.scoped);
+      }).pipe(Effect.provide(layerRotated), Effect.scoped);
 
-      const removedLayer = yield* makeDiskSessionStoreLayer(baseDir);
+      const layerRemoved = yield* makeDiskSessionStoreLayer(baseDir);
       yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         expect((yield* Effect.flip(sessions.verify(newToken)))._tag).toBe(
@@ -224,7 +222,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(
           (yield* sessions.listActive()).some((row) => row.sessionId === rotated.dev.sessionId),
         ).toBe(true);
-      }).pipe(Effect.provide(removedLayer), Effect.scoped);
+      }).pipe(Effect.provide(layerRemoved), Effect.scoped);
     }),
   );
 
@@ -321,7 +319,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         currentSessionId: issued.sessionId,
         cause: repositoryFailure,
       });
-    }).pipe(Effect.provide(failingSessionLookupCredentialLayer)),
+    }).pipe(Effect.provide(layerFailingSessionLookupCredential)),
   );
   it.effect("verifies session tokens against the Effect clock", () =>
     Effect.gen(function* () {
@@ -413,7 +411,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
         previous.sessionId,
       ]);
-    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
+    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistence.layerMemory))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>
@@ -728,6 +726,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       yield* sessions.recordClientConnection(issued.sessionId, {});
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
-    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
+    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistence.layerMemory))),
   );
 });

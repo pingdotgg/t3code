@@ -27,7 +27,7 @@ import {
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
-const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
+const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -160,7 +160,7 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
       "Selected option",
       `Attached image "screen.png": "${path}"`,
     ]);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("rolls back earlier question claims when a later pending upload is missing", () =>
@@ -227,7 +227,7 @@ it.effect("rolls back earlier question claims when a later pending upload is mis
         entry.startsWith("thread-q-fail-"),
       ),
     ).toEqual([`${existingId}.png`]);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("rolls back earlier question claims when attachment path preparation fails", () =>
@@ -279,7 +279,7 @@ it.effect("rolls back earlier question claims when attachment path preparation f
         entry.startsWith("thread-path-fail-"),
       ),
     ).toEqual([]);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("retains claimed copies when dispatch failure may have been accepted", () =>
@@ -318,7 +318,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
     );
     expect(threadFiles).toHaveLength(1);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("releases claimed copies when the command was already rejected", () =>
@@ -370,7 +370,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("releases claimed copies when dispatch replays an earlier accepted response", () =>
@@ -438,7 +438,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
       NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`)),
     ).toEqual(Buffer.from([4, 4, 4]));
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("releases claimed copies when the recorded answer has no attachments", () =>
@@ -489,7 +489,7 @@ it.effect("releases claimed copies when the recorded answer has no attachments",
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("releases claimed copies when the recorded answer was text-only", () =>
@@ -540,7 +540,7 @@ it.effect("releases claimed copies when the recorded answer was text-only", () =
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
@@ -609,7 +609,7 @@ it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
         entry.startsWith("thread-fresh-answer-"),
       ),
     ).toHaveLength(2);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("releases claimed copies when preparation dies with a defect", () =>
@@ -653,7 +653,7 @@ it.effect("releases claimed copies when preparation dies with a defect", () =>
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("a retried response re-claims the preserved pending uploads", () =>
@@ -736,7 +736,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
         entry.startsWith("thread-retry-"),
       ),
     ).toHaveLength(2);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("applies the image budget across all questions before dispatch", () =>
@@ -762,5 +762,5 @@ it.effect("applies the image budget across all questions before dispatch", () =>
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") expect(String(result.cause)).toContain("80 MiB");
     expect(captured).toEqual([]);
-  }).pipe(Effect.provide(intakeTestLayer)),
+  }).pipe(Effect.provide(layerIntakeTest)),
 );

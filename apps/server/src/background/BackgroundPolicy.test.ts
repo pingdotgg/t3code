@@ -57,7 +57,7 @@ function makeLayer(
   hostPower: HostPowerSnapshot,
   settingsOverrides: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) {
-  const hostLayer = Layer.effect(
+  const layerHost = Layer.effect(
     HostPowerMonitor.HostPowerMonitor,
     Effect.gen(function* () {
       const changes = yield* PubSub.sliding<HostPowerSnapshot>(1);
@@ -73,7 +73,7 @@ function makeLayer(
     }),
   );
   return BackgroundPolicy.layer.pipe(
-    Layer.provide(Layer.merge(hostLayer, ServerSettings.layerTest(settingsOverrides))),
+    Layer.provide(Layer.merge(layerHost, ServerSettings.layerTest(settingsOverrides))),
   );
 }
 
@@ -144,7 +144,7 @@ describe("BackgroundPolicy", () => {
       const firstSnapshotStarted = yield* Deferred.make<void>();
       const releaseFirstSnapshot = yield* Deferred.make<void>();
       const snapshotReads = yield* Ref.make(0);
-      const hostLayer = Layer.succeed(
+      const layerHost = Layer.succeed(
         HostPowerMonitor.HostPowerMonitor,
         HostPowerMonitor.HostPowerMonitor.of({
           snapshot: Ref.updateAndGet(snapshotReads, (count) => count + 1).pipe(
@@ -162,7 +162,7 @@ describe("BackgroundPolicy", () => {
         }),
       );
       const layer = BackgroundPolicy.layer.pipe(
-        Layer.provide(Layer.merge(hostLayer, ServerSettings.layerTest())),
+        Layer.provide(Layer.merge(layerHost, ServerSettings.layerTest())),
       );
 
       yield* Effect.gen(function* () {

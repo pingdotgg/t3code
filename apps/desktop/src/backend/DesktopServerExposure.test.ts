@@ -94,8 +94,8 @@ function makeLayer(input: {
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
-  const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
-  const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
+  const layerEnvironment = makeEnvironmentLayer(input.baseDir, env);
+  const layerNetwork = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
 
@@ -104,9 +104,9 @@ function makeLayer(input: {
     Layer.provideMerge(NodeFileSystem.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(input.spawnerLayer ?? mockSpawnerLayer()),
-    Layer.provideMerge(networkLayer),
+    Layer.provideMerge(layerNetwork),
     Layer.provideMerge(DesktopConfig.layerTest(env)),
-    Layer.provideMerge(environmentLayer),
+    Layer.provideMerge(layerEnvironment),
   );
 }
 
@@ -247,7 +247,7 @@ describe("DesktopServerExposure", () => {
       path: "/tmp/desktop-settings.json",
       cause: diskFailure,
     });
-    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+    const layerSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
       get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
       load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
       setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
@@ -301,7 +301,7 @@ describe("DesktopServerExposure", () => {
       }),
       {},
       undefined,
-      settingsLayer,
+      layerSettings,
     );
   });
 

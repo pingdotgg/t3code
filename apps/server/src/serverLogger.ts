@@ -8,9 +8,9 @@ import * as OtlpLogger from "effect/observability/OtlpLogger";
 
 import * as ServerConfig from "./config.ts";
 
-export const ServerLoggerLive = Effect.gen(function* () {
+export const layer = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const minimumLogLevelLayer = Layer.succeed(References.MinimumLogLevel, config.logLevel);
+  const layerMinimumLogLevel = Layer.succeed(References.MinimumLogLevel, config.logLevel);
 
   const logs = config.otlpLogsExport;
   const otlpLogger =
@@ -35,7 +35,7 @@ export const ServerLoggerLive = Effect.gen(function* () {
   // Recording events on spans is also the shape OpenTelemetry is deprecating,
   // in favor of the log-based events this logger emits:
   // https://opentelemetry.io/blog/2026/deprecating-span-events/
-  const loggerLayer = Logger.layer(
+  const layerLogger = Logger.layer(
     otlpLogger === undefined
       ? [Logger.consolePretty(), Logger.tracerLogger]
       : [Logger.consolePretty(), otlpLogger],
@@ -45,5 +45,5 @@ export const ServerLoggerLive = Effect.gen(function* () {
     Layer.provide(otlpSerializationLayer(logs.protocol)),
   );
 
-  return Layer.mergeAll(loggerLayer, minimumLogLevelLayer);
+  return Layer.mergeAll(layerLogger, layerMinimumLogLevel);
 }).pipe(Layer.unwrap);

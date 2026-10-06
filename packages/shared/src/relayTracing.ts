@@ -132,7 +132,7 @@ export function makeRelayClientTracingLayer(
     return Layer.succeed(RelayClientTracer, Option.none());
   }
 
-  const tracerLayer = OtlpTracer.layer({
+  const layerTracer = OtlpTracer.layer({
     url: config.tracesUrl,
     headers: {
       Authorization: `Bearer ${config.tracesToken}`,
@@ -153,5 +153,5 @@ export function makeRelayClientTracingLayer(
   return Layer.effect(
     RelayClientTracer,
     Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
-  ).pipe(Layer.provide(tracerLayer));
+  ).pipe(Layer.provide(layerTracer));
 }

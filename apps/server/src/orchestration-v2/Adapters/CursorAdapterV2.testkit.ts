@@ -605,13 +605,13 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
   // replays from picking up the host's own skills.
-  const hostEnvironmentLayer = Layer.effect(
+  const layerHostEnvironment = Layer.effect(
     HostProcessEnvironment,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -630,8 +630,8 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
     Layer.provide(
       Layer.mergeAll(
         makeCursorAgentSdkReplayLayer(transcript, options),
-        serverConfigLayer,
-        hostEnvironmentLayer,
+        layerServerConfig,
+        layerHostEnvironment,
         NodeServices.layer,
         IdAllocator.layer,
       ),

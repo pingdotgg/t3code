@@ -85,7 +85,7 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
   });
 });
 
-export const CursorSdkCatalogLive = Layer.effect(CursorSdkCatalog, makeCursorSdkCatalog());
+export const layer = Layer.effect(CursorSdkCatalog, makeCursorSdkCatalog());
 
 export function makeCursorSdkCatalogTestLayer(
   read: CursorSdkCatalogShape["read"],

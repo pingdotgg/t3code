@@ -13,7 +13,7 @@ import {
   type BrowserDpopKey,
 } from "./dpop";
 
-const relayDpopSignerLayer = Layer.effect(
+const layerRelayDpopSigner = Layer.effect(
   ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -78,5 +78,5 @@ const relayDpopSignerLayer = Layer.effect(
 
 export const managedRelayClientLayer = (relayUrl: string) =>
   ManagedRelay.layer({ relayUrl, clientId: RelayWebClientId }).pipe(
-    Layer.provideMerge(relayDpopSignerLayer),
+    Layer.provideMerge(layerRelayDpopSigner),
   );

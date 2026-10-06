@@ -63,7 +63,7 @@ const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
 );
-const testDpopSignerLayer = Layer.succeed(
+const layerTestDpopSigner = Layer.succeed(
   ManagedRelay.ManagedRelayDpopSigner,
   ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("client-proof-key-thumbprint"),
@@ -72,9 +72,9 @@ const testDpopSignerLayer = Layer.succeed(
 );
 
 function cloudClientLayer() {
-  const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
+  const layerHttpClient = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
-    httpClientLayer,
+    layerHttpClient,
     Layer.succeed(
       MobileStorage.MobileStorage,
       MobileStorage.MobileStorage.of({
@@ -93,7 +93,7 @@ function cloudClientLayer() {
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
-    }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
+    }).pipe(Layer.provideMerge(layerTestDpopSigner), Layer.provide(layerHttpClient)),
   );
 }
 

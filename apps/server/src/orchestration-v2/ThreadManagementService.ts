@@ -833,7 +833,7 @@ const make = Effect.gen(function* () {
   });
 });
 
-const legacyV1ThreadImporterNoopLayer = Layer.succeed(
+const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   LegacyV1ThreadImporter.LegacyV1ThreadImporter,
   LegacyV1ThreadImporter.LegacyV1ThreadImporter.of({
     pendingThreadCount: Effect.succeed(0),
@@ -844,7 +844,7 @@ const legacyV1ThreadImporterNoopLayer = Layer.succeed(
 );
 
 export const layer: Layer.Layer<ThreadManagementService, never, Orchestrator.OrchestratorV2> =
-  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
+  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(layerLegacyV1ThreadImporterNoop));
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,

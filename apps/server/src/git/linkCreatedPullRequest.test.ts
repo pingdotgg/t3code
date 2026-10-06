@@ -179,17 +179,17 @@ describe("linkCreatedPullRequest", () => {
   it.effect("dispatches nothing when the action produced no pull request", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
-      const dependencies = makeDependencies(dispatch);
+      const layerDependencies = makeDependencies(dispatch);
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
         result: prResult({ status: "skipped_not_requested" }),
         commandId,
-      }).pipe(Effect.provide(dependencies));
+      }).pipe(Effect.provide(layerDependencies));
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
         result: prResult({ status: "created", url: "https://github.com/t3tools/t3code/pull/42" }),
         commandId,
-      }).pipe(Effect.provide(dependencies));
+      }).pipe(Effect.provide(layerDependencies));
 
       expect(yield* Ref.get(commands)).toEqual([]);
     }),
@@ -229,7 +229,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const refreshed: string[] = [];
-      const dependencies = Layer.mergeAll(
+      const layerDependencies = Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadShell: () => Effect.succeed(v2PullRequestThread(thread)),
         }),
@@ -246,22 +246,22 @@ it.effect(
       yield* refreshPushedPullRequests(
         { cwd: "/worktree", threadId: THREAD_ID },
         { push: { status: "pushed" } },
-      ).pipe(Effect.provide(dependencies));
+      ).pipe(Effect.provide(layerDependencies));
       yield* refreshPushedPullRequests(
         { cwd: project.workspaceRoot },
         { push: { status: "pushed" } },
-      ).pipe(Effect.provide(dependencies));
+      ).pipe(Effect.provide(layerDependencies));
       yield* refreshPushedPullRequests({ cwd: "/unrelated" }, { push: { status: "pushed" } }).pipe(
-        Effect.provide(dependencies),
+        Effect.provide(layerDependencies),
       );
       yield* refreshPushedPullRequests(
         { cwd: project.workspaceRoot, threadId: THREAD_ID },
         { push: { status: "skipped_not_requested" } },
-      ).pipe(Effect.provide(dependencies));
+      ).pipe(Effect.provide(layerDependencies));
       yield* refreshPushedPullRequests(
         { cwd: "/draft-worktree", projectId: PROJECT_ID },
         { push: { status: "pushed" } },
-      ).pipe(Effect.provide(dependencies));
+      ).pipe(Effect.provide(layerDependencies));
       expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID]);
     }),
 );

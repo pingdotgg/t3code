@@ -12,8 +12,8 @@ import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -27,7 +27,7 @@ import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
 // Real repository detection: the service only asks the Git workflow whether
 // the data dir is inside a checkout.
-const gitWorkflowLayer = Layer.unwrap(
+const layerGitWorkflow = Layer.unwrap(
   Effect.gen(function* () {
     const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
     return Layer.mock(GitWorkflow.GitWorkflowService)({
@@ -40,7 +40,7 @@ const gitWorkflowLayer = Layer.unwrap(
   }),
 ).pipe(Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))));
 
-const enrichmentLayer = ProjectEnrichmentService.layer.pipe(
+const layerEnrichment = ProjectEnrichmentService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
@@ -53,7 +53,7 @@ const enrichmentLayer = ProjectEnrichmentService.layer.pipe(
   ),
 );
 
-const realGitLayer = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
+const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   /** A git driver for failures real git cannot produce on demand. */
@@ -78,12 +78,12 @@ const makeLayer = (baseDir: string, options?: HarnessOptions) =>
             ProjectService.ProjectService.pipe(Effect.map(options.projects)),
           ),
     ),
-    Layer.provideMerge(ProjectServiceLayerLive),
-    Layer.provideMerge(enrichmentLayer),
+    Layer.provideMerge(RuntimeLayer.layerProjectService),
+    Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
-    Layer.provideMerge(gitWorkflowLayer),
-    Layer.provideMerge(options?.git ?? realGitLayer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(layerGitWorkflow),
+    Layer.provideMerge(options?.git ?? layerRealGit),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );

@@ -39,13 +39,13 @@ const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (inpu
     }),
   );
 
-const TestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+const layerTestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
   run: processProbeFailure,
 });
 
 let integrationListeningPort: number | null = null;
 
-const TestIntegrationNet = Layer.succeed(Net.NetService, {
+const layerTestIntegrationNet = Layer.succeed(Net.NetService, {
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: (port) => Effect.sync(() => port !== integrationListeningPort),
   hasListenerOnHost: (port) => Effect.sync(() => port === integrationListeningPort),
@@ -74,11 +74,11 @@ const makeProbeFailureLayer = (
     ),
   );
 
-const TestPortDiscoveryLive = PortScanner.layer.pipe(
+const layerTestPortDiscovery = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      TestProcessRunner,
-      TestIntegrationNet,
+      layerTestProcessRunner,
+      layerTestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
     ),
@@ -205,7 +205,7 @@ const commonNonHttpServer = Effect.acquireRelease(
  * platform so the tests exercise the TCP-probe fallback without depending on
  * `lsof` being installed.
  */
-effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
+effectIt.layer(layerTestPortDiscovery)("PortDiscovery integration (TCP probe fallback)", (it) => {
   it.effect(
     "scan() returns an HTTP server we just opened on a curated dev port",
     Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {

@@ -24,7 +24,7 @@ import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
 
-const historyLayer = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
   register: () => Effect.void,
   recordMetrics: () => Effect.void,
   shutdown: Effect.void,
@@ -65,7 +65,7 @@ describe("DesktopTelemetryPublisher", () => {
     Effect.gen(function* () {
       const pollStarted = yield* Deferred.make<void>();
       const blockPoll = yield* Deferred.make<void>();
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Effect.succeed(false),
@@ -81,7 +81,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer, historyLayer)),
+        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), layerPower, layerHistory)),
       );
       const scope = yield* Scope.make();
 
@@ -124,7 +124,7 @@ describe("DesktopTelemetryPublisher", () => {
           },
         } as Electron.ProcessMetric,
       ];
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Ref.get(onBattery),
@@ -152,7 +152,7 @@ describe("DesktopTelemetryPublisher", () => {
             makeElectronAppLayer(metrics, () => {
               metricsReadCount += 1;
             }),
-            powerLayer,
+            layerPower,
             Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
               register: () => Effect.void,
               shutdown: Effect.void,
@@ -413,7 +413,7 @@ describe("DesktopTelemetryPublisher", () => {
 
   it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
     Effect.gen(function* () {
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Effect.succeed(false),
@@ -426,7 +426,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer, historyLayer)),
+        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), layerPower, layerHistory)),
       );
 
       yield* Effect.gen(function* () {
@@ -562,7 +562,7 @@ describe("DesktopRendererHistory", () => {
               readonly written: Deferred.Deferred<Record>;
             }
           | undefined;
-        const fileLayer = Layer.succeed(FileSystem.FileSystem, {
+        const layerFile = Layer.succeed(FileSystem.FileSystem, {
           ...fileSystem,
           writeFile: (filePath, bytes, options) =>
             fileSystem.writeFile(filePath, bytes, options).pipe(
@@ -590,7 +590,7 @@ describe("DesktopRendererHistory", () => {
                   logDir: directory,
                 } as DesktopEnvironment.DesktopEnvironment["Service"]),
               ),
-              fileLayer,
+              layerFile,
             ),
           ),
         );
@@ -735,7 +735,7 @@ describe("DesktopRendererHistory", () => {
         );
       }
       const written = yield* Deferred.make<void>();
-      const fileLayer = Layer.succeed(FileSystem.FileSystem, {
+      const layerFile = Layer.succeed(FileSystem.FileSystem, {
         ...fileSystem,
         writeFile: (target, bytes, options) =>
           fileSystem
@@ -751,7 +751,7 @@ describe("DesktopRendererHistory", () => {
                 logDir: directory,
               } as DesktopEnvironment.DesktopEnvironment["Service"]),
             ),
-            fileLayer,
+            layerFile,
           ),
         ),
       );

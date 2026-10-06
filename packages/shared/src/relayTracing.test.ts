@@ -64,10 +64,10 @@ describe("withRelayClientTracing", () => {
 
   it.effect("preserves nested error causes in exported relay spans", () => {
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-    const httpClientLayer = FetchHttpClient.layer.pipe(
+    const layerHttpClient = FetchHttpClient.layer.pipe(
       Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
     );
-    const tracingLayer = makeRelayClientTracingLayer(
+    const layerTracing = makeRelayClientTracingLayer(
       {
         tracesUrl: "https://api.axiom.test/v1/traces",
         tracesDataset: "relay-traces",
@@ -78,18 +78,18 @@ describe("withRelayClientTracing", () => {
         runtime: "test",
         client: "test",
       },
-    ).pipe(Layer.provide(httpClientLayer));
+    ).pipe(Layer.provide(layerHttpClient));
     const rootCause = new Error("relay socket closed");
     const failure = new Error("relay request failed", { cause: rootCause });
-    const tracedApplication = Layer.effectDiscard(
+    const layerTracedApplication = Layer.effectDiscard(
       Effect.fail(failure).pipe(
         Effect.withSpan("relay.failed-operation"),
         withRelayClientTracing,
         Effect.exit,
       ),
-    ).pipe(Layer.provide(tracingLayer));
+    ).pipe(Layer.provide(layerTracing));
 
-    return Layer.build(tracedApplication).pipe(
+    return Layer.build(layerTracedApplication).pipe(
       Effect.scoped,
       Effect.andThen(
         Effect.sync(() => {

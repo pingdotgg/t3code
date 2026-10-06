@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import { createDpopProof, loadOrCreateDpopProofKeyPair } from "./dpop";
 import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
-const relayDpopSignerLayer = Layer.effect(
+const layerRelayDpopSigner = Layer.effect(
   ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -69,4 +69,4 @@ export const managedRelayClientLayer = (relayUrl: string) =>
     relayUrl,
     clientId: RelayMobileClientId,
     accessTokenStore: managedRelayAccessTokenStore,
-  }).pipe(Layer.provideMerge(relayDpopSignerLayer));
+  }).pipe(Layer.provideMerge(layerRelayDpopSigner));

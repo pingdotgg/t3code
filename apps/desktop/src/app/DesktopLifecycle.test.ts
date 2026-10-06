@@ -54,7 +54,7 @@ function makeElectronAppLayer(
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
-const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
+const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
@@ -106,14 +106,14 @@ describe("DesktopLifecycle", () => {
     (platform) => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       let windowsDestroyed = false;
-      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform,
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
 
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
-        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(
           makeElectronWindowLayer(
             Effect.sync(() => {
@@ -122,7 +122,7 @@ describe("DesktopLifecycle", () => {
           ),
         ),
         Layer.provideMerge(makeDesktopWindowLayer()),
-        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
       );
@@ -174,7 +174,7 @@ describe("DesktopLifecycle", () => {
         events.push("flush");
       });
 
-      const desktopShutdownLayer = Layer.succeed(DesktopShutdown.DesktopShutdown, {
+      const layerDesktopShutdown = Layer.succeed(DesktopShutdown.DesktopShutdown, {
         request: Effect.sync(() => {
           events.push("request");
         }).pipe(Effect.andThen(Deferred.succeed(shutdownRequested, undefined)), Effect.asVoid),
@@ -184,18 +184,18 @@ describe("DesktopLifecycle", () => {
         isComplete: Deferred.isDone(allowShutdown),
       });
 
-      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform: "darwin",
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
 
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
-        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(makeElectronWindowLayer(destroyAll)),
         Layer.provideMerge(makeDesktopWindowLayer({ flushMainWindowBounds })),
-        Layer.provideMerge(environmentLayer),
-        Layer.provideMerge(desktopShutdownLayer),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(layerDesktopShutdown),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -226,16 +226,16 @@ describe("DesktopLifecycle", () => {
       const activate = Effect.sync(() => {
         activationCount += 1;
       });
-      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform: "darwin",
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
-        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(makeElectronWindowLayer()),
         Layer.provideMerge(makeDesktopWindowLayer({ activate })),
-        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
       );

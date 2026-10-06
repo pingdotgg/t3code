@@ -42,7 +42,7 @@ const runWithEnvironmentAuth = <A, E>(
       return yield* run(environmentAuth);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.runtimeLayer).pipe(
+        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
           Layer.provide(ServerConfig.layer(config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),

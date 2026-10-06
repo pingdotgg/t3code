@@ -61,7 +61,7 @@ const withService = <A, E>(
       },
       { preconnect: () => {} },
     );
-    const dependencies = Layer.mergeAll(
+    const layerDependencies = Layer.mergeAll(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
         get: (name) =>
           (options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET) ||
@@ -93,7 +93,7 @@ const withService = <A, E>(
       const preferences = yield* CloudPreferences.CloudPreferences;
       return yield* body({ preferences, stored, relayCalls });
     }).pipe(
-      Effect.provide(CloudPreferences.layer.pipe(Layer.provide(dependencies))),
+      Effect.provide(CloudPreferences.layer.pipe(Layer.provide(layerDependencies))),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
   });

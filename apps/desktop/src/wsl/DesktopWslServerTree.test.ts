@@ -340,7 +340,7 @@ describe("DesktopWslServerTree", () => {
         const treeRoot = path.dirname(versionDir);
         const extractedEntryPath = path.join(versionDir, "apps/server/dist/bin.mjs");
         let cleanupFailed = false;
-        const partialCleanupFileSystem = Layer.effect(
+        const layerPartialCleanupFileSystem = Layer.effect(
           FileSystem.FileSystem,
           Effect.gen(function* () {
             const realFileSystem = yield* FileSystem.FileSystem;
@@ -372,7 +372,7 @@ describe("DesktopWslServerTree", () => {
           Effect.provide(
             DesktopWslServerTree.layer.pipe(
               Layer.provideMerge(environmentLayer({ baseDir: tempDir, resourcesPath })),
-              Layer.provideMerge(partialCleanupFileSystem),
+              Layer.provideMerge(layerPartialCleanupFileSystem),
             ),
           ),
         );

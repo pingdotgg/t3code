@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/http";
 
-import { cryptoLayer } from "./dpop";
+import * as Dpop from "./dpop";
 import { managedRelayClientLayer } from "./managedRelayLayer";
 
 vi.mock("expo-crypto", () => ({
@@ -55,7 +55,7 @@ describe("managed relay DPoP signer", () => {
     }).pipe(
       Effect.provide(
         managedRelayClientLayer("https://relay.example.test").pipe(
-          Layer.provide(Layer.mergeAll(FetchHttpClient.layer, cryptoLayer)),
+          Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
         ),
       ),
     ),
