@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

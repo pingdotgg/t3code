@@ -286,7 +286,7 @@ it.effect("requires task permission before attaching a prepared worktree to a th
               handled = true;
             }).pipe(Effect.andThen(Effect.never)),
           ),
-          rpcScopeAuthorizationLayer([AuthSourceControlWriteScope]),
+          RpcAuthorization.layer([AuthSourceControlWriteScope]),
         ),
       ),
     );
