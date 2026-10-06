@@ -119,7 +119,7 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
  *
  * Decoding runs each value through its own schema, so transformations (dates,
  * trimming, decoding defaults) apply as usual. Only values that schema
- * rejects are dropped; encoding is the plain encoding.
+ * rejects are dropped, on either side.
  *
  * For a tagged union, prefer {@link ForwardCompatibleUnion}: it drops only
  * values whose tag this build does not know, so a known member with a broken
@@ -130,10 +130,17 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
     Schema.UndefinedOr(element).pipe(
       // An element this build cannot read becomes a hole, filtered out below.
       Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+      // Likewise an element that cannot be encoded is sent as a hole, so one
+      // bad element costs only itself rather than the whole payload.
+      Schema.catchEncoding(() => Effect.succeedSome(undefined)),
     ),
   ).pipe(
     Schema.decodeTo(
-      Schema.Array(Schema.toType(element)),
+      Schema.Array(
+        Schema.UndefinedOr(Schema.toType(element)).pipe(
+          Schema.catchEncoding(() => Effect.succeedSome(undefined)),
+        ),
+      ),
       SchemaTransformation.transform<
         ReadonlyArray<Element["Type"]>,
         ReadonlyArray<Element["Type"] | undefined>

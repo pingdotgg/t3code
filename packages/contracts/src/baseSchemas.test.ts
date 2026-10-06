@@ -47,6 +47,21 @@ describe("ForwardCompatibleArray", () => {
       { name: "a", count: 7 },
     ]);
   });
+
+  it("sends an element it cannot encode as a hole instead of failing the array", () => {
+    const Named = ForwardCompatibleArray(Schema.Struct({ name: TrimmedNonEmptyString }));
+    const wire = JSON.parse(
+      JSON.stringify(
+        Schema.encodeUnknownSync(Schema.toCodecJson(Named))([
+          { name: "a" },
+          { name: " " },
+          { name: "b" },
+        ]),
+      ),
+    );
+    expect(wire).toEqual([{ name: "a" }, null, { name: "b" }]);
+    expect(fromWire(Named)(wire)).toEqual([{ name: "a" }, { name: "b" }]);
+  });
 });
 
 describe("ForwardCompatibleUnion", () => {
