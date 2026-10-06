@@ -696,17 +696,20 @@ export const make = Effect.gen(function* () {
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
           // The catalog entry carries no credential, so a fresh bearer keeps
-          // the equivalent runtime. A supervisor that stopped on the old
-          // bearer's authentication failure would otherwise wait for a manual
-          // retry, so wake it with the new one.
+          // the equivalent runtime. Anything not yet connected may be using the
+          // old bearer: an attempt in flight would fail with it and then wait
+          // blocked for a manual retry. Retry with the new one instead. A
+          // connected session keeps its socket.
           if (bearerReplaced) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
               if (
-                state.phase === "blocked" &&
-                state.lastFailure?._tag === "ConnectionBlockedError" &&
-                state.lastFailure.reason === "authentication"
+                state.phase === "connecting" ||
+                state.phase === "backoff" ||
+                (state.phase === "blocked" &&
+                  state.lastFailure?._tag === "ConnectionBlockedError" &&
+                  state.lastFailure.reason === "authentication")
               ) {
                 yield* scope.supervisor.retryNow;
               }
