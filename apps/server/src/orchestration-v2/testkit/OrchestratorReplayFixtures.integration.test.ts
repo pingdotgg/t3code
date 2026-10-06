@@ -8,6 +8,7 @@ import type {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -21,6 +22,7 @@ import {
 } from "../Adapters/OpenCode2AdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import { makeAdapterSnapshotConformance } from "./AdapterSnapshotConformance.testkit.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
@@ -122,11 +124,22 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     },
   };
 
+  const conformance = makeAdapterSnapshotConformance();
+  const observedHarness = {
+    ...input.harness,
+    makeProviderAdapterRegistryLayer: (
+      ...args: Parameters<typeof input.harness.makeProviderAdapterRegistryLayer>
+    ) =>
+      conformance.layer.pipe(
+        Layer.provide(input.harness.makeProviderAdapterRegistryLayer(...args)),
+      ),
+  };
   const result = yield* runOrchestratorV2ProviderReplayScenario(
     scenario,
-    input.harness,
+    observedHarness,
     input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
   ).pipe(provideDeterministicTestRuntime);
+  conformance.assertConformance();
   input.driver.assertOutput(result, transcript);
   assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;
@@ -248,6 +261,43 @@ describe("orchestrator replay fixtures", () => {
         buildInput: messageRestartInput,
         driver: cursorSteeringProvider,
       }),
+    );
+  }
+
+  const multiTurnFixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+    (fixture) => fixture.name === "multi_turn",
+  );
+  const codexMultiTurnProvider = multiTurnFixture?.providers.find(
+    (provider) => provider.driver === "codex",
+  );
+  if (multiTurnFixture !== undefined && codexMultiTurnProvider !== undefined) {
+    it.effect(
+      "keeps the successor snapshot correlated when a prior Codex terminal arrives late",
+      () =>
+        runFixtureProviderWithRegisteredHarness({
+          fixtureName: "multi_turn",
+          buildInput: multiTurnFixture.buildInput,
+          driver: codexMultiTurnProvider,
+          transformTranscript: (transcript) => {
+            const priorTerminal = transcript.entries.find(
+              (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed",
+            );
+            const starts = transcript.entries.flatMap((entry, index) =>
+              entry.type === "emit_inbound" && entry.label === "turn/started" ? [index] : [],
+            );
+            assert.isDefined(priorTerminal);
+            assert.lengthOf(starts, 2);
+            const successorStart = starts[1]!;
+            return {
+              ...transcript,
+              entries: [
+                ...transcript.entries.slice(0, successorStart + 1),
+                priorTerminal!,
+                ...transcript.entries.slice(successorStart + 1),
+              ],
+            };
+          },
+        }),
     );
   }
 

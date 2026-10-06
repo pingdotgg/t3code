@@ -72,6 +72,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 import {
   AcpProviderCapabilitiesV2,
   acpProviderItemNativeId,
@@ -3479,118 +3480,142 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("drains native ACP cancellation before admitting the next prompt", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
-      const native: { current?: AcpSessionRuntime.AcpSessionRuntime["Service"] } = {};
-      const instanceId = ProviderInstanceId.make("acp-native-cancel");
-      const adapter = makeAcpAdapterV2({
-        crypto: yield* Crypto.Crypto,
-        instanceId,
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath: yield* path.fromFileUrl(
-              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  it.effect.each([false, true] as const)(
+    "drains native ACP cancellation before admitting the restarted attempt with runtime replacement=%s",
+    (restartRuntimeAfterInterrupt) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const native: {
+          current?: AcpSessionRuntime.AcpSessionRuntime["Service"];
+          generation?: number;
+        } = {};
+        const instanceId = ProviderInstanceId.make("acp-native-cancel");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            restartRuntimeAfterInterrupt,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              environment: (generation) => ({
+                T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: generation === 1 ? "1" : "0",
+              }),
+              protocolEvents,
+              cancelBehavior: "wait-for-prompt",
+              wrapRuntime: (runtime, generation) => {
+                native.current = runtime;
+                native.generation = generation;
+                return runtime;
+              },
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-native-cancel");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const opened = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-acp-native-cancel"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const observed: Array<ProviderAdapterV2Event> = [];
+        const runtime = {
+          ...opened,
+          events: opened.events.pipe(
+            Stream.tap((event) => Effect.sync(() => observed.push(event))),
+          ),
+        };
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const first = makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now });
+        yield* runtime.startTurn(first);
+        const started = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool",
             ),
-            environment: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
-            protocolEvents,
-            cancelBehavior: "wait-for-prompt",
-            wrapRuntime: (runtime) => {
-              native.current = runtime;
-              return runtime;
-            },
-          }),
-        },
-        fileSystem,
-        idAllocator,
-        serverConfig,
-        selfInvocation,
-      });
-      const threadId = ThreadId.make("thread-acp-native-cancel");
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("session-acp-native-cancel"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* runtime.startTurn(
-        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
-      );
-      const started = Option.getOrThrow(
-        yield* runtime.events.pipe(
+            Stream.runHead,
+          ),
+        );
+        if (
+          started.type !== "turn_item.updated" ||
+          started.turnItem.providerTurnId === null ||
+          native.current === undefined
+        ) {
+          return yield* Effect.die("Expected the native cancellable command");
+        }
+        const providerTurnId = started.turnItem.providerTurnId;
+        const interrupt = yield* runtime
+          .interruptTurn({
+            providerThread,
+            providerTurnId,
+            requestRuntimeRestart: restartRuntimeAfterInterrupt,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Stream.fromQueue(protocolEvents).pipe(
           Stream.filter(
             (event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool",
+              event.direction === "incoming" &&
+              typeof event.payload === "string" &&
+              event.payload.includes("native-cancel-received"),
           ),
           Stream.runHead,
-        ),
-      );
-      if (
-        started.type !== "turn_item.updated" ||
-        started.turnItem.providerTurnId === null ||
-        native.current === undefined
-      ) {
-        return yield* Effect.die("Expected the native cancellable command");
-      }
-      const providerTurnId = started.turnItem.providerTurnId;
-      const interrupt = yield* runtime
-        .interruptTurn({ providerThread, providerTurnId })
-        .pipe(Effect.forkScoped);
-      yield* Stream.fromQueue(protocolEvents).pipe(
-        Stream.filter(
-          (event) =>
-            event.direction === "incoming" &&
-            typeof event.payload === "string" &&
-            event.payload.includes("native-cancel-received"),
-        ),
-        Stream.runHead,
-      );
-      yield* native.current.request("_test/finish-cancel", {});
-      yield* Fiber.join(interrupt);
-      const terminal = Option.getOrThrow(
-        yield* runtime.events.pipe(
-          Stream.filter(
-            (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+        );
+        yield* native.current.request("_test/finish-cancel", {});
+        yield* Fiber.join(interrupt);
+        const terminal = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+            ),
+            Stream.runHead,
           ),
-          Stream.runHead,
-        ),
-      );
-      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
-      yield* runtime.startTurn(
-        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
-      );
-      const nextTerminal = Option.getOrThrow(
-        yield* runtime.events.pipe(
-          Stream.filter(
-            (event) => event.type === "turn.terminal" && event.providerTurnId !== providerTurnId,
+        );
+        assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+        const replacement = {
+          ...first,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:acp-native-cancel:replacement"),
+        };
+        yield* runtime.startTurn(replacement);
+        const nextTerminal = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) => event.type === "turn.terminal" && event.providerTurnId !== providerTurnId,
+            ),
+            Stream.runHead,
           ),
-          Stream.runHead,
-        ),
-      );
-      assert.equal(nextTerminal.type === "turn.terminal" && nextTerminal.status, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        );
+        assert.equal(nextTerminal.type === "turn.terminal" && nextTerminal.status, "completed");
+        assert.equal(native.generation, restartRuntimeAfterInterrupt ? 2 : 1);
+        assertRestartSnapshotConformance(observed, first, replacement);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("cancels pending permission requests while interrupting an ACP turn", () =>

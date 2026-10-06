@@ -49,7 +49,12 @@ import {
   OPENCODE_PROVIDER,
   reconcileOpenCodePromptAdmissionStatus,
 } from "./OpenCodeAdapterV2.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import {
+  ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterV2Event,
+  type ProviderAdapterV2TurnInput,
+} from "../ProviderAdapter.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const OPEN_CODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
@@ -182,7 +187,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     runtimePolicy: policy,
   });
   const now = yield* DateTime.now;
-  const startTurn = (text = "hello") =>
+  const startTurn = (text = "hello", identity?: Partial<ProviderAdapterV2TurnInput>) =>
     runtime.startTurn({
       appThread: {
         id: threadId,
@@ -223,6 +228,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       },
       modelSelection,
       runtimePolicy: policy,
+      ...identity,
     });
   return {
     nativeSessionId,
@@ -237,6 +243,110 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("publishes each restarted attempt's snapshot before its terminal", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-restart-conformance";
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("restart-conformance", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          status: async () => ({ data: { [nativeSessionId]: { type: "idle" } } }),
+          messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
+        },
+        mcp: { add: async () => ({ data: true }) },
+      });
+      const observed: Array<ProviderAdapterV2Event> = [];
+      const terminalReceipts =
+        yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+      const snapshotReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapterV2Event, { type: "provider_turn.updated" }>
+        >();
+      yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) => {
+          observed.push(event);
+          return event.type === "turn.terminal"
+            ? Queue.offer(terminalReceipts, event)
+            : event.type === "provider_turn.updated"
+              ? Queue.offer(snapshotReceipts, event)
+              : Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      const first = {
+        providerThread: harness.providerThread,
+        runId: harness.runId,
+        runOrdinal: 1,
+        rootNodeId: NodeId.make("node:opencode-restart:root"),
+        attemptId: RunAttemptId.make("attempt:opencode-restart:first"),
+      };
+      yield* harness.startTurn("hello", first);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      const firstTurn = (yield* Queue.take(snapshotReceipts)).providerTurn;
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: firstTurn.id,
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
+        }),
+      );
+      assert.equal((yield* Queue.take(terminalReceipts)).status, "interrupted");
+      const replacement = {
+        ...first,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode-restart:replacement"),
+      };
+      yield* harness.startTurn("hello", replacement);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            info: { id: promptId, role: "user", time: { created: 2 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: nativeSessionId, status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
+        }),
+      );
+      assert.equal((yield* Queue.take(terminalReceipts)).status, "completed");
+      assertRestartSnapshotConformance(observed, first, replacement);
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>

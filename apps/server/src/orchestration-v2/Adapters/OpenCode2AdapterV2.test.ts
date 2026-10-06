@@ -47,6 +47,7 @@ import type { ProviderContinuationRequest } from "../ProviderContinuationRequest
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { OPENCODE_2_STILL_STOPPING, t3McpServerName } from "./OpenCode2AdapterV2.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -1341,14 +1342,26 @@ describe("OpenCode2 adapter", () => {
           error: { type: "provider", message: "second turn failed" },
         }),
       ]);
-      const ended = yield* terminals(runtime, 2);
+      const observed: Array<ProviderAdapterV2Event> = [];
+      const observedRuntime = {
+        ...runtime,
+        events: runtime.events.pipe(Stream.tap((event) => Effect.sync(() => observed.push(event)))),
+      };
+      const firstInput = turnInput(thread);
+      const replacement = {
+        ...firstInput,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:replacement"),
+      };
+      const ended = yield* terminals(observedRuntime, 2);
       yield* stopFirstTurn(runtime, thread);
-      yield* runtime.startTurn(secondTurn(thread));
+      yield* runtime.startTurn(replacement);
       const [first, second] = yield* Fiber.join(ended);
       assert.equal(first?.status, "interrupted");
       // Only the second turn's own end finishes it.
       assert.equal(second?.status, "failed");
       assert.equal(second?.failure?.message, "second turn failed");
+      assertRestartSnapshotConformance(observed, firstInput, replacement);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 

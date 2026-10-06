@@ -72,6 +72,17 @@ readiness or the launcher's commit boundary. Graceful shutdown captures intent b
 closing providers, then reconciles after ingestion has stopped so a late completion
 cannot be overwritten by a stale cancellation.
 
+Steering restarts can reuse a thread and run ordinal. Provider activity and
+[root completion](../../apps/server/src/orchestration-v2/RunExecutionService.ts)
+therefore depend on the adapter's attempt-correlated root snapshot arriving before
+its terminal. The [native replay conformance test](../../apps/server/src/orchestration-v2/testkit/OrchestratorReplayFixtures.integration.test.ts)
+checks that order at the adapter boundary.
+
+A healthy stream that omits the snapshot has no idle-release deadline.
+[Session lifetime management](../../apps/server/src/orchestration-v2/ProviderSessionManager.ts)
+clears activity on explicit close or stream failure, while reattaching to the same
+live entry leaves that activity in place.
+
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, archive state, provider selection, newer user work, a stop
 the user requested, and maintenance turns such as `/compact` before dispatching. Stable

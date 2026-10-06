@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  MessageId,
   NodeId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -40,6 +41,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import { handoffBudget } from "../ContextHandoffBudget.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 import { makePiAdapterV2, PI_PROVIDER } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
 
@@ -347,8 +349,12 @@ const openRuntime = Effect.fnUntraced(function* (
     runtimePolicy,
   });
   const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
+  const events: Array<ProviderAdapterV2Event> = [];
   yield* runtime.events.pipe(
-    Stream.runForEach((event) => Queue.offer(emitted, event)),
+    Stream.runForEach((event) => {
+      events.push(event);
+      return Queue.offer(emitted, event);
+    }),
     Effect.forkScoped,
   );
   const takeEvent = (predicate: (event: ProviderAdapterV2Event) => boolean) =>
@@ -358,7 +364,7 @@ const openRuntime = Effect.fnUntraced(function* (
         if (predicate(event)) return event;
       }
     });
-  return { runtime, takeEvent };
+  return { runtime, takeEvent, events };
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -461,6 +467,59 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(layerTest));
 
 describe("PiAdapterV2", () => {
+  it.effect("publishes each restarted attempt's snapshot before its terminal", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, events } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const first = {
+        appThread: yield* makeAppThread("default"),
+        threadId: THREAD_ID,
+        runId: RunId.make("run:pi-restart-conformance"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt:pi-restart:first"),
+        rootNodeId: NodeId.make("node:pi-restart:root"),
+        providerThread,
+        message: {
+          messageId: MessageId.make("message:pi-restart"),
+          text: "hi",
+          attachments: [],
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        },
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      };
+      yield* runtime.startTurn(first);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const snapshot = yield* takeEvent((event) => event.type === "provider_turn.updated");
+      if (snapshot.type !== "provider_turn.updated") return yield* Effect.die("missing snapshot");
+      yield* runtime.interruptTurn({ providerThread, providerTurnId: snapshot.providerTurn.id });
+      yield* fake.takeRequest("abort");
+      yield* fake.emit({ type: "agent_settled" });
+      const interrupted = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.equal(interrupted.type === "turn.terminal" && interrupted.status, "interrupted");
+      const replacement = {
+        ...first,
+        attemptId: RunAttemptId.make("attempt:pi-restart:replacement"),
+        providerTurnOrdinal: 2,
+      };
+      yield* runtime.startTurn(replacement);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const completed = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.equal(completed.type === "turn.terminal" && completed.status, "completed");
+      assertRestartSnapshotConformance(events, first, replacement);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

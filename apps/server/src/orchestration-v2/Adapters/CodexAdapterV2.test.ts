@@ -43,6 +43,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -66,6 +67,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
@@ -2173,6 +2175,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const cause = error._tag === "ProviderAdapterProtocolError" ? error.cause : undefined;
       assert.equal((cause as { _tag?: string } | undefined)?._tag, "CodexAppServerRequestError");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect(
+    "publishes restart snapshots before terminals despite a late predecessor terminal",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "restart-conformance-thread";
+        const firstTurnId = "restart-conformance-first";
+        const replacementTurnId = "restart-conformance-replacement";
+        const prompt = "Run a command.";
+        const completed = (id: string, status: "completed" | "interrupted") => ({
+          type: "emit_inbound" as const,
+          frame: {
+            method: "turn/completed",
+            params: { threadId: nativeThreadId, turn: makeCodexReplayTurn({ id, status }) },
+          },
+        });
+        const replacementEntries = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: replacementTurnId,
+          prompt,
+        })
+          .slice(-3)
+          .map((entry) =>
+            entry.type === "expect_outbound" || entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame:
+                    Predicate.isObject(entry.frame) && "id" in entry.frame
+                      ? { ...entry.frame, id: 5 }
+                      : entry.frame,
+                }
+              : entry,
+          );
+        const terminals =
+          yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "restart-snapshot-conformance",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId: firstTurnId, prompt }),
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 4,
+                  method: "turn/interrupt",
+                  params: { threadId: nativeThreadId, turnId: firstTurnId },
+                },
+              },
+              { type: "emit_inbound", frame: { id: 4, result: {} } },
+              completed(firstTurnId, "interrupted"),
+              ...replacementEntries,
+              completed(firstTurnId, "interrupted"),
+              completed(replacementTurnId, "completed"),
+            ],
+          }),
+          (event) => (event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void),
+        );
+        const first = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt:codex-restart:first"),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn(first);
+        const firstProviderTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId: firstTurnId,
+        });
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: firstProviderTurnId,
+        });
+        assert.equal((yield* Queue.take(terminals)).status, "interrupted");
+        const replacement = {
+          ...first,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:codex-restart:replacement"),
+        };
+        yield* harness.runtime.startTurn(replacement);
+        const replacementTerminal = yield* Queue.take(terminals);
+        assert.equal(replacementTerminal.status, "completed");
+        assert.notEqual(replacementTerminal.providerTurnId, firstProviderTurnId);
+        assertRestartSnapshotConformance(harness.events, first, replacement);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>

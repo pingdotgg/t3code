@@ -66,6 +66,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { assertRestartSnapshotConformance } from "../testkit/RestartSnapshotConformance.testkit.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -2078,6 +2079,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly reopenMessages?: boolean;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2085,7 +2087,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
-      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      let sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
         const processed = yield* Deferred.make<void>();
@@ -2118,10 +2120,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
           open: (input) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (openedOptions !== undefined && options?.reopenMessages === true) {
+                sdkMessages = yield* Queue.unbounded<SDKMessage>();
+              }
+              const messages = sdkMessages;
               openedOptions = input.options;
               return {
-                messages: Stream.fromQueue(sdkMessages).pipe(
+                messages: Stream.fromQueue(messages).pipe(
                   Stream.flatMap((message) =>
                     Stream.make(message).pipe(
                       // The next pull happens after runForEach finishes handling this frame.
@@ -2148,7 +2154,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
-                close: options?.close?.(sdkMessages) ?? Effect.void,
+                close: options?.close?.(messages) ?? Effect.void,
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -2196,7 +2202,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtime,
         providerThread,
         threadId,
-        sdkMessages,
+        get sdkMessages() {
+          return sdkMessages;
+        },
         offerAndWait,
         offeredMessages,
         permissionModeChanges,
@@ -2376,6 +2384,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("publishes each restarted attempt's snapshot before its terminal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        reopenMessages: true,
+        close: (messages) => Queue.shutdown(messages),
+      });
+      const first = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt:claude-restart:first"),
+        text: "Run a command.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(first);
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${first.attemptId}`,
+      });
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId,
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      const replacement = {
+        ...first,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:claude-restart:replacement"),
+      };
+      yield* harness.runtime.startTurn(replacement);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000914",
+          result: "Replacement completed.",
+          numTurns: 1,
+        }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assertRestartSnapshotConformance(harness.events, first, replacement);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each(["completed", "interrupted"] as const)(
