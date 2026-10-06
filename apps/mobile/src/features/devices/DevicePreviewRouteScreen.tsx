@@ -54,10 +54,17 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
 export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
+  const { environmentId, threadId } = route.params;
+  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
+  const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
+  useEffect(() => {
+    if (isBlankLink) onClose();
+  }, [isBlankLink, onClose]);
+  if (isBlankLink) return null;
   return (
     <DevicePreviewScreen
-      environmentId={EnvironmentId.make(route.params.environmentId)}
-      threadId={ThreadId.make(route.params.threadId)}
+      environmentId={EnvironmentId.make(environmentId)}
+      threadId={ThreadId.make(threadId)}
       onClose={onClose}
     />
   );
