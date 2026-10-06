@@ -1,15 +1,31 @@
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
-import type { AppSymbolName } from "../components/AppSymbol";
 
 export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
   | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor }
-  | { readonly kind: "symbol"; readonly name: AppSymbolName; readonly color: ProjectIconColor };
+  | {
+      readonly kind: "lucide";
+      readonly paths: readonly string[];
+      readonly color: ProjectIconColor;
+    };
 
-/** Native stand-ins for the Lucide icons the server assigns on its own. */
-const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
-  // No project. Neither SF Symbols nor Tabler has a dashed chat bubble.
-  "message-square-dashed": "square.dashed",
+/**
+ * Stroke paths for the Lucide icons the server assigns on its own, copied from
+ * lucide-react so mobile draws the same shape as web.
+ */
+const LUCIDE_PATHS: Partial<Record<string, readonly string[]>> = {
+  "message-square-dashed": [
+    "M14 3h2",
+    "M16 19h-2",
+    "M2 12v-2",
+    "M2 16v5.286a.71.71 0 0 0 1.212.502l1.149-1.149",
+    "M20 19a2 2 0 0 0 2-2v-1",
+    "M22 10v2",
+    "M22 6V5a2 2 0 0 0-2-2",
+    "M4 3a2 2 0 0 0-2 2v1",
+    "M8 19h2",
+    "M8 3h2",
+  ],
 };
 
 /**
@@ -41,8 +57,8 @@ export function projectMonogram(projectName: string): string {
 
 /**
  * Picks what mobile draws for an assigned project icon. Mobile does not bundle
- * the Lucide set, so a Lucide override keeps its color and draws a native
- * stand-in when one exists, else the project's monogram instead of the folder glyph.
+ * the Lucide set, so a Lucide override keeps its color and draws the paths
+ * mobile carries for it, else the project's monogram instead of the folder glyph.
  */
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
@@ -54,9 +70,9 @@ export function resolveProjectIconGlyph(
     case "monogram":
       return { kind: "monogram", text: projectIcon.text, color: projectIcon.color };
     case "lucide": {
-      const symbol = SYMBOL_BY_LUCIDE_NAME[projectIcon.name];
-      return symbol
-        ? { kind: "symbol", name: symbol, color: projectIcon.color }
+      const paths = LUCIDE_PATHS[projectIcon.name];
+      return paths
+        ? { kind: "lucide", paths, color: projectIcon.color }
         : { kind: "monogram", text: projectMonogram(projectTitle), color: projectIcon.color };
     }
     case undefined:

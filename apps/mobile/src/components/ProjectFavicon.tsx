@@ -3,6 +3,8 @@ import { AppText } from "./AppText";
 import { Image } from "expo-image";
 import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
+import { Path, Svg } from "react-native-svg";
+import { withUniwind } from "uniwind";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
@@ -28,6 +30,7 @@ import {
 } from "../lib/projectFaviconRequests";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
+const TintedSvg = withUniwind(Svg);
 
 /* ─── Component ──────────────────────────────────────────────────────── */
 export const ProjectFavicon = memo(function ProjectFavicon(props: {
@@ -111,14 +114,23 @@ function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonl
   }
 
   const colors = projectIconColorClassNames(glyph.color);
-  if (glyph.kind === "symbol") {
+  if (glyph.kind === "lucide") {
     return (
-      <SymbolView
-        name={glyph.name}
-        size={size}
-        tintColorClassName={colors.tint}
-        type="monochrome"
-      />
+      <TintedSvg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        colorClassName={colors.tint}
+      >
+        {glyph.paths.map((d) => (
+          <Path key={d} d={d} />
+        ))}
+      </TintedSvg>
     );
   }
 
