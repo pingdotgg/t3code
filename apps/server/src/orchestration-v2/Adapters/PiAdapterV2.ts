@@ -61,7 +61,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
+import { cuaCallContext, mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -1017,7 +1017,17 @@ export function makePiAdapterV2(
             ...shared,
             title: toolName,
             type: "dynamic_tool",
-            ...mcpToolPresentation({ toolName }),
+            ...mcpToolPresentation({
+              toolName,
+              ...cuaCallContext({
+                serverName: /^mcp__(.+?)__/u.exec(toolName)?.[1],
+                toolName: /^mcp__.+?__(.+)$/u.exec(toolName)?.[1],
+                threadId: shared.threadId,
+                status: shared.status,
+                args: args ?? {},
+                result: resultRecord,
+              }),
+            }),
             toolName,
             input: args ?? {},
             ...(outputText.length > 0 ? { output: outputText } : {}),

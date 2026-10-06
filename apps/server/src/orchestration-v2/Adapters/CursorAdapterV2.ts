@@ -44,7 +44,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
+import { cuaCallContext, mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
@@ -1288,6 +1288,14 @@ export function makeCursorAdapterV2(
                   ? mcpToolPresentation({
                       serverName: toolCall.args.providerIdentifier,
                       toolName: toolCall.args.toolName,
+                      ...cuaCallContext({
+                        serverName: toolCall.args.providerIdentifier,
+                        toolName: toolCall.args.toolName,
+                        threadId: base.threadId,
+                        status: base.status,
+                        args: toolCall.args.args,
+                        result: cursorToolOutput(toolCall),
+                      }),
                     })
                   : {}),
                 toolName: cursorToolName(toolCall),

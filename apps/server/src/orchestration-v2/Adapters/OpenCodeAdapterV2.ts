@@ -56,7 +56,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
+import { cuaCallContext, mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
@@ -1639,6 +1639,16 @@ export function makeOpenCodeAdapterV2(
                   serverName,
                   toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
                   title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
+                  ...cuaCallContext({
+                    serverName,
+                    toolName: part.tool.slice(
+                      serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1,
+                    ),
+                    threadId: base.threadId,
+                    status: base.status,
+                    args: input,
+                    result: output,
+                  }),
                 });
           const turnItem: OrchestrationV2TurnItem = matchingServers?.length
             ? {

@@ -115,6 +115,7 @@ import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { parseCuaToolName, rememberCuaToolResult } from "../../cua/cuaToolPresentation.ts";
 import { mcpToolPresentation, normalizeMcpText } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -3835,6 +3836,31 @@ export function makeClaudeAdapterV2(
           readonly toolNonExecutionKind?: string;
         }) => {
           const completedAt = input.status === "running" ? null : input.updatedAt;
+          // Cua Driver titles follow the call's final input and status, and a
+          // finished call teaches the thread which app each pid is.
+          const cuaTool = parseCuaToolName(input.toolName);
+          if (cuaTool !== undefined && input.status === "completed") {
+            rememberCuaToolResult(
+              input.threadId,
+              cuaTool,
+              claudeNativeToolInputValue(input.toolInput),
+              claudeNativeToolOutputValue(input.output),
+            );
+          }
+          const presentation =
+            cuaTool === undefined
+              ? input.presentation
+              : mcpToolPresentation({
+                  toolName: input.toolName,
+                  threadId: input.threadId,
+                  args: claudeNativeToolInputValue(input.toolInput),
+                  status:
+                    input.status === "running"
+                      ? "inProgress"
+                      : input.status === "completed"
+                        ? "completed"
+                        : "failed",
+                });
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CLAUDE_PROVIDER,
             nativeItemId: input.nativeItemId,
@@ -3898,7 +3924,7 @@ export function makeClaudeAdapterV2(
                 ? formatReadToolLabel(readPath)
                 : (searchTitle ??
                   dynamicToolTitle(input.toolName, nativeToolInput) ??
-                  input.presentation?.title ??
+                  presentation?.title ??
                   null),
             startedAt: input.startedAt,
             completedAt,
@@ -3980,12 +4006,15 @@ export function makeClaudeAdapterV2(
                   : {
                       ...itemBase,
                       type: "dynamic_tool",
-                      ...(input.presentation?.toolIcon === undefined
+                      ...(presentation?.toolSurface === undefined
                         ? {}
-                        : { toolIcon: input.presentation.toolIcon }),
-                      ...(input.presentation?.toolSource === undefined
+                        : { toolSurface: presentation.toolSurface }),
+                      ...(presentation?.toolIcon === undefined
                         ? {}
-                        : { toolSource: input.presentation.toolSource }),
+                        : { toolIcon: presentation.toolIcon }),
+                      ...(presentation?.toolSource === undefined
+                        ? {}
+                        : { toolSource: presentation.toolSource }),
                       toolName: input.toolName,
                       ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
                       input: claudeNativeToolInputValue(input.toolInput),

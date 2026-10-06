@@ -63,7 +63,7 @@ import {
   makeAcpMcpOverAcpBridge,
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
-import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
+import { cuaCallContext, mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
@@ -3322,6 +3322,14 @@ export function makeAcpAdapterV2(
                 source: unknownRecord(
                   (unknownRecord(rawOutputRecord?.result) ?? rawOutputRecord)?._meta,
                 )?.source,
+                ...cuaCallContext({
+                  serverName: mcpIdentity.server,
+                  toolName: mcpIdentity.tool,
+                  threadId: base.threadId,
+                  status: base.status,
+                  args: mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments),
+                  result: rawOutput,
+                }),
               }),
               type: "dynamic_tool",
               toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,

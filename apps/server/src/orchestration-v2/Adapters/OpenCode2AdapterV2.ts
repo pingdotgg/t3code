@@ -79,6 +79,7 @@ import {
   type OpenCodeRuntimeError,
 } from "../../provider/opencodeRuntime.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { cuaCallContext, mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -1189,18 +1190,42 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const completedAt = status === "running" ? null : updatedAt;
       const nativeId = `${turn.scope}${id}`;
       yield* emitNode(state, turn, nativeId, "tool_call", status, startedAt, completedAt);
+      const turnItem = openCodeToolTurnItem(
+        itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
+        {
+          name: tool.name,
+          input: tool.input,
+          output: result?.output,
+          completedMetadata: status === "completed" ? result?.metadata : undefined,
+        },
+      );
+      // OpenCode names the thread's Cua tools `cua-driver-<thread>_<tool>`.
+      const cuaPrefix = state.cua === undefined ? undefined : `${state.cua.name}_`;
+      const cuaTool =
+        cuaPrefix !== undefined && tool.name.startsWith(cuaPrefix)
+          ? tool.name.slice(cuaPrefix.length)
+          : undefined;
       yield* emit({
         type: "turn_item.updated",
         driver,
-        turnItem: openCodeToolTurnItem(
-          itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
-          {
-            name: tool.name,
-            input: tool.input,
-            output: result?.output,
-            completedMetadata: status === "completed" ? result?.metadata : undefined,
-          },
-        ),
+        turnItem:
+          cuaTool === undefined || turnItem.type !== "dynamic_tool"
+            ? turnItem
+            : {
+                ...turnItem,
+                ...mcpToolPresentation({
+                  serverName: McpProviderSession.CUA_MCP_SERVER_NAME,
+                  toolName: cuaTool,
+                  ...cuaCallContext({
+                    serverName: McpProviderSession.CUA_MCP_SERVER_NAME,
+                    toolName: cuaTool,
+                    threadId: turnItem.threadId,
+                    status: turnItem.status,
+                    args: tool.input,
+                    result: result?.output,
+                  }),
+                }),
+              },
       });
     });
 
