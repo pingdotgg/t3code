@@ -360,6 +360,9 @@ function makeLocalCommandHarness(input: {
     };
   }
   const events: Array<OrchestrationV2DomainEvent> = [];
+  const dropAttempts = () => {
+    projection = { ...projection, attempts: [] };
+  };
   const interruptRun = () => {
     projection = {
       ...projection,
@@ -553,6 +556,7 @@ function makeLocalCommandHarness(input: {
     attemptId,
     projection: () => projection,
     interruptRun,
+    dropAttempts,
     failStartingRun: (failedRunId: RunId = runId) =>
       Effect.gen(function* () {
         yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).failStartingRun({
@@ -833,6 +837,18 @@ effectIt.effect("returns the write failure when a starting run cannot be failed"
 
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("reports a starting run with no attempt left as unsettleable", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue" });
+    harness.dropAttempts();
+
+    const error = yield* harness.failStartingRun().pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartRunStateMissingError");
     expect(harness.events).toEqual([]);
   }),
 );

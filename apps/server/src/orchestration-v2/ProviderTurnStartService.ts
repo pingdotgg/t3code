@@ -64,6 +64,21 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
+/**
+ * The run is `starting` but its root node or attempt is gone from the
+ * projection, so no start or failure can ever settle it. Retrying cannot help.
+ */
+export class ProviderTurnStartRunStateMissingError extends Schema.TaggedError<ProviderTurnStartRunStateMissingError>()(
+  "ProviderTurnStartRunStateMissingError",
+  {
+    runId: RunId,
+  },
+) {}
+
+export const isProviderTurnStartRunStateMissingError = Schema.is(
+  ProviderTurnStartRunStateMissingError,
+);
+
 const START_GAVE_UP_MESSAGE =
   "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.";
 
@@ -86,7 +101,7 @@ export interface ProviderTurnStartServiceV2Shape {
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
-  }) => Effect.Effect<void, ProviderTurnStartError>;
+  }) => Effect.Effect<void, ProviderTurnStartError | ProviderTurnStartRunStateMissingError>;
 }
 
 export class ProviderTurnStartServiceV2 extends Context.Service<
@@ -282,6 +297,9 @@ export const layer: Layer.Layer<
           transfer.resolution === null,
       );
       if (rootNode === undefined || attempt === undefined) {
+        if (input.failRun === true) {
+          return yield* new ProviderTurnStartRunStateMissingError({ runId });
+        }
         return yield* new ProviderTurnStartError({
           runId,
           cause: `Run ${runId} is missing its execution projection state.`,
@@ -1300,10 +1318,12 @@ export const layer: Layer.Layer<
 
     const toStartError = (runId: RunId) => (cause: unknown) =>
       isProviderTurnStartError(cause) ? cause : new ProviderTurnStartError({ runId, cause });
+    const toFailRunError = (runId: RunId) => (cause: unknown) =>
+      isProviderTurnStartRunStateMissingError(cause) ? cause : toStartError(runId)(cause);
     return ProviderTurnStartServiceV2.of({
       start: (input) => start(input).pipe(Effect.mapError(toStartError(input.runId))),
       failStartingRun: ({ threadId, runId }) =>
-        start({ threadId, runId, failRun: true }).pipe(Effect.mapError(toStartError(runId))),
+        start({ threadId, runId, failRun: true }).pipe(Effect.mapError(toFailRunError(runId))),
     });
   }),
 );

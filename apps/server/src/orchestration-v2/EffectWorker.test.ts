@@ -83,6 +83,7 @@ function layerExecutorFor(input: {
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly failRunFailure?: boolean;
+  readonly failRunStateMissing?: boolean;
   readonly interruptFailure?: boolean;
   readonly startInterrupted?: boolean;
 }) {
@@ -144,18 +145,20 @@ function layerExecutorFor(input: {
             }
           }),
         failStartingRun: () =>
-          record("fail-run").pipe(
-            Effect.andThen(
-              input.failRunFailure === true
-                ? Effect.fail(
-                    new ProviderTurnStartService.ProviderTurnStartError({
-                      runId,
-                      cause: "simulated run failure write",
-                    }),
-                  )
-                : Effect.void,
-            ),
-          ),
+          Effect.gen(function* () {
+            yield* record("fail-run");
+            if (input.failRunStateMissing === true) {
+              return yield* new ProviderTurnStartService.ProviderTurnStartRunStateMissingError({
+                runId,
+              });
+            }
+            if (input.failRunFailure === true) {
+              return yield* new ProviderTurnStartService.ProviderTurnStartError({
+                runId,
+                cause: "simulated run failure write",
+              });
+            }
+          }),
       }),
     ),
     Layer.succeed(
@@ -938,6 +941,24 @@ it.effect("returns the start failure when the run cannot be failed either", () =
   }),
 );
 
+it.effect("returns an unsettleable run instead of the start failure", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const failFirstStart = yield* Ref.make(true);
+
+    const error = yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      return yield* executor.execute(startEffect(now), { willRetry: false }).pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(layerExecutorFor({ events, failFirstStart, failRunStateMissing: true })),
+    );
+
+    assert.deepEqual(yield* Ref.get(events), ["start", "fail-run"]);
+    assert.isTrue(ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error.cause));
+  }),
+);
+
 it.effect.each(["provider-turn.start", "provider-turn.restart"] as const)(
   "keeps retrying a %s effect past its attempt budget",
   (effectType) =>
@@ -998,4 +1019,52 @@ it.effect.each(["provider-turn.start", "provider-turn.restart"] as const)(
       assert.deepEqual(yield* Ref.get(retryDelays), [1_600]);
       assert.equal(yield* Ref.get(terminalizations), 0);
     }),
+);
+
+it.effect("fails a run-start effect for good when its run has no state left to settle", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const workerId = "worker-run-start-unsettleable";
+    const claimedEffect: EffectOutbox.OrchestrationEffectV2 = {
+      ...startEffect(now),
+      attemptCount: 5,
+      leaseOwner: workerId,
+    };
+    const retries = yield* Ref.make(0);
+    const terminalizations = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+      fail: () => Ref.update(terminalizations, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      EffectWorker.OrchestrationEffectExecutorV2,
+      EffectWorker.OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.fail(
+            new EffectWorker.OrchestrationEffectExecutionError({
+              effectId: claimedEffect.id,
+              effectType: claimedEffect.request.type,
+              cause: new ProviderTurnStartService.ProviderTurnStartRunStateMissingError({ runId }),
+            }),
+          ),
+      }),
+    );
+    const workerLayer = EffectWorker.layerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    assert.isTrue(
+      yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+        Effect.flatMap((worker) => worker.runOnce),
+        Effect.provide(workerLayer),
+      ),
+    );
+
+    assert.equal(yield* Ref.get(retries), 0);
+    assert.equal(yield* Ref.get(terminalizations), 1);
+  }),
 );
