@@ -3,6 +3,7 @@ import {
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
+  MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -94,6 +95,17 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
             Effect.gen(function* () {
               const reply = yield* Deferred.make<{ sequence: number }, Error>();
               yield* Queue.offer(requests, { command, reply });
+              return yield* Deferred.await(reply);
+            }),
+          // Worktree bootstrap launches through its own RPC; queue it like a command.
+          [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launch: { threadId: ThreadId }) =>
+            Effect.gen(function* () {
+              const reply = yield* Deferred.make<{ sequence: number }, Error>();
+              const command = { type: "thread.launch", threadId: launch.threadId };
+              yield* Queue.offer(requests, {
+                command: command as unknown as OrchestrationV2Command,
+                reply,
+              });
               return yield* Deferred.await(reply);
             }),
         },
@@ -373,5 +385,148 @@ describe("remote thread lifecycle commands", () => {
         expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
+  );
+});
+
+describe("thread commands during bootstrap", () => {
+  const startInput = {
+    threadId: THREAD_ID,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    message: {
+      messageId: MessageId.make("first-message"),
+      role: "user" as const,
+      text: "Start a turn",
+      attachments: [],
+    },
+    bootstrap: {
+      createThread: {
+        projectId: ProjectId.make("project"),
+        title: "Remote thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      prepareWorktree: {
+        projectCwd: "/project",
+        baseBranch: "main",
+        branch: "new-worktree",
+      },
+    },
+  };
+
+  it.effect("dispatches pin, reorder and unpin before bootstrap replies, but delays delete", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const bootstrap = h.commands.startTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: startInput,
+      });
+      const start = yield* Queue.take(h.requests);
+      expect(start.command.type).toBe("thread.launch");
+      for (const [action, type] of [
+        ["pin", "thread.pin"],
+        ["reorderPin", "thread.pin.reorder"],
+        ["unpin", "thread.unpin"],
+      ] as const) {
+        const result = h.commands[action].run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, orderKey: "a" },
+        });
+        const request = yield* Queue.take(h.requests);
+        expect(request.command.type).toBe(type);
+        yield* Deferred.succeed(request.reply, { sequence: 2 });
+        expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+      }
+      const deletion = h.commands.delete.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      // A different thread's receipt proves that the dispatch path has run.
+      const marker = h.commands.pin.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: ThreadId.make("other-thread") },
+      });
+      const markerRequest = yield* Queue.take(h.requests);
+      expect(markerRequest.command).toMatchObject({ threadId: "other-thread" });
+      yield* Deferred.succeed(markerRequest.reply, { sequence: 3 });
+      yield* Effect.promise(() => marker);
+      yield* Deferred.succeed(start.reply, { sequence: 4 });
+      yield* Effect.promise(() => bootstrap);
+      const removed = yield* Queue.take(h.requests);
+      expect(removed.command.type).toBe("thread.delete");
+      yield* Deferred.succeed(removed.reply, { sequence: 5 });
+      expect((yield* Effect.promise(() => deletion))._tag).toBe("Success");
+    }),
+  );
+
+  it.effect.each(["settle", "snooze"] as const)(
+    "keeps a later pin after %s queued behind a metadata update",
+    (action) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const metadata = h.commands.updateMetadata.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, title: "Renamed" },
+        });
+        const start = yield* Queue.take(h.requests);
+        const park = h.commands[action].run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+        });
+        const pin = h.commands.pin.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID },
+        });
+        yield* Deferred.succeed(start.reply, { sequence: 2 });
+        yield* Effect.promise(() => metadata);
+        const parked = yield* Queue.take(h.requests);
+        expect(parked.command.type).toBe(`thread.${action}`);
+        yield* Deferred.succeed(parked.reply, { sequence: 3 });
+        yield* Effect.promise(() => park);
+        const pinned = yield* Queue.take(h.requests);
+        expect(pinned.command.type).toBe("thread.pin");
+        yield* Deferred.succeed(pinned.reply, { sequence: 4 });
+        expect((yield* Effect.promise(() => pin))._tag).toBe("Success");
+        const confirmed = {
+          ...SNAPSHOT,
+          snapshotSequence: 4,
+          threads: [{ ...SNAPSHOT.threads[0]!, pinnedAt: NOW, snoozedUntil: null }],
+        };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+      }),
+  );
+
+  it.effect("keeps settle after an in-flight pin even when the pin fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const pin = h.commands.pin.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      const pinned = yield* Queue.take(h.requests);
+      const settle = h.commands.settle.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      const marker = h.commands.pin.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: ThreadId.make("other-thread") },
+      });
+      const markerRequest = yield* Queue.take(h.requests);
+      expect(markerRequest.command).toMatchObject({ threadId: "other-thread" });
+      yield* Deferred.succeed(markerRequest.reply, { sequence: 2 });
+      yield* Effect.promise(() => marker);
+      yield* Deferred.fail(pinned.reply, new Error("Pin rejected"));
+      expect((yield* Effect.promise(() => pin))._tag).toBe("Failure");
+      const settled = yield* Queue.take(h.requests);
+      expect(settled.command.type).toBe("thread.settle");
+      yield* Deferred.succeed(settled.reply, { sequence: 3 });
+      expect((yield* Effect.promise(() => settle))._tag).toBe("Success");
+    }),
   );
 });
