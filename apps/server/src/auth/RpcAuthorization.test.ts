@@ -147,9 +147,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.previewRefresh,
       WS_METHODS.previewClose,
       WS_METHODS.previewReportStatus,
-      WS_METHODS.previewAutomationConnect,
-      WS_METHODS.previewAutomationRespond,
-      WS_METHODS.previewAutomationFocusHost,
+      WS_METHODS.previewAdjust,
+      WS_METHODS.previewClearProfile,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
     }

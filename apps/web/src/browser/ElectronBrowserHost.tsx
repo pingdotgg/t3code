@@ -3,7 +3,7 @@
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { AuthPreviewOperateScope, FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { type ComponentProps, useEffect, useMemo } from "react";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
