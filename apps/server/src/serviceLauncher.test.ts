@@ -471,6 +471,65 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  it.effect("records no update when the server exits during the backup check", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-exit-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
+      const encoded = JSON.stringify({ databasePath });
+      const childSource = `
+const paths = ${encoded};
+process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath }, () =>
+  process.exit(3),
+);
+setInterval(() => {}, 1_000);
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          backupSpaceProbe: {
+            // The child exits right after its request; outlast that.
+            readFreeBytes: () =>
+              Effect.runPromise(
+                Effect.sleep("500 millis").pipe(Effect.as(Number.MAX_SAFE_INTEGER)),
+              ),
+          },
+        },
+      );
+      const failure = yield* Effect.promise(() =>
+        launcher.run().then(
+          () => new Error("launcher unexpectedly completed"),
+          (cause: unknown) => cause as Error,
+        ),
+      );
+
+      assert.include(failure.message, "Active child exited unexpectedly (3)");
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.isUndefined(state.update);
+    }),
+  );
+
   it.effect("checks database backup space against clone or full-copy needs", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

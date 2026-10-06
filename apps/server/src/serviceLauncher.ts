@@ -163,8 +163,9 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
  * Whether `copyDatabaseFile` will clone the database into the backup
  * directory rather than copy it.
  * - macOS: `cp -c` clones within one APFS volume and silently copies
- *   anywhere else, so both directories must share a device whose filesystem
- *   type matches the system volume's, which is always APFS.
+ *   anywhere else, so every existing database file must share the backup
+ *   directory's device, whose filesystem type must match the system volume's,
+ *   which is always APFS.
  * - Linux: clone each existing database file with `cp --reflink=always`,
  *   which fails instead of copying when a file cannot be reflinked (another
  *   filesystem, or a btrfs file marked No_COW), then discard the clones.
@@ -174,13 +175,21 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
   if (platform === "darwin") {
-    const [dbDirectory, backupDirectory, backupFs, systemFs] = await Promise.all([
-      NodeFSP.stat(NodePath.dirname(dbPath)),
+    const [backupDirectory, backupFs, systemFs] = await Promise.all([
       NodeFSP.stat(backupRoot),
       NodeFSP.statfs(backupRoot),
       NodeFSP.statfs("/"),
     ]);
-    return dbDirectory.dev === backupDirectory.dev && backupFs.type === systemFs.type;
+    if (backupFs.type !== systemFs.type) return false;
+    // `stat` follows symlinks, so a file linked from another volume is caught.
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const source = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
+        if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw cause;
+      });
+      if (source !== undefined && source.dev !== backupDirectory.dev) return false;
+    }
+    return true;
   }
   if (platform !== "linux") return false;
   const probe = NodePath.join(backupRoot, `.clone-probe-${NodeCrypto.randomUUID()}`);
@@ -657,6 +666,9 @@ export class Launcher {
       (error: unknown) =>
         `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
     );
+    // The child may have exited during the check. Its queued exit transition
+    // reports that; answering it or recording a pending update would not.
+    if (!child.process.connected) return;
     if (backupBlocker !== undefined) {
       await reject(backupBlocker);
       return;
