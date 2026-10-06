@@ -173,6 +173,7 @@ import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
+import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
@@ -2192,16 +2193,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return labels;
   }, [activeThreadKnownSessions]);
-  // Keyed on the ids, not the thread object: the shell changes identity on every
-  // update during a run, and effects keyed on this ref must not re-run for that.
-  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
-  const activeThreadRef = useMemo(
-    () =>
-      activeThreadEnvironmentId !== null && activeThreadId !== null
-        ? scopeThreadRef(activeThreadEnvironmentId, activeThreadId)
-        : null,
-    [activeThreadEnvironmentId, activeThreadId],
-  );
+  const activeThreadRef = useActiveThreadRef(activeThread);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
