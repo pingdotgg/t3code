@@ -6,6 +6,7 @@ import type {
   DesktopPreviewRecordingInputEvent,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -269,32 +270,34 @@ const layerFileSystem = FileSystem.layerNoop({
     }),
 });
 
-const layer = PreviewManager.layer.pipe(
-  Layer.provideMerge(
-    Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
-      register: () => Effect.void,
-      recordMetrics: () => Effect.void,
-      shutdown: Effect.void,
-    }),
-  ),
-  Layer.provideMerge(DesktopBrowserHost.layer),
-  Layer.provideMerge(layerBrowserSession),
-  Layer.provideMerge(layerEnvironment),
-  Layer.provideMerge(layerFileSystem),
-  Layer.provideMerge(Path.layer),
-  Layer.provideMerge(NodeCrypto.layer),
-  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
-);
+const managerLayer = (platform: NodeJS.Platform = "darwin") =>
+  PreviewManager.layer.pipe(
+    Layer.provideMerge(
+      Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+        register: () => Effect.void,
+        recordMetrics: () => Effect.void,
+        shutdown: Effect.void,
+      }),
+    ),
+    Layer.provideMerge(DesktopBrowserHost.layer),
+    Layer.provideMerge(layerBrowserSession),
+    Layer.provideMerge(layerEnvironment),
+    Layer.provideMerge(layerFileSystem),
+    Layer.provideMerge(Path.layer),
+    Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(Layer.succeed(HostProcessPlatform, platform)),
+  );
 
 const withManager = <A>(
   use: (
     manager: PreviewManager.PreviewManager["Service"],
   ) => Effect.Effect<A, PreviewManager.PreviewManagerError, Scope.Scope>,
+  platform: NodeJS.Platform = "darwin",
 ) =>
   Effect.gen(function* () {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* use(manager);
-  }).pipe(Effect.provide(layer), Effect.scoped);
+  }).pipe(Effect.provide(managerLayer(platform)), Effect.scoped);
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
@@ -574,7 +577,7 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const preview = makeFaviconWebContents();
         const sendInputEvent = vi.fn();
-        const hostWebContents = { sendInputEvent };
+        const hostWebContents = { sendInputEvent, isDestroyed: () => false };
         Object.assign(preview.webContents, { hostWebContents });
         fromId.mockReturnValue(preview.webContents);
         getFocusedWebContents.mockReturnValue(preview.webContents as never);
@@ -626,6 +629,108 @@ describe("PreviewManager", () => {
         expect(sendInputEvent).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect.each([
+    ["mod+shift+t", "view.reopenClosed"],
+    ["ctrl+alt+u", "sidebar.toggle"],
+  ] as const)(
+    "forwards only the configured command from the focused guest: %s",
+    ([chord, command]) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeFaviconWebContents();
+          const send = vi.fn();
+          Object.assign(preview.webContents, {
+            hostWebContents: { isDestroyed: () => false, send },
+          });
+          fromId.mockReturnValue(preview.webContents);
+          getFocusedWebContents.mockReturnValue(preview.webContents as never);
+          yield* manager.createTab("tab_reopen");
+          yield* manager.registerWebview("tab_reopen", 42);
+          const shortcut = parseKeybindingShortcut(chord)!;
+          yield* manager.setForwardedShortcuts([{ command, shortcut }]);
+          const beforeInput = preview.listeners.get("before-input-event")!;
+          const input = {
+            type: "keyDown",
+            key: shortcut.key.toUpperCase(),
+            meta: shortcut.metaKey || shortcut.modKey,
+            control: shortcut.ctrlKey,
+            shift: shortcut.shiftKey,
+            alt: shortcut.altKey,
+          };
+          const preventDefault = vi.fn();
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).toHaveBeenCalledOnce();
+          expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
+          for (const overrides of [
+            { isAutoRepeat: true },
+            { type: "keyUp" },
+            { shift: !input.shift },
+            { key: "x" },
+          ]) {
+            preventDefault.mockClear();
+            beforeInput({ preventDefault } as never, { ...input, ...overrides } as never);
+            expect(preventDefault).toHaveBeenCalledTimes("isAutoRepeat" in overrides ? 1 : 0);
+            expect(send).toHaveBeenCalledOnce();
+          }
+          getFocusedWebContents.mockReturnValue(null);
+          preventDefault.mockClear();
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).not.toHaveBeenCalled();
+          expect(send).toHaveBeenCalledOnce();
+          getFocusedWebContents.mockReturnValue(preview.webContents as never);
+          yield* manager.setForwardedShortcuts([]);
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).not.toHaveBeenCalled();
+          expect(send).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
+  effectIt.effect.each([
+    ["linux", "ctrl+alt+[", "[", "BracketLeft", false],
+    ["win32", "ctrl+alt+8", "[", "Digit8", false],
+    ["win32", "ctrl+alt+k", "K", "KeyK", false],
+    ["linux", "ctrl+alt+`", "Dead", "Backquote", false],
+    ["darwin", "ctrl+alt+[", "[", "BracketLeft", true],
+    ["linux", "ctrl+alt+f7", "F7", "F7", true],
+  ] as const)(
+    "handles ambiguous preview chords on %s: %s",
+    ([platform, chord, key, code, expected]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+            });
+            fromId.mockReturnValue(preview.webContents);
+            getFocusedWebContents.mockReturnValue(preview.webContents as never);
+            yield* manager.createTab("tab_alt_graph");
+            yield* manager.registerWebview("tab_alt_graph", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "view.reopenClosed", shortcut: parseKeybindingShortcut(chord)! },
+            ]);
+            const preventDefault = vi.fn();
+            preview.listeners.get("before-input-event")!(
+              { preventDefault } as never,
+              {
+                type: "keyDown",
+                key,
+                code,
+                meta: false,
+                control: true,
+                shift: false,
+                alt: true,
+              } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledTimes(expected ? 1 : 0);
+            expect(send).toHaveBeenCalledTimes(expected ? 1 : 0);
+          }),
+        platform,
+      ),
   );
 
   effectIt.effect("preserves focused browser editing in tabs and sign-in popups", () =>
@@ -2716,7 +2821,7 @@ describe("PreviewManager", () => {
       expect(yield* nextType).toBe("attached");
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
-    }).pipe(Effect.provide(layer), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("stops capture retries when the tab swaps during the retry delay", () =>

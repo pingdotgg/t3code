@@ -380,7 +380,6 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
             directory: dir,
             name: "grok",
             source: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               `process.stderr.write(${JSON.stringify(`${secretStderr}\n`)});`,
               "process.exit(2);",
               "",
@@ -417,7 +416,6 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
           "  process.exit(0);",
           "}",

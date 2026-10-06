@@ -111,7 +111,6 @@ function normalizeGitHubPullRequestRecord(
 }
 
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
-const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
 /**
@@ -138,14 +137,4 @@ export function decodeGitHubPullRequestListJson(
   Cause.Cause<Schema.SchemaError>
 > {
   return Result.map(decodeGitHubPullRequestList(raw), decodeGitHubPullRequestEntries);
-}
-
-export function decodeGitHubPullRequestJson(
-  raw: string,
-): Result.Result<NormalizedGitHubPullRequestRecord, Cause.Cause<Schema.SchemaError>> {
-  const result = decodeGitHubPullRequest(raw);
-  if (Result.isSuccess(result)) {
-    return Result.succeed(normalizeGitHubPullRequestRecord(result.success));
-  }
-  return Result.fail(result.failure);
 }

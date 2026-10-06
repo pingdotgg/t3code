@@ -56,7 +56,11 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
     }),
   }),
   failure: OrchestratorMcpFailure,
-  dependencies: [McpInvocationContext.McpInvocationContext, HtmlRender.HtmlRender],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    HtmlRender.HtmlRender,
+  ],
 })
   .annotate(Tool.Title, "Preview HTML")
   .annotate(Tool.Readonly, true)
