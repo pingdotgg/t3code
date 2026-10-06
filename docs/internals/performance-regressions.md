@@ -102,3 +102,19 @@ continuous traffic during an outage.
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
 `runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
 `ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+
+## Branch pull-request metadata
+
+Overlapping branch pull-request reads share only their initial Git metadata work.
+The key includes the canonical cwd, branch, invalidation epoch, and explicit refresh
+mode. Worktrees keep distinct keys. The zero-TTL cache releases successful and
+failed results, so the next sequential caller reads Git again. Repository identity
+verification still runs for each caller after the existing PR lookup cache.
+
+The installed Effect cache must keep the producer alive while any caller waits,
+cancel it when the last caller leaves, and detach its entry before cancellation
+finalizers run. Removing an old entry must not remove a replacement for the same
+key. `GitManager.test.ts` pins those lifecycle rules with Deferred barriers and
+compares overlapping metadata counts against the uncached path. Its service tests
+use real local Git repositories and bare remotes with a fake hosting CLI. They do
+not prove live hosting responses, installed T3 behavior, or client latency.

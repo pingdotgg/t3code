@@ -2162,10 +2162,10 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
-    "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
-    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+  const readBranchPrMetadata = Effect.fn("GitManager.readBranchPrMetadata")(function* (
+    cacheCwd: string,
+    branch: string,
+  ) {
     const remotes = yield* gitCore.execute({
       operation: "GitManager.branchPullRequest.remotes",
       cwd: cacheCwd,
@@ -2237,6 +2237,32 @@ export const make = Effect.gen(function* () {
     const defaultBranch = yield* gitCore
       .resolveDefaultBranchName(cacheCwd, defaultRemoteName)
       .pipe(Effect.orElseSucceed(() => null));
+    return { upstreamRef, remoteName, localBranchExists, defaultBranch };
+  });
+  const branchPrMetadataKey = Schema.fromJsonString(
+    Schema.Tuple([Schema.String, Schema.String, Schema.Number, Schema.Boolean]),
+  );
+  const branchPrMetadataReads = yield* Cache.makeWith(
+    (key: string) =>
+      Schema.decodeEffect(branchPrMetadataKey)(key).pipe(
+        Effect.orDie,
+        Effect.flatMap(([cwd, branch]) => readBranchPrMetadata(cwd, branch)),
+      ),
+    { capacity: PR_LOOKUP_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
+    "branchPullRequest",
+  )(function* ({ cwd, branch }, options) {
+    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+    const metadataKey = yield* Schema.encodeEffect(branchPrMetadataKey)([
+      cacheCwd,
+      branch,
+      prLookupEpoch(cacheCwd),
+      options?.refresh === true,
+    ]).pipe(Effect.orDie);
+    const metadata = yield* Cache.get(branchPrMetadataReads, metadataKey);
+    if (metadata === null) return null;
+    const { upstreamRef, remoteName, localBranchExists, defaultBranch } = metadata;
     const cacheKey = prLookupCacheKey(cacheCwd, {
       branch,
       upstreamRef,

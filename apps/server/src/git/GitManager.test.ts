@@ -6,7 +6,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
+import * as Cache from "effect/Cache";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -670,6 +674,11 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  observeGit?: (
+    input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["execute"]>[0],
+  ) => Effect.Effect<void, GitCommandError>;
+  observeDefaultBranch?: () => void;
+  observeRealPath?: (path: string) => Effect.Effect<void>;
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
@@ -685,30 +694,39 @@ function makeManager(input?: {
 
   const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
-  const vcsDriverLayer = input?.gitConfigReads
-    ? Layer.effect(
-        GitVcsDriver.GitVcsDriver,
-        GitVcsDriver.make.pipe(
-          Effect.map((service) =>
-            GitVcsDriver.GitVcsDriver.of({
-              ...service,
-              readConfigValue: (cwd, key) =>
-                Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
-                  Effect.andThen(service.readConfigValue(cwd, key)),
-                ),
-            }),
+  const vcsDriverLayer =
+    input?.gitConfigReads || input?.observeGit || input?.observeDefaultBranch
+      ? Layer.effect(
+          GitVcsDriver.GitVcsDriver,
+          GitVcsDriver.make.pipe(
+            Effect.map((service) =>
+              GitVcsDriver.GitVcsDriver.of({
+                ...service,
+                execute: (command) =>
+                  (input.observeGit?.(command) ?? Effect.void).pipe(
+                    Effect.andThen(service.execute(command)),
+                  ),
+                resolveDefaultBranchName: (cwd, remoteName) =>
+                  Effect.sync(() => input.observeDefaultBranch?.()).pipe(
+                    Effect.andThen(service.resolveDefaultBranchName(cwd, remoteName)),
+                  ),
+                readConfigValue: (cwd, key) =>
+                  Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
+                    Effect.andThen(service.readConfigValue(cwd, key)),
+                  ),
+              }),
+            ),
           ),
-        ),
-      ).pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(serverConfigLayer),
-      )
-    : GitVcsDriver.layer.pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(serverConfigLayer),
-      );
+        ).pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(serverConfigLayer),
+        )
+      : GitVcsDriver.layer.pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(serverConfigLayer),
+        );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     (input?.sourceControlProvider === undefined
@@ -748,15 +766,38 @@ function makeManager(input?: {
   );
 
   return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
     const stores = yield* Layer.build(storesLayer);
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
     const manager = yield* GitManager.make.pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        // Synchronous real-path resolution lets immediate forks enroll before the test resumes.
+        realPath: (path) =>
+          input?.observeRealPath
+            ? Effect.sync(() => NodeFS.realpathSync(path)).pipe(Effect.tap(input.observeRealPath))
+            : fileSystem.realPath(path),
+      }),
       Effect.provide(managerLayer),
       Effect.provideContext(stores),
     );
     return { manager, ghCalls };
+  });
+}
+
+function makeMetadataRepo() {
+  return Effect.gen(function* () {
+    const cwd = yield* makeTempDir("t3code-git-metadata-");
+    yield* initRepo(cwd);
+    const remote = yield* createBareRemote();
+    yield* runGit(cwd, ["remote", "add", "origin", remote]);
+    yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+    const branch = "feature/metadata";
+    yield* runGit(cwd, ["checkout", "-b", branch]);
+    yield* runGit(cwd, ["push", "-u", "origin", branch]);
+    return { cwd, branch };
   });
 }
 
@@ -1162,6 +1203,391 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.pr).toBeNull();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
     }),
+  );
+
+  it.effect(
+    "zero TTL metadata cache enrolls waiters atomically and releases success and failure",
+    () =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<void>();
+        let reads = 0;
+        let fail = false;
+        const cache = yield* Cache.makeWith(
+          () =>
+            Effect.gen(function* () {
+              const read = ++reads;
+              yield* Deferred.await(release);
+              if (fail) return yield* Effect.fail("metadata failure");
+              return read;
+            }),
+          { capacity: 16, timeToLive: () => Duration.zero },
+        );
+        const first = yield* Cache.get(cache, "branch").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const second = yield* Cache.get(cache, "branch").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        expect(reads).toBe(1);
+        yield* Fiber.interrupt(first);
+        expect(reads).toBe(1);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(second)).toBe(1);
+        expect(yield* Cache.get(cache, "branch")).toBe(2);
+        fail = true;
+        expect(Exit.isFailure(yield* Effect.exit(Cache.get(cache, "branch")))).toBe(true);
+        fail = false;
+        expect(yield* Cache.get(cache, "branch")).toBe(4);
+      }),
+  );
+
+  it.effect("zero TTL metadata cache detaches last cancellation before replacement cleanup", () =>
+    Effect.gen(function* () {
+      const cleanupStarted = yield* Deferred.make<void>();
+      const cleanupRelease = yield* Deferred.make<void>();
+      const oldRelease = yield* Deferred.make<void>();
+      const newRelease = yield* Deferred.make<void>();
+      let reads = 0;
+      const cache = yield* Cache.makeWith(
+        () =>
+          Effect.gen(function* () {
+            const read = ++reads;
+            if (read === 1) {
+              yield* Deferred.await(oldRelease).pipe(
+                Effect.onInterrupt(() =>
+                  Deferred.succeed(cleanupStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(cleanupRelease)),
+                  ),
+                ),
+              );
+            } else {
+              yield* Deferred.await(newRelease);
+            }
+            return read;
+          }),
+        { capacity: 16, timeToLive: () => Duration.zero },
+      );
+      const old = yield* Cache.get(cache, "branch").pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const cancel = yield* Fiber.interrupt(old).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(cleanupStarted);
+      const replacement = yield* Cache.get(cache, "branch").pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      expect(reads).toBe(2);
+      yield* Deferred.succeed(cleanupRelease, undefined);
+      yield* Fiber.join(cancel);
+      expect(Exit.hasInterrupts(yield* Fiber.await(old))).toBe(true);
+      const joined = yield* Cache.get(cache, "branch").pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      expect(reads).toBe(2);
+      yield* Deferred.succeed(newRelease, undefined);
+      expect(yield* Fiber.join(replacement)).toBe(2);
+      expect(yield* Fiber.join(joined)).toBe(2);
+      expect(yield* Cache.get(cache, "branch")).toBe(3);
+    }),
+  );
+
+  it.effect("branch PR metadata overlap reads once and sequential calls read fresh", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/metadata"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/metadata"]);
+      const started = yield* Deferred.make<void>();
+      const normalized = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      let paths = 0;
+      let defaults = 0;
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 216,
+                title: "Metadata PR",
+                url: "https://github.com/pingdotgg/t3code/pull/216",
+                baseRefName: "main",
+                headRefName: "feature/metadata",
+                state: "OPEN",
+              },
+            ]),
+          ],
+        },
+        observeGit: (input) =>
+          Effect.gen(function* () {
+            operations.push(input.operation);
+            if (input.operation === "GitManager.branchPullRequest.remotes") {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+          }),
+        observeRealPath: () =>
+          ++paths === 2 ? Deferred.succeed(normalized, undefined).pipe(Effect.asVoid) : Effect.void,
+        observeDefaultBranch: () => {
+          defaults++;
+        },
+      });
+      const input = { cwd: repoDir, branch: "feature/metadata" };
+      const first = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(started);
+      const second = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(normalized);
+      expect(operations.filter((op) => op === "GitManager.branchPullRequest.remotes")).toHaveLength(
+        1,
+      );
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(first)).toMatchObject({ number: 216 });
+      expect(yield* Fiber.join(second)).toMatchObject({ number: 216 });
+      expect(
+        operations.filter((op) => op === "GitManager.branchPullRequest.branchRef"),
+      ).toHaveLength(1);
+      expect(defaults).toBe(1);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+      expect(yield* manager.branchPullRequest(input)).toMatchObject({ number: 216 });
+      expect(operations.filter((op) => op === "GitManager.branchPullRequest.remotes")).toHaveLength(
+        2,
+      );
+      expect(defaults).toBe(2);
+    }),
+  );
+
+  it.effect.each(["tracked", "deleted", "no-remotes"] as const)(
+    "branch PR metadata coalesces canonical aliases for %s branches",
+    (kind) =>
+      Effect.gen(function* () {
+        const input = yield* makeMetadataRepo();
+        if (kind === "deleted") {
+          yield* runGit(input.cwd, ["checkout", "main"]);
+          yield* runGit(input.cwd, ["branch", "-D", input.branch]);
+        } else if (kind === "no-remotes") {
+          yield* runGit(input.cwd, ["remote", "remove", "origin"]);
+        }
+        const aliasRoot = yield* makeTempDir("t3code-git-alias-");
+        const alias = NodePath.join(aliasRoot, "repo");
+        NodeFS.symlinkSync(input.cwd, alias, "dir");
+        const release = yield* Deferred.make<void>();
+        const operations: string[] = [];
+        const { manager } = yield* makeManager({
+          observeRealPath: () => Effect.void,
+          observeGit: (command) =>
+            Effect.gen(function* () {
+              operations.push(command.operation);
+              if (command.operation === "GitManager.branchPullRequest.remotes")
+                yield* Deferred.await(release);
+            }),
+        });
+        const first = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const second = yield* manager
+          .branchPullRequest({ ...input, cwd: alias })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const third = yield* manager
+          .branchPullRequest({ ...input, cwd: `${input.cwd}/.` })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(
+          operations.filter((op) => op === "GitManager.branchPullRequest.remotes"),
+        ).toHaveLength(1);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(first)).toBeNull();
+        expect(yield* Fiber.join(second)).toBeNull();
+        expect(yield* Fiber.join(third)).toBeNull();
+        expect(
+          operations.filter((op) => op === "GitManager.branchPullRequest.branchRef"),
+        ).toHaveLength(kind === "no-remotes" ? 0 : 1);
+        expect(
+          operations.filter((op) => op === "GitManager.branchPullRequest.remoteTrackingRefs"),
+        ).toHaveLength(kind === "deleted" ? 1 : 0);
+      }),
+  );
+
+  it.effect.each(["cwd", "branch", "worktree", "refresh", "epoch"] as const)(
+    "branch PR metadata keeps overlapping %s reads separate",
+    (kind) =>
+      Effect.gen(function* () {
+        const input = yield* makeMetadataRepo();
+        let other = input;
+        if (kind === "cwd") {
+          other = yield* makeMetadataRepo();
+        } else if (kind === "branch") {
+          const branch = "feature/other";
+          yield* runGit(input.cwd, ["branch", branch]);
+          other = { ...input, branch };
+        } else if (kind === "worktree") {
+          const root = yield* makeTempDir("t3code-git-worktree-");
+          const cwd = NodePath.join(root, "worktree");
+          yield* runGit(input.cwd, ["worktree", "add", "-b", "feature/worktree", cwd, "main"]);
+          other = { ...input, cwd };
+        }
+        const release = yield* Deferred.make<void>();
+        let reads = 0;
+        const { manager } = yield* makeManager({
+          observeRealPath: () => Effect.void,
+          observeGit: (command) =>
+            command.operation === "GitManager.branchPullRequest.remotes"
+              ? Effect.sync(() => {
+                  reads++;
+                }).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+        });
+        const first = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        if (kind === "epoch") yield* manager.invalidateStatus(input.cwd);
+        const second = yield* manager
+          .branchPullRequest(other, kind === "refresh" ? { refresh: true } : undefined)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(reads).toBe(2);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(first)).toBeNull();
+        expect(yield* Fiber.join(second)).toBeNull();
+      }),
+  );
+
+  it.effect("branch PR metadata shares a failure and retries on the next call", () =>
+    Effect.gen(function* () {
+      const input = yield* makeMetadataRepo();
+      const release = yield* Deferred.make<void>();
+      let reads = 0;
+      const { manager } = yield* makeManager({
+        observeRealPath: () => Effect.void,
+        observeGit: (command) =>
+          Effect.gen(function* () {
+            if (command.operation !== "GitManager.branchPullRequest.remotes") return;
+            if (++reads !== 1) return;
+            yield* Deferred.await(release);
+            return yield* new GitCommandError({
+              operation: command.operation,
+              cwd: command.cwd,
+              command: "git remote",
+              detail: "metadata failure",
+            });
+          }),
+      });
+      const first = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect(reads).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      const firstExit = yield* Fiber.await(first);
+      const secondExit = yield* Fiber.await(second);
+      expect(Exit.isFailure(firstExit)).toBe(true);
+      expect(secondExit).toEqual(firstExit);
+      expect(yield* manager.branchPullRequest(input)).toBeNull();
+      expect(reads).toBe(2);
+    }),
+  );
+
+  it.effect("branch PR metadata keeps the producer when one caller cancels", () =>
+    Effect.gen(function* () {
+      const input = yield* makeMetadataRepo();
+      const release = yield* Deferred.make<void>();
+      let reads = 0;
+      let interrupted = false;
+      const { manager } = yield* makeManager({
+        observeRealPath: () => Effect.void,
+        observeGit: (command) =>
+          command.operation === "GitManager.branchPullRequest.remotes"
+            ? Effect.sync(() => {
+                reads++;
+              }).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    interrupted = true;
+                  }),
+                ),
+              )
+            : Effect.void,
+      });
+      const first = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* manager
+        .branchPullRequest(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Fiber.interrupt(first);
+      expect(Exit.hasInterrupts(yield* Fiber.await(first))).toBe(true);
+      expect(interrupted).toBe(false);
+      expect(reads).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(second)).toBeNull();
+      expect(interrupted).toBe(false);
+      expect(yield* manager.branchPullRequest(input)).toBeNull();
+      expect(reads).toBe(2);
+    }),
+  );
+
+  it.effect(
+    "branch PR metadata cancels the last caller and preserves a replacement during cleanup",
+    () =>
+      Effect.gen(function* () {
+        const input = yield* makeMetadataRepo();
+        const oldRelease = yield* Deferred.make<void>();
+        const newRelease = yield* Deferred.make<void>();
+        const cleanupStarted = yield* Deferred.make<void>();
+        const cleanupRelease = yield* Deferred.make<void>();
+        let reads = 0;
+        const { manager } = yield* makeManager({
+          observeRealPath: () => Effect.void,
+          observeGit: (command) =>
+            Effect.gen(function* () {
+              if (command.operation !== "GitManager.branchPullRequest.remotes") return;
+              if (++reads === 1) {
+                yield* Deferred.await(oldRelease).pipe(
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(cleanupStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(cleanupRelease)),
+                    ),
+                  ),
+                );
+              } else {
+                yield* Deferred.await(newRelease);
+              }
+            }),
+        });
+        const first = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const second = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.interrupt(first);
+        const cancel = yield* Fiber.interrupt(second).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(cleanupStarted);
+        const replacement = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(reads).toBe(2);
+        yield* Deferred.succeed(cleanupRelease, undefined);
+        yield* Fiber.join(cancel);
+        expect(Exit.hasInterrupts(yield* Fiber.await(second))).toBe(true);
+        const joined = yield* manager
+          .branchPullRequest(input)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(reads).toBe(2);
+        yield* Deferred.succeed(newRelease, undefined);
+        expect(yield* Fiber.join(replacement)).toBeNull();
+        expect(yield* Fiber.join(joined)).toBeNull();
+        expect(yield* manager.branchPullRequest(input)).toBeNull();
+        expect(reads).toBe(3);
+      }),
   );
 
   it.effect("branch PR lookup returns null when the repository has no remotes", () =>
