@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -195,6 +197,45 @@ describe("OrchestrationMessageContext", () => {
         })),
       }),
     ).toThrow();
+  });
+
+  it("sends a message without a record it cannot encode", () => {
+    const wire = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext))({
+      version: 1,
+      records: [
+        decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],
+        { ...knownRecords.terminal, contextId: "ctx_2", terminalLabel: "   " },
+      ],
+    });
+    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
+  });
+
+  it("sends a message without the records the wire cannot carry", () => {
+    const wire = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext))({
+      version: 1,
+      records: [
+        decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],
+        {
+          ...base,
+          contextId: "ctx_2",
+          kind: "future-kind",
+          label: "x",
+          payload: { count: Number.NaN },
+        },
+        { ...knownRecords["review-comment"], contextId: "ctx_3", fenceLanguage: undefined },
+        // JSON.stringify throws on a bigint on every engine.
+        { ...base, contextId: "ctx_4", kind: "future-kind", label: "y", payload: { n: 1n } },
+      ],
+    });
+    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
+  });
+
+  it("reports a hole as a schema issue, even when collecting every issue", () => {
+    const result = Schema.decodeUnknownExit(Schema.toType(OrchestrationMessageContext))(
+      { version: 1, records: [undefined] },
+      { errors: "all" },
+    );
+    expect(Exit.isFailure(result) && Cause.hasFails(result.cause)).toBe(true);
   });
 
   it("normalizes decoded record identifiers", () => {

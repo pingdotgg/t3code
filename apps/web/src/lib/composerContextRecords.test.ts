@@ -514,7 +514,7 @@ describe("composerContextRecords", () => {
     expect(
       isSameComposerContextPayload(base, {
         ...base,
-        elements: base.elements?.map((element) => ({
+        elements: base.elements!.map((element) => ({
           ...element,
           htmlPreview: '<button id="pay">Changed</button>',
         })),
@@ -523,7 +523,7 @@ describe("composerContextRecords", () => {
     expect(
       isSameComposerContextPayload(base, {
         ...base,
-        elements: base.elements?.map((element) => ({
+        elements: base.elements!.map((element) => ({
           ...element,
           source: {
             functionName: "Checkout",
