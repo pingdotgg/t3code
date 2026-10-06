@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
+import type { SnoozeFavorite } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -214,7 +215,13 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week"
+  | `favorite:${string}`;
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -302,6 +309,55 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   return presets;
 }
 
+export const MAX_SNOOZE_FAVORITES = 5;
+
+const SNOOZE_UNIT_MS = { minutes: 60_000, hours: HOUR_MS, days: 24 * HOUR_MS } as const;
+
+function sameSnoozeFavorite(a: SnoozeFavorite, b: SnoozeFavorite): boolean {
+  return a.amount === b.amount && a.unit === b.unit;
+}
+
+/** "2 hours", "1 day": the favorite as the user typed it into the dialog. */
+export function snoozeFavoriteLabel(favorite: SnoozeFavorite): string {
+  return `${favorite.amount} ${favorite.amount === 1 ? favorite.unit.slice(0, -1) : favorite.unit}`;
+}
+
+/** Appends a favorite. A duplicate is a no-op; past the cap the oldest is dropped. */
+export function addSnoozeFavorite(
+  favorites: ReadonlyArray<SnoozeFavorite>,
+  favorite: SnoozeFavorite,
+): ReadonlyArray<SnoozeFavorite> {
+  if (favorites.some((existing) => sameSnoozeFavorite(existing, favorite))) return favorites;
+  return [...favorites, favorite].slice(-MAX_SNOOZE_FAVORITES);
+}
+
+export function removeSnoozeFavorite(
+  favorites: ReadonlyArray<SnoozeFavorite>,
+  favorite: SnoozeFavorite,
+): ReadonlyArray<SnoozeFavorite> {
+  return favorites.filter((existing) => !sameSnoozeFavorite(existing, favorite));
+}
+
+/**
+ * Saved custom durations as snooze presets, resolved against `now` so "In 2
+ * hours" is relative to the menu opening, like the built-in presets.
+ * `whenLabel` is the clock time; clients localize it like the other presets.
+ */
+export function resolveSnoozeFavoritePresets(
+  favorites: ReadonlyArray<SnoozeFavorite>,
+  now: Date,
+): ReadonlyArray<SnoozePreset> {
+  return favorites.map((favorite) => {
+    const wake = new Date(now.getTime() + favorite.amount * SNOOZE_UNIT_MS[favorite.unit]);
+    return {
+      id: `favorite:${favorite.amount}-${favorite.unit}`,
+      label: `In ${snoozeFavoriteLabel(favorite)}`,
+      whenLabel: snoozeTimeOfDayLabel(wake),
+      snoozedUntil: wake.toISOString(),
+    };
+  });
+}
+
 /**
  * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d". Minutes
  * round up so a snooze never reads "0m" while still hidden. Shared by web
@@ -332,7 +388,7 @@ export function resolveCustomSnooze(input: CustomSnoozeInput, now: Date): string
   if (input.mode === "duration") {
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) return null;
-    const unitMs = { minutes: 60_000, hours: HOUR_MS, days: 24 * HOUR_MS }[input.unit];
+    const unitMs = SNOOZE_UNIT_MS[input.unit];
     wake = new Date(now.getTime() + amount * unitMs);
   } else {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{2}:\d{2}$/.test(input.time)) return null;

@@ -1,13 +1,19 @@
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
 import {
+  addSnoozeFavorite,
   localSnoozeDate,
   localSnoozeTime,
+  removeSnoozeFavorite,
   resolveCustomSnooze,
+  snoozeFavoriteLabel,
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
+import type { SnoozeFavorite } from "@t3tools/contracts/settings";
 import { Button } from "./ui/button";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, XIcon } from "lucide-react";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { Checkbox } from "./ui/checkbox";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
@@ -62,7 +68,10 @@ function CustomSnoozeDialog() {
   const [time, setTime] = useState(localSnoozeTime(initial));
   const [amount, setAmount] = useState("2");
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
+  const [saveAsFavorite, setSaveAsFavorite] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const favorites = useClientSettings((settings) => settings.snoozeFavorites);
+  const updateClientSettings = useUpdateClientSettings();
   const input: CustomSnoozeInput =
     mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
   return (
@@ -85,6 +94,13 @@ function CustomSnoozeDialog() {
                   : "Enter a positive duration.",
               );
               return;
+            }
+            if (input.mode === "duration" && saveAsFavorite) {
+              const next = addSnoozeFavorite(favorites, {
+                amount: Number(input.amount),
+                unit: input.unit,
+              });
+              if (next !== favorites) void updateClientSettings({ snoozeFavorites: next });
             }
             finish({ snoozedUntil });
           }}
@@ -205,6 +221,37 @@ function CustomSnoozeDialog() {
                     </Label>
                   </div>
                 )}
+                {mode === "duration" && (
+                  <div className="flex flex-col gap-3">
+                    {favorites.length > 0 && (
+                      <ul aria-label="Favorite durations" className="flex flex-wrap gap-1.5">
+                        {favorites.map((favorite) => (
+                          <FavoriteChip
+                            key={`${favorite.amount}-${favorite.unit}`}
+                            favorite={favorite}
+                            onSelect={() => {
+                              setAmount(String(favorite.amount));
+                              setUnit(favorite.unit);
+                              setError(null);
+                            }}
+                            onRemove={() =>
+                              void updateClientSettings({
+                                snoozeFavorites: removeSnoozeFavorite(favorites, favorite),
+                              })
+                            }
+                          />
+                        ))}
+                      </ul>
+                    )}
+                    <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+                      <Checkbox
+                        checked={saveAsFavorite}
+                        onCheckedChange={(checked) => setSaveAsFavorite(checked === true)}
+                      />
+                      Add as favorite
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
             {error && (
@@ -222,5 +269,32 @@ function CustomSnoozeDialog() {
         </form>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function FavoriteChip(props: {
+  favorite: SnoozeFavorite;
+  onSelect: () => void;
+  onRemove: () => void;
+}) {
+  const label = snoozeFavoriteLabel(props.favorite);
+  return (
+    <li className="flex items-center rounded-full border border-input text-xs">
+      <button
+        type="button"
+        className="cursor-pointer rounded-l-full py-0.5 pr-1 pl-2.5 hover:bg-accent"
+        onClick={props.onSelect}
+      >
+        {label}
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove ${label} from favorites`}
+        className="cursor-pointer rounded-r-full py-1 pr-2 pl-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        onClick={props.onRemove}
+      >
+        <XIcon className="size-3" />
+      </button>
+    </li>
   );
 }

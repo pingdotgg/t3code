@@ -1120,3 +1120,22 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
     ).toBe(true);
   });
 });
+
+describe("ClientSettings snooze favorites", () => {
+  it("defaults to none and accepts saved durations in a patch", () => {
+    expect(decodeClientSettings({}).snoozeFavorites).toEqual([]);
+    expect(
+      decodeClientSettingsPatch({ snoozeFavorites: [{ amount: 2, unit: "hours" }] })
+        .snoozeFavorites,
+    ).toEqual([{ amount: 2, unit: "hours" }]);
+  });
+
+  it.each([0, -1, Number.POSITIVE_INFINITY])(
+    "rejects a non-positive or non-finite amount %s",
+    (amount) => {
+      expect(() =>
+        decodeClientSettingsPatch({ snoozeFavorites: [{ amount, unit: "hours" }] }),
+      ).toThrow();
+    },
+  );
+});

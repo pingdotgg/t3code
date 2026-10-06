@@ -1,6 +1,15 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar and elapsed-time snooze input.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { localSnoozeDate, localSnoozeTime, resolveCustomSnooze } from "./threadSettled.ts";
+import {
+  addSnoozeFavorite,
+  localSnoozeDate,
+  localSnoozeTime,
+  MAX_SNOOZE_FAVORITES,
+  removeSnoozeFavorite,
+  resolveCustomSnooze,
+  resolveSnoozeFavoritePresets,
+  snoozeFavoriteLabel,
+} from "./threadSettled.ts";
 
 const now = new Date(2026, 8, 14, 14, 30);
 
@@ -62,5 +71,37 @@ describe("custom snooze", () => {
     const date = new Date(2026, 0, 2, 3, 4);
     expect(localSnoozeDate(date)).toBe("2026-01-02");
     expect(localSnoozeTime(date)).toBe("03:04");
+  });
+});
+
+describe("snooze favorites", () => {
+  it("labels durations with a singular unit for one", () => {
+    expect(snoozeFavoriteLabel({ amount: 1, unit: "days" })).toBe("1 day");
+    expect(snoozeFavoriteLabel({ amount: 1.5, unit: "hours" })).toBe("1.5 hours");
+    expect(snoozeFavoriteLabel({ amount: 45, unit: "minutes" })).toBe("45 minutes");
+  });
+
+  it("resolves favorites relative to the menu opening time", () => {
+    const [preset] = resolveSnoozeFavoritePresets([{ amount: 2, unit: "hours" }], now);
+    expect(preset).toMatchObject({
+      id: "favorite:2-hours",
+      label: "In 2 hours",
+      snoozedUntil: new Date(now.getTime() + 2 * 3_600_000).toISOString(),
+    });
+  });
+
+  it("ignores duplicates, drops the oldest past the cap, and removes by value", () => {
+    const two = { amount: 2, unit: "hours" } as const;
+    const list = addSnoozeFavorite([], two);
+    expect(addSnoozeFavorite(list, { ...two })).toBe(list);
+    let full = list;
+    for (let minutes = 1; minutes <= MAX_SNOOZE_FAVORITES; minutes += 1) {
+      full = addSnoozeFavorite(full, { amount: minutes, unit: "minutes" });
+    }
+    expect(full).toHaveLength(MAX_SNOOZE_FAVORITES);
+    expect(full).not.toContainEqual(two);
+    expect(removeSnoozeFavorite(full, { amount: 1, unit: "minutes" })).toHaveLength(
+      MAX_SNOOZE_FAVORITES - 1,
+    );
   });
 });

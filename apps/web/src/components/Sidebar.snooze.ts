@@ -1,5 +1,6 @@
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { SnoozeFavorite, TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  resolveSnoozeFavoritePresets,
   resolveSnoozePresets as resolveSharedSnoozePresets,
   snoozeWakeLabel,
   type SnoozePreset,
@@ -15,22 +16,26 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
   return formatShortTimestamp(date.toISOString(), timestampFormat);
 }
 
+/** The built-in presets followed by the user's saved custom durations. */
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
+  favorites: ReadonlyArray<SnoozeFavorite> = [],
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now).map((preset) => {
-    const wake = parseTimestampDate(preset.snoozedUntil);
-    if (wake === null) return preset;
-    const time = timeOfDayLabel(wake, timestampFormat);
-    return {
-      ...preset,
-      whenLabel:
-        preset.id === "next-week"
-          ? `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
-          : time,
-    };
-  });
+  return [...resolveSharedSnoozePresets(now), ...resolveSnoozeFavoritePresets(favorites, now)].map(
+    (preset) => {
+      const wake = parseTimestampDate(preset.snoozedUntil);
+      if (wake === null) return preset;
+      const time = timeOfDayLabel(wake, timestampFormat);
+      return {
+        ...preset,
+        whenLabel:
+          preset.id === "next-week"
+            ? `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
+            : time,
+      };
+    },
+  );
 }
 
 /**

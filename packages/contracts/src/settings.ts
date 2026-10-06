@@ -292,6 +292,13 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/** A saved custom-snooze duration, offered in every snooze menu. */
+export const SnoozeFavorite = Schema.Struct({
+  amount: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
+  unit: Schema.Literals(["minutes", "hours", "days"]),
+});
+export type SnoozeFavorite = typeof SnoozeFavorite.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -431,6 +438,9 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  snoozeFavorites: Schema.Array(SnoozeFavorite).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
     PullRequestMergeMethod,
@@ -1795,6 +1805,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  snoozeFavorites: Schema.optionalKey(Schema.Array(SnoozeFavorite)),
   providerModelPreferences: Schema.optionalKey(
     Schema.Record(
       ProviderInstanceId,

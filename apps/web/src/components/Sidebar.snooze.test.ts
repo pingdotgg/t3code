@@ -8,6 +8,15 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 }
 
 describe("resolveSnoozePresets", () => {
+  it("lists saved favorites after the built-in presets", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale", [
+      { amount: 2, unit: "hours" },
+    ]);
+    expect(presets.at(-1)).toMatchObject({ id: "favorite:2-hours", label: "In 2 hours" });
+    expect(new Date(presets.at(-1)!.snoozedUntil).getHours()).toBe(12);
+    expect(presets.at(-1)!.whenLabel).not.toBe("");
+  });
+
   it("offers one hour, three hours, evening, tomorrow, and next week in the morning", () => {
     // Wednesday 2026-04-08 10:00 local.
     const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale");
