@@ -8,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/plugin-notifications";
 import type { ContributionStatusTone, EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, View } from "react-native";
+import { AccessibilityInfo, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -77,7 +77,14 @@ export function PluginNotificationBannerHost() {
           onRemoved={onRemoved}
         />
       ))}
-      {head === undefined ? null : <PluginNotificationBanner banner={head} onDone={dismiss} />}
+      {head === undefined ? null : (
+        // A fresh mount per notification, so two identical ones are both announced.
+        <PluginNotificationBanner
+          key={`${head.environmentId}:${head.entry.key}`}
+          banner={head}
+          onDone={dismiss}
+        />
+      )}
     </>
   );
 }
@@ -117,9 +124,16 @@ function PluginNotificationBanner(props: {
   const linkTo = useLinkTo();
   const { threadId, title, tone } = banner.entry.notification;
   const description = pluginNotificationDescription(banner.entry);
+  // The banner leaves on its own, so it is announced rather than waiting for
+  // focus: accessibilityLiveRegion reaches TalkBack, VoiceOver needs this.
+  useEffect(() => {
+    if (Platform.OS === "ios")
+      AccessibilityInfo.announceForAccessibility(`${title}. ${description}`);
+  }, [title, description]);
 
   return (
     <View
+      accessibilityLiveRegion="polite"
       pointerEvents="box-none"
       className="absolute inset-x-0 items-center px-3"
       style={{ top: insets.top + 4 }}
