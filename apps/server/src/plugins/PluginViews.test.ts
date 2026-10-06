@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
+import * as PluginManifestLoader from "./PluginManifestLoader.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 import * as PluginViews from "./PluginViews.ts";
 
@@ -325,6 +326,30 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
   });
 
   describe("calls", () => {
+    it.effect("refuses the views capability without the proposed API opt-in", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-views-" });
+        yield* fs.writeFileString(
+          path.join(directory, "main.mjs"),
+          "export function activate() {}\n",
+        );
+        yield* fs.writeFileString(
+          path.join(directory, "t3-plugin.json"),
+          toJson({
+            id: "test.views-no-opt-in",
+            name: "test.views-no-opt-in",
+            version: "1.0.0",
+            apiVersion: 1,
+            entry: "main.mjs",
+            capabilities: ["views"],
+          }),
+        );
+        const error = yield* PluginManifestLoader.loadPluginDirectory(directory).pipe(Effect.flip);
+        expect(error.reason).toContain('"views" capability needs "proposedApi": true');
+      }).pipe(Effect.scoped),
+    );
     it.effect("reaches only the view's own handlers of the current generation", () =>
       withDatabase(
         Effect.gen(function* () {

@@ -129,6 +129,9 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
     return yield* fail(`the "${PLUGIN_SETTINGS_CAPABILITY}" capability needs "proposedApi": true.`);
   const actionProblem = checkActions(manifest);
   if (actionProblem !== undefined) return yield* fail(actionProblem);
+  // Views reach their plugin through `context.proposed.handle`, which only exists with the opt-in.
+  if (manifest.capabilities.includes(PLUGIN_VIEWS_CAPABILITY) && !manifest.proposedApi)
+    return yield* fail(`the "${PLUGIN_VIEWS_CAPABILITY}" capability needs "proposedApi": true.`);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
