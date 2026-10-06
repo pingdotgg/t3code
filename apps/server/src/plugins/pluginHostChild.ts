@@ -130,6 +130,11 @@ export const runPluginHostChild = (): void => {
       await module.activate(context);
       send({ _tag: "Ready" });
     } catch (error) {
+      // A plugin that failed to activate serves nothing it registered before
+      // failing, and is not deactivated later as if it had started.
+      activated = undefined;
+      handlers.clear();
+      controller.abort(new Error("Activation failed."));
       send({ _tag: "ActivationFailed", message: errorMessage(error) });
     }
   };
