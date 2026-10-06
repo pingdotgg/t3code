@@ -28,11 +28,14 @@
  * Hot-reload
  * ----------
  * On layer build we:
- *   1. Read the current `ServerSettings` once and use it to seed the
+ *   1. Acquire `ServerSettingsService.subscribeChanges`, so a change saved
+ *      while the registry is still building is queued rather than lost.
+ *   2. Read the current `ServerSettings` once and use it to seed the
  *      registry's initial state via `ProviderInstanceRegistry.layer`.
- *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
- *      acquires `ServerSettingsService.subscribeChanges` and calls
- *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
+ *   3. Fork a daemon fiber (lifetime tied to the layer's scope) that, on
+ *      every emission, re-reads the current settings and calls
+ *      `ProviderInstanceRegistryMutator.reconcile` with them. A queued
+ *      change may predate the seed, so its snapshot is not applied as is.
  *
  * Failures inside the watcher are logged and swallowed so a single bad
  * settings emission cannot kill the registry. Unknown drivers and invalid
@@ -124,25 +127,29 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const layerSettingsWatcher = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
-    const serverSettings = yield* Settings.ServerSettingsService;
-    const settingsChanges = yield* serverSettings.subscribeChanges;
-    yield* settingsChanges.pipe(
-      Stream.runForEach((next) =>
-        mutator
-          .reconcile(deriveProviderInstanceConfigMap(next))
-          .pipe(
+const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
+      const serverSettings = yield* Settings.ServerSettingsService;
+      yield* settingsChanges.pipe(
+        Stream.runForEach((next) =>
+          // The subscription predates the seed read, so a queued change can be
+          // older than the seed. Reconcile against the current settings.
+          serverSettings.getSettings.pipe(
+            Effect.orElseSucceed(() => next),
+            Effect.flatMap((current) =>
+              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+            ),
             Effect.catchCause((cause) =>
               Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
             ),
           ),
-      ),
-      Effect.forkScoped,
-    );
-  }),
-);
+        ),
+        Effect.forkScoped,
+      );
+    }),
+  );
 
 /**
  * Hydrate `ProviderInstanceRegistry` from `ServerSettings` and keep it in
@@ -152,8 +159,9 @@ const layerSettingsWatcher = Layer.effectDiscard(
  *   - `ProviderInstanceRegistry.layer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
- *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
- *     subscription before forking, and runs a daemon fiber in the same scope.
+ *   - `layerSettingsWatcher` consumes the mutator and drains the settings
+ *     subscription, acquired before the seed read, in a daemon fiber in the
+ *     same scope.
  *
  * Composing via `Layer.provideMerge` makes the watcher's deps available
  * from the mutable layer while still surfacing the registry as an output.
@@ -167,6 +175,9 @@ export const layer: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* Settings.ServerSettingsService;
+    // Subscribe before reading the seed: building the registry takes a while,
+    // and a change published before the watcher subscribed would never arrive.
+    const settingsChanges = yield* serverSettings.subscribeChanges;
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -183,7 +194,7 @@ export const layer: Layer.Layer<
       Layer.provide(AcpRegistryCatalog.layer),
     );
 
-    return layerSettingsWatcher.pipe(Layer.provideMerge(layerMutable));
+    return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   ProviderInstanceRegistry.ProviderInstanceRegistry,

@@ -2861,6 +2861,164 @@ it.layer(
       }),
     );
 
+    // Hydrates the provider registry. `onSeedRead` runs right after the
+    // registry reads its seed settings, before the rest of it has finished
+    // building. Returns once every settings consumer has caught up.
+    const startupSettings = decodeServerSettings(
+      deepMerge(encodedDefaultServerSettings, {
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+        },
+      }),
+    );
+    const hydrateWithSeedReadHook = (
+      seed: ContractServerSettings,
+      onSeedRead: (input: {
+        readonly settingsRef: Ref.Ref<ContractServerSettings>;
+        readonly changes: PubSub.PubSub<ContractServerSettings>;
+      }) => Effect.Effect<void>,
+    ) =>
+      Effect.gen(function* () {
+        const settingsRef = yield* Ref.make(seed);
+        const changes = yield* PubSub.unbounded<ContractServerSettings>();
+        let saveDuringStartup: Effect.Effect<void> | undefined;
+        // Every settings consumer reports when it has handled everything
+        // published to it and is waiting for more.
+        const consumersIdle = new Map<number, boolean>();
+        const allConsumersCaughtUp = yield* Deferred.make<void>();
+        const setIdle = (consumer: number, idle: boolean) =>
+          Effect.suspend(() => {
+            consumersIdle.set(consumer, idle);
+            return [...consumersIdle.values()].every(Boolean)
+              ? Deferred.succeed(allConsumersCaughtUp, undefined)
+              : Effect.void;
+          });
+        const serverSettings = {
+          start: Effect.void,
+          ready: Effect.void,
+          getSettings: Effect.suspend(() => {
+            const save = saveDuringStartup;
+            saveDuringStartup = undefined;
+            return Ref.get(settingsRef).pipe(Effect.tap(() => save ?? Effect.void));
+          }),
+          updateSettings: () => Effect.die("unused"),
+          updateProviderInstance: () => Effect.die("unused"),
+          withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
+          streamChanges: Stream.fromPubSub(changes),
+          subscribeChanges: Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(changes);
+            const consumer = consumersIdle.size;
+            consumersIdle.set(consumer, false);
+            return Stream.fromEffectRepeat(
+              Effect.gen(function* () {
+                if ((yield* PubSub.remaining(subscription)) === 0) {
+                  yield* setIdle(consumer, true);
+                }
+                const next = yield* PubSub.take(subscription);
+                yield* setIdle(consumer, false);
+                return next;
+              }),
+            );
+          }),
+        } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const dependencies = yield* Layer.build(
+          Layer.mergeAll(
+            AntigravityInstallation.AntigravityInstallation.layer,
+            ServerSecretStore.layer,
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          ).pipe(
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
+            Layer.provideMerge(layerTestHttpClient),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        saveDuringStartup = onSeedRead({ settingsRef, changes });
+        const registryServices = yield* Layer.build(ProviderInstanceRegistryHydration.layer).pipe(
+          Effect.provide(dependencies),
+          Scope.provide(scope),
+        );
+        yield* Deferred.await(allConsumersCaughtUp);
+
+        const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry.pipe(
+          Effect.provide(registryServices),
+        );
+        return (yield* registry.listUnavailable).map(
+          (provider): string | undefined => provider.instanceId,
+        );
+      });
+    const withGhostInstance = (settings: ContractServerSettings, instanceId: string) =>
+      ({
+        ...settings,
+        providerInstances: {
+          ...settings.providerInstances,
+          [instanceId]: {
+            driver: "ghostDriver",
+            displayName: "Added while the registry started",
+            enabled: false,
+            config: {},
+          },
+        },
+      }) as unknown as ContractServerSettings;
+
+    it.effect("applies a settings change saved while the provider registry starts", () =>
+      Effect.gen(function* () {
+        const unavailable = yield* hydrateWithSeedReadHook(
+          startupSettings,
+          ({ settingsRef, changes }) =>
+            Ref.updateAndGet(settingsRef, (current) =>
+              withGhostInstance(current, "ghost_late"),
+            ).pipe(
+              Effect.flatMap((next) => PubSub.publish(changes, next)),
+              Effect.asVoid,
+            ),
+        );
+        assert.include(
+          unavailable,
+          "ghost_late",
+          "the instance saved during startup is missing from the registry",
+        );
+      }),
+    );
+
+    it.effect("does not apply a queued settings change older than the registry seed", () =>
+      Effect.gen(function* () {
+        // The seed already has `ghost_current`; a change published before the
+        // seed read is still queued and carries older settings.
+        const unavailable = yield* hydrateWithSeedReadHook(
+          withGhostInstance(startupSettings, "ghost_current"),
+          ({ changes }) =>
+            PubSub.publish(changes, withGhostInstance(startupSettings, "ghost_stale")).pipe(
+              Effect.asVoid,
+            ),
+        );
+        assert.include(unavailable, "ghost_current");
+        assert.notInclude(unavailable, "ghost_stale");
+      }),
+    );
+
     it.effect(
       "keeps Cursor disabled and skips provider probing when settings use their defaults",
       () =>
