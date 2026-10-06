@@ -101,6 +101,31 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("names the adapter's reason for each wrapper category", () => {
+  const categories = [
+    ["ProviderAdapterTurnStartError", "The provider could not start this turn"],
+    ["ProviderAdapterEventStreamError", "The provider event stream closed unexpectedly"],
+    ["ProviderAdapterOpenSessionError", "The provider session could not be opened"],
+    ["ProviderAdapterResumeThreadError", "The provider conversation could not be resumed"],
+  ] as const;
+  for (const [tag, summary] of categories) {
+    const message = makeProviderFailure({
+      // An Effect Cause between the category and its reason is transparent.
+      cause: Cause.fail({ _tag: tag, cause: Cause.fail("adapter said no.") }),
+    }).message;
+    assert.isTrue(message.startsWith(`${summary}: adapter said no. `), message);
+  }
+  // A newer category replaces the reason that sat beneath an outer one.
+  assert.isTrue(
+    makeProviderFailure({
+      cause: {
+        _tag: "ProviderAdapterTurnStartError",
+        cause: { _tag: "ProviderAdapterOpenSessionError", cause: "inner reason" },
+      },
+    }).message.startsWith("The provider session could not be opened: inner reason. "),
+  );
+});
+
 it("names the adapter's reason when a turn cannot start", () => {
   const turnStart = (cause: unknown) =>
     new ProviderAdapterTurnStartError({
