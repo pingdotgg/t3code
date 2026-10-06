@@ -930,7 +930,7 @@ it.effect("ProviderSessionManagerV2 records provider session and turn metrics", 
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
       // A private registry keeps other tests' provider metrics out of the assertions.
       Effect.provideService(Metric.MetricRegistry, new Map()),
     );
