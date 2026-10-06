@@ -68,7 +68,7 @@ interface HarnessOptions {
  * The service over a real ProjectService and real git, with its data dir at
  * `baseDir`.
  */
-const makeLayer = (baseDir: string, options?: HarnessOptions) =>
+const layer = (baseDir: string, options?: HarnessOptions) =>
   ManagedProjectFolders.layer.pipe(
     Layer.provide(
       options?.projects === undefined
@@ -105,7 +105,7 @@ const withScratch = <A, E>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-managed-folders-" });
-    return yield* body({ baseDir }).pipe(Effect.provide(makeLayer(baseDir, options)));
+    return yield* body({ baseDir }).pipe(Effect.provide(layer(baseDir, options)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
@@ -141,7 +141,7 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(makeLayer(baseDir)));
+    }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

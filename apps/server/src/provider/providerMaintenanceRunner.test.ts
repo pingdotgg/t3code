@@ -92,7 +92,7 @@ const baseOpenCodeProvider: ServerProvider = {
   driver: OPENCODE_DRIVER,
 };
 
-const latestVersionHttpClient = (version: string) =>
+const layerLatestVersionHttpClient = (version: string) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -126,7 +126,7 @@ function mockHandle(result: {
   });
 }
 
-function mockSpawnerLayer(
+function layerMockSpawner(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
@@ -266,8 +266,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((command, args) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
@@ -295,8 +295,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer(() => ({ stdout: "updated" })),
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
         ),
       ),
     );
@@ -322,8 +322,8 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            latestVersionHttpClient("0.0.0"),
-            mockSpawnerLayer(() => ({ stdout: "updated" })),
+            layerLatestVersionHttpClient("0.0.0"),
+            layerMockSpawner(() => ({ stdout: "updated" })),
           ),
         ),
       );
@@ -355,8 +355,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((_command, _args, options) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((_command, _args, options) => {
             seen.push(options.env);
             return { stdout: "updated" };
           }),
@@ -396,8 +396,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((command, args) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
@@ -441,8 +441,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((command) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((command) => {
             calls.push(command);
             return { stdout: "updated" };
           }),
@@ -491,8 +491,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((command, args) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
@@ -522,8 +522,8 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            latestVersionHttpClient("0.0.0"),
-            mockSpawnerLayer((command, args) => {
+            layerLatestVersionHttpClient("0.0.0"),
+            layerMockSpawner((command, args) => {
               calls.push({ command, args });
               return { stdout: "updated" };
             }),
@@ -595,8 +595,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.124.0-alpha.3"),
-          mockSpawnerLayer((command, args) => {
+          layerLatestVersionHttpClient("0.124.0-alpha.3"),
+          layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
@@ -620,8 +620,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer(() => ({ stderr: "permission denied", code: 1 })),
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ stderr: "permission denied", code: 1 })),
         ),
       ),
     ),
@@ -646,8 +646,8 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            latestVersionHttpClient("9.9.9"),
-            mockSpawnerLayer(() => ({ stdout: "updated" })),
+            layerLatestVersionHttpClient("9.9.9"),
+            layerMockSpawner(() => ({ stdout: "updated" })),
           ),
         ),
       ),
@@ -685,8 +685,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer(() => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => {
             startedLatch.resolve();
             return {
               stdout: "updated",
@@ -762,8 +762,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("2.0.0"),
-          mockSpawnerLayer((_command, args) => {
+          layerLatestVersionHttpClient("2.0.0"),
+          layerMockSpawner((_command, args) => {
             calls.push(args.join(" "));
             if (calls.length === 1) {
               firstStartedLatch.resolve();
@@ -806,8 +806,8 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((_command, args) => {
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner((_command, args) => {
             calls.push(args.join(" "));
             return { stdout: "updated" };
           }),
@@ -861,8 +861,8 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            latestVersionHttpClient("0.0.0"),
-            mockSpawnerLayer(() => ({ stdout: "updated" })),
+            layerLatestVersionHttpClient("0.0.0"),
+            layerMockSpawner(() => ({ stdout: "updated" })),
           ),
         ),
       ),
@@ -908,7 +908,7 @@ describe("providerMaintenanceRunner", () => {
           Layer.succeed(SpawnExecutableResolution, (command) =>
             command === "npm" ? "C:\\fake\\npm\\npm.cmd" : undefined,
           ),
-          latestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("0.0.0"),
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make((command) => {
@@ -1010,8 +1010,8 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
     Effect.provide(
       Layer.mergeAll(
         layerNonWindowsPlatform,
-        latestVersionHttpClient("3.0.0"),
-        mockSpawnerLayer((_command, args) => {
+        layerLatestVersionHttpClient("3.0.0"),
+        layerMockSpawner((_command, args) => {
           calls.push(args.join(" "));
           return { stdout: "installed" };
         }),

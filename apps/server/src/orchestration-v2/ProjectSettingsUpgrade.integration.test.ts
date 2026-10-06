@@ -15,7 +15,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -116,7 +116,7 @@ const unusedEnrichment = {
 };
 
 /** The production V2 runtime and project service against one file-backed database. */
-const makeRuntimeLayer = (dbPath: string) => {
+const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
     NodeServices.layer,
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
@@ -152,7 +152,7 @@ const makeRuntimeLayer = (dbPath: string) => {
       }),
     ),
     Layer.provide(McpSessionRegistryTestkit.layer),
-    Layer.provideMerge(makeSqlitePersistenceLive(dbPath)),
+    Layer.provideMerge(SqlitePersistence.layerFromPath(dbPath)),
     Layer.provide(layerCheckpointStore),
     Layer.provide(layerServerConfig),
     Layer.provide(ServerSettings.layerTest()),
@@ -189,7 +189,7 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
         assert.deepEqual(yield* readSettings, expectedSettings);
         const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
         assert.equal(project._tag, "Some");
-      }).pipe(Effect.provide(makeRuntimeLayer(dbPath)));
+      }).pipe(Effect.provide(layerRuntime(dbPath)));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

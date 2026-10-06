@@ -22,7 +22,7 @@ import {
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 import {
@@ -61,8 +61,8 @@ const layerDpopSigner = Layer.succeed(
   }),
 );
 
-function relayLayer() {
-  const layerHttp = remoteHttpClientLayer(globalThis.fetch);
+function layerRelay() {
+  const layerHttp = layerRemoteHttpClient(globalThis.fetch);
   return Layer.mergeAll(
     layerHttp,
     ManagedRelay.layer({
@@ -72,7 +72,7 @@ function relayLayer() {
   );
 }
 
-function registryLayer(options?: {
+function layerRegistry(options?: {
   readonly status?: { readonly status: "available"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
@@ -119,8 +119,8 @@ function registryLayer(options?: {
   );
 }
 
-function services(options?: Parameters<typeof registryLayer>[0]) {
-  return Layer.mergeAll(relayLayer(), registryLayer(options));
+function layerServices(options?: Parameters<typeof layerRegistry>[0]) {
+  return Layer.mergeAll(layerRelay(), layerRegistry(options));
 }
 
 function withServices<A, E>(
@@ -131,9 +131,9 @@ function withServices<A, E>(
     | ManagedRelay.ManagedRelayClient
     | EnvironmentRegistry.EnvironmentRegistry
   >,
-  options?: Parameters<typeof registryLayer>[0],
+  options?: Parameters<typeof layerRegistry>[0],
 ) {
-  return effect.pipe(Effect.provide(services(options)));
+  return effect.pipe(Effect.provide(layerServices(options)));
 }
 
 function bodyText(body: BodyInit | null | undefined): string {

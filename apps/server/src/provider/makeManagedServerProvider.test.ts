@@ -99,7 +99,7 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
-function makeBackgroundPolicyLayer(shouldRunScopeWork: boolean) {
+function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
   return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     reportClientActivity: () => Effect.void,
     removeRpcClient: () => Effect.void,
@@ -130,8 +130,8 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: boolean) {
   });
 }
 
-const layerBackgroundPolicyAlwaysRun = makeBackgroundPolicyLayer(true);
-const layerBackgroundPolicyNeverRun = makeBackgroundPolicyLayer(false);
+const layerBackgroundPolicyAlwaysRun = layerBackgroundPolicy(true);
+const layerBackgroundPolicyNeverRun = layerBackgroundPolicy(false);
 const layerServerSettingsTest = ServerSettings.layerTest();
 const layerAlwaysRunTest = Layer.merge(layerBackgroundPolicyAlwaysRun, layerServerSettingsTest);
 const layerNeverRunTest = Layer.merge(layerBackgroundPolicyNeverRun, layerServerSettingsTest);

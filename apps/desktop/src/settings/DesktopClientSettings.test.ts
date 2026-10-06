@@ -78,7 +78,7 @@ const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(Clien
 const decodeRecordJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-function makeLayer(baseDir: string) {
+function layer(baseDir: string) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -109,7 +109,7 @@ const withClientSettings = <A, E, R>(
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-client-settings-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir)));
+    return yield* effect.pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {

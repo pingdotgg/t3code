@@ -45,7 +45,7 @@ function resolvedRuntimeRequest(
   };
 }
 
-function runtimeRequestTestLayer(
+function layerRuntimeRequestTest(
   projection: OrchestrationV2ThreadProjection,
   getSession: ProviderSessionManager.ProviderSessionManagerV2Shape["get"],
 ) {
@@ -204,15 +204,15 @@ it.effect("classifies runtime request response validation failures", () => {
   );
   const requestId = RuntimeRequestId.make("request-validation");
   const unexpectedGetSession = vi.fn(() => Effect.succeed(Option.none()));
-  const layerMissing = runtimeRequestTestLayer(
+  const layerMissing = layerRuntimeRequestTest(
     projectionWithRuntimeRequest(),
     unexpectedGetSession,
   );
-  const layerNotResumable = runtimeRequestTestLayer(
+  const layerNotResumable = layerRuntimeRequestTest(
     projectionWithRuntimeRequest(resolvedRuntimeRequest(requestId, otherProviderSessionId)),
     unexpectedGetSession,
   );
-  const layerInactive = runtimeRequestTestLayer(
+  const layerInactive = layerRuntimeRequestTest(
     projectionWithRuntimeRequest(resolvedRuntimeRequest(requestId, providerSessionId)),
     () => Effect.succeed(Option.none()),
   );
@@ -266,7 +266,7 @@ it.effect("preserves genuine provider session lookup failures as the cause", () 
     providerSessionId,
     cause: "lookup failed",
   });
-  const layerTest = runtimeRequestTestLayer(
+  const layerTest = layerRuntimeRequestTest(
     projectionWithRuntimeRequest(resolvedRuntimeRequest(requestId, providerSessionId)),
     () => Effect.fail(lookupFailure),
   );

@@ -65,7 +65,7 @@ function deadSessionRecord(
   };
 }
 
-function testLayer(
+function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
@@ -115,7 +115,7 @@ it.effect(
       assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
     }).pipe(
       Effect.provide(
-        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
     ),
 );
@@ -140,7 +140,7 @@ it.effect.each(["stopped", "error"] as const)(
       assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
     }).pipe(
       Effect.provide(
-        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
     ),
 );
@@ -169,7 +169,7 @@ it.effect("releases the newest live session, not the newest record overall", () 
     assert.deepEqual(result.releaseProviderSessionIds, [newerLiveSessionId]);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -192,7 +192,7 @@ it.effect("creates a fresh session with handoff when every recorded session is d
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -246,7 +246,7 @@ it.effect("falls back to the native provider thread when every recorded session 
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -265,7 +265,7 @@ it.effect("hands off from a native provider thread after its session detaches", 
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({
+      layerTest({
         [currentInstanceId]: { continuationKey: "codex:account:primary" },
         codex_other: { continuationKey: "codex:account:other" },
       }),
@@ -290,7 +290,7 @@ it.effect.each(["stopped", "error"] as const)(
       assert.deepEqual(result.releaseProviderSessionIds, []);
     }).pipe(
       Effect.provide(
-        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
           Effect.succeed(acpSelectionTransition(input)),
         ),
       ),
@@ -309,7 +309,7 @@ it.effect("rejects a model change the dead record never negotiated support for",
     assert.instanceOf(result, ProviderSwitch.ProviderSwitchPlanError);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
         Effect.succeed(acpSelectionTransition(input)),
       ),
     ),
@@ -333,7 +333,7 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
     assert.equal(incompatible.transition.type, "create_with_handoff");
   }).pipe(
     Effect.provide(
-      testLayer({
+      layerTest({
         [currentInstanceId]: { continuationKey: "codex:account:primary" },
         codex_compatible: { continuationKey: "codex:account:primary" },
         codex_incompatible: { continuationKey: "codex:account:other" },

@@ -26,7 +26,7 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 
-const makeRepositoryIdentityResolverTestLayer = (options: {
+const layerRepositoryIdentityResolverTest = (options: {
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
 }) =>
@@ -341,7 +341,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         Effect.provide(
           Layer.merge(
             TestClock.layer(),
-            makeRepositoryIdentityResolverTestLayer({
+            layerRepositoryIdentityResolverTest({
               negativeCacheTtl: Duration.millis(50),
               positiveCacheTtl: Duration.seconds(1),
             }),
@@ -382,7 +382,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       Effect.provide(
         Layer.merge(
           TestClock.layer(),
-          makeRepositoryIdentityResolverTestLayer({
+          layerRepositoryIdentityResolverTest({
             negativeCacheTtl: Duration.millis(50),
             positiveCacheTtl: Duration.millis(100),
           }),

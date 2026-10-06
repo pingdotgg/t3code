@@ -64,15 +64,12 @@ import {
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
-import {
-  makeOrchestratorV2ProviderReplayLayer,
-  makeOrchestratorV2ReplayLayerWithRegistry,
-} from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
-import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -524,7 +521,7 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
-          const layerRegistry = ProviderAdapterRegistry.makeLayer([
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
@@ -596,7 +593,7 @@ describe("orchestrator MCP toolkit", () => {
                 expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
               }
             });
-          const layerOrchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
+          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
               runtimePolicyOverride: {
@@ -615,7 +612,7 @@ describe("orchestrator MCP toolkit", () => {
             layerOrchestrator,
             ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
           );
-          const layerProviderRegistry = makeProviderRegistryLayer([
+          const layerProviderRegistry = ProviderRegistryMock.layer([
             makeProviderSnapshot({
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
@@ -3690,7 +3687,7 @@ describe("orchestrator MCP toolkit", () => {
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(rawTranscript, cwd),
         );
-        const layerOrchestrator = makeOrchestratorV2ProviderReplayLayer(
+        const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
           {
             name: "delegated-task-status/codex",
             transcript,
@@ -3703,7 +3700,7 @@ describe("orchestrator MCP toolkit", () => {
           layerOrchestrator,
           ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
         );
-        const layerProviderRegistry = makeProviderRegistryLayer([
+        const layerProviderRegistry = ProviderRegistryMock.layer([
           makeProviderSnapshot({
             instanceId: codexInstanceId,
             driver: ProviderDriverKind.make("codex"),

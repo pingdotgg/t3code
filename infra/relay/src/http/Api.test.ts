@@ -305,7 +305,7 @@ describe("relay environment authentication", () => {
   });
 });
 
-function relayUnlinkTestLayer(input?: {
+function layerRelayUnlinkTest(input?: {
   readonly withTransaction?: RelayDb.RelayTransactions["Service"]["withTransaction"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
   readonly revokeForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["revokeForUser"];
@@ -507,7 +507,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             provision: () => Effect.die("registration must not provision a tunnel"),
           }),
@@ -540,7 +540,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             reconcileOrigin: () => Effect.succeed("recovery_required"),
           }),
@@ -575,7 +575,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
@@ -606,7 +606,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
@@ -652,7 +652,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             provision: () =>
               Effect.succeed({
@@ -689,7 +689,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             provision: () =>
               Effect.sync(() => {
@@ -722,7 +722,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () =>
               Effect.succeed({
                 ...linkedEnvironmentRecord,
@@ -759,7 +759,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             provision: () =>
               Effect.succeed({
@@ -838,7 +838,7 @@ describe("relay managed tunnel recovery", () => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () =>
               Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : currentLink)),
             provision: () =>
@@ -882,7 +882,7 @@ describe("relay environment unlink", () => {
       expect(calls).toEqual(["transaction", "link", "credential"]);
     }).pipe(
       Effect.provide(
-        relayUnlinkTestLayer({
+        layerRelayUnlinkTest({
           withTransaction: (effect) => {
             calls.push("transaction");
             return effect;
@@ -912,7 +912,7 @@ describe("relay environment unlink", () => {
         managedEndpointNamespace: "dev",
       }).pipe(
         Effect.provide(
-          relayUnlinkTestLayer({
+          layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
             revokeForUser: () => Effect.succeed(true),
             prepareDeprovision: () =>
@@ -981,7 +981,7 @@ describe("relay environment unlink", () => {
       ]);
     }).pipe(
       Effect.provide(
-        relayUnlinkTestLayer({
+        layerRelayUnlinkTest({
           withTransaction: (effect) => {
             calls.push("transaction");
             return effect;
@@ -1036,7 +1036,7 @@ describe("relay environment unlink", () => {
       expect(calls).toEqual(["prepare", "transaction", "link", "credential"]);
     }).pipe(
       Effect.provide(
-        relayUnlinkTestLayer({
+        layerRelayUnlinkTest({
           withTransaction: (effect) => {
             calls.push("transaction");
             return effect;
@@ -1078,7 +1078,7 @@ describe("relay environment unlink", () => {
       expect(calls).toEqual(["prepare", "deprovision"]);
     }).pipe(
       Effect.provide(
-        relayUnlinkTestLayer({
+        layerRelayUnlinkTest({
           prepareDeprovision: () =>
             Effect.sync(() => {
               calls.push("prepare");
@@ -1120,7 +1120,7 @@ describe("relay environment unlink", () => {
       expect(targets).toEqual([target, target]);
     }).pipe(
       Effect.provide(
-        relayUnlinkTestLayer({
+        layerRelayUnlinkTest({
           getForUser: () => Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : null)),
           revokeForUser: () => Effect.succeed(true),
           prepareDeprovision: () => Effect.succeed(target),

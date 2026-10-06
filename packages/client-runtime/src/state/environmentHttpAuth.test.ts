@@ -27,7 +27,8 @@ import {
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
@@ -159,7 +160,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
       signer: Option.some(signer),
       remoteAuthorization: Option.some(remoteAuthorization),
     },
-    httpLayer: remoteHttpClientLayer(fetchFn),
+    httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
 }
 

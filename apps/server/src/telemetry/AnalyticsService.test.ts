@@ -61,7 +61,7 @@ const SentBatch = Schema.fromJsonString(
  * before the response arrived. PostHog stores these batches, so the server
  * must not send them forever.
  */
-const acceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
+const layerAcceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -107,7 +107,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcessPlatform, "win32"),
             Layer.succeed(HostProcessArchitecture, "x64"),
-            acceptThenFailClient(batches),
+            layerAcceptThenFailClient(batches),
           ),
         ),
       );

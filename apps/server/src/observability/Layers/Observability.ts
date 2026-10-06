@@ -1,9 +1,6 @@
 import * as HttpObservability from "@t3tools/shared/httpObservability";
-import {
-  makeLocalFileTracer,
-  makeTraceSink,
-  otlpSerializationLayer,
-} from "@t3tools/shared/observability";
+import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,7 +23,7 @@ export const layer = Layer.unwrap(
     const metrics = config.otlpMetricsExport;
     // The trace serializer stays in the returned context because the browser
     // trace forwarder exports on the same signal.
-    const layerSerialization = otlpSerializationLayer(traces.protocol);
+    const layerSerialization = SharedObservability.layerOtlpSerialization(traces.protocol);
     const resource = ServerConfig.otlpResource(config);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
@@ -86,7 +83,7 @@ export const layer = Layer.unwrap(
             exportInterval: `${metrics.exportIntervalMs} millis`,
             headers: metrics.headers,
             resource,
-          }).pipe(Layer.provide(otlpSerializationLayer(metrics.protocol)));
+          }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)));
 
     // Logged once the server's loggers are installed, so the warnings use them.
     const layerOtelWarnings = Layer.effectDiscard(

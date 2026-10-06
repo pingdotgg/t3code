@@ -16,7 +16,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as Dpop from "../cloud/dpop";
-import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
+import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
 import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
@@ -220,7 +220,7 @@ function savedConnection(): SavedRemoteConnection {
   };
 }
 
-const layerRelayTest = managedRelayClientLayer("https://relay.example.test").pipe(
+const layerRelayTest = ManagedRelayLayer.layer("https://relay.example.test").pipe(
   Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
 );
 
@@ -988,7 +988,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
-          managedRelayClientLayer("https://permission-relay.example.test").pipe(
+          ManagedRelayLayer.layer("https://permission-relay.example.test").pipe(
             Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
           ),
         ),

@@ -36,7 +36,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const sessionId = "automatic-delivery-session";
@@ -414,9 +414,9 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
           assert.equal(offers.length, 2);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "claude-automatic-delivery" },
-              ProviderAdapterRegistry.makeSingleLayer(adapter),
+              ProviderAdapterRegistry.layerSingle(adapter),
               { runEffectWorker: false },
             ),
           ),

@@ -31,7 +31,7 @@ function makeNativeSnapshot(
   };
 }
 
-function makeTelemetryLayer(
+function layerTelemetryFor(
   snapshot: ResourceMonitorSnapshotEvent,
   desktopSnapshot?: DesktopHostTelemetrySnapshot,
 ) {
@@ -98,7 +98,7 @@ describe("ProcessDiagnostics", () => {
           ioSemantics: "storage",
         },
       ]);
-      const layerTelemetry = makeTelemetryLayer(snapshot);
+      const layerTelemetry = layerTelemetryFor(snapshot);
       const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(layerTelemetry));
 
       const diagnostics = yield* Effect.gen(function* () {
@@ -116,7 +116,7 @@ describe("ProcessDiagnostics", () => {
   it.effect("rejects stale process identities before signaling", () =>
     Effect.gen(function* () {
       const snapshot = makeNativeSnapshot([]);
-      const layerTelemetry = makeTelemetryLayer(snapshot);
+      const layerTelemetry = layerTelemetryFor(snapshot);
       const layer = ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetry));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
@@ -161,7 +161,7 @@ describe("ProcessDiagnostics", () => {
       ]);
       const staleTelemetry = yield* Effect.service(ResourceTelemetry.ResourceTelemetry).pipe(
         Effect.flatMap((telemetry) => telemetry.latest),
-        Effect.provide(makeTelemetryLayer(snapshot)),
+        Effect.provide(layerTelemetryFor(snapshot)),
       );
       const layerTelemetry = Layer.succeed(
         ResourceTelemetry.ResourceTelemetry,
@@ -228,7 +228,7 @@ describe("ProcessDiagnostics", () => {
         },
       ]);
       const sampledAt = DateTime.makeUnsafe(sampledAtUnixMs);
-      const layerTelemetry = makeTelemetryLayer(snapshot, {
+      const layerTelemetry = layerTelemetryFor(snapshot, {
         version: 1,
         type: "desktopTelemetry",
         sequence: 1,

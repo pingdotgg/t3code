@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/http";
 
 import * as Dpop from "./dpop";
-import { managedRelayClientLayer } from "./managedRelayLayer";
+import * as ManagedRelayLayer from "./managedRelayLayer";
 
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: { SHA256: "SHA-256" },
@@ -54,7 +54,7 @@ describe("managed relay DPoP signer", () => {
       assert.equal(yield* signer.thumbprint, thumbprint);
     }).pipe(
       Effect.provide(
-        managedRelayClientLayer("https://relay.example.test").pipe(
+        ManagedRelayLayer.layer("https://relay.example.test").pipe(
           Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
         ),
       ),

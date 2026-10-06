@@ -492,7 +492,7 @@ export function makeCursorAgentSdkReplayRunner(
   };
 }
 
-function makeCursorAgentSdkReplayLayer(
+function layerCursorAgentSdkReplay(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
     readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
@@ -598,7 +598,7 @@ function makeReplayServerConfig(
   });
 }
 
-export function makeCursorProviderAdapterRegistryReplayLayer(
+export function layer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
     readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
@@ -619,7 +619,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [CursorAdapterV2Driver],
     configMap: {
       [CURSOR_DEFAULT_INSTANCE_ID]: {
@@ -629,7 +629,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeCursorAgentSdkReplayLayer(transcript, options),
+        layerCursorAgentSdkReplay(transcript, options),
         layerServerConfig,
         layerHostEnvironment,
         NodeServices.layer,
@@ -666,8 +666,7 @@ export const CursorOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (transcript) =>
-    makeCursorProviderAdapterRegistryReplayLayer(transcript),
+  makeProviderAdapterRegistryLayer: (transcript) => layer(transcript),
 };
 
 function sanitizeReplayText(

@@ -94,7 +94,7 @@ interface FlakyReleaseWrites {
 }
 
 // Fails release writes with a defect, the way a failed SQL commit surfaces.
-const makeFlakyReleaseEventSinkLayer = (flaky: FlakyReleaseWrites) =>
+const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
   Layer.effect(
     EventSink.EventSinkV2,
     Effect.gen(function* () {
@@ -392,7 +392,7 @@ function makeProviderAdapter(
   };
 }
 
-function makeTestLayer(input: {
+function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
@@ -415,11 +415,11 @@ function makeTestLayer(input: {
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
-      ? makeFlakyReleaseEventSinkLayer(input.flakyReleaseWrites)
+      ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
       : input.failReleaseEventWrites
         ? layerFailingReleaseEventSink
         : layerTestEventSink;
-  const layerRegistry = ProviderAdapterRegistry.makeSingleLayer(
+  const layerRegistry = ProviderAdapterRegistry.layerSingle(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
@@ -548,7 +548,7 @@ function runBrowserAccessScenario(input: {
         .pipe(Effect.ignore);
     }).pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1_000,
           mcpConfigs,
@@ -766,7 +766,7 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 60_000,
           beforeOpen,
@@ -823,7 +823,7 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 60_000,
         }),
@@ -882,7 +882,7 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 60_000,
           beforeOpen,
@@ -923,7 +923,7 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 60_000,
         }),
@@ -972,7 +972,7 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
       assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
   }),
 );
 
@@ -1040,7 +1040,7 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
   }),
 );
 
@@ -1095,7 +1095,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
@@ -1150,7 +1150,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
@@ -1252,7 +1252,7 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1_000,
           mcpConfigs,
@@ -1322,7 +1322,7 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1_000,
           capabilities: ExclusiveCapabilities,
@@ -1398,7 +1398,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1_000,
             capabilities: ExclusiveCapabilities,
@@ -1477,7 +1477,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
@@ -1537,9 +1537,7 @@ it.effect(
         yield* manager.close(s1);
       });
 
-      yield* effect.pipe(
-        Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs })),
-      );
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
     }),
 );
 
@@ -1601,7 +1599,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
@@ -1656,7 +1654,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
   }),
 );
 
@@ -1704,7 +1702,7 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
       assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 
@@ -1750,7 +1748,7 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
     );
   }),
 );
@@ -1799,7 +1797,7 @@ it.effect("ProviderSessionManagerV2 defers idle release while background work is
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1000,
           hasPendingBackgroundWork: Ref.get(pendingWork),
@@ -1850,7 +1848,7 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1000,
           maxIdlePinMs: 3000,
@@ -1969,7 +1967,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1000,
             // Uninterruptible so the markBusy-triggered interrupt cannot land
@@ -2063,7 +2061,7 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1000,
           maxIdlePinMs: 60_000,
@@ -2176,7 +2174,7 @@ it.effect(
         assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
       });
 
-      yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );
 
@@ -2226,7 +2224,7 @@ it.effect("ProviderSessionManagerV2 uses the same release path for runtime failu
       assert.equal(projection.providerSessions.at(-1)?.lastError, "process exited");
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 
@@ -2274,7 +2272,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
 
     yield* effect.pipe(
       Effect.provide(
-        makeTestLayer({
+        layerTest({
           state,
           idleTimeoutMs: 1000,
           failEventStream: true,
@@ -2347,7 +2345,7 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
       assert.equal(requestTurnItem?.status, "failed");
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 it.effect("ProviderSessionManagerV2 retries release records that failed to persist", () =>
@@ -2408,7 +2406,7 @@ it.effect("ProviderSessionManagerV2 retries release records that failed to persi
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
 );
@@ -2481,7 +2479,7 @@ it.effect("ProviderSessionManagerV2 release retries leave a replacement session 
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
 );
@@ -2572,7 +2570,7 @@ it.effect("ProviderSessionManagerV2 keeps each failed release's cleanup", () =>
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
 );
@@ -2638,7 +2636,7 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
 );
@@ -2712,7 +2710,7 @@ it.effect("ProviderSessionManagerV2 terminalizes a pending input transcript item
       assert.equal(requestTurnItem?.status, "failed");
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 
@@ -2797,7 +2795,7 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
       assert.equal(turnItem?.status, "waiting");
     });
 
-    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 
@@ -2871,7 +2869,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
+          layerTest({
             state,
             idleTimeoutMs: 1000,
             beforeOpen: (input) =>
@@ -3025,7 +3023,7 @@ it.effect(
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
-      yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );
 
@@ -3190,7 +3188,7 @@ it.effect(
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
-      yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );
 
@@ -3294,7 +3292,7 @@ it.effect(
       });
 
       yield* effect.pipe(
-        Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, beforeUnload })),
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnload })),
         Effect.scoped,
       );
     }),
@@ -3353,7 +3351,7 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({ state, idleTimeoutMs: 1000, capabilities: ExclusiveCapabilities }),
+          layerTest({ state, idleTimeoutMs: 1000, capabilities: ExclusiveCapabilities }),
         ),
       );
     }),
@@ -3404,7 +3402,7 @@ it.effect.each(["missing", "file"] as const)(
           (yield* projectionStore.getThreadProjection(threadId)).providerSessions,
           [],
         );
-      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -3454,7 +3452,7 @@ it.effect(
           (yield* projectionStore.getThreadProjection(threadId)).providerSessions,
           before.providerSessions,
         );
-      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 

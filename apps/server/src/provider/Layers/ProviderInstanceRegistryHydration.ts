@@ -29,7 +29,7 @@
  * ----------
  * On layer build we:
  *   1. Read the current `ServerSettings` once and use it to seed the
- *      registry's initial state via `ProviderInstanceRegistryMutableLayer`.
+ *      registry's initial state via `ProviderInstanceRegistryLive.layer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
  *      acquires `ServerSettingsService.subscribeChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
@@ -55,7 +55,7 @@ import * as Settings from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
-import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
+import * as ProviderInstanceRegistryLive from "./ProviderInstanceRegistryLive.ts";
 import { type ProviderOrchestrationAdapterInfrastructure } from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as ProviderOrchestrationAdapterInfrastructureLayer from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
@@ -150,7 +150,7 @@ const layerSettingsWatcher = Layer.effectDiscard(
  * sync with subsequent `streamChanges` emissions.
  *
  * The Layer's two halves:
- *   - `ProviderInstanceRegistryMutableLayer` produces the registry +
+ *   - `ProviderInstanceRegistryLive.layer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
  *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
@@ -176,7 +176,7 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    const layerMutable = ProviderInstanceRegistryMutableLayer({
+    const layerMutable = ProviderInstanceRegistryLive.layer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     }).pipe(

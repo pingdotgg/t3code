@@ -31,7 +31,7 @@ const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const failingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
+const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
     dispatch: (command) => {
       captured.push(command);
@@ -143,7 +143,7 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
       attachmentsByQuestionId: {
         q: [{ type: "image", id, name: "screen.png", mimeType: "image/png", sizeBytes: 3 }],
       },
-    }).pipe(Effect.provide(failingDispatch(captured)), Effect.result);
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
     expect(captured).toHaveLength(1);
     const command = captured[0]!;
     expect(command.type).toBe("runtime-request.respond");
@@ -211,7 +211,7 @@ it.effect("rolls back earlier question claims when a later pending upload is mis
           },
         ],
       },
-    }).pipe(Effect.provide(failingDispatch(captured)), Effect.result);
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(result.failure._tag).toBe("AttachmentClaimError");
@@ -265,7 +265,7 @@ it.effect("rolls back earlier question claims when attachment path preparation f
           },
         ],
       },
-    }).pipe(Effect.provide(failingDispatch(captured)), Effect.result);
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(result.failure._tag).toBe("AttachmentClaimError");
@@ -308,7 +308,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
           },
         ],
       },
-    }).pipe(Effect.provide(failingDispatch(captured)), Effect.result);
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
     expect(result._tag).toBe("Failure");
     expect(captured).toHaveLength(1);
     // The response may have been accepted before the error, so the copy that
@@ -644,7 +644,7 @@ it.effect("releases claimed copies when preparation dies with a defect", () =>
         ],
         q2: [poisoned] as never,
       },
-    }).pipe(Effect.provide(failingDispatch(captured)), Effect.exit);
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.exit);
     expect(result._tag).toBe("Failure");
     expect(captured).toHaveLength(0);
     expect(
@@ -695,7 +695,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     };
     const captured: OrchestrationV2ServerCommand[] = [];
     const first = yield* dispatchCommand(command).pipe(
-      Effect.provide(failingDispatch(captured)),
+      Effect.provide(layerFailingDispatch(captured)),
       Effect.result,
     );
     expect(first._tag).toBe("Failure");
@@ -757,7 +757,7 @@ it.effect("applies the image budget across all questions before dispatch", () =>
         requestId: RuntimeRequestId.make("question-image-budget"),
         answers: {},
         attachmentsByQuestionId: { q1: attachments, q2: attachments },
-      }).pipe(Effect.provide(failingDispatch(captured))),
+      }).pipe(Effect.provide(layerFailingDispatch(captured))),
     );
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") expect(String(result.cause)).toContain("80 MiB");

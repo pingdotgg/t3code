@@ -157,7 +157,7 @@ const layerTailscaleUp = Layer.succeed(
 );
 
 /** Answers the Serve probe with `status`. */
-const serveProbeLayer = (status: number) =>
+const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -184,7 +184,7 @@ const resolveWithServe = (probeStatus: number) =>
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerTailscaleUp, serveProbeLayer(probeStatus)),
+          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),

@@ -38,7 +38,7 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function mockSpawnerLayer(statusJson = "{}") {
+function layerMockSpawner(statusJson = "{}") {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -61,14 +61,14 @@ function mockSpawnerLayer(statusJson = "{}") {
   );
 }
 
-function dieOnSpawnLayer() {
+function layerDieOnSpawn() {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() => Effect.die("unexpected tailscale spawn")),
   );
 }
 
-function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
+function layerEnvironmentFor(baseDir: string, env: Record<string, string | undefined> = {}) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -86,7 +86,7 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
   );
 }
 
-function makeLayer(input: {
+function layer(input: {
   readonly baseDir: string;
   readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly env?: Record<string, string | undefined>;
@@ -94,7 +94,7 @@ function makeLayer(input: {
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
-  const layerEnvironment = makeEnvironmentLayer(input.baseDir, env);
+  const layerEnvironment = layerEnvironmentFor(input.baseDir, env);
   const layerNetwork = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
@@ -103,7 +103,7 @@ function makeLayer(input: {
     Layer.provideMerge(input.desktopSettingsLayer ?? DesktopAppSettings.layer),
     Layer.provideMerge(NodeFileSystem.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
-    Layer.provideMerge(input.spawnerLayer ?? mockSpawnerLayer()),
+    Layer.provideMerge(input.spawnerLayer ?? layerMockSpawner()),
     Layer.provideMerge(layerNetwork),
     Layer.provideMerge(DesktopConfig.layerTest(env)),
     Layer.provideMerge(layerEnvironment),
@@ -132,7 +132,7 @@ const withHarness = <A, E, R>(
     });
     return yield* effect.pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           baseDir,
           networkInterfaces,
           env,
@@ -365,7 +365,7 @@ describe("DesktopServerExposure", () => {
         );
       }),
       {},
-      dieOnSpawnLayer(),
+      layerDieOnSpawn(),
     ),
   );
 

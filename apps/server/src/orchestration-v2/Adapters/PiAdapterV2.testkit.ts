@@ -407,7 +407,7 @@ function makePiReplaySpawner(
  * spawner that tees a live `pi`; replay passes the transcript-backed one. The
  * launch arguments are part of the recorded argv, so replay reuses them.
  */
-export function makePiProviderAdapterRegistryLayer<E, R>(input: {
+export function layer<E, R>(input: {
   readonly scenario: string;
   readonly spawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner, E, R>;
   readonly binaryPath: string;
@@ -418,7 +418,7 @@ export function makePiProviderAdapterRegistryLayer<E, R>(input: {
     ServerConfig.ServerConfig,
     makeReplayServerConfig(`pi-${input.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [PiAdapterV2Driver],
     configMap: {
       [PI_PROVIDER]: {
@@ -457,7 +457,7 @@ export const PiOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
       ),
     ),
   makeProviderAdapterRegistryLayer: (transcript) =>
-    makePiProviderAdapterRegistryLayer({
+    layer({
       scenario: transcript.scenario,
       binaryPath: "pi",
       launchArgs: metadataString(transcript, "launchArgs"),

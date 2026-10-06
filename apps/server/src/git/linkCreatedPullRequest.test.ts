@@ -71,7 +71,7 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
   return { pr };
 }
 
-const makeDependencies = (
+const layerDependenciesFor = (
   dispatch: Orchestrator.OrchestratorV2Shape["dispatch"],
   threadShell: PullRequestTestThread | null = thread,
 ) =>
@@ -159,7 +159,7 @@ describe("linkCreatedPullRequest", () => {
           url: "https://github.com/t3tools/t3code/pull/42",
         }),
         commandId,
-      }).pipe(Effect.provide(makeDependencies(dispatch)));
+      }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
 
       expect(yield* Ref.get(commands)).toEqual([
         {
@@ -179,7 +179,7 @@ describe("linkCreatedPullRequest", () => {
   it.effect("dispatches nothing when the action produced no pull request", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
-      const layerDependencies = makeDependencies(dispatch);
+      const layerDependencies = layerDependenciesFor(dispatch);
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
         result: prResult({ status: "skipped_not_requested" }),
@@ -211,14 +211,14 @@ describe("linkCreatedPullRequest", () => {
         url: "https://github.com/t3tools/t3code/pull/7",
       });
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(rejecting)),
+        Effect.provide(layerDependenciesFor(rejecting)),
       );
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(() => Effect.die(new Error("engine down")))),
+        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("engine down")))),
       );
       // A thread that vanished between the action and the link is not an error either.
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(() => Effect.die(new Error("unreachable")), null)),
+        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("unreachable")), null)),
       );
     }),
   );

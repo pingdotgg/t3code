@@ -35,7 +35,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -403,7 +403,7 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         closedSessionCount: 0,
         failedReplacementOpen: false,
       });
-      const layerRegistry = ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state));
+      const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
 
       const result = yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -480,7 +480,7 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         return yield* Effect.die("selection restart did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-restart-lifecycle" },
             layerRegistry,
           ),
@@ -554,7 +554,7 @@ it.live.each(["stopped", "error"] as const)(
           // simulated replacement-open failure is skipped.
           failedReplacementOpen: true,
         });
-        const layerRegistry = ProviderAdapterRegistry.makeSingleLayer(
+        const layerRegistry = ProviderAdapterRegistry.layerSingle(
           makeRestartAdapter(state, exclusiveCapabilities),
         );
 
@@ -677,7 +677,7 @@ it.live.each(["stopped", "error"] as const)(
             liveSessionId: liveSession.id,
             detachedSessionIds,
           };
-        }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, layerRegistry)));
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
 
         const { projection, captured } = result;
         assert.lengthOf(projection.runs, 2);
@@ -719,7 +719,7 @@ it.live("detaches the old provider session after an active provider handoff", ()
         failedReplacementOpen: false,
       });
       const targetStartCount = yield* Ref.make(0);
-      const layerRegistry = ProviderAdapterRegistry.makeLayer([
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeRestartAdapter(state, exclusiveCapabilities),
         makeCompletingHandoffAdapter(targetStartCount),
       ]);
@@ -803,7 +803,7 @@ it.live("detaches the old provider session after an active provider handoff", ()
         return yield* Effect.die("active provider handoff did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-provider-handoff-lifecycle" },
             layerRegistry,
           ),
@@ -990,7 +990,7 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.equal(returnedThread.providerInstanceId, providerInstanceId);
           assert.isEmpty(third.contextHandoffs);
           assert.deepEqual(messages, ["first", "second", "third"]);
-        }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, layerRegistry)));
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
       }),
     ),
 );

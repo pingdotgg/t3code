@@ -206,7 +206,7 @@ export function runOrchestratorV2ProviderReplayScenario<
         : [],
     ) ?? [],
   );
-  const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
+  const layer = layerProviderReplay(scenario, harness, {
     ...options,
     replayGate,
   });
@@ -214,10 +214,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
 }
 
-export function makeOrchestratorV2ProviderReplayLayer<
-  Transcript extends ProviderReplayTranscript,
-  Error,
->(
+export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
@@ -243,10 +240,10 @@ export function makeOrchestratorV2ProviderReplayLayer<
     scenario.transcript,
     options.replayGate === undefined ? {} : { replayGate: options.replayGate },
   );
-  return makeOrchestratorV2ReplayLayerWithRegistry(scenario, layerRegistry, options);
+  return layerWithRegistry(scenario, layerRegistry, options);
 }
 
-export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
+export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {

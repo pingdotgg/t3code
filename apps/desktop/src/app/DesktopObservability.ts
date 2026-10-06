@@ -2,9 +2,9 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import {
   makeLocalFileTracer,
   makeTraceSink,
-  otlpSerializationLayer,
   type SignalExport,
 } from "@t3tools/shared/observability";
+import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   parsePersistedServerObservabilitySettings,
@@ -661,7 +661,9 @@ const layerTelemetry = Layer.unwrap(
     ).pipe(
       Layer.provide(OtlpExporter.layerFlusher),
       Layer.provide(
-        otlpSerializationLayer(endpoints.logs?.export.protocol ?? environment.otlpProtocol),
+        SharedObservability.layerOtlpSerialization(
+          endpoints.logs?.export.protocol ?? environment.otlpProtocol,
+        ),
       ),
     );
 
@@ -682,7 +684,11 @@ const layerTelemetry = Layer.unwrap(
                 exportInterval: `${endpoints.traces.export.exportIntervalMs} millis`,
                 headers: endpoints.traces.export.headers,
                 resource,
-              }).pipe(Effect.provide(otlpSerializationLayer(endpoints.traces.export.protocol)));
+              }).pipe(
+                Effect.provide(
+                  SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
+                ),
+              );
         const tracer = yield* makeLocalFileTracer({
           filePath: tracePath,
           maxBytes: DESKTOP_LOG_FILE_MAX_BYTES,
@@ -710,7 +716,7 @@ const layerTelemetry = Layer.unwrap(
     //         exportInterval: `${endpoints.metrics.export.exportIntervalMs} millis`,
     //         headers: endpoints.metrics.export.headers,
     //         resource,
-    //       }).pipe(Layer.provide(otlpSerializationLayer(endpoints.metrics.export.protocol)));
+    //       }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(endpoints.metrics.export.protocol)));
 
     // Logged once the loggers above are installed, so the warnings use them.
     const layerOtelWarnings = Layer.effectDiscard(

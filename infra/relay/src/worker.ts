@@ -27,7 +27,8 @@ import {
 } from "./http/Api.ts";
 import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { makeRelayTraceLayer, RelayObservability } from "./observability.ts";
+import { RelayObservability } from "./observability.ts";
+import * as Observability from "./observability.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
 import * as Devices from "./agentActivity/Devices.ts";
@@ -229,7 +230,7 @@ export const layer = Api.make(
         tracesDatasetName: axiomDatasetName,
         tracesEndpoint: axiomTracesEndpoint,
         ingestToken: axiomIngestToken,
-      }).pipe(Effect.map(makeRelayTraceLayer)),
+      }).pipe(Effect.map(Observability.layer)),
     );
 
     // Each managed endpoint's held webhook requests live in its own Durable Object.

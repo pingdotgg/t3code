@@ -45,7 +45,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
-import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -59,7 +59,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -111,8 +111,8 @@ interface HarnessOptions {
 
 function makeHarness(options: HarnessOptions = {}) {
   const layerDatabase = SqlitePersistence.layerMemory;
-  const layerRegistry = ProviderAdapterRegistry.makeLayer([adapter]);
-  const layerOrchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([adapter]);
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
@@ -184,7 +184,7 @@ function makeHarness(options: HarnessOptions = {}) {
       generateBranchName,
     }),
     ServerSettings.layerTest(options.serverSettings),
-    makeProviderRegistryLayer(options.providers),
+    ProviderRegistryMock.layer(options.providers),
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",

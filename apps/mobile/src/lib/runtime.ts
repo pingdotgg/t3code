@@ -2,10 +2,10 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Socket from "effect/socket/Socket";
 
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
 import * as Dpop from "../features/cloud/dpop";
-import { managedRelayClientLayer } from "../features/cloud/managedRelayLayer";
+import * as ManagedRelayLayer from "../features/cloud/managedRelayLayer";
 import { resolveCloudPublicConfig } from "../features/cloud/publicConfig";
 import * as Tracing from "../features/observability/tracing";
 import * as Persistence from "../persistence/layer";
@@ -17,10 +17,10 @@ function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relay.url ?? "http://relay.invalid";
 }
 
-const layerHttpClient = remoteHttpClientLayer(fetch);
+const layerHttpClient = layerRemoteHttpClient(fetch);
 
 type RuntimeLayerSource =
-  | ReturnType<typeof managedRelayClientLayer>
+  | ReturnType<typeof ManagedRelayLayer.layer>
   | typeof Socket.layerWebSocketConstructorGlobal
   | typeof Dpop.layer
   | typeof layerHttpClient
@@ -28,7 +28,7 @@ type RuntimeLayerSource =
   | typeof Tracing.layer;
 
 const layerRuntime = Layer.merge(
-  managedRelayClientLayer(configuredRelayUrl()),
+  ManagedRelayLayer.layer(configuredRelayUrl()),
   Socket.layerWebSocketConstructorGlobal,
 ).pipe(
   Layer.provideMerge(Dpop.layer),

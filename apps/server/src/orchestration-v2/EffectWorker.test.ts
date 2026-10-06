@@ -76,7 +76,7 @@ function restartEffect(
   };
 }
 
-function makeExecutorLayer(input: {
+function layerExecutorFor(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
@@ -734,7 +734,7 @@ it.effect("safely retries after replacement cleanup succeeds and start fails", (
       type: "replace",
       replacementProviderSessionId: replacementSessionId,
     });
-    const layer = makeExecutorLayer({ events, failFirstStart });
+    const layer = layerExecutorFor({ events, failFirstStart });
 
     const first = yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
@@ -763,7 +763,7 @@ it.effect("settles a delegated child once its restart continuation fails for goo
     const timestamp = DateTime.formatIso(yield* DateTime.now);
     const events = yield* Ref.make<ReadonlyArray<string>>([]);
     const recovered = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
-    const layer = makeExecutorLayer({
+    const layer = layerExecutorFor({
       events,
       continueAfterRestart: true,
       threads: {

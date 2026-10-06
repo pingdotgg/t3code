@@ -61,7 +61,7 @@ const spawnInput = { shell: "powershell.exe", cwd: ".", cols: 80, rows: 24, env:
 
 const fakeNodePty = { spawn } as unknown as typeof import("node-pty");
 
-const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
+const layerTestFor = (platform: NodeJS.Platform = "win32") =>
   NodePtyAdapter.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -73,7 +73,7 @@ const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
     ),
   );
 
-const layerTest = makeTestLayer();
+const layerTest = layerTestFor();
 
 it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
@@ -189,7 +189,7 @@ it.effect.each(["win32", "linux", "darwin"] as const)(
           ? [[undefined], [undefined], [undefined]]
           : [["SIGTERM"], ["SIGKILL"], [undefined]],
       );
-    }).pipe(Effect.provide(makeTestLayer(platform))),
+    }).pipe(Effect.provide(layerTestFor(platform))),
 );
 
 it.effect("spawns through the public adapter with the provided host references", () =>

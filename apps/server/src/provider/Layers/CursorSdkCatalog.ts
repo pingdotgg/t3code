@@ -87,8 +87,6 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
 
 export const layer = Layer.effect(CursorSdkCatalog, makeCursorSdkCatalog());
 
-export function makeCursorSdkCatalogTestLayer(
-  read: CursorSdkCatalogShape["read"],
-): Layer.Layer<CursorSdkCatalog> {
+export function layerTest(read: CursorSdkCatalogShape["read"]): Layer.Layer<CursorSdkCatalog> {
   return Layer.succeed(CursorSdkCatalog, CursorSdkCatalog.of({ read }));
 }

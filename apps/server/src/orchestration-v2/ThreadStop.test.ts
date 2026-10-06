@@ -27,7 +27,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -45,9 +45,9 @@ const layerTest = ThreadManagementService.layer.pipe(
     Layer.mergeAll(
       layerDatabase,
       ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-      makeOrchestratorV2ReplayLayerWithRegistry(
+      ProviderReplayHarness.layerWithRegistry(
         { name: "thread-stop" },
-        ProviderAdapterRegistry.makeLayer([adapter]),
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
         { databaseLayer: layerDatabase, runEffectWorker: false },
       ),
     ),

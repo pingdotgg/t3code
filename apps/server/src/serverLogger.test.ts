@@ -22,7 +22,7 @@ interface ExportedRequest {
 }
 
 /** Answers every export with a 200 and keeps what was posted for assertions. */
-const collectorLayer = (requests: Array<ExportedRequest>) =>
+const layerCollector = (requests: Array<ExportedRequest>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -38,7 +38,7 @@ const collectorLayer = (requests: Array<ExportedRequest>) =>
     ),
   );
 
-const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+const layerConfig = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
@@ -94,8 +94,8 @@ const logThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
     yield* Effect.log("server logger under test").pipe(
       Effect.provide(
         ServerLogger.layer.pipe(
-          Layer.provide(configLayer(overrides)),
-          Layer.provide(collectorLayer(requests)),
+          Layer.provide(layerConfig(overrides)),
+          Layer.provide(layerCollector(requests)),
         ),
       ),
     );
@@ -125,8 +125,8 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
       Effect.provide(
         Layer.mergeAll(
           ServerLogger.layer.pipe(
-            Layer.provide(configLayer(overrides)),
-            Layer.provide(collectorLayer(requests)),
+            Layer.provide(layerConfig(overrides)),
+            Layer.provide(layerCollector(requests)),
           ),
           layerTracer,
         ),

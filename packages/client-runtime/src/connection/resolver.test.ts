@@ -32,7 +32,7 @@ import {
   type ConnectionTarget,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import {
   GitHubRoutingPermissions,
   gitHubRoutingConnectionKey,
@@ -146,7 +146,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
-    remoteHttpClientLayer((() =>
+    RpcHttp.layerRemoteHttpClient((() =>
       Promise.resolve(
         Response.json({
           environmentId: ENVIRONMENT_ID,

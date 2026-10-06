@@ -25,7 +25,7 @@ import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import { firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
 
-const sourceControlProviderRegistryTestLayer = (input: {
+const layerSourceControlProviderRegistryTest = (input: {
   readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;
   readonly process: Partial<VcsProcess.VcsProcess["Service"]>;
 }) =>
@@ -538,7 +538,7 @@ it.effect("reports implemented tools separately from locally available executabl
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(
-      sourceControlProviderRegistryTestLayer({
+      layerSourceControlProviderRegistryTest({
         process: processMock,
         bitbucket: {
           probeAuth: Effect.succeed({
@@ -689,7 +689,7 @@ Logged in to gitlab.com as gitlab-user
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(
-      sourceControlProviderRegistryTestLayer({
+      layerSourceControlProviderRegistryTest({
         process: processMock,
         bitbucket: {
           probeAuth: Effect.succeed({

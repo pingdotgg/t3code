@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
@@ -30,7 +30,7 @@ const layerClientPresentation = Layer.succeed(
   }),
 );
 
-function pairingHttpLayer(
+function layerPairingHttp(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
   options?: {
     readonly failDescriptor?: boolean;
@@ -81,7 +81,7 @@ function pairingHttpLayer(
     return Promise.reject(new Error(`Unexpected request: ${url}`));
   }) satisfies typeof fetch;
 
-  return remoteHttpClientLayer(fetchFn);
+  return RpcHttp.layerRemoteHttpClient(fetchFn);
 }
 
 describe("connection onboarding", () => {
@@ -91,7 +91,7 @@ describe("connection onboarding", () => {
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, pairingHttpLayer(calls))));
+      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))));
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -138,7 +138,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
-            pairingHttpLayer(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1 }),
+            layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1 }),
           ),
         ),
         Effect.flip,
@@ -158,7 +158,7 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
         expectedEnvironmentId: EnvironmentId.make("some-other-machine"),
       }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, pairingHttpLayer(calls))),
+        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
         Effect.flip,
       );
       expect(error).toMatchObject({ reason: "configuration" });
@@ -179,7 +179,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
-            pairingHttpLayer(calls, {
+            layerPairingHttp(calls, {
               protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
               selfUpdate: true,
             }),
@@ -201,7 +201,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
-            pairingHttpLayer(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
+            layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
           ),
         ),
         Effect.flip,
@@ -225,7 +225,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             layerClientPresentation,
-            pairingHttpLayer(calls, { failDescriptor: true }),
+            layerPairingHttp(calls, { failDescriptor: true }),
           ),
         ),
         Effect.flip,
@@ -244,7 +244,7 @@ describe("connection onboarding", () => {
         host: "",
         pairingCode: "",
       }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, pairingHttpLayer(calls))),
+        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
         Effect.flip,
       );
 

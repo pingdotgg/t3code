@@ -16,7 +16,7 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { fetchEnvironmentSessionState } from "../state/session.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
@@ -1551,7 +1551,7 @@ describe("EnvironmentSupervisor", () => {
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
       });
-      const layerHttp = remoteHttpClientLayer(fetchFn);
+      const layerHttp = RpcHttp.layerRemoteHttpClient(fetchFn);
       const remoteAuthorization = yield* RemoteEnvironmentAuthorization.make.pipe(
         Effect.provide(
           Layer.mergeAll(

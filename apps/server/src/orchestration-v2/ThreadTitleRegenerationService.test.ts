@@ -26,7 +26,7 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const projectId = ProjectId.make("project:title-regeneration");
 const modelSelection = {
@@ -48,8 +48,8 @@ function makeHarness(
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
-  const layerRegistry = ProviderAdapterRegistry.makeLayer([adapter]);
-  const layerOrchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([adapter]);
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-title-regeneration" },
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },

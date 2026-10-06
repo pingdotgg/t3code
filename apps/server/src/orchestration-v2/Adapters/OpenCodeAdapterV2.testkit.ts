@@ -389,7 +389,7 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
   } as unknown as OpencodeClient;
 }
 
-function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript) {
+function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
   return Layer.effect(
     OpenCodeRuntime.OpenCodeRuntime,
     Effect.gen(function* () {
@@ -456,12 +456,12 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
   );
 }
 
-function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
+function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
       [OPENCODE_DEFAULT_INSTANCE_ID]: {
@@ -472,7 +472,7 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeOpenCodeReplayRuntimeLayer(transcript),
+        layerOpenCodeReplayRuntime(transcript),
         layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,
@@ -508,5 +508,5 @@ export const OpenCodeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarn
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: makeOpenCodeProviderAdapterRegistryReplayLayer,
+  makeProviderAdapterRegistryLayer: layerOpenCodeProviderAdapterRegistryReplay,
 };

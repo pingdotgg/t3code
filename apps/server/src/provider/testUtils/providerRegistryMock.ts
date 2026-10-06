@@ -18,5 +18,5 @@ const makeProviderRegistryMock = (
   streamChanges: Stream.empty,
 });
 
-export const makeProviderRegistryLayer = (providers: ReadonlyArray<ServerProvider> = []) =>
+export const layer = (providers: ReadonlyArray<ServerProvider> = []) =>
   Layer.succeed(ProviderRegistry.ProviderRegistry, makeProviderRegistryMock(providers));

@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { WAL_SIZE_LIMIT_BYTES, makeSqlitePersistenceLive } from "./Sqlite.ts";
+import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const lockHolderSource = `
@@ -53,7 +53,7 @@ it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", (
     const rows = yield* sql<{ readonly id: number }>`SELECT id FROM busy_probe`;
     assert.deepEqual([...rows], [{ id: 1 }]);
   }).pipe(
-    Effect.provide(makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
@@ -79,7 +79,7 @@ it.effect("shrinks the WAL file back to the size limit after a large write", () 
     yield* sql`INSERT INTO wal_probe(payload) VALUES (x'00')`;
     assert.isAtMost(walFileSize(), WAL_SIZE_LIMIT_BYTES);
   }).pipe(
-    Effect.provide(makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });

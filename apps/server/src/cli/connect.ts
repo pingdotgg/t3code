@@ -44,11 +44,8 @@ import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
-import {
-  bootServiceLayer,
-  offerServiceDuringOnboarding,
-  recoverServiceOnboardingOffer,
-} from "./service.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -442,7 +439,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
     EnvironmentAuth.layerRuntime,
-    bootServiceLayer(config),
+    CliService.layer(config),
     RelayTracing.layerHeadlessRelayClient,
   ).pipe(
     Layer.provideMerge(FetchHttpClient.layer),

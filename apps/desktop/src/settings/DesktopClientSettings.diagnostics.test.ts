@@ -19,7 +19,7 @@ interface LogRecord {
 
 const baseDir = "/virtual-home";
 
-function makeLayer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
+function layer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -60,10 +60,7 @@ const readWithLogs = (fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) => {
     };
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        makeLayer(fileSystemLayer),
-        Logger.layer([logger], { mergeWithExisting: false }),
-      ),
+      Layer.mergeAll(layer(fileSystemLayer), Logger.layer([logger], { mergeWithExisting: false })),
     ),
   );
 };

@@ -6,11 +6,8 @@ import * as Tracer from "effect/Tracer";
 import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
-import {
-  makeRelayClientTracingLayer,
-  RelayClientTracer,
-  withRelayClientTracing,
-} from "./relayTracing.ts";
+import { RelayClientTracer, withRelayClientTracing } from "./relayTracing.ts";
+import * as RelayTracing from "./relayTracing.ts";
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
   return Tracer.make({
@@ -67,7 +64,7 @@ describe("withRelayClientTracing", () => {
     const layerHttpClient = FetchHttpClient.layer.pipe(
       Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
     );
-    const layerTracing = makeRelayClientTracingLayer(
+    const layerTracing = RelayTracing.layer(
       {
         tracesUrl: "https://api.axiom.test/v1/traces",
         tracesDataset: "relay-traces",

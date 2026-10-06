@@ -33,7 +33,7 @@ const waitForAvailable = Effect.fn("ProjectEnrichmentServiceTest.waitForAvailabl
   return yield* Effect.die(`Project metadata for ${workspaceRoot} was not resolved in time.`);
 });
 
-const makeLayer = (
+const layer = (
   metadataLayer: Layer.Layer<
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
@@ -90,7 +90,7 @@ it.effect("preserves either enrichment field when the other resolver fails", () 
       );
       assert.isNull(repositoryFailure.repositoryIdentity);
       assert.equal(repositoryFailure.faviconPath, "/repo-fails/favicon.svg");
-    }).pipe(Effect.provide(makeLayer(layerMetadata)));
+    }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );
 
@@ -117,7 +117,7 @@ it.effect("publishes repository completion while favicon enrichment is still pen
       assert.isTrue(change.repositoryIdentityResolved);
       assert.equal(change.enrichment.repositoryIdentity?.canonicalKey, "example.test/v1/completed");
       assert.isNull(change.enrichment.faviconPath);
-    }).pipe(Effect.provide(makeLayer(layerMetadata)));
+    }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );
 
@@ -158,7 +158,7 @@ it.effect("keeps repository workers available when every favicon worker is hung"
       assert.equal(yield* Ref.get(faviconStarts), 2);
     }).pipe(
       Effect.provide(
-        makeLayer(layerMetadata, {
+        layer(layerMetadata, {
           cacheCapacity: 8,
           maxPending: 4,
           concurrency: 2,
@@ -205,7 +205,7 @@ it.effect("getAvailable returns immediately while repository identity is still u
       );
       assert.equal(resolved.repositoryIdentity?.canonicalKey, "example.test/v1/pending-identity");
       assert.isTrue(resolved.repositoryIdentityResolved);
-    }).pipe(Effect.provide(makeLayer(layerMetadata)));
+    }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );
 
@@ -268,7 +268,7 @@ it.effect(
         const failed = yield* service.peek("/fails");
         assert.isNull(failed.repositoryIdentity);
         assert.isFalse(failed.repositoryIdentityResolved);
-      }).pipe(Effect.provide(makeLayer(layerMetadata)));
+      }).pipe(Effect.provide(layer(layerMetadata)));
     }),
 );
 
@@ -332,7 +332,7 @@ it.effect("deduplicates requests, bounds pending work, and reloads invalidated r
       ]);
     }).pipe(
       Effect.provide(
-        makeLayer(layerMetadata, {
+        layer(layerMetadata, {
           cacheCapacity: 8,
           maxPending: 2,
           concurrency: 1,

@@ -78,7 +78,7 @@ export type RemoteEnvironmentRequestError =
   | RemoteEnvironmentAuthUndeclaredStatusError
   | RemoteEnvironmentAuthTimeoutError;
 
-export const remoteHttpClientLayer = (
+export const layerRemoteHttpClient = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.merge(

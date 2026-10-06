@@ -191,7 +191,7 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
-function mockSpawnerLayer(
+function layerMockSpawner(
   handler: (args: ReadonlyArray<string>) => {
     stdout: string;
     stderr: string;
@@ -234,7 +234,7 @@ function recordingMockSpawnerLayer(
   return { layer, commands };
 }
 
-function mockCommandSpawnerLayer(
+function layerMockCommandSpawner(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
@@ -252,7 +252,7 @@ function mockCommandSpawnerLayer(
   );
 }
 
-function failingSpawnerLayer(description: string) {
+function layerFailingSpawner(description: string) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -268,7 +268,7 @@ function failingSpawnerLayer(description: string) {
   );
 }
 
-function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
+function layerHangingScopedSpawner(killCalls: Ref.Ref<number>) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -588,7 +588,7 @@ it.layer(
       Effect.gen(function* () {
         const killCalls = yield* Ref.make(0);
         const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
-          Effect.provide(hangingScopedSpawnerLayer(killCalls)),
+          Effect.provide(layerHangingScopedSpawner(killCalls)),
           Effect.forkChild,
         );
 
@@ -2870,7 +2870,7 @@ it.layer(
             ),
             Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
             Layer.provideMerge(
-              mockCommandSpawnerLayer((command, args) => {
+              layerMockCommandSpawner((command, args) => {
                 if (command === "cursor-agent") {
                   cursorSpawned = true;
                 }
@@ -2927,7 +2927,7 @@ it.layer(
     it.effect("skips codex probes entirely when the provider is disabled", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(disabledCodexSettings).pipe(
-          Effect.provide(failingSpawnerLayer("spawn codex ENOENT")),
+          Effect.provide(layerFailingSpawner("spawn codex ENOENT")),
         );
         assert.strictEqual(status.enabled, false);
         assert.strictEqual(status.status, "disabled");
@@ -2951,7 +2951,7 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -2981,7 +2981,7 @@ it.layer(
         assert.strictEqual(status.auth.label, "Amazon Bedrock");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
@@ -3002,7 +3002,7 @@ it.layer(
         assert.strictEqual(status.auth.label, "Claude Max Subscription");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -3044,7 +3044,7 @@ it.layer(
         assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
@@ -3066,7 +3066,7 @@ it.layer(
         assert.strictEqual(status.auth.label, "Claude Max Subscription");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
@@ -3088,7 +3088,7 @@ it.layer(
         assert.strictEqual(status.auth.label, "Claude Max Subscription");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
@@ -3107,7 +3107,7 @@ it.layer(
         assert.strictEqual(status.auth.email, "claude@example.com");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -3179,7 +3179,7 @@ it.layer(
         ]);
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -3223,7 +3223,7 @@ it.layer(
         ]);
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -3250,7 +3250,7 @@ it.layer(
         assert.strictEqual(status.auth.label, "Claude API Key");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
@@ -3275,7 +3275,7 @@ it.layer(
         assert.strictEqual(status.installed, false);
         assert.strictEqual(status.auth.status, "unknown");
         assert.strictEqual(status.message, "Claude Agent CLI (`claude`) was not found on PATH.");
-      }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
+      }).pipe(Effect.provide(layerFailingSpawner("spawn claude ENOENT"))),
     );
 
     it.effect("returns error when version check fails with non-zero exit code", () => {
@@ -3291,7 +3291,7 @@ it.layer(
         assert.ok(!(status.message ?? "").includes(secretStderr));
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version")
               return {
@@ -3320,7 +3320,7 @@ it.layer(
         );
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args) => {
+          layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")

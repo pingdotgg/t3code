@@ -17,7 +17,7 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
 });
 
 /** Spawner whose `tailscale status --json` exits with the given output. */
-const spawnerLayer = (input: { readonly exitCode: number; readonly stdout: string }) =>
+const layerSpawner = (input: { readonly exitCode: number; readonly stdout: string }) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -39,7 +39,7 @@ const spawnerLayer = (input: { readonly exitCode: number; readonly stdout: strin
     ),
   );
 
-const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
+const layerNet = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
   Layer.succeed(NetService.NetService, {
     canListenOnHost: () => Effect.succeed(true),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
@@ -57,7 +57,7 @@ const resolveTargets = (input: {
     Effect.provideService(HostProcessHostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
-        Layer.provide(Layer.mergeAll(netLayer(input.sshd), spawnerLayer(input.tailscale))),
+        Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
       ),
     ),
   );

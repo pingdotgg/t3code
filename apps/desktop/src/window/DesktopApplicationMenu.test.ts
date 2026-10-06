@@ -71,7 +71,7 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   installPrepared: () => Effect.die("unexpected installPrepared"),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
-const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
+const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
     ensureMain: Effect.die("unexpected ensureMain"),
@@ -90,7 +90,7 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
-const makeElectronMenuLayer = (
+const layerElectronMenu = (
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
 ) =>
   Layer.succeed(ElectronMenu.ElectronMenu, {
@@ -110,8 +110,8 @@ const configureMenu = (
   }).pipe(
     Effect.provide(
       DesktopApplicationMenu.layer.pipe(
-        Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
-        Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+        Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
+        Layer.provideMerge(layerDesktopWindow(selectedAction)),
         Layer.provideMerge(layerDesktopUpdates),
         Layer.provideMerge(layerElectronDialog),
         Layer.provideMerge(layerElectronApp),

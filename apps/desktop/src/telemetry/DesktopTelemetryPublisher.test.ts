@@ -30,7 +30,7 @@ const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory
   shutdown: Effect.void,
 });
 
-function makeElectronAppLayer(
+function layerElectronApp(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
   onMetricsRead: () => void = () => undefined,
 ) {
@@ -81,7 +81,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), layerPower, layerHistory)),
+        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
       );
       const scope = yield* Scope.make();
 
@@ -149,7 +149,7 @@ describe("DesktopTelemetryPublisher", () => {
       const layer = DesktopTelemetryPublisher.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            makeElectronAppLayer(metrics, () => {
+            layerElectronApp(metrics, () => {
               metricsReadCount += 1;
             }),
             layerPower,
@@ -426,7 +426,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), layerPower, layerHistory)),
+        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
       );
 
       yield* Effect.gen(function* () {

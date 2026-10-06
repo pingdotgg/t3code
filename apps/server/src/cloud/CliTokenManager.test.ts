@@ -137,7 +137,7 @@ const tokenGranted = {
   }),
 };
 
-const makeDeviceFlowLayer = (server: DeviceFlowServer) =>
+const layerDeviceFlow = (server: DeviceFlowServer) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -177,7 +177,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
         Effect.sync(() => {
           prompts.push(prompt);
         }),
-      ).pipe(Effect.provide(makeDeviceFlowLayer(server)), provideTestEnv, Effect.forkChild);
+      ).pipe(Effect.provide(layerDeviceFlow(server)), provideTestEnv, Effect.forkChild);
 
       yield* TestClock.adjust(Duration.seconds(10));
       const { token, identity } = yield* Fiber.join(fiber);
@@ -219,7 +219,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       };
 
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(makeDeviceFlowLayer(server)),
+        Effect.provide(layerDeviceFlow(server)),
         provideTestEnv,
         Effect.forkChild,
       );
@@ -245,7 +245,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       };
 
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(makeDeviceFlowLayer(server)),
+        Effect.provide(layerDeviceFlow(server)),
         provideTestEnv,
         Effect.forkChild,
       );
@@ -270,7 +270,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       };
 
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(makeDeviceFlowLayer(server)),
+        Effect.provide(layerDeviceFlow(server)),
         provideTestEnv,
         Effect.flip,
         Effect.forkChild,
@@ -291,7 +291,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       };
 
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(makeDeviceFlowLayer(server)),
+        Effect.provide(layerDeviceFlow(server)),
         provideTestEnv,
         Effect.flip,
         Effect.forkChild,
@@ -311,7 +311,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       };
 
       const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(makeDeviceFlowLayer(server)),
+        Effect.provide(layerDeviceFlow(server)),
         provideTestEnv,
         Effect.flip,
         Effect.forkChild,

@@ -76,7 +76,7 @@ const layerRelayDpopSigner = Layer.effect(
   }),
 );
 
-export const managedRelayClientLayer = (relayUrl: string) =>
+export const layer = (relayUrl: string) =>
   ManagedRelay.layer({ relayUrl, clientId: RelayWebClientId }).pipe(
     Layer.provideMerge(layerRelayDpopSigner),
   );

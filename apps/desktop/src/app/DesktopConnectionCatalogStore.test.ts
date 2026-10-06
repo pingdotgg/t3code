@@ -28,7 +28,7 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
@@ -50,7 +50,7 @@ function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> 
   } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
 
-function makeLayer(
+function layerFor(
   baseDir: string,
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
@@ -71,7 +71,7 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const layerSafeStorage = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
+  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
@@ -97,7 +97,7 @@ const withStore = <A, E, R>(
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-connection-catalog-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir, encryptionAvailable)));
+    return yield* effect.pipe(Effect.provide(layerFor(baseDir, encryptionAvailable)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
@@ -287,7 +287,7 @@ describe("DesktopConnectionCatalogStore", () => {
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, layerFileSystem)),
+        Effect.provide(layerFor(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.get.pipe(Effect.flip);
@@ -325,7 +325,7 @@ describe("DesktopConnectionCatalogStore", () => {
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, layerFileSystem)),
+        Effect.provide(layerFor(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.set("{}").pipe(Effect.flip);
@@ -413,7 +413,7 @@ describe("DesktopConnectionCatalogStore", () => {
         prefix: "t3-desktop-connection-catalog-test-",
       });
       const failDecrypt = yield* Ref.make(false);
-      const layer = makeLayer(baseDir, true, failDecrypt);
+      const layer = layerFor(baseDir, true, failDecrypt);
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
         Effect.provide(layer),
       );

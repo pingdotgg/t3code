@@ -177,7 +177,7 @@ export function makeReplayServerConfig(
   });
 }
 
-export function makeCodexProviderAdapterRegistryReplayLayer(input: {
+export function layer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
 }) {
@@ -208,7 +208,7 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  const layerRegistry = ProviderAdapterRegistry.makeDriverLayer({
+  const layerRegistry = ProviderAdapterRegistry.layerFromDrivers({
     drivers: [CodexAdapterV2.CodexAdapterV2Driver],
     configMap: {
       [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
@@ -267,9 +267,7 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
                   Effect.promise((signal) => replayGate.beforeEmit(entry.label, signal)),
               },
         );
-        return yield* Layer.build(
-          makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
-        );
+        return yield* Layer.build(layer({ transcript, driver }));
       }),
     );
   },

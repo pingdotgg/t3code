@@ -33,7 +33,7 @@ const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
   authMethodId: "replay",
 });
 
-function makeAcpRegistryProviderAdapterRegistryReplayLayer(
+function layerAcpRegistryProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
@@ -42,7 +42,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(
     makeReplayServerConfig(`acp-registry-${transcript.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
 
-  return ProviderAdapterRegistry.makeLayerEffect(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -105,5 +105,5 @@ export const AcpRegistryOrchestratorReplayHarness: OrchestratorV2ProviderReplayH
     decodeAcpReplayTranscript(transcript, ACP_REGISTRY_PROVIDER, {
       retargetProvider: true,
     }),
-  makeProviderAdapterRegistryLayer: makeAcpRegistryProviderAdapterRegistryReplayLayer,
+  makeProviderAdapterRegistryLayer: layerAcpRegistryProviderAdapterRegistryReplay,
 };

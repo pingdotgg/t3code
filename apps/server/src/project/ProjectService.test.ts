@@ -49,7 +49,7 @@ const layerMetadata = Layer.merge(
   }),
 );
 
-const makeTestLayer = (
+const layerTestFor = (
   projectMetadataLayer: Layer.Layer<
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
@@ -64,7 +64,7 @@ const makeTestLayer = (
     Layer.provide(NodeServices.layer),
   );
 
-const layerTest = makeTestLayer(layerMetadata);
+const layerTest = layerTestFor(layerMetadata);
 
 /** Every dependency of ProjectService.make, so a test can swap one of them. */
 const layerProjectServiceDependencies = Layer.mergeAll(
@@ -587,7 +587,7 @@ it.effect(
         assert.equal(secondSnapshot.projects[0]?.faviconPath, "/work/slow-enrichment/favicon.svg");
         assert.equal(yield* Ref.get(repositoryCalls), 1);
         assert.equal(yield* Ref.get(faviconCalls), 1);
-      }).pipe(Effect.provide(makeTestLayer(layerSlowMetadata)));
+      }).pipe(Effect.provide(layerTestFor(layerSlowMetadata)));
     }),
 );
 
@@ -625,7 +625,7 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
       assert.equal(snapshot.projects[0]?.title, "Still visible");
       assert.isNull(snapshot.projects[0]?.repositoryIdentity ?? null);
       assert.isNull(snapshot.projects[0]?.faviconPath ?? null);
-    }).pipe(Effect.provide(makeTestLayer(layerFailingMetadata)));
+    }).pipe(Effect.provide(layerTestFor(layerFailingMetadata)));
   }),
 );
 
@@ -695,7 +695,7 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
         )).faviconPath,
         "/work/original/favicon-v3.svg",
       );
-    }).pipe(Effect.provide(makeTestLayer(layerVersionedMetadata)));
+    }).pipe(Effect.provide(layerTestFor(layerVersionedMetadata)));
   }),
 );
 

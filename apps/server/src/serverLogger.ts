@@ -1,4 +1,4 @@
-import { otlpSerializationLayer } from "@t3tools/shared/observability";
+import * as SharedObservability from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -42,7 +42,7 @@ export const layer = Effect.gen(function* () {
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),
-    Layer.provide(otlpSerializationLayer(logs.protocol)),
+    Layer.provide(SharedObservability.layerOtlpSerialization(logs.protocol)),
   );
 
   return Layer.mergeAll(layerLogger, layerMinimumLogLevel);

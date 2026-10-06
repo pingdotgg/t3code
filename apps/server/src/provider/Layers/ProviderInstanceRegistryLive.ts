@@ -412,7 +412,7 @@ export const makeProviderInstanceRegistry = <R>(input: {
  * changes. Tests that exercise the mutator directly can pair this Layer
  * with a test-local `ServerSettingsService`.
  */
-export const ProviderInstanceRegistryMutableLayer = <R>(input: {
+export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Layer.Layer<

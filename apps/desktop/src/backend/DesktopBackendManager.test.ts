@@ -98,7 +98,7 @@ function responseForRequest(
   return HttpClientResponse.fromWeb(request, new Response(null, { status }));
 }
 
-function httpClientLayer(
+function layerHttpClient(
   handler: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
@@ -109,7 +109,7 @@ function httpClientLayer(
   );
 }
 
-const layerHealthyHttpClient = httpClientLayer((request) =>
+const layerHealthyHttpClient = layerHttpClient((request) =>
   Effect.succeed(responseForRequest(request, 200)),
 );
 
@@ -279,7 +279,7 @@ describe("DesktopBackendManager", () => {
       const requested = yield* Deferred.make<HttpClientRequest.HttpClientRequest>();
       const layer = Layer.merge(
         TestClock.layer(),
-        httpClientLayer((request) =>
+        layerHttpClient((request) =>
           Deferred.succeed(requested, request).pipe(Effect.andThen(Effect.never)),
         ),
       );
@@ -631,7 +631,7 @@ describe("DesktopBackendManager", () => {
         );
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
           backendOutputLog: {
             writeOutputChunk: (_streamName, chunk) =>
               Ref.update(outputChunks, (current) => [...current, new TextDecoder().decode(chunk)]),
@@ -689,7 +689,7 @@ describe("DesktopBackendManager", () => {
             Effect.sync(() => {
               prunedRuntimes.push([distro, runtimeId]);
             }).pipe(Effect.andThen(Deferred.succeed(pruneComplete, void 0)), Effect.asVoid),
-          httpClientLayer: httpClientLayer((request) =>
+          httpClientLayer: layerHttpClient((request) =>
             Effect.gen(function* () {
               const status = statuses.shift();
               assert.isDefined(status);
@@ -757,7 +757,7 @@ describe("DesktopBackendManager", () => {
           // The backend stays 503 through the first *two* readiness budgets
           // and only becomes healthy (200) for the third round, i.e. it comes
           // up well after the initial 50ms budget has expired.
-          const layerHttp = httpClientLayer((request) =>
+          const layerHttp = layerHttpClient((request) =>
             Effect.gen(function* () {
               requestCount += 1;
               requestUrls.push(request.url);
@@ -954,7 +954,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
         });
 
         yield* instance.start;
@@ -1029,7 +1029,7 @@ describe("DesktopBackendManager", () => {
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
           configResolve,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
         });
 
         yield* instance.start;
@@ -1094,7 +1094,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
         });
 
         yield* instance.start;
@@ -1144,7 +1144,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
           onShutdown: Effect.sync(() => {
             shutdownCount += 1;
           }),
@@ -1180,7 +1180,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
           backendOutputLog: {
             persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
           },
@@ -1434,7 +1434,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
         });
 
         yield* instance.start;
@@ -1481,7 +1481,7 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer: layerSpawner,
-          httpClientLayer: httpClientLayer(() => Effect.never),
+          httpClientLayer: layerHttpClient(() => Effect.never),
         });
 
         yield* instance.start;
@@ -1534,7 +1534,7 @@ describe("DesktopBackendManager", () => {
                 }),
               ),
             ),
-            httpClientLayer: httpClientLayer(() => Effect.never),
+            httpClientLayer: layerHttpClient(() => Effect.never),
           });
 
         const instance1 = yield* makeInstance("instance1");

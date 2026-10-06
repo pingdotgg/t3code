@@ -1340,7 +1340,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   });
 });
 
-const makeCodexAppServerClientFactoryCommandLayer = (
+const layerCodexAppServerClientFactoryCommand = (
   options: CodexClient.CodexAppServerClientOptions & {
     readonly command: string;
     readonly args?: ReadonlyArray<string>;

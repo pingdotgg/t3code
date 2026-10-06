@@ -39,7 +39,7 @@ type CapturedCommand = {
   };
 };
 
-const helperLayer = (input: {
+const layerHelper = (input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly stdoutStream?: Stream.Stream<Uint8Array>;
@@ -131,7 +131,7 @@ describe("Linux Chromium secrets", () => {
       expect(keys.cbcV11Error?.reason).toBe("keychainUnavailable");
     }).pipe(
       Effect.provide(
-        helperLayer({
+        layerHelper({
           spawnError: PlatformError.systemError({
             _tag: "NotFound",
             module: "ChildProcess",
@@ -171,7 +171,7 @@ describe("Linux Chromium secrets", () => {
       expect(keys.cbcV11).toHaveLength(16);
     }).pipe(
       Effect.provide(
-        helperLayer({ stdout: "linux-secret", capture: (value) => (captured = value) }),
+        layerHelper({ stdout: "linux-secret", capture: (value) => (captured = value) }),
       ),
     );
   });
@@ -183,7 +183,7 @@ describe("Linux Chromium secrets", () => {
       expect(error.reason).toBe("keychainUnavailable");
     }).pipe(
       Effect.provide(
-        helperLayer({ stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY", exitCode: 1 }),
+        layerHelper({ stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY", exitCode: 1 }),
       ),
     ),
   );
@@ -192,7 +192,7 @@ describe("Linux Chromium secrets", () => {
     Effect.gen(function* () {
       const secret = yield* readLinuxSecret("chrome");
       expect(secret).toBe("linux-secret \t\n");
-    }).pipe(Effect.provide(helperLayer({ stdout: "linux-secret \t\n" }))),
+    }).pipe(Effect.provide(layerHelper({ stdout: "linux-secret \t\n" }))),
   );
 
   it.effect("drains stdout and stderr concurrently", () =>
@@ -206,7 +206,7 @@ describe("Linux Chromium secrets", () => {
       );
 
       const secret = yield* readLinuxSecret("chrome").pipe(
-        Effect.provide(helperLayer({ stdoutStream: stdout, stderrStream: stderr })),
+        Effect.provide(layerHelper({ stdoutStream: stdout, stderrStream: stderr })),
       );
 
       expect(secret).toBe("linux-secret");
@@ -226,7 +226,7 @@ describe("Linux Chromium secrets", () => {
         expect(captured?.options.env?.SESSION_MARKER).toBe("kept");
       }).pipe(
         Effect.provide(
-          helperLayer({
+          layerHelper({
             stderr: "Zugriff verweigert",
             exitCode: 3,
             capture: (value) => (captured = value),
@@ -250,7 +250,7 @@ describe("Linux Chromium secrets", () => {
         linuxSecretApplication: "brave",
       }).pipe(Effect.flip);
       expect(error.reason).toBe("needsKeychainApproval");
-    }).pipe(Effect.provide(helperLayer({ stderr: "Keyring is locked", exitCode: 3 }))),
+    }).pipe(Effect.provide(layerHelper({ stderr: "Keyring is locked", exitCode: 3 }))),
   );
 
   it.effect("keeps the v10 fallback when the Secret Service backend is unavailable", () =>
@@ -265,7 +265,7 @@ describe("Linux Chromium secrets", () => {
       expect(keys.cbcV11).toBeUndefined();
     }).pipe(
       Effect.provide(
-        helperLayer({
+        layerHelper({
           stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY",
           exitCode: 1,
         }),
@@ -283,7 +283,7 @@ describe("Linux Chromium secrets", () => {
       });
       expect(keys.cbcV10).toHaveLength(16);
       expect(keys.cbcV11).toBeUndefined();
-    }).pipe(Effect.provide(helperLayer({ exitCode: 2 }))),
+    }).pipe(Effect.provide(layerHelper({ exitCode: 2 }))),
   );
 });
 
@@ -320,7 +320,7 @@ describe("Windows Chromium secrets", () => {
       expect(captured?.args.join(" ")).not.toContain(wrapped.toString("base64"));
     }).pipe(
       Effect.provide(
-        helperLayer({ stdout: key.toString("base64"), capture: (value) => (captured = value) }),
+        layerHelper({ stdout: key.toString("base64"), capture: (value) => (captured = value) }),
       ),
       Effect.provideService(HostProcessEnvironment, { SystemRoot: "C:\\Windows" }),
     );

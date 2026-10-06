@@ -106,7 +106,7 @@ const makeRequest = Effect.gen(function* () {
   };
 });
 
-function testLayer(input?: {
+function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
@@ -167,7 +167,7 @@ describe("EnvironmentLinker", () => {
       expect(persistedEnvironmentId).toBe(payload.environmentId);
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: (input) =>
             Effect.sync(() => {
               persistedEnvironmentId = input.proof.environmentId;
@@ -236,7 +236,7 @@ describe("EnvironmentLinker", () => {
       expect(deprovisionedEnvironmentId).toBe("env-link-test");
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: (input) =>
             Effect.sync(() => {
               persistedEndpoint = input.endpoint.httpBaseUrl;
@@ -277,7 +277,7 @@ describe("EnvironmentLinker", () => {
       expect(persisted).toBe(false);
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: () =>
             Effect.sync(() => {
               persisted = true;
@@ -304,6 +304,6 @@ describe("EnvironmentLinker", () => {
           });
         }
       }
-    }).pipe(Effect.provide(testLayer({ consume: () => Effect.succeed(false) }))),
+    }).pipe(Effect.provide(layerTest({ consume: () => Effect.succeed(false) }))),
   );
 });

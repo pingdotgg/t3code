@@ -211,7 +211,7 @@ const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
 
-function makeTestLayer(input: {
+function layerTest(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
@@ -466,7 +466,7 @@ describe("DesktopWindow", () => {
         focusedContents: unknown;
       }>();
       const copiedTexts: string[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: host.window,
         createCount: yield* Ref.make(0),
         mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
@@ -619,7 +619,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -653,7 +653,7 @@ describe("DesktopWindow", () => {
         const fakeWindow = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-        const layer = makeTestLayer({
+        const layer = layerTest({
           window: fakeWindow.window,
           createCount,
           mainWindow,
@@ -682,7 +682,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -728,7 +728,7 @@ describe("DesktopWindow", () => {
       const send = vi.spyOn(fakeWindow.window.webContents, "send");
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
@@ -755,7 +755,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const previewZoomReapplies: number[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -787,7 +787,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
@@ -821,7 +821,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -849,7 +849,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -883,7 +883,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -910,7 +910,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -953,7 +953,7 @@ describe("DesktopWindow", () => {
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
       const mainWindowMaximizedUpdates: boolean[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -987,7 +987,7 @@ describe("DesktopWindow", () => {
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
       const mainWindowMaximizedUpdates: boolean[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1024,7 +1024,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1054,7 +1054,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1096,7 +1096,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1132,7 +1132,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1180,7 +1180,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1218,7 +1218,7 @@ describe("DesktopWindow", () => {
       const writeStarted = yield* Deferred.make<void>();
       const allowWrite = yield* Deferred.make<void>();
       const flushCompleted = yield* Deferred.make<void>();
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1270,7 +1270,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1301,7 +1301,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1369,7 +1369,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const openedExternalUrls: unknown[] = [];
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1515,7 +1515,7 @@ describe("DesktopWindow", () => {
       });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1550,7 +1550,7 @@ describe("DesktopWindow", () => {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
+      const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
@@ -1596,7 +1596,7 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const onReveal = vi.fn();
-      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow, onReveal });
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow, onReveal });
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
@@ -1620,7 +1620,7 @@ describe("DesktopWindow", () => {
         Option.some(fakeWindow.window),
       );
       const onReveal = vi.fn();
-      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow, onReveal });
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow, onReveal });
       vi.mocked(fakeWindow.window.webContents.isLoadingMainFrame).mockReturnValue(true);
 
       yield* Effect.gen(function* () {

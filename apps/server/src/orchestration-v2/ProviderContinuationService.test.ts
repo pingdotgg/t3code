@@ -88,7 +88,7 @@ const makeGuard = Effect.fnUntraced(function* (completed?: Deferred.Deferred<voi
   };
 });
 
-function testLayer(input: {
+function layerTest(input: {
   readonly dispatched: Queue.Queue<unknown>;
   readonly getThreadRecords: () => Effect.Effect<OrchestrationV2ThreadProjection>;
 }) {
@@ -147,7 +147,7 @@ describe("ProviderContinuationService", () => {
         assert.equal(command.delegatedCompletion.taskIds.length, 2);
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(recovered) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(recovered) }),
         ),
         Effect.scoped,
       );
@@ -173,7 +173,7 @@ describe("ProviderContinuationService", () => {
         });
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
         ),
         Effect.scoped,
       );
@@ -215,7 +215,7 @@ describe("ProviderContinuationService", () => {
         });
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
         ),
         Effect.scoped,
       );
@@ -264,7 +264,7 @@ describe("ProviderContinuationService", () => {
         assert.include(command.text, "task_status");
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () => Effect.succeed(delegatedProjection()),
           }),
@@ -533,7 +533,7 @@ describe("ProviderContinuationService", () => {
         assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () => Effect.succeed(delegatedProjection()),
           }),
@@ -568,7 +568,7 @@ describe("ProviderContinuationService", () => {
             assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
           }).pipe(
             Effect.provide(
-              testLayer({
+              layerTest({
                 dispatched,
                 getThreadRecords: () => Effect.succeed(delegatedProjection(disposition)),
               }),
@@ -602,7 +602,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () =>
               Effect.succeed({
@@ -639,7 +639,7 @@ describe("ProviderContinuationService", () => {
           assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
         }).pipe(
           Effect.provide(
-            testLayer({
+            layerTest({
               dispatched,
               getThreadRecords: () =>
                 Effect.succeed({
@@ -668,7 +668,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
         ),
         Effect.scoped,
       );
@@ -687,7 +687,7 @@ describe("ProviderContinuationService", () => {
         });
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
         ),
         Effect.scoped,
       );
@@ -708,7 +708,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
         ),
         Effect.scoped,
       );
@@ -733,7 +733,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () =>
               Deferred.succeed(projectionEntered, undefined).pipe(
@@ -768,7 +768,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () => {
               projectionCalls += 1;
@@ -803,7 +803,7 @@ describe("ProviderContinuationService", () => {
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             dispatched,
             getThreadRecords: () =>
               Effect.succeed({

@@ -124,7 +124,7 @@ function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
-export function makeRelayClientTracingLayer(
+export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
 ): Layer.Layer<never, never, HttpClient.HttpClient> {

@@ -26,9 +26,7 @@ const layerSetup = Layer.effectDiscard(
   }),
 );
 
-export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(function* (
-  dbPath: string,
-) {
+export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
@@ -54,6 +52,6 @@ export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig.ServerConfig;
     yield* initializeV2Database(dbPath);
-    return makeSqlitePersistenceLive(dbPath);
+    return layerFromPath(dbPath);
   }),
 );

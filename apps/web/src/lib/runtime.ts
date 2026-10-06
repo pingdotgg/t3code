@@ -3,13 +3,13 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import * as RelayTracing from "@t3tools/shared/relayTracing";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 
 import * as Dpop from "../cloud/dpop";
-import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
+import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
 import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
 import * as ClientTracer from "../observability/clientTracer";
 
@@ -17,8 +17,8 @@ function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
-const layerHttpClient = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
-const layerRelayTracing = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
+const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
+const layerRelayTracing = RelayTracing.layer(resolveRelayTracingConfig(), {
   serviceName: "t3code-web",
   serviceVersion: import.meta.env.APP_VERSION,
   runtime: "browser",
@@ -31,7 +31,7 @@ type RuntimeLayerSource =
   | typeof Socket.layerWebSocketConstructorGlobal
   | typeof layerRelayTracing
   | typeof ClientTracer.layer
-  | ReturnType<typeof managedRelayClientLayer>;
+  | ReturnType<typeof ManagedRelayLayer.layer>;
 
 const primaryHttpRuntime = ManagedRuntime.make(
   PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(PrimaryEnvironmentHttpLayer.layer)),
@@ -60,7 +60,7 @@ const layerRuntime = Layer.mergeAll(
   Socket.layerWebSocketConstructorGlobal,
   ClientTracer.layer,
   layerRelayTracing,
-  managedRelayClientLayer(configuredRelayUrl()).pipe(
+  ManagedRelayLayer.layer(configuredRelayUrl()).pipe(
     Layer.provide(Layer.mergeAll(layerHttpClient, Dpop.layer)),
   ),
 );

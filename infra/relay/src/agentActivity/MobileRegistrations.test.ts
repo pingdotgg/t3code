@@ -153,7 +153,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointNamespace: undefined,
 });
 
-function makeRegistrationReplayLayer(input: {
+function layerRegistrationReplay(input: {
   readonly devices: Devices.Devices["Service"];
   readonly liveActivities: LiveActivities.LiveActivities["Service"];
   readonly queuedJobs: Array<SignedApnsDeliveryJob>;
@@ -490,7 +490,7 @@ describe("MobileRegistrations", () => {
         expect(registeredDevices).toHaveLength(1);
         expect(queuedStarts).toEqual([]);
         expect(queuedJobs).toEqual([]);
-      }).pipe(Effect.provide(makeRegistrationReplayLayer({ devices, liveActivities, queuedJobs })));
+      }).pipe(Effect.provide(layerRegistrationReplay({ devices, liveActivities, queuedJobs })));
     },
   );
 });

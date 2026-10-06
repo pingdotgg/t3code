@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/http";
 
 import * as MobileStorage from "../../persistence/mobile-storage";
@@ -71,8 +71,8 @@ const layerTestDpopSigner = Layer.succeed(
   }),
 );
 
-function cloudClientLayer() {
-  const layerHttpClient = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
+function layerCloudClient() {
+  const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     layerHttpClient,
     Layer.succeed(
@@ -106,7 +106,7 @@ const withCloudServices = <A, E>(
     | ManagedRelay.ManagedRelayDpopSigner
     | MobileStorage.MobileStorage
   >,
-) => effect.pipe(Effect.provide(cloudClientLayer()));
+) => effect.pipe(Effect.provide(layerCloudClient()));
 
 function validLinkProof() {
   return "signed-environment-link-jwt";

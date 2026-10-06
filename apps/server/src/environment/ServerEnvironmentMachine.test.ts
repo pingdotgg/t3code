@@ -33,7 +33,7 @@ const processOutput = (stdout: string, code = 0) =>
     stderrInvalidUtf8: false,
   });
 
-const dmiFileSystem = (files: Readonly<Record<string, string>>) =>
+const layerDmiFileSystem = (files: Readonly<Record<string, string>>) =>
   FileSystem.layerNoop({
     readFileString: (path) => {
       const name = path.slice(path.lastIndexOf("/") + 1);
@@ -188,7 +188,7 @@ describe("detectServerEnvironmentMachineKind", () => {
         Effect.provide(
           withPlatform(
             "linux",
-            dmiFileSystem({
+            layerDmiFileSystem({
               chassis_type: "3\n",
               sys_vendor: "GMKtec\n",
               product_name: "NucBox K8 Plus\n",
@@ -208,7 +208,7 @@ describe("detectServerEnvironmentMachineKind", () => {
         Effect.provide(
           withPlatform(
             "linux",
-            dmiFileSystem({
+            layerDmiFileSystem({
               osrelease: "5.15.153.1-microsoft-standard-WSL2\n",
               chassis_type: "3\n",
               sys_vendor: "Microsoft Corporation\n",
@@ -225,7 +225,7 @@ describe("detectServerEnvironmentMachineKind", () => {
   it.effect("returns null on Linux without DMI (containers, ARM boards)", () =>
     Effect.gen(function* () {
       const result = yield* detectServerEnvironmentMachineKind().pipe(
-        Effect.provide(withPlatform("linux", dmiFileSystem({}))),
+        Effect.provide(withPlatform("linux", layerDmiFileSystem({}))),
       );
 
       expect(result).toBeNull();

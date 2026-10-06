@@ -30,7 +30,7 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 // example one T3 installed under <T3 home>/tools/chrome-headless-shell.
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
-const htmlRenderLayer = (
+const layerHtmlRender = (
   executable?: string,
   installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
     Option.fromUndefinedOr(executable),
@@ -52,7 +52,7 @@ const htmlRenderLayer = (
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
     Layer.provideMerge(NodeServices.layer),
   );
-const layerTest = htmlRenderLayer();
+const layerTest = layerHtmlRender();
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -225,7 +225,7 @@ describe("HtmlRender", () => {
         expect(yield* storedPages).toEqual([]);
       }).pipe(
         Effect.provide(
-          htmlRenderLayer(
+          layerHtmlRender(
             undefined,
             Deferred.succeed(measuring, undefined).pipe(Effect.andThen(Effect.never)),
           ),
@@ -283,7 +283,7 @@ describe("HtmlRender", () => {
               },
             ]),
           );
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );
@@ -314,7 +314,7 @@ describe("HtmlRender", () => {
           const texts = preview.consoleMessages.map((message) => message.text);
           expect(texts).toContain("secret: none");
           expect(texts.join(" ")).not.toContain("abc123");
-        }).pipe(Effect.scoped, Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );
@@ -370,7 +370,7 @@ describe("HtmlRender", () => {
               `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
             ].join(""),
           });
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
         expect(requests).toEqual([]);
         expect(datagrams).toEqual([]);
       }).pipe(Effect.scoped),
@@ -396,7 +396,7 @@ describe("HtmlRender", () => {
           expect(reference.heights).toEqual(
             HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
           );
-        }).pipe(Effect.provide(htmlRenderLayer(executable)));
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
   );
