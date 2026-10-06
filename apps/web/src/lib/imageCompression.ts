@@ -143,33 +143,27 @@ async function validateHeicImageDimensions(
   return foundImageDimensions ? null : "unreadable";
 }
 
-/** Chunked so a large image can't blow the argument limit of `fromCharCode`. */
-const BASE64_CHUNK_SIZE = 0x8000;
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_SIZE) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + BASE64_CHUNK_SIZE));
-  }
-  return btoa(binary);
+export function readFileAsDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Could not read image data."));
+    });
+    reader.addEventListener("error", () => {
+      reject(reader.error ?? new Error("Failed to read image."));
+    });
+    reader.readAsDataURL(file);
+  });
 }
 
-/**
- * Blob → base64 data URL. Uses `arrayBuffer()` rather than `FileReader` so
- * the module works anywhere `Blob` does (including non-DOM test runners).
- */
-async function blobToDataUrl(blob: File | Blob, mimeTypeOverride?: string): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const mimeType = mimeTypeOverride || blob.type || "application/octet-stream";
-  return `data:${mimeType};base64,${bytesToBase64(new Uint8Array(buffer))}`;
-}
-
-/** Approximate decoded byte count for a base64 data URL. */
-function dataUrlByteLength(dataUrl: string): number {
-  const commaIndex = dataUrl.indexOf(",");
-  const payload = commaIndex === -1 ? dataUrl : dataUrl.slice(commaIndex + 1);
-  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
+function dataUrlLength(blob: Blob): number {
+  return (
+    `data:${blob.type || "application/octet-stream"};base64,`.length + 4 * Math.ceil(blob.size / 3)
+  );
 }
 
 /** Base64 payload of a data URL decoded back into a `File`. */
@@ -232,19 +226,14 @@ async function encodeCanvas(
   canvas: OffscreenCanvas | HTMLCanvasElement,
   quality: number,
   mimeType: string,
-  budgetChars: number,
-): Promise<{ dataUrl: string | null; mimeType: string } | null> {
+): Promise<Blob | null> {
+  let blob: Blob | null;
   if (typeof HTMLCanvasElement !== "undefined" && canvas instanceof HTMLCanvasElement) {
-    const dataUrl = canvas.toDataURL(mimeType, quality);
-    // toDataURL silently returns a PNG when the requested type is unsupported.
-    if (!dataUrl.startsWith(`data:${mimeType}`)) return null;
-    return { dataUrl: dataUrl.length <= budgetChars ? dataUrl : null, mimeType };
+    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
+  } else {
+    blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
   }
-  const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
-  if (blob.type && blob.type !== mimeType) return null;
-  const dataUrlLength = `data:${mimeType};base64,`.length + 4 * Math.ceil(blob.size / 3);
-  if (dataUrlLength > budgetChars) return { dataUrl: null, mimeType };
-  return { dataUrl: await blobToDataUrl(blob, mimeType), mimeType };
+  return blob?.type === mimeType ? blob : null;
 }
 
 const composerThumbnails = new WeakMap<File, Promise<string | null>>();
@@ -274,10 +263,8 @@ export function createComposerImageThumbnail(file: File): Promise<string | null>
         dimension,
         dimension,
       );
-      return (
-        (await encodeCanvas(surface.canvas, 1, "image/png", Number.POSITIVE_INFINITY))?.dataUrl ??
-        null
-      );
+      const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+      return blob ? await readFileAsDataUrl(blob) : null;
     } catch {
       return null;
     } finally {
@@ -297,7 +284,7 @@ async function encodeWithinBudget(
   maxDimension: number,
   budgetChars: number,
   preferredMimeType?: "image/jpeg",
-): Promise<{ dataUrl: string; mimeType: string; imageSize: ImageSize } | null> {
+): Promise<{ blob: Blob; mimeType: string; imageSize: ImageSize } | null> {
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
@@ -308,7 +295,7 @@ async function encodeWithinBudget(
   // happen before drawing and depends on which codec we end up using.
   const mimeType =
     preferredMimeType ??
-    ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp", 0))
+    ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp"))
       ? "image/webp"
       : "image/jpeg");
 
@@ -319,17 +306,17 @@ async function encodeWithinBudget(
   target.context.drawImage(bitmap, 0, 0, width, height);
 
   for (const quality of QUALITY_STEPS) {
-    const encoded = await encodeCanvas(target.canvas, quality, mimeType, budgetChars);
+    const encoded = await encodeCanvas(target.canvas, quality, mimeType);
     if (!encoded) break;
-    if (encoded.dataUrl !== null) {
-      return { dataUrl: encoded.dataUrl, mimeType: encoded.mimeType, imageSize: { width, height } };
+    if (dataUrlLength(encoded) <= budgetChars) {
+      return { blob: encoded, mimeType, imageSize: { width, height } };
     }
   }
   return null;
 }
 
 type ReencodeResult =
-  | { ok: true; dataUrl: string; mimeType: string; imageSize: ImageSize }
+  | { ok: true; blob: Blob; mimeType: string; imageSize: ImageSize }
   | { ok: false; reason: ImageCompressionFailureReason };
 
 /**
@@ -378,10 +365,10 @@ async function reencodeWithinBudget(
         continue;
       }
       encodeFailed = false;
-      if (encoded && encoded.dataUrl.length <= budgetChars) {
+      if (encoded) {
         return {
           ok: true,
-          dataUrl: encoded.dataUrl,
+          blob: encoded.blob,
           mimeType: encoded.mimeType,
           imageSize: encoded.imageSize,
         };
@@ -405,37 +392,35 @@ export async function compressImageForStash(
   file: File,
   budgetChars: number = MAX_STASH_IMAGE_DATA_URL_CHARS,
 ): Promise<CompressStashImageResult> {
-  let originalDataUrl: string;
   try {
-    originalDataUrl = await blobToDataUrl(file);
-  } catch {
-    return { ok: false, reason: "unreadable" };
-  }
-  if (originalDataUrl.length <= budgetChars) {
+    if (dataUrlLength(file) <= budgetChars) {
+      return {
+        ok: true,
+        image: {
+          dataUrl: await readFileAsDataUrl(file),
+          mimeType: file.type,
+          sizeBytes: file.size,
+          recompressed: false,
+        },
+      };
+    }
+    const reencoded = await reencodeWithinBudget(file, budgetChars);
+    if (!reencoded.ok) {
+      return reencoded;
+    }
     return {
       ok: true,
       image: {
-        dataUrl: originalDataUrl,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        recompressed: false,
+        dataUrl: await readFileAsDataUrl(reencoded.blob),
+        mimeType: reencoded.mimeType,
+        sizeBytes: reencoded.blob.size,
+        recompressed: true,
+        imageSize: reencoded.imageSize,
       },
     };
+  } catch {
+    return { ok: false, reason: "unreadable" };
   }
-  const reencoded = await reencodeWithinBudget(file, budgetChars);
-  if (!reencoded.ok) {
-    return reencoded;
-  }
-  return {
-    ok: true,
-    image: {
-      dataUrl: reencoded.dataUrl,
-      mimeType: reencoded.mimeType,
-      sizeBytes: dataUrlByteLength(reencoded.dataUrl),
-      recompressed: true,
-      imageSize: reencoded.imageSize,
-    },
-  };
 }
 
 /**
@@ -468,10 +453,10 @@ export async function compressImageToByteLimit(
   }
   return {
     ok: true,
-    file: dataUrlToFile(
-      reencoded.dataUrl,
+    file: new File(
+      [reencoded.blob],
       fileNameForMimeType(file.name || "image", reencoded.mimeType),
-      reencoded.mimeType,
+      { type: reencoded.mimeType },
     ),
     recompressed: true,
     imageSize: reencoded.imageSize,

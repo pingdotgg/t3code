@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createComposerImageThumbnail,
@@ -33,6 +33,26 @@ vi.mock("heic-to/csp", () => ({
 
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalOffscreenCanvas = globalThis.OffscreenCanvas;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "FileReader",
+    class extends EventTarget {
+      result: string | null = null;
+      error: unknown = null;
+      async readAsDataURL(blob: Blob) {
+        try {
+          const bytes = await blob.arrayBuffer();
+          this.result = `data:${blob.type || "application/octet-stream"};base64,${Buffer.from(bytes).toString("base64")}`;
+          this.dispatchEvent(new Event("load"));
+        } catch (error) {
+          this.error = error;
+          this.dispatchEvent(new Event("error"));
+        }
+      }
+    },
+  );
+});
 
 function makeFile(sizeBytes: number, type = "image/png"): File {
   return new File([new Uint8Array(sizeBytes).fill(7)], "shot.png", { type });
@@ -85,7 +105,7 @@ function makeHeicFile(options?: {
  */
 function stubCanvasPipeline(
   sizeForQuality: (quality: number) => number,
-  options?: { supportsWebp?: boolean },
+  options?: { supportsWebp?: boolean; htmlCanvas?: boolean },
 ) {
   const supportsWebp = options?.supportsWebp ?? true;
   const close = vi.fn();
@@ -114,6 +134,17 @@ function stubCanvasPipeline(
       }
     },
   );
+  if (options?.htmlCanvas) {
+    const Canvas = globalThis.OffscreenCanvas;
+    class HtmlCanvas extends Canvas {
+      toBlob(callback: BlobCallback, type: string, quality: number) {
+        void this.convertToBlob({ type, quality }).then(callback);
+      }
+    }
+    vi.stubGlobal("OffscreenCanvas", undefined);
+    vi.stubGlobal("HTMLCanvasElement", HtmlCanvas);
+    vi.stubGlobal("document", { createElement: () => new HtmlCanvas(0, 0) });
+  }
   return { close, fillRect };
 }
 
@@ -194,6 +225,51 @@ describe("dataUrlToFile", () => {
 });
 
 describe("compressImageForStash", () => {
+  it.each([true, false])(
+    "encodes with HTML canvas when WebP support is %s",
+    async (supportsWebp) => {
+      const { close } = stubCanvasPipeline(() => 120_000, { htmlCanvas: true, supportsWebp });
+
+      const result = await compressImageToByteLimit(makeFile(2_000_000), 1_000_000);
+
+      expect(result.ok && result.file.type).toBe(supportsWebp ? "image/webp" : "image/jpeg");
+      expect(result.ok && result.file.size).toBe(120_000);
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps the exact data URL budget boundary and original bytes", async () => {
+    const original = makeFile(3);
+    const dataUrl = "data:image/png;base64,BwcH";
+
+    const result = await compressImageForStash(original, dataUrl.length);
+
+    expect(result.ok && result.image.dataUrl).toBe(dataUrl);
+    expect(result.ok && result.image.recompressed).toBe(false);
+    expect(await compressImageForStash(original, dataUrl.length - 1)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+  });
+
+  it("reports unreadable if reading a small image fails", async () => {
+    const original = makeFile(3);
+    vi.spyOn(original, "arrayBuffer").mockRejectedValue(new Error("read failed"));
+
+    expect(await compressImageForStash(original)).toEqual({ ok: false, reason: "unreadable" });
+  });
+
+  it("compresses an oversized source before reading it as a data URL", async () => {
+    stubCanvasPipeline(() => 120_000);
+    const original = makeFile(4_000_000);
+    const read = vi.spyOn(original, "arrayBuffer").mockRejectedValue(new Error("unneeded read"));
+
+    const result = await compressImageForStash(original);
+
+    expect(result.ok && result.image.recompressed).toBe(true);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("stores a small image verbatim without re-encoding", async () => {
     const bitmapSpy = vi.fn();
     vi.stubGlobal("createImageBitmap", bitmapSpy);
