@@ -293,6 +293,20 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
+describe("T3 shell developer instructions", () => {
+  it("keeps shell use bounded in both collaboration modes", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /git status once per turn/);
+      NodeAssert.match(instructions, /gh auth token/);
+      NodeAssert.match(instructions, /Start dev servers in the background/);
+      NodeAssert.match(instructions, /Do not poll with sleep/);
+    }
+  });
+});
+
 describe("T3 browser developer instructions", () => {
   it("prefers the product-native preview tools in both collaboration modes", () => {
     for (const instructions of [
