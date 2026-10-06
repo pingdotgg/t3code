@@ -581,9 +581,14 @@ export const isPreviewEditingShortcut = (
   const isMac = platform === "darwin";
   if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
 
-  const key = input.key.toLowerCase();
-  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
-  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
+  // `key` follows the keyboard layout, so a non-Latin layout reports its own letter
+  // (Hebrew ב for Cmd+C), and Option turns macOS Paste and Match Style into a symbol
+  // (◊). Use the physical key then. A Latin `key` wins so remapped layouts such as
+  // Dvorak keep their own letters.
+  const reportedKey = input.key.toLowerCase();
+  const key = /^[a-z]$/.test(reportedKey)
+    ? reportedKey
+    : (/^Key([A-Z])$/.exec(input.code)?.[1]?.toLowerCase() ?? reportedKey);
   if (key === "v" && input.shift) return input.alt === isMac;
   if (input.alt) return false;
   if (key === "z") return !input.shift || platform !== "win32";

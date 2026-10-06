@@ -135,6 +135,38 @@ describe("isPreviewEditingShortcut", () => {
       ).toBe(false);
     }
   });
+
+  it.each(["darwin", "linux", "win32"] as const)(
+    "recognizes editing chords by physical key on a non-Latin layout on %s",
+    (platform) => {
+      for (const [key, code] of [
+        ["ש", "KeyA"],
+        ["ב", "KeyC"],
+        ["ה", "KeyV"],
+        ["ס", "KeyX"],
+        ["ז", "KeyZ"],
+        ["с", "KeyC"],
+        ["м", "KeyV"],
+      ] as const) {
+        expect(
+          PreviewManager.isPreviewEditingShortcut(input(platform, key, { code }), platform),
+        ).toBe(true);
+      }
+      expect(
+        PreviewManager.isPreviewEditingShortcut(input(platform, "ל", { code: "KeyK" }), platform),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps the layout's Latin letter when it differs from the physical key", () => {
+    // Dvorak: the key labelled C sits where QWERTY has I.
+    expect(
+      PreviewManager.isPreviewEditingShortcut(input("darwin", "c", { code: "KeyI" }), "darwin"),
+    ).toBe(true);
+    expect(
+      PreviewManager.isPreviewEditingShortcut(input("darwin", "j", { code: "KeyC" }), "darwin"),
+    ).toBe(false);
+  });
 });
 
 describe("previewWindowOpenAction", () => {
