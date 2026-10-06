@@ -4794,6 +4794,14 @@ export default function Sidebar() {
   // for multi-project setups.
   const handleNewThreadClick = useCallback(
     (event?: ReactMouseEvent) => {
+      // A scoped sidebar already names the project. Shift+click still means
+      // the current project, below.
+      const scopedProjectRef = newThreadContext.scopedNewThreadProjectRef;
+      if (scopedProjectRef && !event?.shiftKey) {
+        if (isMobile) setOpenMobile(false);
+        void newThreadContext.handleNewThread(scopedProjectRef);
+        return;
+      }
       // One project: nothing to pick, create immediately. Shift+click creates
       // directly in the current project even with several projects, skipping
       // the palette picker.

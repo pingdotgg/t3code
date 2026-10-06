@@ -83,6 +83,30 @@ export function resolveThreadActionProjectRef(
   return context.defaultProjectRef;
 }
 
+// New chat from a scoped sidebar lands in the scoped project, so the thread
+// shows up in the list the user is looking at. The viewed project wins only
+// when it is a member of the scope, which keeps the viewed thread's machine.
+export function resolveScopedNewThreadProjectRef(
+  context: Pick<ChatThreadActionContext, "activeDraftThread" | "activeThread">,
+  scope: {
+    readonly representative: { readonly environmentId: EnvironmentId; readonly id: ProjectId };
+    readonly memberProjectRefs: readonly ScopedProjectRef[];
+  },
+): ScopedProjectRef {
+  const current = context.activeThread ?? context.activeDraftThread;
+  if (
+    current &&
+    scope.memberProjectRefs.some(
+      (projectRef) =>
+        projectRef.environmentId === current.environmentId &&
+        projectRef.projectId === current.projectId,
+    )
+  ) {
+    return scopeProjectRef(current.environmentId, current.projectId);
+  }
+  return scopeProjectRef(scope.representative.environmentId, scope.representative.id);
+}
+
 // New threads inherit only the *project* from the current context. Branch,
 // worktree, and env mode always come from the user's configured defaults —
 // carrying them over from the viewed thread meant "new thread" silently

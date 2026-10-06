@@ -31,8 +31,14 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    scopedNewThreadProjectRef,
+    handleNewThread,
+    routeThreadRef,
+  } = useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -121,6 +127,11 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
+        // A scoped sidebar already names the project, so there is nothing to pick.
+        if (scopedNewThreadProjectRef) {
+          void handleNewThread(scopedNewThreadProjectRef);
+          return;
+        }
         // The default sidebar routes creation through the command palette
         // whenever there is a real choice to make; the legacy sidebar (and
         // single-project setups) keep the immediate contextual create.
@@ -196,6 +207,7 @@ function ChatRouteGlobalShortcuts() {
     primaryEnvironmentId,
     projectGroupCount,
     routeThreadRef,
+    scopedNewThreadProjectRef,
     scratchEnvironmentId,
     selectedThreadKeysSize,
     startScratchThread,
