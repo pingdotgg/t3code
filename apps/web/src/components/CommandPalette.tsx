@@ -55,6 +55,7 @@ import {
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
+  Maximize2Icon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
@@ -125,11 +126,15 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import { dispatchToggleRightPanelMaximized } from "../rightPanelActionBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   PULL_REQUESTS_PANEL_REF,
   selectActiveRightPanel,
+  selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
@@ -739,6 +744,15 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const panelThreadRef = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : activeDraftThread
+      ? scopeThreadRef(activeDraftThread.environmentId, activeDraftThread.threadId)
+      : null;
+  const rightPanelOpen = useRightPanelStore(
+    (state) => selectThreadRightPanelState(state.byThreadKey, panelThreadRef).isOpen,
+  );
+  const rightPanelUsesSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1879,6 +1893,20 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  if (panelThreadRef !== null && rightPanelOpen && !rightPanelUsesSheet) {
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-right-panel-maximized",
+      searchTerms: ["maximize", "restore", "panel", "size", "expand"],
+      title: "Toggle right panel maximized",
+      icon: <Maximize2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "rightPanel.toggleMaximized",
+      run: async () => {
+        dispatchToggleRightPanelMaximized();
+      },
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

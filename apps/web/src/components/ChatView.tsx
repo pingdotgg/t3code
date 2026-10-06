@@ -260,6 +260,7 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
+import { onToggleRightPanelMaximized } from "../rightPanelActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
@@ -5821,6 +5822,10 @@ export default function ChatView(props: ChatViewProps) {
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
   }, [canMaximizeRightPanel, routeThreadKey]);
+  useEffect(
+    () => onToggleRightPanelMaximized(toggleRightPanelMaximized),
+    [toggleRightPanelMaximized],
+  );
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -7824,6 +7829,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.toggleMaximized") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) toggleRightPanelMaximized();
+        return;
+      }
+
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
@@ -8015,6 +8027,7 @@ export default function ChatView(props: ChatViewProps) {
     copyActiveThreadReference,
     getShortcutContext,
     toggleRightPanel,
+    toggleRightPanelMaximized,
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -10863,6 +10876,7 @@ export default function ChatView(props: ChatViewProps) {
         >
           <RightPanelMaximizeControl
             maximized={rightPanelMaximized}
+            shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
             onToggle={toggleRightPanelMaximized}
           />
         </span>

@@ -120,6 +120,11 @@ a shortcut.
 
 ## Commands with special behavior
 
+Assign `rightPanel.toggleMaximized` in **Settings → Keybindings** to maximize or
+restore the open right panel. It has no default shortcut and is also available
+in the command palette. It does nothing when the panel is closed or displayed
+as a sheet on a narrow screen.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
