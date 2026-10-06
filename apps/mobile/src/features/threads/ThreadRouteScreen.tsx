@@ -722,7 +722,12 @@ function ThreadRouteContent(
         hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
       });
 
-      if (isCloudThread || !selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (
+        isCloudThread ||
+        !localWorkspaceEnabled ||
+        !selectedThread ||
+        !selectedThreadProject?.workspaceRoot
+      ) {
         return;
       }
 
@@ -732,7 +737,13 @@ function ThreadRouteContent(
         ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
       });
     },
-    [isCloudThread, navigation, selectedThread, selectedThreadProject?.workspaceRoot],
+    [
+      isCloudThread,
+      localWorkspaceEnabled,
+      navigation,
+      selectedThread,
+      selectedThreadProject?.workspaceRoot,
+    ],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
@@ -742,7 +753,12 @@ function ThreadRouteContent(
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
-    if (isCloudThread || !selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (
+      isCloudThread ||
+      !localWorkspaceEnabled ||
+      !selectedThread ||
+      !selectedThreadProject?.workspaceRoot
+    ) {
       return;
     }
 
@@ -756,6 +772,7 @@ function ThreadRouteContent(
     });
   }, [
     isCloudThread,
+    localWorkspaceEnabled,
     navigation,
     selectedThread,
     selectedThreadProject?.workspaceRoot,
@@ -859,7 +876,8 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenTerminal:
+      !isCloudThread && localWorkspaceEnabled && Boolean(selectedThreadProject?.workspaceRoot),
     canOpenFiles: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
     projectScripts: selectedThreadProject
       ? resolveProjectScripts(
@@ -1134,7 +1152,9 @@ function ThreadRouteContent(
         usesNativeHeaderGlass={usesNativeHeaderGlass}
         gitControls={threadGitControlProps}
         hasThreadCwd={!isCloudThread && selectedThreadCwd !== null}
-        hasWorkspaceRoot={!isCloudThread && Boolean(selectedThreadProject?.workspaceRoot)}
+        hasWorkspaceRoot={
+          !isCloudThread && localWorkspaceEnabled && Boolean(selectedThreadProject?.workspaceRoot)
+        }
         fileInspectorSupported={!isCloudThread && fileInspector.supported}
         inspectorMode={inspectorMode}
         onToggleInspector={handleToggleInspector}
