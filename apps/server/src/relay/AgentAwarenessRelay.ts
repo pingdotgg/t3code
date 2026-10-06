@@ -88,15 +88,18 @@ export function shouldPublishAgentAwarenessEvent(
     return false;
   }
   // projectThreadAwarenessV2 reads thread metadata, run status, pending requests,
-  // and pending background work (a finished subagent, a cleared roster, or an
-  // ended background item can release a held completion). Message bodies and
-  // tool progress cannot change the published activity.
+  // pending background work (a finished subagent, a cleared roster, or an
+  // ended background item can release a held completion), and settlement
+  // (settling a finished thread removes it). Unsettling is not published: the
+  // row is already gone, and its fresh updatedAt would re-alert Done. Message
+  // bodies and tool progress cannot change the published activity.
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
     case "thread.metadata-updated":
+    case "thread.settled":
     case "thread.pull-request-synced":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
@@ -106,7 +109,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "subagent.updated":
     case "provider-thread.updated":
       return true;
-    case "thread.settled":
     case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":

@@ -28,6 +28,7 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
         | "lineage"
+        | "settledOverride"
       >
     > = {},
   ) => ({
@@ -41,6 +42,7 @@ describe("projectThreadAwarenessV2", () => {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     status: "running" as const,
     pendingRuntimeRequest: null,
+    settledOverride: null,
     updatedAt,
     ...overrides,
   });
@@ -74,6 +76,38 @@ describe("projectThreadAwarenessV2", () => {
       ).toBeNull();
     },
   );
+
+  it.each([
+    ["completed", null],
+    ["failed", null],
+    ["running", "running"],
+  ] as const)("projects a settled %s thread as %s", (status, phase) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ status, settledOverride: "settled" }),
+      })?.phase ?? null,
+    ).toBe(phase);
+  });
+
+  it("keeps a settled thread that is waiting on the user", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          settledOverride: "settled",
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-settled"),
+            kind: "user_input",
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toMatchObject({ phase: "waiting_for_input" });
+  });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
