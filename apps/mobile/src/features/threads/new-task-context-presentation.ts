@@ -59,6 +59,24 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
   };
 }
 
+export function resolveNewTaskBranchAfterWorkspaceModeChange(input: {
+  readonly mode: WorkspaceMode;
+  readonly previousMode: WorkspaceMode;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly localSelection: ReturnType<typeof resolveNewTaskLocalWorkspaceSelection>;
+}): string | null {
+  if (
+    input.previousMode === "local" &&
+    input.mode === "worktree" &&
+    input.branch === input.localSelection.branch &&
+    input.worktreePath === input.localSelection.worktreePath
+  ) {
+    return null;
+  }
+  return input.branch;
+}
+
 export function resolveNewTaskBranchLabel(input: {
   readonly branchName: string | null;
   readonly startFromOrigin: boolean;

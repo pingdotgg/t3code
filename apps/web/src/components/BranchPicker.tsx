@@ -266,6 +266,7 @@ export function BranchPickerRefItem({
   value,
   onClick,
   onContextMenu,
+  hint,
 }: {
   branch: VcsRef;
   projectCwd: string | null;
@@ -273,6 +274,7 @@ export function BranchPickerRefItem({
   value?: string;
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
+  hint?: string | null;
 }) {
   const itemValue = refName.name;
   const hasSecondaryWorktree =
@@ -297,6 +299,7 @@ export function BranchPickerRefItem({
     >
       <div className="flex w-full min-w-0 items-center justify-between gap-2">
         <MiddleTruncate value={itemValue} className="flex-1" />
+        {hint && <span className="shrink-0 text-3xs text-muted-foreground">{hint}</span>}
         {badge && <span className="shrink-0 text-3xs text-muted-foreground/45">{badge}</span>}
       </div>
     </ComboboxItem>

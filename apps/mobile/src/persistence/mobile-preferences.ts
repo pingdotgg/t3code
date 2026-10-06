@@ -17,6 +17,7 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
+  readonly lastWorktreeBaseBranchByProject?: Readonly<Record<string, string>>;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
@@ -93,6 +94,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    lastWorktreeBaseBranchByProject?: Readonly<Record<string, string>>;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
@@ -116,6 +118,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
   } = {};
+
+  if (
+    parsed.lastWorktreeBaseBranchByProject &&
+    typeof parsed.lastWorktreeBaseBranchByProject === "object" &&
+    !Array.isArray(parsed.lastWorktreeBaseBranchByProject)
+  ) {
+    preferences.lastWorktreeBaseBranchByProject = Object.fromEntries(
+      Object.entries(parsed.lastWorktreeBaseBranchByProject).filter(
+        ([, branch]) => typeof branch === "string" && branch.trim().length > 0,
+      ),
+    );
+  }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;

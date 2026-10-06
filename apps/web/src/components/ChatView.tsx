@@ -343,7 +343,10 @@ import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  resolveDraftBranchAfterEnvModeChange,
+  resolveNewDraftStartFromOrigin,
+} from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -10424,6 +10427,11 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
+          branch: resolveDraftBranchAfterEnvModeChange({
+            mode,
+            branch: draftThread?.branch ?? null,
+            environmentSelection: draftThread?.environmentSelection,
+          }),
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -10437,6 +10445,8 @@ export default function ChatView(props: ChatViewProps) {
       canOverrideServerThreadEnvMode,
       composerDraftTarget,
       draftThread?.worktreePath,
+      draftThread?.branch,
+      draftThread?.environmentSelection,
       isLocalDraftThread,
       multipleModelSelections,
       activeProjectSettings.settings.newWorktreesStartFromOrigin,

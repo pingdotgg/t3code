@@ -4,6 +4,7 @@ export interface VcsRefTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly query?: string | null;
+  readonly includeMatchingRemoteRefs?: boolean;
 }
 
 export type VcsRef = ContractVcsRef;

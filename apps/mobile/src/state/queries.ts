@@ -4,7 +4,6 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
   ProjectId,
-  ThreadId,
   VcsListRefsResult,
   VcsRef,
 } from "@t3tools/contracts";
@@ -196,7 +195,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
   const query = target.query?.trim() ?? "";
   const targetKey =
     target.environmentId !== null && target.cwd !== null
-      ? JSON.stringify([target.environmentId, target.cwd, query])
+      ? JSON.stringify([target.environmentId, target.cwd, query, target.includeMatchingRemoteRefs])
       : null;
   const [pagination, setPagination] = useState<{
     readonly targetKey: string | null;
@@ -215,13 +214,14 @@ export function usePaginatedBranches(target: VcsRefTarget) {
               input: {
                 cwd: target.cwd!,
                 ...(query.length > 0 ? { query } : {}),
+                ...(target.includeMatchingRemoteRefs ? { includeMatchingRemoteRefs: true } : {}),
                 ...(cursor === undefined ? {} : { cursor }),
                 limit: VCS_REF_LIST_LIMIT,
               },
             }),
           )
         : [],
-    [cursors, query, target.cwd, target.environmentId],
+    [cursors, query, target.cwd, target.environmentId, target.includeMatchingRemoteRefs],
   );
   const pagesAtom = useMemo(
     () =>

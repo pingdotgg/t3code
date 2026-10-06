@@ -10,6 +10,7 @@ import {
   resolveThreadActionProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
+  resolveDraftBranchAfterEnvModeChange,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,
   type ChatThreadActionContext,
@@ -100,6 +101,30 @@ describe("chatThreadActions", () => {
         newWorktreesStartFromOrigin: true,
       }),
     ).toBe(false);
+  });
+
+  it("clears an automatically synced checkout branch when switching to a new worktree", () => {
+    expect(
+      resolveDraftBranchAfterEnvModeChange({
+        mode: "worktree",
+        branch: "feature/current-checkout",
+        environmentSelection: "auto",
+      }),
+    ).toBeNull();
+    expect(
+      resolveDraftBranchAfterEnvModeChange({
+        mode: "worktree",
+        branch: "feature/chosen-base",
+        environmentSelection: "manual",
+      }),
+    ).toBe("feature/chosen-base");
+    expect(
+      resolveDraftBranchAfterEnvModeChange({
+        mode: "local",
+        branch: "feature/current-checkout",
+        environmentSelection: "auto",
+      }),
+    ).toBe("feature/current-checkout");
   });
 
   it("prefers the active thread project when resolving thread actions", () => {

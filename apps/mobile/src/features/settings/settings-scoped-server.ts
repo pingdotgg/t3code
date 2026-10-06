@@ -11,6 +11,7 @@ import {
   clearProjectSettingsOverrides,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
+import * as Equal from "effect/Equal";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 
@@ -19,6 +20,18 @@ export interface ScopedMobileSettingsTarget {
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
   readonly sources: ReturnType<typeof resolveProjectSettings>["sources"];
+}
+
+/** Compare decoded setting values across the selected environments. */
+export function mobileSettingsAreMixed(
+  targets: readonly Pick<ScopedMobileSettingsTarget, "settings">[],
+  key: keyof ServerSettings,
+): boolean {
+  const reference = targets[0];
+  return (
+    reference === undefined ||
+    targets.some((entry) => !Equal.equals(entry.settings[key], reference.settings[key]))
+  );
 }
 
 export function resolveMobileSettingsTargets(

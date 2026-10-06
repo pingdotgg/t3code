@@ -1,13 +1,14 @@
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text, AppTextInput } from "../../components/AppText";
 import {
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
   type ThreadEnvMode,
   type WorktreeSubmodules,
+  type WorktreeBaseRef,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
+  mobileSettingsAreMixed,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -47,7 +49,12 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
-  "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
+  "new-threads": [
+    "defaultThreadEnvMode",
+    "defaultWorktreeBaseRef",
+    "worktreeSubmodules",
+    "defaultRuntimeMode",
+  ],
   "source-control": [
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
@@ -157,9 +164,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const uniform = <K extends keyof ServerSettings>(key: K) =>
     uniformMobileSetting(displayTargets, key);
   // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
-  const isMixed = (key: keyof ServerSettings) =>
-    reference === null ||
-    displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+  const isMixed = (key: keyof ServerSettings) => mobileSettingsAreMixed(displayTargets, key);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "environment settings update",
     reportFailure: true,
@@ -274,6 +279,48 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         onPress={() => write({ defaultThreadEnvMode: choice.mode })}
                       />
                     ))}
+                  </SettingsSection>
+                  <SettingsSection title="Worktree base ref">
+                    <SettingsChoiceRow
+                      label="Repository default"
+                      description="Start from the repository's default branch."
+                      selected={
+                        !isMixed("defaultWorktreeBaseRef") &&
+                        uniform("defaultWorktreeBaseRef") === null
+                      }
+                      separated={false}
+                      disabled={disabledFor("defaultWorktreeBaseRef")}
+                      onPress={() => write({ defaultWorktreeBaseRef: null })}
+                    />
+                    <SettingsChoiceRow
+                      label="Last used"
+                      description="Reuse your last base in this project on this device."
+                      selected={
+                        !isMixed("defaultWorktreeBaseRef") &&
+                        uniform("defaultWorktreeBaseRef") !== null &&
+                        typeof uniform("defaultWorktreeBaseRef") === "object"
+                      }
+                      separated
+                      disabled={disabledFor("defaultWorktreeBaseRef")}
+                      onPress={() => write({ defaultWorktreeBaseRef: { mode: "last-used" } })}
+                    />
+                    <View className="gap-3 p-4">
+                      <Text className="text-sm text-foreground-muted">
+                        Or enter a specific branch, tag, or commit.
+                      </Text>
+                      <WorktreeBaseRefField
+                        key={JSON.stringify(
+                          targets.map((target) => [
+                            target.environment.environmentId,
+                            target.projectId,
+                          ]),
+                        )}
+                        value={uniform("defaultWorktreeBaseRef")}
+                        mixed={isMixed("defaultWorktreeBaseRef")}
+                        disabled={disabledFor("defaultWorktreeBaseRef")}
+                        onCommit={(value) => write({ defaultWorktreeBaseRef: value })}
+                      />
+                    </View>
                   </SettingsSection>
                   <SettingsSection
                     title="Worktree submodules"
@@ -480,5 +527,33 @@ function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
     >
       Mixed
     </Text>
+  );
+}
+
+function WorktreeBaseRefField(props: {
+  readonly value: WorktreeBaseRef;
+  readonly mixed: boolean;
+  readonly disabled: boolean;
+  readonly onCommit: (value: string | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <AppTextInput
+      accessibilityLabel="Worktree base ref"
+      className="min-h-11 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
+      value={draft ?? (typeof props.value === "string" ? props.value : "")}
+      placeholder={props.mixed ? "Mixed" : "Enter a specific ref…"}
+      autoCapitalize="none"
+      autoCorrect={false}
+      returnKeyType="done"
+      editable={!props.disabled}
+      onChangeText={setDraft}
+      onEndEditing={(event) => {
+        const value = event.nativeEvent.text.trim() || null;
+        setDraft(null);
+        if (draft !== null && !props.disabled && (props.mixed || value !== props.value))
+          props.onCommit(value);
+      }}
+    />
   );
 }

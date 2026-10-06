@@ -36,6 +36,16 @@ const WRITING_STYLE_LABELS: Record<string, string> = {
 
 /** Human labels for the values the chain can show; falls back to a type summary. */
 function formatValue(key: keyof ServerSettings, value: unknown): string {
+  if (key === "defaultWorktreeBaseRef") {
+    if (value === null) return "Repository default";
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "mode" in value &&
+      value.mode === "last-used"
+    )
+      return "Last used";
+  }
   if (value === null || value === undefined) {
     return key === "pullRequestMergeMethod"
       ? "Last selected"

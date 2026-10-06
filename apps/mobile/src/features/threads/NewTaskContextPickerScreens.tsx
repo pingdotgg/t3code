@@ -366,6 +366,7 @@ export function NewTaskBranchPickerRouteScreen() {
       onLoadMore={flow.loadMoreBranches}
       selectionDisabled={switchingBranchName !== null}
       onSelect={selectBranch}
+      lastWorktreeBaseBranch={flow.lastWorktreeBaseBranch}
       worktree={
         flow.workspaceMode === "worktree"
           ? {
@@ -394,6 +395,7 @@ export function BranchPickerScreen(props: {
   readonly onLoadMore: () => void;
   readonly selectionDisabled?: boolean;
   readonly onSelect: (branch: VcsRef) => void;
+  readonly lastWorktreeBaseBranch?: string | null;
   readonly worktree?: {
     readonly startFromOrigin: boolean;
     readonly onChangeStartFromOrigin: (value: boolean) => void;
@@ -423,7 +425,14 @@ export function BranchPickerScreen(props: {
   const renderBranch = useCallback(
     ({ item, index }: { readonly item: VcsRef; readonly index: number }) => (
       <BranchSelectionRow
-        badge={branchBadgeLabel({ branch: item, project: props.project })}
+        badge={
+          [
+            branchBadgeLabel({ branch: item, project: props.project }),
+            props.worktree && item.name === props.lastWorktreeBaseBranch ? "Last used" : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || null
+        }
         branch={item}
         disabled={props.selectionDisabled ?? false}
         isFirst={index === 0}
@@ -436,6 +445,8 @@ export function BranchPickerScreen(props: {
       props.branches.length,
       props.project,
       props.onSelect,
+      props.worktree,
+      props.lastWorktreeBaseBranch,
       selectedBranchName,
       props.selectionDisabled,
     ],

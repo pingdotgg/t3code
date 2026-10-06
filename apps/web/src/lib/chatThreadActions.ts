@@ -5,7 +5,11 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
-import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
+import type {
+  ComposerThreadDraftState,
+  DraftThreadEnvMode,
+  DraftThreadState,
+} from "../composerDraftStore";
 
 type ComposerModelSelectionState = Pick<
   ComposerThreadDraftState,
@@ -42,6 +46,16 @@ export function resolveNewDraftStartFromOrigin(input: {
   newWorktreesStartFromOrigin: boolean;
 }): boolean {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
+}
+
+export function resolveDraftBranchAfterEnvModeChange(input: {
+  mode: DraftThreadEnvMode;
+  branch: string | null;
+  environmentSelection: DraftThreadState["environmentSelection"];
+}): string | null {
+  // The local checkout branch is synced into a fresh draft automatically.
+  // Let the configured worktree base win when that draft switches modes.
+  return input.mode === "worktree" && input.environmentSelection === "auto" ? null : input.branch;
 }
 
 export function resolveNewThreadModelSelectionOverride(input: {

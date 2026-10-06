@@ -242,6 +242,17 @@ describe("scoped settings writes", () => {
     });
   });
 
+  it("stores a worktree base or explicit repository default on every selected project checkout", () => {
+    for (const defaultWorktreeBaseRef of ["origin/dev", null]) {
+      const plan = planScopedSettingsPatch(project, environments, { defaultWorktreeBaseRef });
+      expect(plan.unavailableReason).toBeNull();
+      expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+        { projectSettingsOverrides: { [projectId]: { defaultWorktreeBaseRef } } },
+        { projectSettingsOverrides: { [laptopProjectId]: { defaultWorktreeBaseRef } } },
+      ]);
+    }
+  });
+
   it("writes project overrides into each member's entry on its environment", () => {
     const withExisting = environment("Server", {
       settings: {

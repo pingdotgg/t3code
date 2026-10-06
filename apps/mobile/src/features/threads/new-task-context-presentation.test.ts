@@ -5,6 +5,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskBranchLabel,
   resolveNewTaskLocalWorkspaceSelection,
+  resolveNewTaskBranchAfterWorkspaceModeChange,
 } from "./new-task-context-presentation";
 
 describe("resolveNewTaskLocalWorkspaceSelection", () => {
@@ -51,6 +52,38 @@ describe("resolveNewTaskLocalWorkspaceSelection", () => {
       worktreePath: "/repo/.t3/worktrees/split",
       awaitsCurrentBranch: false,
     });
+  });
+});
+
+describe("resolveNewTaskBranchAfterWorkspaceModeChange", () => {
+  const localSelection = {
+    branch: "feature/current",
+    worktreePath: null,
+    awaitsCurrentBranch: false,
+  };
+
+  it("applies the configured base after leaving the current checkout", () => {
+    expect(
+      resolveNewTaskBranchAfterWorkspaceModeChange({
+        mode: "worktree",
+        previousMode: "local",
+        branch: "feature/current",
+        worktreePath: null,
+        localSelection,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a distinct branch chosen for the draft", () => {
+    expect(
+      resolveNewTaskBranchAfterWorkspaceModeChange({
+        mode: "worktree",
+        previousMode: "local",
+        branch: "feature/chosen",
+        worktreePath: null,
+        localSelection,
+      }),
+    ).toBe("feature/chosen");
   });
 });
 
