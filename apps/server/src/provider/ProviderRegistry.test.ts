@@ -9,8 +9,10 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -3373,4 +3375,146 @@ it.layer(
       ),
     );
   });
+});
+
+// Live clock: the registry debounces skill root changes before rescanning.
+// Kept outside the it.layer block above because only the top-level `it`
+// exposes `live`.
+describe("ProviderRegistry skill root watching", () => {
+  it.live("rescans a held workspace snapshot when its skill root changes", () =>
+    Effect.gen(function* () {
+      const realFileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const skillRoot = yield* realFileSystem.makeTempDirectoryScoped({
+        prefix: "t3-provider-registry-skill-root-",
+      });
+      const driver = ProviderDriverKind.make("codex");
+      const instanceId = ProviderInstanceId.make("codex");
+      const machineProvider = {
+        instanceId,
+        driver,
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-06-10T00:00:00.000Z",
+        version: "1.0.0",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const existingSkill = {
+        name: "existing",
+        path: path.join(skillRoot, "existing", "SKILL.md"),
+        enabled: true,
+      };
+      const addedSkill = {
+        name: "added",
+        path: path.join(skillRoot, "added", "SKILL.md"),
+        enabled: true,
+      };
+      const workspaceSkills = yield* Ref.make([existingSkill]);
+      const snapshotCalls = yield* Ref.make(0);
+      const cacheInvalidations = yield* Ref.make(0);
+      const watchStarted = yield* Deferred.make<void>();
+      const watchEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const instance: ProviderInstance = {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {
+          resolveMaintenance: () =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: driver,
+                packageName: null,
+              }),
+            ),
+          getSnapshot: Effect.succeed(machineProvider),
+          refresh: Effect.succeed(machineProvider),
+          streamChanges: Stream.empty,
+          applyUsageLimits: () => Effect.void,
+        },
+        snapshotForCwd: () =>
+          Ref.update(snapshotCalls, (count) => count + 1).pipe(
+            Effect.andThen(Ref.get(workspaceSkills)),
+            Effect.map((skills) => ({ ...machineProvider, skills })),
+          ),
+        skillRoots: () => Effect.succeed([skillRoot]),
+        invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      };
+      // Real filesystem, except the skill root's watch replays queued events.
+      const fileSystem: FileSystem.FileSystem = {
+        ...realFileSystem,
+        watch: (watchedPath, options) =>
+          watchedPath === skillRoot
+            ? Stream.unwrap(
+                Deferred.succeed(watchStarted, undefined).pipe(
+                  Effect.as(Stream.fromQueue(watchEvents)),
+                ),
+              )
+            : realFileSystem.watch(watchedPath, options),
+      };
+      const registryChanges = yield* PubSub.unbounded<void>();
+      const instanceRegistryLayer = Layer.succeed(
+        ProviderInstanceRegistry.ProviderInstanceRegistry,
+        {
+          getInstance: (requestedId) =>
+            Effect.succeed(requestedId === instanceId ? instance : undefined),
+          listInstances: Effect.succeed([instance]),
+          listUnavailable: Effect.succeed([]),
+          streamChanges: Stream.fromPubSub(registryChanges),
+          subscribeChanges: PubSub.subscribe(registryChanges),
+        },
+      );
+      const runtimeServices = yield* Layer.build(
+        ProviderRegistryLive.pipe(
+          Layer.provideMerge(instanceRegistryLayer),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-provider-registry-skill-root-watch-",
+            }),
+          ),
+        ),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+
+      yield* Effect.gen(function* () {
+        const registry = yield* ProviderRegistry.ProviderRegistry;
+        yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+        yield* Deferred.await(watchStarted);
+        const rescanned = yield* registry.streamChanges.pipe(
+          Stream.filter((providers) => providers[0]?.workspaceSnapshots?.[0]?.skills.length === 2),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        yield* Ref.set(workspaceSkills, [existingSkill, addedSkill]);
+        yield* Queue.offerAll(watchEvents, [
+          { _tag: "Update", path: "existing/scripts/run.sh" },
+          { _tag: "Create", path: "added" },
+          { _tag: "Update", path: "added/SKILL.md" },
+        ]);
+
+        const published = yield* Fiber.join(rescanned);
+        assert.strictEqual(published._tag, "Some");
+        assert.deepStrictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.skills, [
+          existingSkill,
+          addedSkill,
+        ]);
+        // One scan to hold the snapshot, one rescan for the coalesced events,
+        // and no cache invalidation: that stays with explicit refreshes.
+        assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+        assert.strictEqual(yield* Ref.get(cacheInvalidations), 0);
+      }).pipe(Effect.provide(runtimeServices), Effect.timeout("30 seconds"));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive),
+      ),
+    ),
+  );
 });

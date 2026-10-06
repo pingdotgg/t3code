@@ -83,6 +83,12 @@ export interface ProviderInstance {
   readonly snapshotForCwd?: (
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
+  /**
+   * Directories `snapshotForCwd` reads skills from for `cwd`, one skill
+   * directory per entry. The registry watches them to rescan held workspace
+   * snapshots when a skill is added, removed, or edited.
+   */
+  readonly skillRoots?: (cwd: string) => Effect.Effect<ReadonlyArray<string>>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;

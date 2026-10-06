@@ -36,6 +36,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -64,6 +65,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import { watchSkillRoots } from "./skillRootWatch.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -167,6 +169,7 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
 const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
+const SKILL_ROOT_CHANGE_DEBOUNCE = Duration.millis(500);
 
 function dropProviderWorkspaceSnapshot(provider: ServerProvider, cwd: string): ServerProvider {
   return provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd)
@@ -990,6 +993,8 @@ export const layer = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
+      /** Scan a held snapshot again without invalidating caches (skill root changed). */
+      readonly rescan?: boolean;
     }) {
       // Fresh scans drop other instances' snapshots for this cwd first, so a
       // composer on one of them scans again on next use, even when this
@@ -1011,7 +1016,8 @@ export const layer = Layer.effect(
       if (
         !provider ||
         !provider.enabled ||
-        (!input.fresh && scannedFrom && !scannedFrom.slashCommandsPending)
+        (input.rescan && !scannedFrom) ||
+        (!input.fresh && !input.rescan && scannedFrom && !scannedFrom.slashCommandsPending)
       ) {
         return providers;
       }
@@ -1024,8 +1030,8 @@ export const layer = Layer.effect(
         next.set(instance, new Set(current).add(input.cwd));
         return [true, next] as const;
       });
-      // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      // A fresh scan or rescan never joins a running one, which may predate the change.
+      if (!claimed && !input.fresh && !input.rescan) return yield* Ref.get(providersRef);
       // Fresh scans also re-read the machine snapshot after invalidating caches.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -1067,6 +1073,84 @@ export const layer = Layer.effect(
         ),
       );
     });
+
+    // Rescan held workspace snapshots when a skill root they read changes.
+    // Otherwise a snapshot keeps its skills until an explicit fresh refresh.
+    type WorkspaceTarget = { readonly instanceId: ProviderInstanceId; readonly cwd: string };
+    const skillRootTargetsRef = yield* Ref.make<
+      ReadonlyMap<string, ReadonlyArray<WorkspaceTarget>>
+    >(new Map());
+    const changedSkillRootsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const workspaceKey = (workspace: WorkspaceTarget) =>
+      `${workspace.instanceId}\0${workspace.cwd}`;
+    const heldWorkspaces = (providers: ReadonlyArray<ServerProvider>) =>
+      providers
+        .filter((provider) => provider.enabled)
+        .flatMap((provider) =>
+          (provider.workspaceSnapshots ?? []).map(({ cwd }) => ({
+            instanceId: provider.instanceId,
+            cwd,
+          })),
+        )
+        .sort((left, right) => workspaceKey(left).localeCompare(workspaceKey(right)));
+    const collectSkillRootTargets = Effect.fn("collectSkillRootTargets")(function* (
+      workspaces: ReadonlyArray<WorkspaceTarget>,
+    ) {
+      const targets = new Map<string, Array<WorkspaceTarget>>();
+      for (const workspace of workspaces) {
+        const instance = yield* instanceRegistry.getInstance(workspace.instanceId);
+        for (const root of instance?.skillRoots ? yield* instance.skillRoots(workspace.cwd) : []) {
+          targets.set(root, [...(targets.get(root) ?? []), workspace]);
+        }
+      }
+      return targets;
+    });
+    const sameKeys = (previous: ReadonlyArray<string>, next: ReadonlyArray<string>) =>
+      previous.length === next.length && previous.every((key, index) => key === next[index]);
+    const rescanChangedSkillRoots = Effect.gen(function* () {
+      const changedRoots = yield* Ref.getAndSet(changedSkillRootsRef, new Set());
+      const targetsByRoot = yield* Ref.get(skillRootTargetsRef);
+      const targets = new Map<string, WorkspaceTarget>();
+      for (const root of changedRoots) {
+        for (const target of targetsByRoot.get(root) ?? []) {
+          targets.set(workspaceKey(target), target);
+        }
+      }
+      // One at a time: a Codex scan starts an app-server process.
+      yield* Effect.forEach(
+        targets.values(),
+        (target) =>
+          refreshWorkspaceSnapshot({ ...target, rescan: true }).pipe(
+            Effect.ignoreCause({ log: true }),
+          ),
+        { discard: true },
+      );
+    });
+    const providerChangesForSkillRoots = yield* PubSub.subscribe(changesPubSub);
+    yield* Stream.concat(
+      Stream.fromEffect(Ref.get(providersRef)),
+      Stream.fromSubscription(providerChangesForSkillRoots),
+    ).pipe(
+      // Most provider updates are status or usage changes; resolve roots only
+      // when the set of held workspaces changes.
+      Stream.map(heldWorkspaces),
+      Stream.changesWith((previous, next) =>
+        sameKeys(previous.map(workspaceKey), next.map(workspaceKey)),
+      ),
+      Stream.mapEffect(collectSkillRootTargets),
+      Stream.tap((targets) => Ref.set(skillRootTargetsRef, targets)),
+      Stream.map((targets) => [...targets.keys()].sort()),
+      Stream.changesWith(sameKeys),
+      Stream.switchMap(watchSkillRoots),
+      Stream.tap((root) => Ref.update(changedSkillRootsRef, (roots) => new Set(roots).add(root))),
+      // Installs and editor saves touch several files at once.
+      Stream.debounce(SKILL_ROOT_CHANGE_DEBOUNCE),
+      Stream.runForEach(() => rescanChangedSkillRoots),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkScoped,
+    );
 
     return {
       getProviders: Ref.get(providersRef),

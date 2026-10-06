@@ -312,6 +312,17 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(NodeOS.homedir(), ".claude");
 });
 
+/** The skill roots {@link discoverClaudeSkills} scans for `cwd`. */
+export const claudeSkillRoots = Effect.fn("claudeSkillRoots")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyArray<string>, never, Path.Path> {
+  const path = yield* Path.Path;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  return [path.join(configDirPath, "skills"), path.join(cwd, ".claude", "skills")];
+});
+
 /**
  * Enumerate Claude Code skills from the user config dir and the workspace
  * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed

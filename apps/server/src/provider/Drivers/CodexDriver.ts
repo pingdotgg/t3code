@@ -21,6 +21,8 @@
  *
  * @module provider/Drivers/CodexDriver
  */
+import * as NodeOS from "node:os";
+
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -301,6 +303,37 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               ),
             );
 
+      // Where Codex reads skills, checked against codex-cli 0.160:
+      // `$CODEX_HOME/skills` and `~/.agents/skills`, then `.agents/skills` and
+      // `.codex/skills` in `cwd` and each parent up to the repository root.
+      // A shadow home links `skills` to the shared home, so watch that.
+      const skillRoots = (cwd: string) =>
+        Effect.gen(function* () {
+          const start = pathService.resolve(cwd);
+          let directories = [start];
+          for (let current = start; ;) {
+            const isRepositoryRoot = yield* fileSystem
+              .exists(pathService.join(current, ".git"))
+              .pipe(Effect.orElseSucceed(() => false));
+            if (isRepositoryRoot) break;
+            const parent = pathService.dirname(current);
+            if (parent === current) {
+              directories = [start];
+              break;
+            }
+            directories.push(parent);
+            current = parent;
+          }
+          return [
+            pathService.join(homeLayout.sharedHomePath, "skills"),
+            pathService.join(processEnv.HOME ?? NodeOS.homedir(), ".agents", "skills"),
+            ...directories.flatMap((directory) => [
+              pathService.join(directory, ".agents", "skills"),
+              pathService.join(directory, ".codex", "skills"),
+            ]),
+          ];
+        });
+
       // Redemption spends something on the user's account. It serialises on
       // the account (instances sharing a Codex home share the credit), keeps
       // one idempotency key until Codex reports an outcome, and is bounded so
@@ -375,6 +408,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        skillRoots,
         consumeResetCredit,
         orchestrationAdapter,
         textGeneration,
