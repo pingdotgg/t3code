@@ -114,7 +114,7 @@ export function uniformMobileSetting<K extends keyof ServerSettings>(
   const reference = targets[0];
   if (!reference) return null;
   const value = reference.settings[key];
-  return targets.every((target) => target.settings[key] === value) ? value : null;
+  return targets.every((target) => Equal.equals(target.settings[key], value)) ? value : null;
 }
 
 export function planMobileScopedSettingsClear(

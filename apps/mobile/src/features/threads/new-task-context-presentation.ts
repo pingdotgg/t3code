@@ -63,14 +63,12 @@ export function resolveNewTaskBranchAfterWorkspaceModeChange(input: {
   readonly mode: WorkspaceMode;
   readonly previousMode: WorkspaceMode;
   readonly branch: string | null;
-  readonly worktreePath: string | null;
-  readonly localSelection: ReturnType<typeof resolveNewTaskLocalWorkspaceSelection>;
+  readonly branchSelection: "auto" | "manual" | undefined;
 }): string | null {
   if (
     input.previousMode === "local" &&
     input.mode === "worktree" &&
-    input.branch === input.localSelection.branch &&
-    input.worktreePath === input.localSelection.worktreePath
+    input.branchSelection === "auto"
   ) {
     return null;
   }

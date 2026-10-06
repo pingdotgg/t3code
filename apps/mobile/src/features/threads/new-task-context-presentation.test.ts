@@ -56,34 +56,37 @@ describe("resolveNewTaskLocalWorkspaceSelection", () => {
 });
 
 describe("resolveNewTaskBranchAfterWorkspaceModeChange", () => {
-  const localSelection = {
-    branch: "feature/current",
-    worktreePath: null,
-    awaitsCurrentBranch: false,
-  };
-
   it("applies the configured base after leaving the current checkout", () => {
     expect(
       resolveNewTaskBranchAfterWorkspaceModeChange({
         mode: "worktree",
         previousMode: "local",
         branch: "feature/current",
-        worktreePath: null,
-        localSelection,
+        branchSelection: "auto",
       }),
     ).toBeNull();
   });
 
-  it("keeps a distinct branch chosen for the draft", () => {
+  it("keeps an explicit branch choice even when it matches the checkout", () => {
     expect(
       resolveNewTaskBranchAfterWorkspaceModeChange({
         mode: "worktree",
         previousMode: "local",
-        branch: "feature/chosen",
-        worktreePath: null,
-        localSelection,
+        branch: "feature/current",
+        branchSelection: "manual",
       }),
-    ).toBe("feature/chosen");
+    ).toBe("feature/current");
+  });
+
+  it("keeps a legacy draft branch whose source is unknown", () => {
+    expect(
+      resolveNewTaskBranchAfterWorkspaceModeChange({
+        mode: "worktree",
+        previousMode: "local",
+        branch: "feature/current",
+        branchSelection: undefined,
+      }),
+    ).toBe("feature/current");
   });
 });
 

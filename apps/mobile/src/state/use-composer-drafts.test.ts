@@ -1713,6 +1713,25 @@ describe("mobile composer drafts", () => {
       },
     });
   });
+
+  it("retains an explicit branch choice across draft hydration", () => {
+    const decoded = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        "new-task:environment-1:project-1": {
+          text: "",
+          attachments: [],
+          workspaceSelection: {
+            mode: "local",
+            branch: "main",
+            worktreePath: null,
+            branchSelection: "manual",
+          },
+        },
+      },
+    });
+    expect(Object.values(decoded.drafts)[0]?.workspaceSelection?.branchSelection).toBe("manual");
+  });
   it("keeps legacy content-only drafts and rejects invalid selector state", () => {
     expect(
       decodePersistedComposerState({

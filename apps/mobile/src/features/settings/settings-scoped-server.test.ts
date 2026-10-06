@@ -84,6 +84,7 @@ describe("mobile project settings scope", () => {
       null,
     );
     expect(mobileSettingsAreMixed(targets, "defaultWorktreeBaseRef")).toBe(mixed);
+    expect(uniformMobileSetting(targets, "defaultWorktreeBaseRef")).toEqual(mixed ? null : first);
   });
 
   it("has no uniform value when no environments are selected", () => {

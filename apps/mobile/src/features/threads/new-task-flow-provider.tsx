@@ -538,6 +538,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     : "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  const selectedBranchSelection = selectedProjectDraft.workspaceSelection?.branchSelection;
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const preferencesLoaded = AsyncResult.isSuccess(preferencesResult);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -954,10 +955,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
                   mode,
                   previousMode: workspaceMode,
                   branch: selectedBranchName,
-                  worktreePath: selectedWorktreePath,
-                  localSelection,
+                  branchSelection: selectedBranchSelection,
                 }),
-          worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
+          worktreePath: mode === "local" ? localSelection.worktreePath : null,
+          branchSelection: mode === "local" ? "auto" : (selectedBranchSelection ?? "manual"),
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
@@ -966,9 +967,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       draftStartFromOrigin,
       selectedBranchName,
+      selectedBranchSelection,
       selectedProject,
       selectedProjectDraftKey,
-      selectedWorktreePath,
       workspaceMode,
     ],
   );
@@ -996,6 +997,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         mode: "local",
         branch: localSelection.branch,
         worktreePath: localSelection.worktreePath,
+        branchSelection: "auto",
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
       },
     });
@@ -1027,6 +1029,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         workspaceSelection: {
           mode: workspaceMode,
           branch: branch.name,
+          branchSelection: "manual",
           worktreePath: resolveNewTaskBranchWorktreePath({
             workspaceMode,
             projectCwd: selectedProject.workspaceRoot,
@@ -1055,11 +1058,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           mode: workspaceMode,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
+          ...(selectedBranchSelection ? { branchSelection: selectedBranchSelection } : {}),
           startFromOrigin: value,
         },
       });
     },
-    [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, workspaceMode],
+    [
+      selectedBranchName,
+      selectedBranchSelection,
+      selectedProjectDraftKey,
+      selectedWorktreePath,
+      workspaceMode,
+    ],
   );
 
   const refreshBranches = branchState.refresh;
@@ -1104,6 +1114,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           mode: "worktree",
           branch: preferredBranch,
           worktreePath: null,
+          branchSelection: "auto",
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });

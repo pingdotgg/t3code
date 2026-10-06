@@ -358,6 +358,7 @@ export interface ComposerDraftWorkspaceSelection {
   readonly mode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  readonly branchSelection?: "auto" | "manual";
   readonly startFromOrigin?: boolean;
 }
 
@@ -370,6 +371,7 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   mode: Schema.Literals(["local", "worktree"]),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  branchSelection: Schema.optional(Schema.Literals(["auto", "manual"])),
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 
