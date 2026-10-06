@@ -111,6 +111,17 @@ function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonl
   }
 
   const colors = projectIconColorClassNames(glyph.color);
+  if (glyph.kind === "symbol") {
+    return (
+      <SymbolView
+        name={glyph.name}
+        size={size}
+        tintColorClassName={colors.tint}
+        type="monochrome"
+      />
+    );
+  }
+
   return (
     <View
       className={colors.background}
