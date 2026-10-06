@@ -578,7 +578,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const change = Option.getOrUndefined(yield* Stream.runHead(changes));
         const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
         // Inspect raw persisted JSON before schema decoding can apply defaults.
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         const persisted = JSON.parse(raw) as Record<string, unknown>;
 
         assert.strictEqual(next.sidebarAutoSettleAfterDays, null);
@@ -759,7 +758,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
         const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
         assert.deepEqual(
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           JSON.parse(raw).sourceControlWriterModelSelection,
           sourceControlWriterModelSelection,
         );
@@ -1046,7 +1044,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isFalse(settings.providers.grok.enabled);
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.isFalse(JSON.parse(raw).providers.grok.enabled);
     }).pipe(Effect.provide(layerServerSettings())),
   );
@@ -1067,7 +1064,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/Development" });
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(raw);
       assert.isTrue(persisted.providers.cursor.enabled);
       assert.isTrue(persisted.providers.grok.enabled);
@@ -1104,7 +1100,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isFalse(resolveProviderInstanceEnabled(grok));
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(raw);
       assert.isFalse(persisted.providers.cursor.enabled);
       assert.isFalse(persisted.providers.grok.enabled);
@@ -1288,7 +1283,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepEqual(JSON.parse(raw), {
         addProjectBaseDirectory: "~/Development",
         observability: {
@@ -1506,7 +1500,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       assert.notInclude(raw, "sk-or-secret");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepEqual(JSON.parse(raw).providerInstances.codex_personal.environment, [
         {
           name: "OPENROUTER_API_KEY",
@@ -1585,6 +1578,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           ServerSettingsModule.redactServerSettingsForClient(cleared).bitbucket.accessToken,
           "",
         );
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect(
+    "keeps GitHub tokens per host in the secret store and tells clients only that one is set",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const saved = yield* serverSettings.updateSettings({
+          github: { tokens: { "GitHub.com": "ghp_dotcom", "ghe.acme.test": "ghp_ghe" } },
+        });
+        assert.deepEqual(saved.github.tokens, {
+          "github.com": "ghp_dotcom",
+          "ghe.acme.test": "ghp_ghe",
+        });
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "ghp_dotcom");
+        assert.notInclude(raw, "ghp_ghe");
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).github;
+        assert.notInclude(forClient.tokens["github.com"]!, "ghp_dotcom");
+        assert.isAbove(forClient.tokens["github.com"]!.length, 0);
+
+        // Echoing the redacted values back keeps them; host and account changes leave tokens alone.
+        yield* serverSettings.updateSettings({ github: { tokens: forClient.tokens } });
+        yield* serverSettings.updateSettings({
+          github: { hosts: { "github.com": { enabled: true, account: "work" } } },
+        });
+        assert.deepEqual((yield* serverSettings.getSettings).github.tokens, {
+          "github.com": "ghp_dotcom",
+          "ghe.acme.test": "ghp_ghe",
+        });
+
+        // An empty token removes that host's token and nothing else.
+        const cleared = yield* serverSettings.updateSettings({
+          github: { tokens: { "github.com": "" } },
+        });
+        assert.equal(cleared.github.tokens["github.com"] ?? "", "");
+        assert.equal(cleared.github.tokens["ghe.acme.test"], "ghp_ghe");
+        const remaining = yield* Effect.forEach(["github.com", "ghe.acme.test"], (host) =>
+          secrets.get(`github-token-${Buffer.from(host, "utf8").toString("base64url")}`),
+        );
+        assert.isTrue(Option.isNone(remaining[0]!));
+        assert.isTrue(Option.isSome(remaining[1]!));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
@@ -1944,10 +1985,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         projectSettingsOverrides: { [legacyProject]: null },
       });
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      const persisted = yield* decodeServerSettings(
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.parse(raw),
-      );
+      const persisted = yield* decodeServerSettings(JSON.parse(raw));
       assert.isTrue(persisted.projectSettingsFolded);
       assert.isUndefined(persisted.projectSettingsOverrides[legacyProject]);
     }).pipe(Effect.provide(layerServerSettings())),
