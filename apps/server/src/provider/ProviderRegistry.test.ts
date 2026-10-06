@@ -3464,7 +3464,7 @@ describe("ProviderRegistry skill root watching", () => {
           : realFileSystem.watch(watchedPath, options),
     };
     const registryChanges = yield* PubSub.unbounded<void>();
-    const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+    const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       getInstance: (requestedId) =>
         Effect.succeed(requestedId === instanceId ? instance : undefined),
       listInstances: Effect.succeed([instance]),
@@ -3473,8 +3473,8 @@ describe("ProviderRegistry skill root watching", () => {
       subscribeChanges: PubSub.subscribe(registryChanges),
     });
     const runtimeServices = yield* Layer.build(
-      ProviderRegistryLive.pipe(
-        Layer.provideMerge(instanceRegistryLayer),
+      ProviderRegistry.layer.pipe(
+        Layer.provideMerge(layerInstanceRegistry),
         Layer.provideMerge(
           ServerConfig.layerTest(process.cwd(), {
             prefix: "t3-provider-registry-skill-root-watch-",
@@ -3522,10 +3522,10 @@ describe("ProviderRegistry skill root watching", () => {
     path: `${root}/${name}/SKILL.md`,
     enabled: true,
   });
-  const testLayer = Layer.mergeAll(
-    TestNodeServices,
+  const layerTest = Layer.mergeAll(
+    layerTestNodeServices,
     ServerSettingsModule.layerTest(),
-    TestHttpClientLive,
+    layerTestHttpClient,
   );
 
   it.live("rescans a held workspace snapshot when its skill root changes", () =>
@@ -3557,7 +3557,7 @@ describe("ProviderRegistry skill root watching", () => {
         assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 2);
         assert.strictEqual(yield* Ref.get(harness.cacheInvalidations), 0);
       }).pipe(Effect.provide(harness.runtimeServices), Effect.timeout("30 seconds"));
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("keeps the newest skills when a rescan races an explicit refresh", () =>
@@ -3623,6 +3623,6 @@ describe("ProviderRegistry skill root watching", () => {
         assert.deepStrictEqual(yield* harness.workspaceSkills(registry), [a!, b!, c!, d!]);
         assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 6);
       }).pipe(Effect.provide(harness.runtimeServices), Effect.timeout("30 seconds"));
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });
