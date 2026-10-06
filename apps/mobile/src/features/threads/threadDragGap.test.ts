@@ -145,6 +145,23 @@ describe("thread list drops into empty sections", () => {
       placement: "before",
     });
   });
+  it("unpins just below the dragged last pin even when a shelf follows", () => {
+    const withShelf: ThreadDragRow[] = [
+      ...pins,
+      { key: "settled", threadKey: null, section: "settled", offset: 160, height: 40 },
+    ];
+    expect(drop(withShelf, 150, pins[1]!)).toBeNull();
+    expect(drop(withShelf, 170, pins[1]!)).toEqual({
+      section: "active",
+      targetId: null,
+      placement: "before",
+    });
+    expect(drop(withShelf, 190, pins[1]!)).toEqual({
+      section: "settled",
+      targetId: null,
+      placement: "before",
+    });
+  });
 });
 
 describe("drag geometry outside the render window", () => {

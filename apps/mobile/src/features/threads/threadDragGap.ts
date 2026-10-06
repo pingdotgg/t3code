@@ -58,47 +58,55 @@ const EMPTY_SECTION_BAND = 24;
 /** Resolve the row under the finger. Hovering the source or its current slot
  * is no move, so cancelling is always one step back. An empty Pinned section
  * takes drops on the top edge of the list, and an empty Active section on
- * the bottom edge of the pins. */
+ * the bottom edge of the pins. When the edge card is the one being dragged,
+ * its band sits just outside it, so lifting a card near its own edge never
+ * pins or unpins it, yet the empty section stays reachable. */
 export function resolveThreadDrop(input: {
   readonly rows: readonly ThreadDragRow[];
   readonly contentY: number;
   readonly source: { readonly threadKey: string; readonly section: ThreadDragSection };
   readonly canDrop: (destination: ThreadDropDestination) => boolean;
 }): ThreadDropDestination | null {
-  const row =
-    input.rows.find((candidate) => input.contentY < candidate.offset + candidate.height) ??
-    input.rows.at(-1);
-  if (row === undefined || row.section === null || row.section === "snoozed") return null;
-  const hasPins = input.rows.some((candidate) => candidate.section === "pinned");
-  const hasActive = input.rows.some((candidate) => candidate.section === "active");
-  // Over the source card the bands shrink to its edges, so lifting a card
-  // near its own edge never pins or unpins it.
-  const band = row.threadKey === input.source.threadKey ? 0 : EMPTY_SECTION_BAND;
+  const y = input.contentY;
+  const firstActive = input.rows.find((candidate) => candidate.section === "active");
+  const lastPin = input.rows.findLast((candidate) => candidate.section === "pinned");
+  const isSource = (row: ThreadDragRow) => row.threadKey === input.source.threadKey;
   let destination: ThreadDropDestination;
   if (
-    !hasPins &&
-    row.section === "active" &&
-    row === input.rows.find((candidate) => candidate.section === "active") &&
-    input.contentY < row.offset + band
+    lastPin === undefined &&
+    firstActive !== undefined &&
+    (isSource(firstActive)
+      ? y < firstActive.offset &&
+        (y >= firstActive.offset - EMPTY_SECTION_BAND || firstActive === input.rows[0])
+      : y < firstActive.offset + EMPTY_SECTION_BAND &&
+        (y >= firstActive.offset || firstActive === input.rows[0]))
   ) {
     destination = { section: "pinned", targetId: null, placement: "before" };
   } else if (
-    !hasActive &&
-    row.section === "pinned" &&
-    row === input.rows.findLast((candidate) => candidate.section === "pinned") &&
-    input.contentY >= row.offset + row.height - band
+    firstActive === undefined &&
+    lastPin !== undefined &&
+    (isSource(lastPin)
+      ? y >= lastPin.offset + lastPin.height &&
+        (y < lastPin.offset + lastPin.height + EMPTY_SECTION_BAND || lastPin === input.rows.at(-1))
+      : y >= lastPin.offset + lastPin.height - EMPTY_SECTION_BAND &&
+        (y < lastPin.offset + lastPin.height || lastPin === input.rows.at(-1)))
   ) {
     destination = { section: "active", targetId: null, placement: "before" };
-  } else if (row.section === "settled") {
-    if (input.source.section === "settled") return null;
-    destination = { section: "settled", targetId: null, placement: "before" };
   } else {
-    if (row.threadKey === null || row.threadKey === input.source.threadKey) return null;
-    destination = {
-      section: row.section,
-      targetId: row.threadKey,
-      placement: input.contentY < row.offset + row.height / 2 ? "before" : "after",
-    };
+    const row =
+      input.rows.find((candidate) => y < candidate.offset + candidate.height) ?? input.rows.at(-1);
+    if (row === undefined || row.section === null || row.section === "snoozed") return null;
+    if (row.section === "settled") {
+      if (input.source.section === "settled") return null;
+      destination = { section: "settled", targetId: null, placement: "before" };
+    } else {
+      if (row.threadKey === null || isSource(row)) return null;
+      destination = {
+        section: row.section,
+        targetId: row.threadKey,
+        placement: y < row.offset + row.height / 2 ? "before" : "after",
+      };
+    }
   }
   return input.canDrop(destination) ? destination : null;
 }
