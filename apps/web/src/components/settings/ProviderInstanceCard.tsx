@@ -37,7 +37,7 @@ import {
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { normalizeProviderAccentColor } from "../../providerInstances";
+import { normalizeProviderAccentColor, shouldShowInstanceBadge } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -51,6 +51,7 @@ import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSe
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { ProviderInstanceAppearanceControls } from "./ProviderInstanceAppearanceControls";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
@@ -661,6 +662,22 @@ export function ProviderInstanceCard({
     );
   };
 
+  const updateIcon = (icon: string | undefined) => {
+    const { icon: _omit, ...rest } = instance;
+    onUpdate(
+      icon ? ({ ...rest, icon } as ProviderInstanceConfig) : (rest as ProviderInstanceConfig),
+    );
+  };
+
+  const updateBadgeLabel = (badgeLabel: string | undefined) => {
+    const { badgeLabel: _omit, ...rest } = instance;
+    onUpdate(
+      badgeLabel
+        ? ({ ...rest, badgeLabel } as ProviderInstanceConfig)
+        : (rest as ProviderInstanceConfig),
+    );
+  };
+
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
@@ -717,6 +734,8 @@ export function ProviderInstanceCard({
       driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      icon={instance.icon}
+      badgeLabel={instance.badgeLabel}
       acpRegistryAgentId={
         readConfigString(instance.config, "source") === "local"
           ? undefined
@@ -727,7 +746,16 @@ export function ProviderInstanceCard({
           ? undefined
           : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
       }
-      showBadge={Boolean(accentColor)}
+      // Preview only what this instance sets; sharing a glyph is a picker concern.
+      showBadge={shouldShowInstanceBadge(
+        {
+          driverKind: instance.driver,
+          icon: instance.icon,
+          accentColor,
+          badgeLabel: instance.badgeLabel,
+        },
+        [],
+      )}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
@@ -1048,6 +1076,31 @@ export function ProviderInstanceCard({
                 onCommit={updateDisplayName}
                 placeholder={driverOption?.label ?? "Instance label"}
                 spellCheck={false}
+              />
+            </div>
+          }
+        />
+        <SettingsRow
+          title="Icon"
+          description="Logo and badge label that tell this instance apart in pickers and the sidebar."
+          control={
+            <div
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={cn(
+                "flex w-full min-w-0 items-center justify-end gap-2 @min-[32rem]/settings-row:w-auto",
+                readOnly && "opacity-50 select-none",
+              )}
+            >
+              <ProviderInstanceAppearanceControls
+                instanceId={instanceId}
+                driverKind={instance.driver}
+                displayName={displayName}
+                accentColor={accentColor}
+                icon={instance.icon}
+                badgeLabel={instance.badgeLabel}
+                onIconChange={updateIcon}
+                onBadgeLabelChange={updateBadgeLabel}
               />
             </div>
           }

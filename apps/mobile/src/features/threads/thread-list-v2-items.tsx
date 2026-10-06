@@ -45,7 +45,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
+  resolveThreadListV2ProviderStack,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
@@ -562,14 +562,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
 
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
+  const { providerStack, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
         candidate.instanceId ===
         (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
     );
     return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerStack: resolveThreadListV2ProviderStack(thread, props.providers),
       providerIconUrl: provider?.iconUrl,
     };
   }, [thread, props.providers]);
@@ -1092,9 +1092,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           // handed-off thread shows where it has been. The current owner
           // keeps its account badge so same-driver instances stay distinct.
           <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map((driver, index) => (
-              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
-                <ProviderIcon provider={driver} size={12} />
+            {providerStack.slice(0, -1).map((owner, index) => (
+              <View key={`${owner.instanceId}:${index}`} className="-mr-1 opacity-30">
+                <ProviderIcon
+                  provider={owner.driver}
+                  iconUrl={owner.iconUrl}
+                  appearance={owner}
+                  size={12}
+                />
               </View>
             ))}
             <ProviderInstanceIcon
@@ -1103,6 +1108,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               size={14}
               displayName={providerInstance.displayName}
               accentColor={providerInstance.accentColor}
+              icon={providerInstance.icon}
+              badgeLabel={providerInstance.badgeLabel}
               showBadge={providerInstance.showBadge}
               surfaceColor={rowAppearance.providerIconSurfaceColor}
             />

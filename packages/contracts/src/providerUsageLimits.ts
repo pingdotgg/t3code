@@ -168,6 +168,8 @@ export const UsageLimitsReport = Schema.Struct({
       resetCreditInput: Schema.optional(ProviderConsumeResetCreditInput),
       displayName: Schema.optional(Schema.String),
       accentColor: Schema.optional(Schema.String),
+      icon: Schema.optional(Schema.String),
+      badgeLabel: Schema.optional(Schema.String),
       limits: ServerProviderUsageLimits,
     }),
   ),

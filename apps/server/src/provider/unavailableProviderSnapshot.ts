@@ -25,6 +25,8 @@ export interface UnavailableProviderSnapshotInput {
   readonly instanceId: ProviderInstanceId;
   readonly displayName?: string | undefined;
   readonly accentColor?: string | undefined;
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
   readonly reason: string;
   /**
    * Optional override for `checkedAt`. Defaulted to the current Effect
@@ -68,6 +70,8 @@ export function buildUnavailableProviderSnapshot(
       ...base,
       instanceId: input.instanceId,
       ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+      ...(input.icon ? { icon: input.icon } : {}),
+      ...(input.badgeLabel ? { badgeLabel: input.badgeLabel } : {}),
       driver:
         typeof input.driverKind === "string"
           ? ProviderDriverKind.make(input.driverKind)
