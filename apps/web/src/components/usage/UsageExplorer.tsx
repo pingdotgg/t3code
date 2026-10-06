@@ -1526,13 +1526,21 @@ function BreakdownTable({
                       "cursor-pointer border-b border-border/50 text-right text-muted-foreground tabular-nums hover:bg-muted/50",
                       highlight === OTHER_SERIES && "bg-muted/50",
                     )}
-                    onClick={() => onToggleOpen(row.path)}
+                    onClick={(event) => {
+                      // The swatch toggles chart visibility; it must not also expand the row.
+                      if ((event.target as HTMLElement).closest("button, a, input")) return;
+                      onToggleOpen(row.path);
+                    }}
                     onMouseEnter={() => onHoverRow(OTHER_SERIES)}
                     onMouseLeave={() => onHoverRow(null)}
                   >
                     <td className="py-2.5 text-left">
                       <span className="flex items-center gap-2">
-                        <Disclosure open={row.open} label="Other" />
+                        <Disclosure
+                          open={row.open}
+                          label="Other"
+                          onToggle={() => onToggleOpen(row.path)}
+                        />
                         <Swatch
                           color="var(--muted-foreground)"
                           hidden={row.hidden}
