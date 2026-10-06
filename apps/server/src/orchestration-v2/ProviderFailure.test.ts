@@ -134,6 +134,8 @@ it("names the adapter's reason when a turn cannot start", () => {
     new Error("socket hang up at 10.0.0.5"),
     // Pi copies the provider's raw RPC error onto its own error's cause.
     { _tag: "PiRpcError", detail: "set_model failed", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+    // A provider-controlled tag naming an Object.prototype key is not a category.
+    { _tag: "constructor", cause: "GOOGLE_API_KEY=AIzaPrivate" },
   ]) {
     assert.equal(
       makeProviderFailure({ cause: turnStart(hidden) }).message,

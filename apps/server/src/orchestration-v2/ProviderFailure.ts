@@ -67,7 +67,10 @@ function causeMessage(cause: unknown): string | undefined {
       }
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
-      const nextCategory = typeof tag === "string" ? PROVIDER_FAILURE_CATEGORIES[tag] : undefined;
+      const nextCategory =
+        typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)
+          ? PROVIDER_FAILURE_CATEGORIES[tag]
+          : undefined;
       switch (tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
