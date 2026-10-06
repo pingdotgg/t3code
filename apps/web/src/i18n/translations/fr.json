@@ -7564,6 +7564,32 @@
       "v": "v"
     }
   ],
+  "c5cf4921e9b53824": "Chrome DevTools MCP ne s’est pas installé. Réessayez.",
+  "75b1a7d1af613c5d": "Terminer plus tard",
+  "290cac9bd85be15a": "Utiliser les onglets de votre navigateur",
+  "2709455317e2d538": [
+    "Les agents se connectent au navigateur de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " dont le débogage à distance est activé. Sur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ", ouvrez la page du navigateur ci-dessous et activez le débogage à distance. Le navigateur demande d’autoriser chaque connexion : quelqu’un devant ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " doit donc l’approuver."
+  ],
+  "2e844dc004983ebb": "Aucun navigateur Chromium trouvé. Installez Chrome, Edge, Brave, Helium ou Chromium.",
+  "99859ef84af13eb3": "Activé",
   "a2fc467e1a6e2e29": "Impossible de préparer les modifications. Consultez Avancé pour obtenir de l’aide.",
   "9c09c0fc3f65c734": "Raccourci enregistré",
   "b1d65f0c09819ac5": "Utilisez {shortcut} depuis une autre app.",
@@ -7993,7 +8019,6 @@
   "82a12d86994dfd17": "Cliquer, saisir du texte et lire les commandes dans d’autres apps.",
   "c07fc2cd79fb94c4": "Enregistrement de l’écran",
   "4bbac051622766c1": "Voir l’écran pour décider de la suite.",
-  "75b1a7d1af613c5d": "Terminer plus tard",
   "a9b9096280be6466": [
     "Autoriser les agents à utiliser ",
     {
@@ -8357,6 +8382,11 @@
   "d18307275ee97e9a": "Réinitialiser le contrôle de l’ordinateur à la valeur par défaut",
   "1419352c258bc7de": "Cette connexion ne peut pas modifier les paramètres sur cet hôte.",
   "b26ad48726dd8132": "Le contrôle de l’ordinateur est activé, mais Cua Driver n’a pas pu redémarrer. Relancez la configuration.",
+  "024b1791e74e4875": "Configuration requise",
+  "565cc034918e3732": "Utilise {browser}",
+  "ce62c408d095401d": "Activez le débogage à distance dans votre navigateur",
+  "2541722d5b0f9ccd": "Permet aux agents d’utiliser les onglets ouverts et les sessions connectées de votre navigateur sur {host} via Chrome DevTools MCP.",
+  "b714ba7431dc4989": "Onglets du navigateur pour les agents",
   "b395b88284e3bca2": "Affiche l’aperçu flottant quand un agent ouvre un navigateur ou un appareil, sauf si l’agent indique le contraire.",
   "6aadfd59cf60b4b5": "Réinitialiser l’affichage automatique de l’aperçu flottant à la valeur par défaut",
   "e4a7ec61190bc1f9": "Afficher automatiquement l’aperçu flottant",
@@ -11552,6 +11582,7 @@
   "345075be6cacc171": "appareil hôtes ssh distant mac mini identité clé connexion eas expo cloud simlock pool passerelle simulateurs locaux",
   "a6b742430b05d6cc": "Les agents peuvent utiliser les appareils",
   "1d5d7418a83575c2": "autoriser simulateur émulateur ios android piloter outils sessions",
+  "9a44b2704adff236": "chrome devtools onglets connexions connecté navigateur débogage à distance edge brave",
   "04050ac46c68cdaa": "cua driver apps bureau écran cliquer saisir agents contrôle ordinateur mac linux windows",
   "60f0825756e404dc": "Utiliser les appareils",
   "907782e153a139a3": "hub d’appareils simulateur émulateur ios android installer démarrer version",
