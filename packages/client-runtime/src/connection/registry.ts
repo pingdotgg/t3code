@@ -660,16 +660,21 @@ export const make = Effect.gen(function* () {
             const stored = yield* credentials
               .get(registration.target.connectionId)
               .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
-            bearerReplaced =
+            const changed =
               Option.isSome(stored) && !Equal.equals(stored.value, registration.credential);
-            yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not store the platform bearer credential.", {
-                  environmentId: target.environmentId,
-                  error,
-                }),
-              ),
-            );
+            // Only a bearer that was actually stored can be retried with; a
+            // failed write leaves the rejected one in place.
+            bearerReplaced = yield* credentials
+              .put(registration.target.connectionId, registration.credential)
+              .pipe(
+                Effect.as(changed),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not store the platform bearer credential.", {
+                    environmentId: target.environmentId,
+                    error,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
           }
 
           if (persisted) {
