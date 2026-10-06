@@ -1546,6 +1546,70 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
+            // An unbound task gets one thread of its own, in this thread's
+            // workspace, so its runs do not each launch a thread and worktree.
+            const ownThreadCall = yield* invoke("schedule_task", {
+              title: "Watchdog",
+              prompt: "check the campaign threads",
+              schedule: { type: "interval", everyMs: 60_000 },
+              bindToCurrentThread: false,
+              clientRequestId: "schedule-own-thread-1",
+            });
+            expect(ownThreadCall.isError).toBe(false);
+            const ownThreadTask = ownThreadCall.structuredContent as {
+              scheduledTaskId: string;
+              boundThreadId: ThreadId | null;
+            };
+            expect(ownThreadTask.boundThreadId).toEqual(expect.any(String));
+            expect(ownThreadTask.boundThreadId).not.toBe(parentThreadId);
+            const ownThread = yield* orchestrator.getThreadProjection(
+              ThreadId.make(ownThreadTask.boundThreadId ?? ""),
+            );
+            const parentThread = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(ownThread.thread).toMatchObject({
+              title: "Watchdog",
+              projectId,
+              branch: parentThread.thread.branch,
+              worktreePath: parentThread.thread.worktreePath,
+            });
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              { threadId: ownThreadTask.boundThreadId, workspaceStrategy: { type: "root" } },
+            ]);
+            // Its id cannot collide with create_threads ids.
+            expect(ownThreadTask.boundThreadId).toMatch(/^thread:mcp-scheduled-task:/);
+            // A retry that replays the creation of a since-removed thread is refused.
+            const removableCall = yield* invoke("schedule_task", {
+              title: "Removable",
+              prompt: "check later",
+              schedule: { type: "interval", everyMs: 60_000 },
+              bindToCurrentThread: false,
+              clientRequestId: "schedule-own-thread-removed",
+            });
+            const removable = removableCall.structuredContent as {
+              scheduledTaskId: string;
+              boundThreadId: string;
+            };
+            yield* invoke("delete_scheduled_task", { scheduledTaskId: removable.scheduledTaskId });
+            yield* orchestrator.dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make("delete-removable-scheduled-thread"),
+              threadId: ThreadId.make(removable.boundThreadId),
+            });
+            const replayCall = yield* invoke("schedule_task", {
+              title: "Removable",
+              prompt: "check later",
+              schedule: { type: "interval", everyMs: 60_000 },
+              bindToCurrentThread: false,
+              clientRequestId: "schedule-own-thread-removed",
+            });
+            expect(replayCall.isError).toBe(true);
+            expect(JSON.stringify(replayCall.content)).toContain("thread was removed");
+            expect(yield* Ref.get(scheduledStore)).toHaveLength(1);
+            yield* invoke("delete_scheduled_task", {
+              scheduledTaskId: ownThreadTask.scheduledTaskId,
+            });
+            expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
             // OpenCode 1.15 has emitted this exact nested-object-as-JSON-string
             // shape. Decode it at the MCP boundary rather than failing a task
             // the model otherwise specified correctly.

@@ -219,17 +219,12 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
+ * Scheduled tasks created over MCP always post into one thread, so the launch
+ * strategy is never used.
  */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
+const MCP_SCHEDULED_TASK_WORKSPACE_STRATEGY: ScheduledTask["workspaceStrategy"] = {
+  type: "root",
+};
 
 /**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
@@ -554,6 +549,21 @@ function stableThreadId(input: {
       stablePart(input.scope.requestNamespace),
       stablePart(input.requestKey),
       String(input.index),
+    ].join(":"),
+  );
+}
+
+/** A scheduled task's own thread. Its second segment keeps it apart from create_threads ids. */
+function scheduledTaskThreadId(input: {
+  readonly scope: McpInvocationScope;
+  readonly requestKey: string;
+}): ThreadId {
+  return ThreadId.make(
+    [
+      "thread",
+      "mcp-scheduled-task",
+      stablePart(input.scope.requestNamespace),
+      stablePart(input.requestKey),
     ].join(":"),
   );
 }
@@ -1433,6 +1443,79 @@ const make = Effect.gen(function* () {
     });
 
   /**
+   * The thread an unbound scheduled task posts every run into. One thread per
+   * task, rather than one per run, keeps a recurring task from filling the
+   * sidebar and the disk with a thread and worktree each time it fires. It
+   * shares the caller's workspace when the caller is in the task's project.
+   */
+  const createScheduledTaskThread = (input: {
+    readonly scope: McpInvocationScope;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined;
+    readonly limits: {
+      readonly runtimeMode: RuntimeMode;
+      readonly interactionMode: ProviderInteractionMode;
+    };
+    readonly projectId: ProjectId;
+    readonly requestKey: string;
+    readonly title: string;
+    readonly modelSelection: ScheduledTask["modelSelection"];
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  }) =>
+    Effect.gen(function* () {
+      const workspace =
+        input.parent !== undefined && input.parent.thread.projectId === input.projectId
+          ? input.parent.thread
+          : undefined;
+      const threadId = scheduledTaskThreadId({ scope: input.scope, requestKey: input.requestKey });
+      yield* threadManagement
+        .dispatch({
+          type: "thread.create",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: stableCommandId({
+            scope: input.scope,
+            requestKey: input.requestKey,
+            operation: "schedule-task-thread",
+          }),
+          threadId,
+          projectId: input.projectId,
+          title: input.title,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          branch: workspace?.branch ?? null,
+          worktreePath: workspace?.worktreePath ?? null,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Could not create the scheduled task's thread: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      // A retried request replays the original creation, and that thread may
+      // since have been removed or raised above the caller's limits.
+      const shell = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
+        return yield* failure(
+          "invalid_request",
+          "The scheduled task's thread was removed. Retry with a new clientRequestId.",
+        );
+      }
+      if (!withinLimits(input.limits, shell)) {
+        return yield* failure(
+          "invalid_request",
+          "The scheduled task's thread now runs above this caller's permissions.",
+        );
+      }
+      return threadId;
+    });
+
+  /**
    * A scheduled task the caller may change: one whose runs execute at modes no
    * broader than the caller's own, so editing its prompt cannot run work above
    * the caller's limits.
@@ -1490,14 +1573,28 @@ const make = Effect.gen(function* () {
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
+        const threadId =
+          !bindToCurrentThread || parent === undefined
+            ? yield* createScheduledTaskThread({
+                scope,
+                parent,
+                limits,
+                projectId,
+                requestKey: yield* requestKey(input.clientRequestId),
+                title,
+                modelSelection,
+                runtimeMode: limits.runtimeMode,
+                interactionMode: limits.interactionMode,
+              })
+            : parent.thread.id;
         const upsertInput: ScheduledTaskUpsertInput = {
           title,
           prompt: input.prompt,
           enabled: input.enabled ?? true,
           schedule: input.schedule,
           projectId,
-          threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          threadId,
+          workspaceStrategy: MCP_SCHEDULED_TASK_WORKSPACE_STRATEGY,
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -1563,14 +1660,22 @@ const make = Effect.gen(function* () {
             ? existing.threadId
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
-              : null;
-        // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+              : yield* createScheduledTaskThread({
+                  scope,
+                  parent,
+                  limits,
+                  projectId: existing.projectId,
+                  // A fresh key: an unbind never replays an earlier creation.
+                  requestKey: yield* requestKey(undefined),
+                  title: input.title ?? existing.title,
+                  modelSelection: existing.modelSelection,
+                  runtimeMode: existing.runtimeMode,
+                  interactionMode: existing.interactionMode,
+                });
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : MCP_SCHEDULED_TASK_WORKSPACE_STRATEGY;
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,

@@ -518,13 +518,13 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   ),
   /**
    * When true (the default), the scheduled task fires into the calling thread
-   * on each run instead of launching a fresh thread. This is the recurring
-   * "wake up in this thread" behaviour reserved for agent-created tasks.
+   * on each run. When false, the task gets one thread of its own and every
+   * run posts there.
    */
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
+        "True (default) posts each run into this thread; false creates one thread for the task that every run posts into.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
