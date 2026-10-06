@@ -8,13 +8,16 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
@@ -98,6 +101,9 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
   },
 };
 
+const AUTOMATIC_REPAIR_TIMEOUT = "30 seconds";
+const AUTOMATIC_REPAIR_RETRY_MS = 5 * 60 * 1_000;
+
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
@@ -125,6 +131,8 @@ export interface CloudflaredRelayClientOptions {
 
 export interface RelayClientShape {
   readonly resolve: Effect.Effect<RelayClientStatus>;
+  /** Check and repair the managed binary before starting a connector. */
+  readonly prepare: Effect.Effect<RelayClientStatus>;
   readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
   readonly installWithProgress: (
     report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
@@ -179,13 +187,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
+  | Scope.Scope
 > {
+  const scope = yield* Effect.scope;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installSemaphore = yield* Semaphore.make(1);
+  let managedCheck: { readonly identity: string; readonly retryAfter: number } | undefined;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
@@ -197,6 +208,20 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     CLOUDFLARED_VERSION,
     `${platform}-${arch}`,
     executableFileName(platform),
+  );
+
+  const managedIdentity = fileSystem.stat(managedPath).pipe(
+    Effect.map((info) =>
+      [
+        managedPath,
+        info.dev,
+        Option.getOrNull(info.ino),
+        info.size,
+        info.mode,
+        Option.map(info.mtime, (time) => time.getTime()).pipe(Option.getOrNull),
+      ].join(":"),
+    ),
+    Effect.orElseSucceed(() => undefined),
   );
 
   const isExecutableFile = Effect.fn("cloudflared.isExecutableFile")(function* (
@@ -221,7 +246,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return null;
   });
 
-  const resolve: RelayClientShape["resolve"] = Effect.gen(function* () {
+  const resolveExecutable: RelayClientShape["resolve"] = Effect.gen(function* () {
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
       return (yield* isExecutableFile(config.executableOverride.value))
@@ -276,6 +301,27 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       return yield* new CloudflaredCommandError({ command, exitCode });
     }
   });
+
+  const isPinnedExecutable = Effect.fn("cloudflared.isPinnedExecutable")(
+    function* (existing: AvailableRelayClient) {
+      if (existing.source !== "managed") return true;
+      // The pinned Windows release accepts `version`, but not `--version`.
+      const child = yield* spawner.spawn(
+        ChildProcess.make(existing.executablePath, ["version"], {
+          shell: false,
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+      );
+      const output = yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+      const exitCode = Number(yield* child.exitCode);
+      const version = /^cloudflared version (\S+)(?:\s|$)/u.exec(output.trim())?.[1];
+      return exitCode === 0 && version === CLOUDFLARED_VERSION;
+    },
+    Effect.scoped,
+    Effect.timeout("5 seconds"),
+    Effect.orElseSucceed(() => false),
+  );
 
   const downloadAsset = Effect.fn("cloudflared.downloadAsset")(function* (
     asset: CloudflaredReleaseAsset,
@@ -354,8 +400,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     report: (stage: RelayClientInstallProgressStage) => Effect.Effect<void>,
   ) {
     yield* report("checking");
-    const existing = yield* resolve;
-    if (existing.status === "available") return existing;
+    const existing = yield* resolveExecutable;
+    if (existing.status === "available" && (yield* isPinnedExecutable(existing))) return existing;
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
       return yield* new RelayClientInstallError({
@@ -391,8 +437,9 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       }),
     );
     return yield* Effect.gen(function* () {
-      const afterLock = yield* resolve;
-      if (afterLock.status === "available") return afterLock;
+      const afterLock = yield* resolveExecutable;
+      if (afterLock.status === "available" && (yield* isPinnedExecutable(afterLock)))
+        return afterLock;
 
       const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
         directory: managedDirectory,
@@ -426,15 +473,18 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
       yield* report("activating");
-      yield* fileSystem
-        .rename(executablePath, stagedPath)
-        .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
-      yield* fileSystem
-        .rename(stagedPath, managedPath)
-        .pipe(
-          wrapInstallFailure("write_failed", "Could not activate the relay client."),
-          Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
-        );
+      // Wait for rename callbacks before cleanup, even if automatic repair times out.
+      yield* Effect.gen(function* () {
+        yield* fileSystem
+          .rename(executablePath, stagedPath)
+          .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
+        yield* fileSystem
+          .rename(stagedPath, managedPath)
+          .pipe(wrapInstallFailure("write_failed", "Could not activate the relay client."));
+      }).pipe(
+        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
+        Effect.uninterruptible,
+      );
       return {
         status: "available",
         executablePath: managedPath,
@@ -459,16 +509,100 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
   const installWithProgress: RelayClientShape["installWithProgress"] = (report) =>
     installSemaphore.withPermit(
-      installUnlocked((stage) =>
-        report({
-          type: "progress",
-          stage,
-        }),
+      Effect.sync(() => {
+        managedCheck = undefined;
+      }).pipe(
+        Effect.andThen(
+          installUnlocked((stage) =>
+            report({
+              type: "progress",
+              stage,
+            }),
+          ),
+        ),
       ),
     );
   const install = installWithProgress(() => Effect.void);
 
-  return RelayClient.of({ resolve, install, installWithProgress });
+  const hasManagedCheck = (identity: string | undefined, now: number) =>
+    identity !== undefined && managedCheck?.identity === identity && now < managedCheck.retryAfter;
+
+  const recordManagedFailure = (identity: string | undefined, now: number) => {
+    if (hasManagedCheck(identity, now)) return false;
+    managedCheck =
+      identity === undefined
+        ? undefined
+        : { identity, retryAfter: now + AUTOMATIC_REPAIR_RETRY_MS };
+    return true;
+  };
+
+  const prepare: RelayClientShape["prepare"] = Effect.gen(function* () {
+    const existing = yield* resolveExecutable;
+    if (existing.status !== "available" || existing.source !== "managed") {
+      managedCheck = undefined;
+      return existing;
+    }
+    const selectedIdentity = yield* managedIdentity;
+    if (hasManagedCheck(selectedIdentity, yield* Clock.currentTimeMillis)) return existing;
+    let warnOnFailure = false;
+    const repair = installSemaphore.withPermit(
+      Effect.gen(function* () {
+        const identity = yield* managedIdentity;
+        const now = yield* Clock.currentTimeMillis;
+        if (hasManagedCheck(identity, now)) {
+          return existing;
+        }
+        return yield* installUnlocked(() => Effect.void).pipe(
+          // Publish the outcome before releasing the permit, including deadline interruption.
+          Effect.onExit((exit) =>
+            Effect.gen(function* () {
+              if (exit._tag === "Success") {
+                const installedIdentity = yield* managedIdentity;
+                managedCheck =
+                  installedIdentity === undefined
+                    ? undefined
+                    : { identity: installedIdentity, retryAfter: Infinity };
+              } else {
+                const failedAt = yield* Clock.currentTimeMillis;
+                warnOnFailure = recordManagedFailure(identity, failedAt);
+              }
+            }),
+          ),
+        );
+      }),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.forkIn(repair, scope),
+      (fiber) => Fiber.join(fiber).pipe(Effect.timeout(AUTOMATIC_REPAIR_TIMEOUT)),
+      // Return on deadline while activation finishes atomically in the client's scope.
+      (fiber) => Fiber.interrupt(fiber).pipe(Effect.forkIn(scope)),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          // A queued or activating repair may not have published its outcome yet.
+          const shouldWarn =
+            error._tag === "TimeoutError"
+              ? recordManagedFailure(yield* managedIdentity, yield* Clock.currentTimeMillis) ||
+                warnOnFailure
+              : warnOnFailure;
+          if (shouldWarn) {
+            yield* Effect.logWarning(
+              "Could not restore the pinned relay client. Keeping the existing binary.",
+              error._tag === "TimeoutError"
+                ? {
+                    reason: "repair_timeout",
+                    message: "Automatic relay client repair timed out.",
+                  }
+                : { reason: error.reason, message: error.message },
+            );
+          }
+          return existing;
+        }),
+      ),
+    );
+  });
+
+  return RelayClient.of({ resolve: resolveExecutable, prepare, install, installWithProgress });
 });
 
 export const layerCloudflared = (options: CloudflaredRelayClientOptions) =>

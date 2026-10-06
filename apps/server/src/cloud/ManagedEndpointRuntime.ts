@@ -298,7 +298,7 @@ export const make = Effect.gen(function* () {
 
     yield* stopActive;
 
-    const executable = yield* relayClient.resolve;
+    const executable = yield* relayClient.prepare;
     if (executable.status !== "available") {
       return {
         status: "failed",

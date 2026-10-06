@@ -21,7 +21,8 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
   RelayClient.RelayClient.of({
-    resolve: Effect.succeed({
+    resolve: Effect.die("launch must prepare the relay client"),
+    prepare: Effect.succeed({
       status: "available",
       executablePath: "cloudflared",
       source: "path",
@@ -341,7 +342,20 @@ describe("CloudManagedEndpointRuntime", () => {
           return handle;
         }),
       );
-      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const relayClient = yield* RelayClient.RelayClient.pipe(
+        Effect.provide(layerRelayClientAvailable),
+      );
+      let preparations = 0;
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(RelayClient.RelayClient, {
+          ...relayClient,
+          prepare: Effect.sync(() => {
+            expect(killed).toHaveLength(spawned.length);
+            preparations += 1;
+          }).pipe(Effect.andThen(relayClient.prepare)),
+        }),
+      );
 
       yield* runtime.applyConfig({
         providerKind: "cloudflare_tunnel",
@@ -377,6 +391,7 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(spawned.map((command) => command.options.detached)).toEqual([false, false]);
       expect(spawned.map((command) => command.options.shell)).toEqual([false, false]);
       expect(killed).toEqual([100, 101]);
+      expect(preparations).toBe(2);
       expect(stopped).toEqual({ status: "disabled" });
     }),
   );
@@ -732,7 +747,8 @@ describe("CloudManagedEndpointRuntime", () => {
         Layer.succeed(
           RelayClient.RelayClient,
           RelayClient.RelayClient.of({
-            resolve: Effect.succeed({
+            resolve: Effect.die("launch must prepare the relay client"),
+            prepare: Effect.succeed({
               status: "missing",
               version: RelayClient.CLOUDFLARED_VERSION,
             }),

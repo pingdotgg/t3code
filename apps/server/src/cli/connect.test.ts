@@ -58,6 +58,7 @@ it.effect("does not install the relay client when the user declines the managed 
     let installCalls = 0;
     const result = yield* acquireRelayClientForLink(
       {
+        prepare: Effect.die("link inspection must not prepare the relay client"),
         resolve: Effect.succeed({
           status: "missing",
           version: RelayClient.CLOUDFLARED_VERSION,
@@ -87,6 +88,7 @@ it.effect("installs the relay client after the user accepts the managed download
     const progress: Array<string> = [];
     const result = yield* acquireRelayClientForLink(
       {
+        prepare: Effect.die("link inspection must not prepare the relay client"),
         resolve: Effect.succeed({
           status: "missing",
           version: RelayClient.CLOUDFLARED_VERSION,
@@ -125,6 +127,7 @@ it.effect("reuses an available relay client executable without prompting", () =>
     let promptCalls = 0;
     const result = yield* acquireRelayClientForLink(
       {
+        prepare: Effect.die("link inspection must not prepare the relay client"),
         resolve: Effect.succeed(managedExecutable),
         install: Effect.die("unexpected install"),
         installWithProgress: () => Effect.die("unexpected install"),
