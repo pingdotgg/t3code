@@ -100,6 +100,20 @@ describe("mobile model options", () => {
       undefined,
       undefined,
     ]);
+
+    // Local ACP commands have no registry agent, so two of them share a glyph.
+    const localConfig = {
+      ...acpConfig,
+      settings: {
+        providerInstances: {
+          acp_a: { driver: "acpRegistry", config: { source: "local", agentId: "agent-a" } },
+          acp_b: { driver: "acpRegistry", config: { source: "local", agentId: "agent-b" } },
+        },
+      },
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(localConfig, null).every((option) => option.providerBadge !== undefined),
+    ).toBe(true);
   });
 
   it("carries configured ACP identity into model and provider catalogs", () => {

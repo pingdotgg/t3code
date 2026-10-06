@@ -49,8 +49,11 @@ export function resolveProviderBadge(
 ): ProviderBadge | undefined {
   const badgeEntry = (candidate: ServerProvider) => {
     const settings = config?.settings?.providerInstances[candidate.instanceId]?.config;
+    // A local ACP command has no registry agent, as on web.
     const agentId =
-      typeof settings === "object" && settings ? Reflect.get(settings, "agentId") : null;
+      typeof settings === "object" && settings && Reflect.get(settings, "source") !== "local"
+        ? Reflect.get(settings, "agentId")
+        : null;
     return {
       driverKind: candidate.driver,
       ...(typeof agentId === "string" && agentId.trim()
