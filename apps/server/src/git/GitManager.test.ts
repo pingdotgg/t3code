@@ -4553,7 +4553,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         Effect.flip,
         Effect.map((error) => error.message),
       );
-      expect(errorMessage).toContain("GitHub CLI (`gh`) is required");
+      expect(errorMessage).toContain("No GitHub credential on the server");
     }),
   );
 

@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -96,6 +97,7 @@ function makeRegistry(input: {
         layerProcess,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
+        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitHubApi.GitHubApi)(input.githubApi ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),

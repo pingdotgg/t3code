@@ -14,6 +14,7 @@ import * as GitHubPullRequestCli from "../src/pullRequest/GitHubPullRequestCli.t
 import * as GitHubPullRequestProvider from "../src/pullRequest/GitHubPullRequestProvider.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
+import * as ServerSettings from "../src/serverSettings.ts";
 import * as GitHubGraphQlBudget from "../src/sourceControl/githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "../src/sourceControl/SourceControlRateLimit.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
@@ -64,7 +65,7 @@ const measuredApi = Layer.effect(
     });
   }),
 ).pipe(
-  Layer.provide(GitHubCredentials.layer),
+  Layer.provide(GitHubCredentials.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
   Layer.provide(GitHubGraphQlBudget.layer),
   Layer.provide(SourceControlRateLimit.layer),
   Layer.provide(FetchHttpClient.layer),

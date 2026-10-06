@@ -18,7 +18,6 @@ import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
-import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -4041,45 +4040,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
       }),
   );
 
-  it.effect("sends the base comparison's head as a variable, not inside the document", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  pullRequest: {
-                    viewerCanUpdateBranch: true,
-                    baseRef: { compare: { behindBy: 4 } },
-                  },
-                },
-              },
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-
-      const comparison = yield* cli.getPullRequestBaseComparison({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        headRef: "fork:feat/page",
-      });
-
-      expect(varsAt(0)).toEqual({
-        owner: "acme",
-        name: "web",
-        number: 7,
-        headRef: "fork:feat/page",
-      });
-      expect(comparison).toEqual({ behindBy: 4, viewerCanUpdate: true });
-      expect(queryAt(0)).toContain(BASE_COMPARISON_GRAPHQL_QUERY.slice(0, -2));
-    }),
-  );
-
   it.effect("stops GraphQL reads at the protected reserve until reset", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(
@@ -4088,10 +4048,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
             encodeJson({
               data: {
                 repository: {
-                  pullRequest: {
-                    viewerCanUpdateBranch: true,
-                    baseRef: { compare: { behindBy: 4 } },
-                  },
+                  mergeCommitAllowed: true,
+                  squashMergeAllowed: false,
+                  rebaseMergeAllowed: true,
+                  viewerPermission: "READ",
+                  pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                 },
                 rateLimit: {
                   cost: 1,
@@ -4110,13 +4071,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
         repository: "acme/web",
         host: "github.com",
         number: 7,
-        headRef: "fork:feat/page",
       } as const;
 
-      yield* cli.getPullRequestBaseComparison(input);
+      yield* cli.getViewerAccess(input);
       expect(queryAt(0)).toContain("rateLimit { cost limit remaining resetAt }");
 
-      const error = yield* Effect.flip(cli.getPullRequestBaseComparison(input));
+      const error = yield* Effect.flip(cli.getViewerAccess(input));
 
       assert.strictEqual(error._tag, "SourceControlRateLimitPausedError");
       if (error._tag !== "SourceControlRateLimitPausedError") return;
@@ -4136,10 +4096,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
               encodeJson({
                 data: {
                   repository: {
-                    pullRequest: {
-                      viewerCanUpdateBranch: true,
-                      baseRef: { compare: { behindBy: 4 } },
-                    },
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
+                    viewerPermission: "READ",
+                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
                   rateLimit: {
                     cost: 1,
@@ -4171,12 +4132,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
         );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      yield* cli.getPullRequestBaseComparison({
+      yield* cli.getViewerAccess({
         cwd: "/w",
         repository: "acme/web",
         host: "github.com",
         number: 7,
-        headRef: "fork:feat/page",
       });
       const access = yield* cli.getViewerAccess({
         cwd: "/w",

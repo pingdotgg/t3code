@@ -1588,6 +1588,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect(
+    "keeps GitHub tokens per host in the secret store and tells clients only that one is set",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const saved = yield* serverSettings.updateSettings({
+          github: { tokens: { "GitHub.com": "ghp_dotcom", "ghe.acme.test": "ghp_ghe" } },
+        });
+        assert.deepEqual(saved.github.tokens, {
+          "github.com": "ghp_dotcom",
+          "ghe.acme.test": "ghp_ghe",
+        });
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "ghp_dotcom");
+        assert.notInclude(raw, "ghp_ghe");
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).github;
+        assert.notInclude(forClient.tokens["github.com"]!, "ghp_dotcom");
+        assert.isAbove(forClient.tokens["github.com"]!.length, 0);
+
+        // Echoing the redacted values back keeps them; host and account changes leave tokens alone.
+        yield* serverSettings.updateSettings({ github: { tokens: forClient.tokens } });
+        yield* serverSettings.updateSettings({
+          github: { hosts: { "github.com": { enabled: true, account: "work" } } },
+        });
+        assert.deepEqual((yield* serverSettings.getSettings).github.tokens, {
+          "github.com": "ghp_dotcom",
+          "ghe.acme.test": "ghp_ghe",
+        });
+
+        // An empty token removes that host's token and nothing else.
+        const cleared = yield* serverSettings.updateSettings({
+          github: { tokens: { "github.com": "" } },
+        });
+        assert.equal(cleared.github.tokens["github.com"] ?? "", "");
+        assert.equal(cleared.github.tokens["ghe.acme.test"], "ghp_ghe");
+        const remaining = yield* Effect.forEach(["github.com", "ghe.acme.test"], (host) =>
+          secrets.get(`github-token-${Buffer.from(host, "utf8").toString("base64url")}`),
+        );
+        assert.isTrue(Option.isNone(remaining[0]!));
+        assert.isTrue(Option.isSome(remaining[1]!));
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("removes a Bitbucket secret once its token is cleared by hand in settings.json", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

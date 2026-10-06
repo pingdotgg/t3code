@@ -11,7 +11,6 @@ import {
   decodePullRequestStackMembershipsJson,
   buildReviewerRequest,
   buildSetFilesViewedGraphQlMutation,
-  decodeBaseComparisonJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
@@ -1693,48 +1692,6 @@ describe("decodePullRequestFilesJson", () => {
 
     expect(result.patch).toContain("rename from src/old.ts");
     expect(result.truncated).toBe(false);
-  });
-});
-
-describe("how far a branch trails its base", () => {
-  const comparison = (pullRequest: unknown) =>
-    JSON.stringify({ data: { repository: { pullRequest } } });
-
-  it("reads the commit count and whether this viewer may move the branch", () => {
-    const decoded = expectSuccess(
-      decodeBaseComparisonJson(
-        comparison({ viewerCanUpdateBranch: true, baseRef: { compare: { behindBy: 12 } } }),
-      ),
-    );
-    expect(decoded).toEqual({ behindBy: 12, viewerCanUpdate: true });
-  });
-
-  it("reads a current branch as nothing to do", () => {
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(
-          comparison({ viewerCanUpdateBranch: false, baseRef: { compare: { behindBy: 0 } } }),
-        ),
-      ),
-    ).toEqual({ behindBy: 0, viewerCanUpdate: false });
-  });
-
-  it("answers unknown where the head could not be compared", () => {
-    // A pull request from a fork whose repository is gone, which GitHub answers with a null
-    // comparison beside a perfectly good pull request.
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(comparison({ viewerCanUpdateBranch: true, baseRef: null })),
-      ).behindBy,
-    ).toBeNull();
-    expect(expectSuccess(decodeBaseComparisonJson(comparison(null)))).toEqual({
-      behindBy: null,
-      viewerCanUpdate: false,
-    });
-  });
-
-  it("refuses a body that is not the answer to this question", () => {
-    expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
   });
 });
 

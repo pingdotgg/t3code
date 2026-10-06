@@ -1264,16 +1264,17 @@ export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.T
 
 /**
  * What each host needs before it can be read, so a failure names the fix rather than the
- * symptom. Bitbucket is credentials on the server rather than a signed-in CLI, which is why
- * these are whole sentences instead of a tool name to interpolate.
+ * symptom. The reason names keep their `cli-` prefix for wire compatibility; for GitHub and
+ * Bitbucket they mean "no credential" and "a refused credential", not a missing tool.
  */
 const PROVIDER_REQUIREMENT: Partial<
   Record<SourceControlProviderKind, { readonly missing: string; readonly unauthenticated: string }>
 > = {
   github: {
     missing:
-      "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
-    unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+    unauthenticated:
+      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
   },
   forgejo: {
     missing:

@@ -44,7 +44,7 @@ export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnava
   gitHubCliFailureFields,
 ) {
   override get message(): string {
-    return "GitHub CLI (`gh`) is required but not available on PATH. Install it and run `gh auth login`, or set GH_TOKEN.";
+    return "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.";
   }
 }
 
@@ -53,7 +53,10 @@ export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAu
   gitHubCliFailureFields,
 ) {
   override get message(): string {
-    return "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
+    // A missing or turned-off credential already says what to do about it.
+    return GitHubCredentials.isGitHubCredentialUnavailableError(this.cause)
+      ? this.cause.message
+      : "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
   }
 }
 
@@ -153,6 +156,7 @@ function fromGitHubApiError(cwd: string, error: GitHubApi.GitHubApiError): GitHu
     case "GitHubCliMissingError":
       return new GitHubCliUnavailableError(context);
     case "GitHubNotSignedInError":
+    case "GitHubHostDisabledError":
     case "GitHubApiAuthenticationError":
       return new GitHubCliAuthenticationError(context);
     case "GitHubCliFailedError":
