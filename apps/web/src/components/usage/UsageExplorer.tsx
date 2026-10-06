@@ -120,6 +120,8 @@ export interface UsageExplorerProps {
   readonly timeZone: string;
   readonly preferences: UsageExplorerPreferences;
   readonly onPreferencesChange: (next: UsageExplorerPreferences) => void;
+  /** The environments selected in the page's environment menu. */
+  readonly environmentIds: readonly string[];
   readonly environmentLabel: (environmentId: string) => string;
   readonly accountLabel: (account: string, provider: UsageProviderKind) => string;
   readonly zoomed: boolean;
@@ -163,7 +165,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
     [environmentLabel, previous],
   );
 
-  const [filters, setFilters] = useState<UsageFilters>(NO_FILTERS);
+  const [filterState, setFilters] = useState<UsageFilters>(NO_FILTERS);
   const [threadView, setThreadView] = useState(false);
   const [hidden, setHidden] = useState<Record<UsageDimension, ReadonlySet<string>>>(() => ({
     project: new Set(),
@@ -179,9 +181,15 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const [highlight, setHighlight] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  const environmentCount = useMemo(
-    () => new Set(data.facts.map((fact) => fact.environment)).size,
-    [data.facts],
+  const environments = useMemo(() => new Set(props.environmentIds), [props.environmentIds]);
+  const environmentCount = environments.size;
+  // A focused environment deselected in the page's menu stops filtering.
+  const filters = useMemo(
+    () =>
+      filterState.environment !== null && !environments.has(filterState.environment)
+        ? { ...filterState, environment: null }
+        : filterState,
+    [environments, filterState],
   );
   // Threads live inside a project: the tab works only while one is focused.
   // Environments needs two to compare; with one, the page groups by project.
@@ -230,6 +238,12 @@ export function UsageExplorer(props: UsageExplorerProps) {
     },
     [accountLabel, accountProvider, data, environmentLabel, filters.environment],
   );
+
+  // Under an environment, its projects need no environment in their names.
+  const rowName = (row: ItemRow) =>
+    row.dimension === "project" && row.ancestors.some((step) => step.dimension === "environment")
+      ? (data.projectTitles.get(row.key) ?? nameOf("project", row.key))
+      : nameOf(row.dimension, row.key);
 
   /* ------------------------------ facts ------------------------------ */
   const filtered = useMemo(
@@ -503,7 +517,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const showMenu = async (row: ItemRow, position: { x: number; y: number }) => {
     const api = readLocalApi();
     if (!api) return;
-    const name = nameOf(row.dimension, row.key);
+    const name = rowName(row);
     type Action =
       | "expand"
       | "focus"
@@ -986,7 +1000,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
                 : { column, descending: column !== "name" },
             )
           }
-          nameOf={nameOf}
+          rowName={rowName}
           threads={data}
           favorites={favorites}
           onToggleOpen={toggleOpen}
@@ -1445,7 +1459,7 @@ function BreakdownTable({
   metric,
   sort,
   onSort,
-  nameOf,
+  rowName,
   threads,
   favorites,
   onToggleOpen,
@@ -1466,7 +1480,7 @@ function BreakdownTable({
   readonly metric: UsageExplorerMetric;
   readonly sort: UsageSort | null;
   readonly onSort: (column: UsageSort["column"]) => void;
-  readonly nameOf: (dimension: BreakdownDimension, key: string) => string;
+  readonly rowName: (row: ItemRow) => string;
   readonly threads: UsageExplorerData;
   readonly favorites: ReadonlySet<string>;
   readonly onToggleOpen: (path: string) => void;
@@ -1607,7 +1621,7 @@ function BreakdownTable({
                   </tr>
                 );
               }
-              const name = nameOf(row.dimension, row.key);
+              const name = rowName(row);
               const info =
                 row.dimension === "thread" ? threads.threads.info.get(row.key) : undefined;
               const series = row.color === null ? null : seriesOf(row.key);

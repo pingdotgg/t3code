@@ -163,6 +163,10 @@ export function UsagePage() {
   const wantsPrevious = !showingLimits && explorerPreferences.columns.includes("change");
   const previous = useUsage(wantsPrevious ? previousWindow(window) : null, selectedEnvironmentIds);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const selectedEnvironmentIdList = useMemo(
+    () => selectedEnvironments.map((environment) => environment.environmentId),
+    [selectedEnvironments],
+  );
   const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
   const sourceMessages = [
     ...new Set(
@@ -550,6 +554,7 @@ export function UsagePage() {
                   timeZone={window.timeZone}
                   preferences={explorerPreferences}
                   onPreferencesChange={changeExplorerPreferences}
+                  environmentIds={selectedEnvironmentIdList}
                   environmentLabel={environmentLabel}
                   accountLabel={accountLabel}
                   zoomed={range.kind === "zoom"}
