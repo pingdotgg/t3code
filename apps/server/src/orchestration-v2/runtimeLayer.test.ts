@@ -2767,6 +2767,179 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("with a host fingerprint, a watch reads only what moved", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("pr-watch-fingerprint-project");
+      const threadId = ThreadId.make("runtime-pull-request-watch-fingerprint");
+      yield* seedProject({
+        projectId,
+        title: "Watch fingerprint",
+        workspaceRoot: "/workspace/watch-fingerprint",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-fingerprint-create"),
+        threadId,
+        projectId,
+        title: "Watch fingerprint",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-fingerprint-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 11,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/11", source: "agent" },
+      });
+
+      let fingerprint: { status: string; remarks: string } | "rate-limited" = {
+        status: "OPEN pending",
+        remarks: "0",
+      };
+      type CheckStatus = "pending" | "success" | "failure";
+      // What the host says now, and what a read answers: a read right after a cache fill can
+      // still answer from before a change until the cache is invalidated.
+      let checks: { lint: CheckStatus; test: CheckStatus } = { lint: "pending", test: "pending" };
+      let cachedChecks: typeof checks | null = null;
+      let comments: Array<PullRequestComment> = [];
+      let detailReads = 0;
+      let activityReads = 0;
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () =>
+                Effect.suspend(() =>
+                  fingerprint === "rate-limited"
+                    ? Effect.fail(
+                        new PullRequestOperationError({
+                          operation: "watchFingerprint",
+                          detail: "paused",
+                          cause: new PullRequestProviderError({
+                            provider: "github",
+                            operation: "getChangeRequestWatchFingerprint",
+                            reason: "rate-limited",
+                            detail: "paused",
+                          }),
+                        }),
+                      )
+                    : Effect.succeed(fingerprint),
+                ),
+              invalidate: () =>
+                Effect.sync(() => {
+                  cachedChecks = null;
+                }),
+              detail: () =>
+                Effect.sync(() => {
+                  detailReads += 1;
+                  const answer = cachedChecks ?? checks;
+                  cachedChecks = null;
+                  return {
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 11,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    checks: Object.entries(answer).map(([name, status]) => ({
+                      name,
+                      status,
+                      description: null,
+                      url: null,
+                    })),
+                  };
+                }),
+              activity: () =>
+                Effect.sync(() => {
+                  activityReads += 1;
+                  return {
+                    comments,
+                    commentCount: comments.length,
+                    commentsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  };
+                }),
+            }),
+          ),
+        ),
+      );
+      const reads = () => ({ detail: detailReads, activity: activityReads });
+      const summaries = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+
+      // The first look reads everything.
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 1, activity: 1 });
+
+      // While checks run, the cheap detail is read every pass: check counts by state cannot
+      // tell which check finished, so a failure can arrive with the fingerprint unchanged.
+      checks = { lint: "failure", test: "pending" };
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 2, activity: 1 });
+      assert.deepEqual(yield* summaries, ["#11: checks failed"]);
+
+      // When the fingerprint moves, a cached answer from before the move is not trusted.
+      yield* TestClock.adjust("1 millis");
+      cachedChecks = checks;
+      checks = { lint: "failure", test: "success" };
+      fingerprint = { status: "OPEN settled", remarks: "0" };
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 3, activity: 1 });
+
+      // Nothing in flight and nothing moved, so the passes read nothing.
+      for (let pass = 0; pass < 5; pass += 1) yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 3, activity: 1 });
+
+      // A new comment moves the remarks, which take the activity read too.
+      yield* TestClock.adjust("1 millis");
+      comments = [
+        {
+          id: "comment-1",
+          kind: "issue-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Please rename this.",
+          createdAt: "2999-01-01T00:00:00.000Z",
+          url: null,
+          path: null,
+          reviewState: null,
+        },
+      ];
+      fingerprint = { status: "OPEN settled", remarks: "1" };
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 4, activity: 2 });
+      assert.deepEqual(yield* summaries, ["#11: checks failed", "#11: new comments"]);
+
+      // While the host is rate limited, a pass reads nothing and the watch stays on.
+      fingerprint = "rate-limited";
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 4, activity: 2 });
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+
+      // Edits inside review threads leave no trace in the fingerprint, so the activity is read
+      // again after half an hour regardless.
+      fingerprint = { status: "OPEN settled", remarks: "1" };
+      yield* TestClock.adjust("30 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(reads(), { detail: 5, activity: 3 });
+      assert.deepEqual(yield* summaries, ["#11: checks failed", "#11: new comments"]);
+    }),
+  );
+
   it.effect.each([
     "single page",
     "paginated",

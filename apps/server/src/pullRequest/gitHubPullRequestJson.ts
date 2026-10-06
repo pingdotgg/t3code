@@ -1993,6 +1993,137 @@ export function decodePullRequestSummariesJson(
   return Result.succeed(summaries);
 }
 
+const WATCH_FINGERPRINT_EDITS = "totalCount nodes { lastEditedAt }";
+const WATCH_FINGERPRINT_CHECK_COUNTS =
+  "checkRunCountsByState { state count } statusContextCountsByState { state count }";
+
+/**
+ * What a pull request watch needs to notice, priced by GitHub at one point for twenty-five pull
+ * requests, where the detail and activity reads it gates cost sixteen for one. Counts and the
+ * newest edit cover new comments, reviews (a reply in a review thread is a review), threads, and
+ * a bot rewriting its summary; check counts by state move whenever a check starts or finishes.
+ * Edits to comments inside review threads are not covered: asking for those costs a point for
+ * each pull request.
+ */
+const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
+  "state mergeable headRefOid " +
+  `comments(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
+  `reviews(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
+  "reviewThreads { totalCount } " +
+  `commits(last: 1) { nodes { commit { statusCheckRollup { contexts { ${WATCH_FINGERPRINT_CHECK_COUNTS} } } } } }`;
+
+/** Watch fingerprints for pull requests on one host, one aliased lookup each; null when unsafe. */
+export function buildPullRequestWatchFingerprintsGraphQlQuery(
+  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+): string | null {
+  if (changeRequests.length === 0) return null;
+  const selections: string[] = [];
+  for (const [index, changeRequest] of changeRequests.entries()) {
+    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
+    if (rest.length > 0 || owner === undefined || name === undefined) return null;
+    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
+    selections.push(
+      `  w${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_WATCH_FINGERPRINT_SELECTION} } }`,
+    );
+  }
+  return `query PullRequestWatchFingerprints {\n${selections.join("\n")}\n}`;
+}
+
+/**
+ * Two parts, so a watch reads only what moved: `status` (state, mergeability, head, and checks)
+ * needs the detail read, and `remarks` also needs the far costlier activity read.
+ */
+export interface GitHubPullRequestWatchFingerprint {
+  readonly status: string;
+  readonly remarks: string;
+}
+
+const RawEditedSchema = Schema.Struct({
+  totalCount: Schema.Int,
+  nodes: Schema.Array(Schema.NullOr(Schema.Struct({ lastEditedAt: Schema.NullOr(Schema.String) }))),
+});
+const RawStateCountsSchema = Schema.NullOr(
+  Schema.Array(Schema.Struct({ state: Schema.String, count: Schema.Int })),
+);
+const decodeWatchFingerprintEntry = Schema.decodeUnknownExit(
+  Schema.Struct({
+    state: Schema.String,
+    mergeable: Schema.NullOr(Schema.String),
+    headRefOid: Schema.String,
+    comments: RawEditedSchema,
+    reviews: RawEditedSchema,
+    reviewThreads: Schema.Struct({ totalCount: Schema.Int }),
+    commits: Schema.Struct({
+      nodes: Schema.Array(
+        Schema.NullOr(
+          Schema.Struct({
+            commit: Schema.Struct({
+              statusCheckRollup: Schema.NullOr(
+                Schema.Struct({
+                  contexts: Schema.Struct({
+                    checkRunCountsByState: RawStateCountsSchema,
+                    statusContextCountsByState: RawStateCountsSchema,
+                  }),
+                }),
+              ),
+            }),
+          }),
+        ),
+      ),
+    }),
+  }),
+);
+
+// An edit only ever moves `lastEditedAt` forward, so the newest one stands for them all.
+const newestEdit = (connection: typeof RawEditedSchema.Type) =>
+  connection.nodes.reduce(
+    (newest, node) =>
+      node?.lastEditedAt != null && node.lastEditedAt > newest ? node.lastEditedAt : newest,
+    "",
+  );
+
+const stateCounts = (counts: typeof RawStateCountsSchema.Type) =>
+  (counts ?? [])
+    .filter(({ count }) => count > 0)
+    .map(({ state, count }) => `${state}:${count}`)
+    .toSorted()
+    .join(",");
+
+/** Fingerprints by alias index; a pull request GitHub returned nothing for is left out. */
+export function decodePullRequestWatchFingerprintsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, GitHubPullRequestWatchFingerprint>, DecodeFailure> {
+  const decoded = decodeSummaries(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const fingerprints = new Map<number, GitHubPullRequestWatchFingerprint>();
+  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
+    const index = /^w(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const entry = decodeWatchFingerprintEntry(value.pullRequest);
+    if (!Exit.isSuccess(entry)) continue;
+    const pr = entry.value;
+    const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+    fingerprints.set(Number(index), {
+      status: [
+        pr.state,
+        pr.mergeable ?? "",
+        pr.headRefOid,
+        stateCounts(contexts?.checkRunCountsByState ?? null),
+        stateCounts(contexts?.statusContextCountsByState ?? null),
+      ].join(" "),
+      remarks: [
+        pr.comments.totalCount,
+        newestEdit(pr.comments),
+        pr.reviews.totalCount,
+        newestEdit(pr.reviews),
+        pr.reviewThreads.totalCount,
+      ].join(" "),
+    });
+  }
+  return Result.succeed(fingerprints);
+}
+
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
