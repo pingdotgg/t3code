@@ -22,12 +22,21 @@ describe("wasRecentlyInteracted", () => {
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("environment-observation-test");
       const scope = { type: "vcs-status" as const, cwd: "/repo" };
+      const releasePassive = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: scope.cwd, includeRemote: false },
+      });
+      expect(retainedBackgroundScopes(environmentId)).toEqual([]);
       const release = yield* observeBackgroundActivitySubscription({
         environmentId,
         method: WS_METHODS.subscribeVcsStatus,
         input: { cwd: scope.cwd },
       });
 
+      expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
+
+      yield* releasePassive;
       expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
 
       yield* release;

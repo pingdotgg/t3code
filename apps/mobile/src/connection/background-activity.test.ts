@@ -12,12 +12,23 @@ describe("mobile background activity", () => {
   it.effect("retains VCS demand only while the mobile subscription is active", () =>
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("mobile-environment");
+      const releasePassive = yield* observeMobileBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: "/workspace", includeRemote: false },
+      });
+      expect(retainedMobileBackgroundScopes(environmentId)).toEqual([]);
       const release = yield* observeMobileBackgroundActivitySubscription({
         environmentId,
         method: WS_METHODS.subscribeVcsStatus,
         input: { cwd: "/workspace" },
       });
 
+      expect(retainedMobileBackgroundScopes(environmentId)).toEqual([
+        { type: "vcs-status", cwd: "/workspace" },
+      ]);
+
+      yield* releasePassive;
       expect(retainedMobileBackgroundScopes(environmentId)).toEqual([
         { type: "vcs-status", cwd: "/workspace" },
       ]);
