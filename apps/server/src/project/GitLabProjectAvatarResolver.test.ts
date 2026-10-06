@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -188,6 +189,30 @@ it.layer(layerTest)("GitLabProjectAvatarResolver", (it) => {
           yield* TestClock.adjust(Duration.days(2));
 
           expect(yield* resolver.resolvePath("/repo")).toBe(resolved);
+        }),
+      ),
+    );
+
+    it.effect("prefers a fresh cache entry over an expired one left beside it", () =>
+      withClock(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          // The single answer means a second download would fail the test.
+          const { resolver, downloads } = yield* makeResolver({
+            identity: gitLabIdentity,
+            answers: [PNG],
+          });
+          const expiredPng = (yield* resolver.resolvePath("/repo"))!;
+          // A crash between writing the new avatar and removing the old one
+          // leaves both files.
+          const freshJpeg = expiredPng.replace(/\.png$/, ".jpg");
+          const later = (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.days(2));
+          yield* fileSystem.writeFile(freshJpeg, JPEG);
+          yield* fileSystem.utimes(freshJpeg, later, later);
+          yield* TestClock.adjust(Duration.days(2));
+
+          expect(yield* resolver.resolvePath("/repo")).toBe(freshJpeg);
+          expect(downloads.count).toBe(1);
         }),
       ),
     );

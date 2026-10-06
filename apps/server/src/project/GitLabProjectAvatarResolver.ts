@@ -92,10 +92,13 @@ export const make = Effect.gen(function* () {
     return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
   };
 
+  // A crash between writeEntry's rename and its cleanup can leave an expired
+  // entry beside a fresh one, so a fresh entry always wins.
   const readEntry = Effect.fn("GitLabProjectAvatarResolver.readEntry")(function* (
     cacheKey: string,
   ) {
     const now = yield* Clock.currentTimeMillis;
+    let staleEntry: CacheEntry | null = null;
     for (const extension of [...AVATAR_EXTENSIONS, MISS_EXTENSION]) {
       const filePath = entryPath(cacheKey, extension);
       const info = yield* fileSystem.stat(filePath).pipe(Effect.option);
@@ -105,11 +108,14 @@ export const make = Effect.gen(function* () {
         onSome: (mtime) => mtime.getTime(),
       });
       const fresh = now - writtenAtMs < CACHE_TTL_MS;
-      return extension === MISS_EXTENSION
-        ? ({ _tag: "missing", fresh } satisfies CacheEntry)
-        : ({ _tag: "avatar", path: filePath, fresh } satisfies CacheEntry);
+      const entry: CacheEntry =
+        extension === MISS_EXTENSION
+          ? { _tag: "missing", fresh }
+          : { _tag: "avatar", path: filePath, fresh };
+      if (fresh) return entry;
+      staleEntry ??= entry;
     }
-    return null;
+    return staleEntry;
   });
 
   // Writes one entry and removes the others, so a project never has two answers.
@@ -144,6 +150,11 @@ export const make = Effect.gen(function* () {
       .getProjectAvatar({ cwd, maxBytes: MAX_AVATAR_BYTES, timeoutMs: DOWNLOAD_TIMEOUT_MS })
       .pipe(Effect.option);
     if (Option.isNone(bytes)) {
+      // Drop expired deadlines first, so projects that are never revisited do
+      // not accumulate here.
+      for (const [key, retryAfterMs] of retryAfterMsByKey) {
+        if (retryAfterMs <= now) retryAfterMsByKey.delete(key);
+      }
       // Keep showing the previous avatar while GitLab is out of reach.
       retryAfterMsByKey.set(cacheKey, now + RETRY_DELAY_MS);
       return staleAvatar;
