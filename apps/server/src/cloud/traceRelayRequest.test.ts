@@ -5,7 +5,11 @@ import * as Tracer from "effect/Tracer";
 import { HttpServerRequest } from "effect/http";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 
-import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
+import {
+  traceAuthenticatedRelayRequest,
+  traceLocalHandlerWork,
+  traceRelayRequest,
+} from "./traceRelayRequest.ts";
 
 describe("relay request tracing", () => {
   it.effect("does not accept an unauthenticated request trace parent", () =>
@@ -67,6 +71,44 @@ describe("relay request tracing", () => {
       const span = spans[0]!;
       expect(span.traceId).toBe("0123456789abcdef0123456789abcdef");
       expect(Option.getOrUndefined(span.parent)?.spanId).toBe("0123456789abcdef");
+    }),
+  );
+});
+
+describe("relay request tracing boundary", () => {
+  it.effect("exports a T3 Connect handler span but not its local work", () =>
+    Effect.gen(function* () {
+      const productSpans: Array<string> = [];
+      const localSpans: Array<string> = [];
+      const collect = (into: Array<string>) =>
+        Tracer.make({
+          span: (options) => {
+            into.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://environment.example.test/api/orchestration/threads/thread-1"),
+      );
+
+      // Shaped like a real handler: an Effect.fn span whose service call runs
+      // on the local tracer.
+      const handler = Effect.fn("environment.orchestration.threadSnapshot")(function* () {
+        yield* Effect.void.pipe(
+          Effect.withSpan("sql.execute"),
+          Effect.withSpan("ServerSecretStore.get"),
+          traceLocalHandlerWork,
+        );
+      });
+
+      yield* traceAuthenticatedRelayRequest(handler()).pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        Effect.provideService(RelayClientTracer, Option.some(collect(productSpans))),
+        Effect.withTracer(collect(localSpans)),
+      );
+
+      expect(productSpans).toEqual(["environment.orchestration.threadSnapshot"]);
+      expect(localSpans).toEqual(["ServerSecretStore.get", "sql.execute"]);
     }),
   );
 });
