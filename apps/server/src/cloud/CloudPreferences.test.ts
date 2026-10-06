@@ -217,3 +217,32 @@ it.effect("changes nothing when the current hold setting can't be read", () =>
     }),
   ),
 );
+
+it.effect("an update the client walks away from still finishes", () => {
+  let release!: () => void;
+  let started!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const atRelay = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  return withService({ holdFirstRelayCall: { started, released } }, ({ preferences, stored }) =>
+    Effect.gen(function* () {
+      const update = yield* preferences
+        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => atRelay);
+      // The interrupt is in flight before the relay answers.
+      const interrupted = yield* Fiber.interrupt(update).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      release();
+      yield* Fiber.join(interrupted);
+      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "true");
+      assert.equal(
+        new TextDecoder().decode(stored.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)),
+        "true",
+      );
+    }),
+  );
+});

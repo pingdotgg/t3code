@@ -121,6 +121,9 @@ const make = Effect.gen(function* () {
       }
       yield* awarenessRelay.requestCatchUp();
     },
+    // A client that disconnects mid-update must not stop it between a save and
+    // its rollback, so an update always finishes or undoes itself.
+    Effect.uninterruptible,
     updateLock.withPermits(1),
   );
 
