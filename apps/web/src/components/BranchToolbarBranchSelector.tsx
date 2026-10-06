@@ -29,6 +29,7 @@ import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThreadShell } from "../state/entities";
+import { useEnvironmentProjectClonesPending, useProjectClone } from "../state/projectClones";
 import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -48,6 +49,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  resolveCurrentGitBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   sanitizeNewRefName,
@@ -240,18 +242,29 @@ export function BranchToolbarBranchSelector({
   // from the response entirely, which would defeat the collision check below.
   // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
   const branchRefQuery = sanitizeNewRefName(deferredTrimmedBranchQuery);
-  const branchRefState = usePaginatedBranches({
-    environmentId,
-    cwd: branchCwd,
-    query: branchRefQuery,
-  });
+  // A cloned project exists before its checkout does, so read no refs while
+  // it clones, and read them fresh while the finished clone is still tracked
+  // (see resolveCurrentGitBranch).
+  const activeProjectClone = useProjectClone(activeProjectRef);
+  const clonePhase = useEnvironmentProjectClonesPending(environmentId)
+    ? "unknown"
+    : (activeProjectClone?.phase ?? null);
+  const isProjectCloning = activeProjectClone !== null && activeProjectClone.phase !== "done";
+  const isProjectJustCloned = clonePhase === "done";
+  const branchRefState = usePaginatedBranches(
+    { environmentId, cwd: isProjectCloning ? null : branchCwd, query: branchRefQuery },
+    { refresh: isProjectJustCloned },
+  );
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
   const isFetchingNextPage = branchRefState.isFetchingNextPage;
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
-  const currentGitBranch =
-    branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  const currentGitBranch = resolveCurrentGitBranch({
+    clonePhase,
+    statusRefName: branchStatusQuery.data?.refName ?? null,
+    refs,
+  });
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(branchStatusQuery.data?.sourceControlProvider),
     [branchStatusQuery.data?.sourceControlProvider],

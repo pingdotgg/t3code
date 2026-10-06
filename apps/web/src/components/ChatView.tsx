@@ -6761,6 +6761,13 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
+  // Right after a clone, the branch picker reads refs fresh before it picks a
+  // base, so hold send until it has one rather than ask for one.
+  const isClonedBaseBranchPending =
+    activeProjectClone?.phase === "done" &&
+    sendEnvMode === "worktree" &&
+    !activeThread?.worktreePath &&
+    !activeThreadBranch;
   const localCheckoutBranchMismatch = useMemo(
     () =>
       isServerThread
@@ -11311,7 +11318,8 @@ export default function ChatView(props: ChatViewProps) {
                                         ? "Messages loading"
                                         : worktreeSetupBlocksSend
                                           ? "Preparing worktree"
-                                          : projectCloneSendBlockReason
+                                          : (projectCloneSendBlockReason ??
+                                            (isClonedBaseBranchPending ? "Finishing clone" : null))
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={

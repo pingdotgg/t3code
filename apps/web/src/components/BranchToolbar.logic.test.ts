@@ -12,6 +12,7 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
+  resolveCurrentGitBranch,
   resolveLockedWorkspaceLabel,
   resolveWorkspaceDisplayName,
   resolveLocalCheckoutBranchMismatch,
@@ -140,6 +141,37 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "local",
       }),
     ).toBe("worktree");
+  });
+});
+
+describe("resolveCurrentGitBranch", () => {
+  const clonedRefs = [
+    { name: "main", current: true },
+    { name: "feature/x", current: false },
+  ];
+
+  it("names no branch while the project is cloning or its clone state is unknown", () => {
+    for (const clonePhase of ["unknown", "running", "failed", "cancelled"] as const) {
+      expect(resolveCurrentGitBranch({ clonePhase, statusRefName: "master", refs: [] })).toBeNull();
+    }
+  });
+
+  it("trusts the fresh refs over lagging status right after a clone", () => {
+    expect(
+      resolveCurrentGitBranch({ clonePhase: "done", statusRefName: "master", refs: clonedRefs }),
+    ).toBe("main");
+    expect(
+      resolveCurrentGitBranch({ clonePhase: "done", statusRefName: "master", refs: [] }),
+    ).toBeNull();
+  });
+
+  it("prefers status for a project that is not being cloned", () => {
+    expect(
+      resolveCurrentGitBranch({ clonePhase: null, statusRefName: "develop", refs: clonedRefs }),
+    ).toBe("develop");
+    expect(
+      resolveCurrentGitBranch({ clonePhase: null, statusRefName: null, refs: clonedRefs }),
+    ).toBe("main");
   });
 });
 

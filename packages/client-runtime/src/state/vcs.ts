@@ -130,8 +130,9 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
   const cache = yield* Persistence.EnvironmentCacheStore;
   const environmentId = supervisor.target.environmentId;
   const useCache = canUseVcsRefsCache(input);
+  // A refresh read exists to bypass stale refs, so it only writes the cache.
   const cached =
-    useCache && persistedCacheReadable
+    useCache && persistedCacheReadable && input.refresh !== true
       ? yield* cache.loadVcsRefs(environmentId, input.cwd).pipe(
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached Git refs.").pipe(

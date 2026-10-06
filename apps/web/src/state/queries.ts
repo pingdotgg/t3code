@@ -99,11 +99,16 @@ export function useThreadSearch(
   };
 }
 
-export function usePaginatedBranches(target: VcsRefTarget) {
+/** `refresh` makes the server re-read refs instead of serving its cached snapshot. */
+export function usePaginatedBranches(
+  target: VcsRefTarget,
+  options?: { readonly refresh?: boolean },
+) {
   const query = target.query?.trim() ?? "";
+  const readFresh = options?.refresh === true;
   const targetKey =
     target.environmentId !== null && target.cwd !== null
-      ? JSON.stringify([target.environmentId, target.cwd, query])
+      ? JSON.stringify([target.environmentId, target.cwd, query, readFresh])
       : null;
   const [pagination, setPagination] = useState<{
     readonly targetKey: string | null;
@@ -123,12 +128,13 @@ export function usePaginatedBranches(target: VcsRefTarget) {
                 cwd: target.cwd!,
                 ...(query.length > 0 ? { query } : {}),
                 ...(cursor === undefined ? {} : { cursor }),
+                ...(readFresh ? { refresh: true } : {}),
                 limit: VCS_REF_LIST_LIMIT,
               },
             }),
           )
         : [],
-    [cursors, query, target.cwd, target.environmentId],
+    [cursors, query, readFresh, target.cwd, target.environmentId],
   );
   const pagesAtom = useMemo(
     () =>

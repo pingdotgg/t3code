@@ -473,6 +473,37 @@ describe("cached VCS refs", () => {
     ),
   );
 
+  it.effect("skips the persisted branch list for a refresh read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = {
+          [WS_METHODS.vcsListRefs]: () => Effect.succeed(LIVE_REFS),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+
+        const refs = yield* Stream.unwrap(
+          makeCachedVcsRefsChanges({ cwd: "/repo", limit: 100, refresh: true }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(
+              Persistence.EnvironmentCacheStore,
+              cacheWithRefs(Option.some(CACHED_REFS)),
+            ),
+          ),
+        ).pipe(Stream.runHead);
+
+        expect(Option.getOrThrow(refs)).toEqual(LIVE_REFS);
+      }),
+    ),
+  );
+
   it.effect("retries a transient live failure while connected", () =>
     Effect.scoped(
       Effect.gen(function* () {

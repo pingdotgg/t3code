@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   EnvironmentMachineKind,
   VcsRef,
+  ProjectClonePhase,
   ProjectId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
@@ -205,6 +206,23 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
     return "worktree";
   }
   return "local";
+}
+
+/**
+ * The checked-out branch, which a new worktree's base defaults to when the
+ * repo has no known default. A cloning project has none yet: git reports its
+ * own default branch (often an unborn `master`). Until the client knows
+ * whether the project is cloning, it has none either. Just after the clone,
+ * status still lags the checkout, so only freshly read refs count.
+ */
+export function resolveCurrentGitBranch(input: {
+  clonePhase: ProjectClonePhase | "unknown" | null;
+  statusRefName: string | null;
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "current">>;
+}): string | null {
+  if (input.clonePhase !== null && input.clonePhase !== "done") return null;
+  const currentRefName = input.refs.find((ref) => ref.current)?.name ?? null;
+  return input.clonePhase === "done" ? currentRefName : (input.statusRefName ?? currentRefName);
 }
 
 export function resolveBranchToolbarValue(input: {

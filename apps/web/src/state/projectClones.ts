@@ -11,6 +11,7 @@ const EMPTY_CLONES: ReadonlyArray<ProjectCloneSnapshot> = [];
 const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
   Atom.withLabel("web-project-clone:empty"),
 );
+const NOT_PENDING_ATOM = Atom.make(false).pipe(Atom.withLabel("web-project-clones-pending:none"));
 
 /**
  * Latest clone list an environment has streamed; empty until the subscription
@@ -27,6 +28,22 @@ export const environmentProjectClonesAtom = Atom.family((environmentId: Environm
   }).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),
 );
 
+/**
+ * True until a clone-tracking environment has streamed its clone list, so a
+ * caller can tell "not cloning" from "not known yet". Servers without clone
+ * tracking are never pending.
+ */
+const environmentProjectClonesPendingAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): boolean => {
+    const config = get(environmentServerConfigsAtom).get(environmentId);
+    if (config === undefined) return true;
+    if (config.environment.capabilities.projectCloneTracking !== true) return false;
+    return AsyncResult.isInitial(
+      get(sourceControlEnvironment.projectClones({ environmentId, input: {} })),
+    );
+  }).pipe(Atom.withLabel(`web-project-clones-pending:${environmentId}`)),
+);
+
 const projectCloneAtom = Atom.family((key: string) => {
   const ref = parseScopedProjectKey(key);
   return Atom.make((get): ProjectCloneSnapshot | null => {
@@ -37,9 +54,10 @@ const projectCloneAtom = Atom.family((key: string) => {
 });
 
 /**
- * The tracked clone for a project, or null once it finished (or never
- * existed). Subscribing here opens the environment's clone stream, which is
- * cheap: the server sends an empty list and stays quiet until a clone starts.
+ * The tracked clone for a project, or null when none is tracked. A finished
+ * clone stays for a short while with phase "done". Subscribing here opens the
+ * environment's clone stream, which is cheap: the server sends an empty list
+ * and stays quiet until a clone starts.
  */
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneSnapshot | null {
   return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));
@@ -49,4 +67,21 @@ export function useEnvironmentProjectClones(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ProjectCloneSnapshot> {
   return useAtomValue(environmentProjectClonesAtom(environmentId));
+}
+
+export function useEnvironmentProjectClonesPending(environmentId: EnvironmentId): boolean {
+  return useAtomValue(environmentProjectClonesPendingAtom(environmentId));
+}
+
+/**
+ * False while a project's git state cannot be trusted: before the environment's
+ * clone list arrives, while the project clones, and while its finished clone is
+ * still tracked (status lags the checkout by a few seconds).
+ */
+export function useIsProjectCloneSettled(ref: ScopedProjectRef | null): boolean {
+  const clone = useProjectClone(ref);
+  const pending = useAtomValue(
+    ref === null ? NOT_PENDING_ATOM : environmentProjectClonesPendingAtom(ref.environmentId),
+  );
+  return !pending && clone === null;
 }

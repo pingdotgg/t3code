@@ -52,6 +52,8 @@ import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useIsProjectCloneSettled } from "~/state/projectClones";
 import {
   buildMenuItems,
   formatGitActionElapsed,
@@ -1211,9 +1213,21 @@ export default function GitActionsControl({
     !activeServerThread &&
     activeDraftThread?.envMode === "worktree" &&
     activeDraftThread.worktreePath === null;
+  // Mid-clone, status names git's own default branch (often an unborn
+  // `master`), so a draft must not adopt it as its branch.
+  const isDraftProjectCloneSettled = useIsProjectCloneSettled(
+    activeDraftThread
+      ? scopeProjectRef(activeDraftThread.environmentId, activeDraftThread.projectId)
+      : null,
+  );
 
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+    if (
+      isGitActionRunning ||
+      isSelectingWorktreeBase ||
+      activeServerThread ||
+      !isDraftProjectCloneSettled
+    ) {
       return;
     }
 
@@ -1230,6 +1244,7 @@ export default function GitActionsControl({
     activeServerThread,
     activeDraftThread?.branch,
     gitStatusForActions,
+    isDraftProjectCloneSettled,
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
