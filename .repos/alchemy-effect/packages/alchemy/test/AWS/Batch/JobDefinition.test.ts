@@ -83,5 +83,8 @@ test.provider(
       yield* stack.destroy();
       expect(yield* activeRevisions).toHaveLength(0);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:batch", "provider:aws:iam", "live"],
+    timeout: 240_000,
+  },
 );

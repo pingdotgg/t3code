@@ -16,9 +16,9 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
-import type { ServerProviderShape } from "./Services/ServerProvider.ts";
+import type { ServerProviderShape } from "./ServerProvider.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -57,10 +57,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
-  Scope.Scope | BackgroundPolicy.BackgroundPolicy | ServerSettingsService
+  Scope.Scope | BackgroundPolicy.BackgroundPolicy | ServerSettings.ServerSettingsService
 > {
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-  const serverSettings = yield* ServerSettingsService;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),

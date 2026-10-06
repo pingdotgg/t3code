@@ -29,7 +29,7 @@ function SubscriptionUsage(
   // The extension evaluates this function without the app's module scope.
   const family = environment.widgetFamily;
   // Gallery snapshots can render an old timeline entry after it has expired.
-  const now = Math.max(environment.date.getTime(), Date.now());
+  const now = Math.max(environment.date?.getTime() ?? 0, Date.now());
   const accessory = family === "accessoryRectangular";
   const compact =
     family === "systemSmall" || accessory || environment.levelOfDetail === "simplified";

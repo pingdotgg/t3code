@@ -1,4 +1,5 @@
 import type * as runtime from "@cloudflare/workers-types";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -65,3 +66,9 @@ export interface MultipartUpload {
 export type MultipartOptions = runtime.R2MultipartOptions;
 export type UploadedPart = runtime.R2UploadedPart;
 export interface UploadPartOptions extends runtime.R2UploadPartOptions {}
+
+/**
+ * Failure while minting a presigned URL (`PresignGetObject` /
+ * `PresignPutObject`): a malformed URL or header, or a WebCrypto error.
+ */
+export type PresignError = SigV4.SigningError;

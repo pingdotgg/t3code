@@ -1,4 +1,5 @@
 import * as NodeVM from "node:vm";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it as effectIt } from "@effect/vitest";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
@@ -22,6 +23,7 @@ import { TestClock } from "effect/testing";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -186,6 +188,7 @@ const {
   fromId,
   getFocusedWebContents,
   mkdir,
+  previewSession,
   showItemInFolder,
   webviewSend,
   writeFile,
@@ -200,6 +203,7 @@ const {
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
+  previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
@@ -231,18 +235,18 @@ vi.mock("electron", () => ({
   },
 }));
 
-const browserSessionLayer = Layer.succeed(
+const layerBrowserSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
     getPartition: () => Effect.succeed("persist:t3code-preview-test"),
     isPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
-    getSession: () => Effect.die("unexpected getSession"),
+    getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
   }),
 );
 
-const environmentLayer = Layer.succeed(
+const layerEnvironment = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
     browserArtifactsDir: "/tmp/t3/dev/browser-artifacts",
@@ -253,7 +257,7 @@ const environmentLayer = Layer.succeed(
   } as DesktopEnvironment.DesktopEnvironment["Service"]),
 );
 
-const fileSystemLayer = FileSystem.layerNoop({
+const layerFileSystem = FileSystem.layerNoop({
   makeDirectory: (path) =>
     Effect.sync(() => {
       mkdir(path);
@@ -265,10 +269,18 @@ const fileSystemLayer = FileSystem.layerNoop({
 });
 
 const layer = PreviewManager.layer.pipe(
-  Layer.provideMerge(browserSessionLayer),
-  Layer.provideMerge(environmentLayer),
-  Layer.provideMerge(fileSystemLayer),
+  Layer.provideMerge(
+    Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+      register: () => Effect.void,
+      recordMetrics: () => Effect.void,
+      shutdown: Effect.void,
+    }),
+  ),
+  Layer.provideMerge(layerBrowserSession),
+  Layer.provideMerge(layerEnvironment),
+  Layer.provideMerge(layerFileSystem),
   Layer.provideMerge(Path.layer),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
 );
 const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
@@ -547,6 +559,7 @@ describe("PreviewManager", () => {
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
     mkdir.mockClear();
+    previewSession.on.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
     clipboardItemConstructor.mockClear();
@@ -1598,7 +1611,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
+  effectIt.effect("re-applies opaque base and color scheme across webview swaps", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const makeWebContents = (id: number) => {
@@ -1647,6 +1660,16 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_scheme", 42);
         yield* Effect.yieldNow;
 
+        // Guests start with a transparent base; dark-scheme pages need an opaque
+        // one or Chromium skips their dark canvas.
+        const opaqueBase = {
+          color: { r: 255, g: 255, b: 255, a: 1 },
+        };
+        expect(first.sendCommand).toHaveBeenCalledWith(
+          "Emulation.setDefaultBackgroundColorOverride",
+          opaqueBase,
+        );
+
         yield* manager.setColorScheme("tab_scheme", "dark");
 
         expect(first.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
@@ -1659,6 +1682,10 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_scheme", 43);
         yield* Effect.yieldNow;
 
+        expect(replacement.sendCommand).toHaveBeenCalledWith(
+          "Emulation.setDefaultBackgroundColorOverride",
+          opaqueBase,
+        );
         expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "dark" }],
         });
@@ -1670,6 +1697,123 @@ describe("PreviewManager", () => {
           features: [{ name: "prefers-color-scheme", value: "" }],
         });
         expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
+  const makeAttachingGuest = (id: number) => {
+    const listeners = new Map<string, () => void>();
+    const attach = vi.fn();
+    const detach = vi.fn();
+    const sendCommand = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+      async () => undefined,
+    );
+    let destroyed = false;
+    const wc = {
+      id,
+      isDestroyed: () => destroyed,
+      isDevToolsOpened: () => {
+        // Electron throws from native methods once a WebContents is destroyed.
+        if (destroyed) throw new TypeError("Object has been destroyed");
+        return false;
+      },
+      getType: () => "webview",
+      getURL: () => "http://localhost:5173/README.md",
+      getTitle: () => "README.md",
+      isLoading: () => true,
+      getZoomFactor: () => 1,
+      setZoomFactor: vi.fn(),
+      setAudioMuted: vi.fn(),
+      isCurrentlyAudible: () => false,
+      on: vi.fn(),
+      off: vi.fn(),
+      once: (event: string, listener: () => void) => {
+        listeners.set(event, listener);
+      },
+      ipc: { on: vi.fn(), off: vi.fn() },
+      send: webviewSend,
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+      setIgnoreMenuShortcuts: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      debugger: {
+        isAttached: () => attach.mock.calls.length > detach.mock.calls.length,
+        attach,
+        detach,
+        sendCommand,
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+    };
+    return {
+      wc: wc as unknown as Electron.WebContents,
+      attach,
+      detach,
+      sendCommand,
+      destroy: () => {
+        destroyed = true;
+        listeners.get("destroyed")?.();
+      },
+    };
+  };
+
+  effectIt.effect("sets the opaque base as soon as a guest attaches", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // The tab's first document can paint before the renderer registers the
+        // guest, so the opaque base has to be the first command on attach.
+        const claimed = makeAttachingGuest(44);
+        fromId.mockReturnValue(claimed.wc);
+        yield* manager.prepareWebview(claimed.wc);
+        expect(claimed.attach).toHaveBeenCalledTimes(1);
+        expect(claimed.sendCommand.mock.calls[0]).toEqual([
+          "Emulation.setDefaultBackgroundColorOverride",
+          { color: { r: 255, g: 255, b: 255, a: 1 } },
+        ]);
+
+        yield* manager.createTab("tab_early");
+        yield* manager.registerWebview("tab_early", 44);
+        yield* manager.setColorScheme("tab_early", "dark");
+        expect(claimed.attach).toHaveBeenCalledTimes(1);
+        expect(claimed.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+
+        // A guest destroyed before any tab claims it releases its session.
+        const unclaimed = makeAttachingGuest(45);
+        yield* manager.prepareWebview(unclaimed.wc);
+        expect(unclaimed.attach).toHaveBeenCalledTimes(1);
+        unclaimed.destroy();
+        yield* Effect.yieldNow;
+        expect(unclaimed.detach).toHaveBeenCalledTimes(1);
+        expect(claimed.detach).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const slow = makeAttachingGuest(46);
+        let releaseSlow = () => {};
+        const slowCommand = new Promise<void>((resolve) => {
+          releaseSlow = resolve;
+        });
+        slow.sendCommand.mockImplementation(() => slowCommand);
+        const queued = makeAttachingGuest(47);
+
+        const slowFiber = yield* manager
+          .prepareWebview(slow.wc)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const queuedFiber = yield* manager
+          .prepareWebview(queued.wc)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        queued.destroy();
+        releaseSlow();
+
+        expect(Exit.isSuccess(yield* Fiber.await(slowFiber))).toBe(true);
+        expect(Exit.isSuccess(yield* Fiber.await(queuedFiber))).toBe(true);
+        expect(slow.attach).toHaveBeenCalledTimes(1);
+        expect(queued.attach).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -2219,6 +2363,40 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("preserves both screenshots of the same site in the same millisecond", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstPng = Buffer.from("first-preview-png");
+        const secondPng = Buffer.from("second-preview-png");
+        const pngImage = (png: Buffer) => ({
+          toPNG: () => png,
+          toJPEG: () => png,
+          getSize: () => ({ width: 1280, height: 720 }),
+        });
+        const capturePage = vi
+          .fn<() => Promise<ReturnType<typeof pngImage>>>()
+          .mockResolvedValueOnce(pngImage(firstPng))
+          .mockResolvedValueOnce(pngImage(secondPng));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        // it.effect keeps TestClock fixed until explicitly advanced.
+        const first = yield* manager.captureScreenshot("tab_1");
+        const second = yield* manager.captureScreenshot("tab_1");
+
+        expect(first.createdAt).toBe(second.createdAt);
+        expect(first.id).not.toBe(second.id);
+        expect(first.path).not.toBe(second.path);
+        expect(first.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(second.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(writeFile.mock.calls).toEqual([
+          [first.path, firstPng],
+          [second.path, secondPng],
+        ]);
       }),
     ),
   );
@@ -4479,6 +4657,88 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "releases evaluation objects after success, exceptions, takeover, and cancellation",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const retained = new Map<string, number>();
+          const pendingEvaluation = yield* Deferred.make<void>();
+          const lateRelease = yield* Deferred.make<void>();
+          let finishEvaluation: (() => void) | undefined;
+          let cancelledGroup: string | undefined;
+          let humanInput: ((event: unknown, signal: unknown) => void) | undefined;
+          const wc = makeTestPreviewWebContents(vi.fn());
+          Object.assign(wc, { isDevToolsOpened: () => false });
+          Object.assign(wc.ipc, {
+            on: vi.fn((channel: string, listener: typeof humanInput) => {
+              if (channel === "preview:human-input") humanInput = listener;
+            }),
+          });
+          Object.assign(wc.debugger, {
+            sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) => {
+              const group = String(params?.objectGroup ?? "");
+              if (method === "Runtime.releaseObjectGroup") {
+                retained.delete(group);
+                if (group === cancelledGroup) Deferred.doneUnsafe(lateRelease, Effect.void);
+              }
+              if (method !== "Runtime.evaluate") return undefined;
+              if (params?.expression === "cancelled") {
+                cancelledGroup = group;
+                Deferred.doneUnsafe(pendingEvaluation, Effect.void);
+                await new Promise<void>((resolve) => {
+                  finishEvaluation = resolve;
+                });
+              }
+              retained.set(group, 2);
+              if (params?.expression === "exception") {
+                return {
+                  result: { objectId: "exception-result" },
+                  exceptionDetails: {
+                    text: "failure",
+                    exception: { objectId: "exception-detail" },
+                  },
+                };
+              }
+              if (params?.expression === "takeover") {
+                humanInput?.({}, { kind: "pointer", x: 1, y: 2, button: 0 });
+              }
+              return { result: { value: 42 } };
+            }),
+          });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 42);
+
+          expect(yield* manager.automationEvaluate("tab_1", { expression: "success" })).toBe(42);
+          expect(retained.size).toBe(0);
+          const failure = yield* Effect.exit(
+            manager.automationEvaluate("tab_1", { expression: "exception" }),
+          );
+          expect(Exit.isFailure(failure)).toBe(true);
+          expect(retained.size).toBe(0);
+          const takeover = yield* Effect.exit(
+            manager.automationEvaluate("tab_1", { expression: "takeover" }),
+          );
+          expect(Exit.isFailure(takeover)).toBe(true);
+          if (Exit.isFailure(takeover)) {
+            expect(Option.getOrThrow(Cause.findErrorOption(takeover.cause))).toMatchObject({
+              _tag: "PreviewAutomationControlInterruptedError",
+            });
+          }
+          expect(retained.size).toBe(0);
+          const cancelled = yield* manager
+            .automationEvaluate("tab_1", { expression: "cancelled" })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(pendingEvaluation);
+          yield* Fiber.interrupt(cancelled);
+          finishEvaluation?.();
+          yield* Deferred.await(lateRelease);
+          expect(retained.size).toBe(0);
+        }),
+      ),
+  );
+
   effectIt.effect("derives evaluation detail kind and length from the same non-empty source", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4533,6 +4793,121 @@ describe("PreviewManager", () => {
           detailLength: text.length,
           cause: exceptionDetails,
         });
+      }),
+    ),
+  );
+  effectIt.effect("saves downloads from agent-driven pages without a Save dialog", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((event: unknown, signal?: unknown) => void) | undefined;
+        const wc = makeTestPreviewWebContents(vi.fn());
+        Object.assign(wc, {
+          isDevToolsOpened: () => false,
+          loadURL: vi.fn(async () => undefined),
+          reload: vi.fn(),
+        });
+        Object.assign(wc.ipc, {
+          on: vi.fn((channel: string, listener: typeof humanInput) => {
+            if (channel === "preview:human-input") humanInput = listener;
+          }),
+        });
+        let holdEvaluate = false;
+        let releaseEvaluate: (() => void) | undefined;
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: { expression?: string }) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            if (params?.expression?.includes("matched"))
+              return { result: { value: { matched: true } } };
+            if (holdEvaluate) {
+              holdEvaluate = false;
+              await new Promise<void>((resolve) => {
+                releaseEvaluate = resolve;
+              });
+            }
+            return { result: { value: 42 } };
+          }),
+        });
+        fromId.mockReturnValue(wc);
+        const takeovers = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+        let takeoverCount = 0;
+        let controller = "none";
+        yield* manager.subscribeStateChanges((_tabId, state) => {
+          const takeover =
+            controller !== "human" && state.controller === "human"
+              ? takeovers[takeoverCount++]
+              : undefined;
+          controller = state.controller;
+          return takeover ? Deferred.succeed(takeover, undefined).pipe(Effect.asVoid) : Effect.void;
+        });
+        yield* manager.getBrowserSession();
+        yield* manager.getBrowserSession();
+        const installs = previewSession.on.mock.calls.filter(
+          ([event]) => event === "will-download",
+        );
+        expect(installs).toHaveLength(1);
+        const willDownload = installs[0]![1] as (
+          event: unknown,
+          item: {
+            getFilename: () => string;
+            getStartTime: () => number;
+            setSavePath: (path: string) => void;
+          },
+          source: Electron.WebContents,
+        ) => void;
+        const download = () => {
+          const setSavePath = vi.fn();
+          willDownload(
+            {},
+            { getFilename: () => "chart.png", getStartTime: () => 1_790_844_530.5, setSavePath },
+            wc,
+          );
+          return setSavePath;
+        };
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        expect(download()).not.toHaveBeenCalled();
+
+        yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        const startedAt = (1_790_844_530_500).toString(36);
+        expect(download()).toHaveBeenCalledWith(
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-0-chart.png`,
+        );
+        // Same name, same millisecond: still a separate file.
+        expect(download()).toHaveBeenCalledWith(
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-1-chart.png`,
+        );
+
+        humanInput?.({}, { kind: "pointer", x: 10, y: 10, button: 0 });
+        yield* Deferred.await(takeovers[0]!);
+        expect(download()).not.toHaveBeenCalled();
+
+        // An action still waiting for the page when the human takes over must
+        // not mark it as agent-driven again.
+        holdEvaluate = true;
+        const running = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => releaseEvaluate !== undefined);
+        const queued = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        humanInput?.({}, { kind: "pointer", x: 20, y: 20, button: 0 });
+        yield* Deferred.await(takeovers[1]!);
+        releaseEvaluate?.();
+        yield* Fiber.await(running);
+        expect(Exit.isFailure(yield* Fiber.await(queued))).toBe(true);
+        expect(download()).not.toHaveBeenCalled();
+
+        // URL-bar navigation hands the page back to the human.
+        yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        expect(download()).toHaveBeenCalled();
+        yield* manager.navigate("tab_1", "https://example.com/report.csv");
+        expect(download()).not.toHaveBeenCalled();
+
+        // Reading the page does not make it agent-driven.
+        yield* manager.automationWaitFor("tab_1", { text: "Example" });
+        expect(download()).not.toHaveBeenCalled();
       }),
     ),
   );

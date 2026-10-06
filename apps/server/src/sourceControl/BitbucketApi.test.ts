@@ -6,19 +6,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import {
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { GitCommandError } from "@t3tools/contracts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
+
+const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
 const bitbucketPullRequest = {
   id: 42,
@@ -64,6 +63,7 @@ function makeLayer(input: {
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientError.HttpClientError;
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly env?: Record<string, string>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
     input.requestFailure
@@ -102,7 +102,7 @@ function makeLayer(input: {
   } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
 
   const driver = {
-    listRemotes: () =>
+    listRemotes: vi.fn(() =>
       Effect.succeed({
         remotes: [
           {
@@ -118,7 +118,25 @@ function makeLayer(input: {
           expiresAt: Option.none(),
         },
       }),
+    ),
   } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
+
+  const resolve = vi.fn(() =>
+    Effect.succeed({
+      kind: "git" as const,
+      repository: {
+        kind: "git" as const,
+        rootPath: "/repo",
+        metadataPath: null,
+        freshness: {
+          source: "live-local" as const,
+          observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+          expiresAt: Option.none(),
+        },
+      },
+      driver: driver as unknown as VcsDriver.VcsDriver["Service"],
+    }),
+  );
 
   const layer = BitbucketApi.layer.pipe(
     Layer.provide(
@@ -129,28 +147,14 @@ function makeLayer(input: {
     ),
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-        resolve: () =>
-          Effect.succeed({
-            kind: "git",
-            repository: {
-              kind: "git",
-              rootPath: "/repo",
-              metadataPath: null,
-              freshness: {
-                source: "live-local" as const,
-                observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
-                expiresAt: Option.none(),
-              },
-            },
-            driver: driver as unknown as VcsDriver.VcsDriver["Service"],
-          }),
+        resolve,
       }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
-          env: {
+          env: input.env ?? {
             T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
             T3CODE_BITBUCKET_EMAIL: "user@example.com",
             T3CODE_BITBUCKET_API_TOKEN: "token",
@@ -158,10 +162,11 @@ function makeLayer(input: {
         }),
       ),
     ),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(NodeServices.layer),
   );
 
-  return { execute, git: gitMock, layer };
+  return { execute, git: gitMock, resolve, listRemotes: driver.listRemotes, layer };
 }
 
 it.effect("parses pull request responses from the Bitbucket REST API", () => {
@@ -335,6 +340,102 @@ it.effect("reads repository clone URLs and default branch", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect.each([false, true])(
+  "rejects invalid explicit repositories before fallback, context=%s",
+  (withContext) => {
+    const { execute, resolve, listRemotes, layer } = makeLayer({
+      response: () => Response.json(repositoryJson),
+    });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      for (const repository of ["t3code", "", " \t "]) {
+        const error = yield* bitbucket
+          .getRepositoryCloneUrls({
+            cwd: "/repo",
+            repository,
+            ...(withContext
+              ? {
+                  context: {
+                    provider: {
+                      kind: "bitbucket" as const,
+                      name: "Bitbucket",
+                      baseUrl: "https://bitbucket.org",
+                    },
+                    remoteName: "origin",
+                    remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+                  },
+                }
+              : {}),
+          })
+          .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => null }));
+
+        assert.instanceOf(error, BitbucketApi.BitbucketRepositoryLocatorError);
+        assert.strictEqual(
+          isBitbucketRepositoryLocatorError(error) ? error.repository : null,
+          repository,
+        );
+        assert.strictEqual(resolve.mock.calls.length, 0);
+        assert.strictEqual(listRemotes.mock.calls.length, 0);
+        assert.strictEqual(execute.mock.calls.length, 0);
+      }
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("prefers an explicit repository and uses context when the repository is omitted", () => {
+  const { execute, resolve, listRemotes, layer } = makeLayer({
+    response: (request) =>
+      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const context = {
+      provider: { kind: "bitbucket" as const, name: "Bitbucket", baseUrl: "https://bitbucket.org" },
+      remoteName: "origin",
+      remoteUrl: "git@bitbucket.org:another/context.git",
+    };
+    for (const repository of ["pingdotgg/t3code", "https://bitbucket.org/pingdotgg/t3code.git"]) {
+      yield* bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository });
+    }
+    yield* bitbucket.getDefaultBranch({ cwd: "/repo", context });
+
+    assert.deepStrictEqual(
+      execute.mock.calls.map(([request]) => request.url).toSorted(),
+      [
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/another/context",
+        "https://api.test.local/2.0/repositories/another/context/branching-model",
+      ].toSorted(),
+    );
+    assert.strictEqual(resolve.mock.calls.length, 0);
+    assert.strictEqual(listRemotes.mock.calls.length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("discovers the repository from cwd remotes when the repository is omitted", () => {
+  const { execute, resolve, listRemotes, layer } = makeLayer({
+    response: (request) =>
+      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const branch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
+
+    assert.strictEqual(branch, "main");
+    assert.deepStrictEqual(resolve.mock.calls, [[{ cwd: "/repo" }]]);
+    assert.deepStrictEqual(listRemotes.mock.calls, [["/repo"]]);
+    assert.isTrue(
+      execute.mock.calls.every(([request]) =>
+        request.url.startsWith("https://api.test.local/2.0/repositories/pingdotgg/t3code"),
+      ),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "prefers the Bitbucket branching model development branch as the default PR target",
   () => {
@@ -505,6 +606,78 @@ it.effect("reports auth status through the Bitbucket REST /user endpoint", () =>
       account: Option.some("bitbucket-user"),
       host: Option.some("bitbucket.org"),
       detail: Option.none(),
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("prefers credentials saved in settings over the environment, without a restart", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json({ username: "bitbucket-user" }),
+  });
+  const lastAuthorization = () => execute.mock.calls.at(-1)?.[0].headers.authorization;
+  const basic = (user: string, password: string) => `Basic ${btoa(`${user}:${password}`)}`;
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const settings = yield* ServerSettings.ServerSettingsService;
+
+    yield* bitbucket.probeAuth;
+    assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
+
+    yield* settings.updateSettings({
+      bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
+    });
+    yield* bitbucket.probeAuth;
+    assert.strictEqual(lastAuthorization(), basic("saved@example.com", "saved-api-token"));
+
+    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    yield* bitbucket.probeAuth;
+    assert.strictEqual(lastAuthorization(), "Bearer saved-access-token");
+
+    yield* settings.updateSettings({ bitbucket: { accessToken: "", apiToken: "" } });
+    yield* bitbucket.probeAuth;
+    assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("never puts a saved token that is unsafe for an HTTP header on the wire", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json({ username: "bitbucket-user" }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const settings = yield* ServerSettings.ServerSettingsService;
+
+    // Fetch would reject this header with an error quoting the token, and that error reaches
+    // clients. The unusable token is ignored, so the environment credential is used instead.
+    yield* settings.updateSettings({ bitbucket: { accessToken: "saved\ntoken" } });
+    yield* bitbucket.probeAuth;
+    assert.strictEqual(
+      execute.mock.calls.at(-1)?.[0].headers.authorization,
+      `Basic ${btoa("user@example.com:token")}`,
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reports saved credentials as configured when Bitbucket cannot confirm them", () => {
+  const { layer } = makeLayer({
+    response: () => new Response(null, { status: 401 }),
+    env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const settings = yield* ServerSettings.ServerSettingsService;
+
+    assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
+
+    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    assert.deepStrictEqual(yield* bitbucket.probeAuth, {
+      status: "unknown",
+      account: Option.none(),
+      host: Option.some("bitbucket.org"),
+      detail: Option.some("An access token is configured."),
     });
   }).pipe(Effect.provide(layer));
 });

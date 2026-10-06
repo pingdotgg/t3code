@@ -1,0 +1,175 @@
+---
+title: Cluster adapters
+description: The extension point between Alchemy's cluster-agnostic Kubernetes resources and the platform a cluster runs on. Covers authentication, image registries, workload identity, load balancer defaults, and how to write your own.
+---
+
+The Kubernetes resources don't know which platform a cluster runs
+on. Everything platform-specific lives in a **cluster adapter**,
+chosen by the `auth.kind` of the resource's
+[connection](/kubernetes/clusters/connecting):
+
+- `kubeconfig`, `token`, `client-cert`, and `exec` are registered by
+  `Kubernetes.providers()`. They handle authentication only.
+- `aws-eks` is registered by `AWS.providers()`. It handles
+  authentication, image registry, workload identity, generated
+  entrypoints, and load balancer defaults.
+
+When a resource runs, Alchemy looks up the adapter for its
+connection's kind among the Stack's provider layers. If none is
+registered, the deploy fails with a message naming the missing kind
+and the provider layer that contributes it.
+
+## What an adapter provides
+
+An adapter implements `Kubernetes.ClusterAdapterService`. Only
+`connect` is required:
+
+- `connect` resolves the API endpoint and CA, and returns a
+  per-request header mint so short-lived tokens stay fresh. It fails
+  with `ClusterNotFoundError` when the cluster definitely no longer
+  exists.
+- `registry` builds or mirrors workload images into a registry the
+  platform manages. Without it, `main` and `context` sources are
+  pushed to the connection's
+  [`registry`](/kubernetes/clusters/registries).
+- `identity` provisions cloud credentials for a workload's
+  ServiceAccount. It turns binding grants, such as AWS
+  `policyStatements`, into those credentials.
+- `bootstrap` replaces the generated container entrypoints for
+  `main` programs, for example to wire a cloud credential chain.
+- `loadBalancerDefaults` sets defaults for `LoadBalancer` Services,
+  such as `loadBalancerClass` and annotations. Your
+  `serviceAnnotations` win.
+
+Missing members degrade gracefully. Without `registry`, only `image`
+sources work. Without `identity`, bindings may only carry `env`.
+
+## Write an adapter
+
+A custom adapter is a Layer for `Kubernetes.ClusterAdapter(kind)`
+plus a type for its auth descriptor. This one reads a bearer token
+from an environment variable on every request, so the token itself
+never lands in Alchemy's state:
+
+```typescript
+// src/env-token-adapter.ts
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+declare module "alchemy/Kubernetes" {
+  interface AuthRegistry {
+    "env-token": {
+      /** Environment variable holding the bearer token. */
+      variable: string;
+    };
+  }
+}
+
+export const EnvTokenAdapter = Layer.succeed(
+  Kubernetes.ClusterAdapter("env-token"),
+  {
+    kind: "Kubernetes.ClusterAdapter",
+    connect: (connection: Kubernetes.Connection) =>
+      Effect.gen(function* () {
+        if (connection.auth.kind !== "env-token" || !connection.endpoint) {
+          return yield* Effect.fail(
+            new Error("env-token needs an endpoint and an env-token auth"),
+          );
+        }
+        const variable = connection.auth.variable;
+        return {
+          endpoint: connection.endpoint,
+          certificateAuthorityData: connection.certificateAuthorityData,
+          headers: Config.String(variable).pipe(
+            Effect.map((token) => ({ Authorization: `Bearer ${token}` })),
+            Effect.mapError((cause) => new Error(String(cause))),
+          ),
+        };
+      }),
+  },
+);
+```
+
+The `declare module` block adds `"env-token"` to the `auth` union,
+so connections using it type-check.
+
+## Register it
+
+Merge the adapter into the Stack's providers, then use its kind in a
+connection:
+
+```typescript
+import { EnvTokenAdapter } from "./src/env-token-adapter.ts";
+
+const cluster: Kubernetes.Connection = {
+  endpoint: "https://k8s.internal:6443",
+  certificateAuthorityData: caData,
+  auth: { kind: "env-token", variable: "K8S_TOKEN" },
+};
+
+export default Alchemy.Stack(
+  "MyCluster",
+  {
+    providers: Layer.mergeAll(Kubernetes.providers(), EnvTokenAdapter),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    yield* Kubernetes.Manifest("Config", {
+      cluster,
+      manifest: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: { name: "app-config", namespace: "default" },
+        data: { LOG_LEVEL: "info" },
+      },
+    });
+  }),
+);
+```
+
+The connection stored in state is `{ kind: "env-token", variable:
+"K8S_TOKEN" }`, so `alchemy destroy` authenticates the same way. It
+uses whatever `K8S_TOKEN` holds at that time.
+
+## Registries and identity
+
+A platform adapter such as `aws-eks` goes further:
+
+- `registry.resolve` receives the workload's image source, target
+  platform, generated entrypoint, and tags. It returns the image URI
+  the pod should run, a content hash, and serializable state. The EKS
+  adapter stores its ECR repository there. `registry.hash` computes
+  the same hash at plan time so content changes show up as updates.
+  `registry.delete` cleans up on destroy.
+- `identity.reconcile` receives the workload's namespace,
+  ServiceAccount, bindings, and `identity` options. It returns extra
+  environment variables, ServiceAccount annotations, and state. The
+  EKS adapter stores its IAM role and Pod Identity association there.
+  `identity.delete` removes them, even when the cluster is already
+  gone.
+
+Platforms extend the typed surfaces through module augmentation of
+`alchemy/Kubernetes`:
+
+- `AuthRegistry` holds connection kinds.
+- `IdentityStateRegistry` and `RegistryStateRegistry` hold persisted
+  state.
+- `WorkloadIdentityOptions` types the `identity` prop. EKS adds
+  `managedPolicyArns`.
+- `WorkloadServicesRegistry` lists services available inside the
+  container.
+
+The
+[EKS adapter source](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/EKS/KubernetesAdapter.ts)
+is the complete reference.
+
+## Where next
+
+- **[Connecting to clusters](/kubernetes/clusters/connecting).** The
+  built-in connection kinds.
+- **[Amazon EKS](/kubernetes/clusters/eks).** What the EKS
+  adapter does in practice.
+- **[Layers](/infrastructure-as-effects/layers).** How Layers compose
+  in an Alchemy program.

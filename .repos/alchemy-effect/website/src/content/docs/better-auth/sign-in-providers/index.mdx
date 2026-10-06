@@ -1,0 +1,47 @@
+---
+title: Sign-in providers
+description: Choose a standalone sign-in walkthrough for your existing Alchemy project.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+Add authentication to an existing Alchemy project with one of the walkthroughs below. Each page introduces its own files; you do not need to copy an application from this overview or complete another provider guide first.
+
+## Choose a sign-in method
+
+- [Email and password](/better-auth/sign-in-providers/email-password): D1-backed registration, real email delivery through Resend, verification, and password recovery.
+- [GitHub](/better-auth/sign-in-providers/github): an OAuth App with minimal profile and email scopes.
+- [Google](/better-auth/sign-in-providers/google): a web OAuth client, consent-screen audience, and test users.
+- [Microsoft](/better-auth/sign-in-providers/microsoft): an Entra registration with an explicit tenant.
+- [Custom OAuth and OIDC](/better-auth/sign-in-providers/custom-oauth): a Keycloak client using discovery and ID-token verification.
+
+## Understand Alchemy's role
+
+The Auth service passes options directly to `BetterAuth`, reading server configuration through Effect `Config`. Its host supplies the database layer and forwards auth requests; Alchemy provisions the stable signing secret and runs supported database migrations automatically.
+
+The walkthroughs use a Cloudflare Worker and D1 with a [configured Cloudflare profile](/cloudflare/setup). Keep your Alchemy integration versions aligned and preserve the stack's state across deployments.
+
+## Keep the browser separate
+
+The browser uses `createAuthClient` from `better-auth/client`, not the server's Auth service. With the page and API on the same origin, the client uses `/api/auth` and Better Auth manages session cookies; private application endpoints must still check the session and authorization on the server.
+
+## Choose the actual origin
+
+Alchemy prints the development URL instead of requiring a fixed port. Use that actual origin wherever a provider requires a registered callback, and set `AUTH_BASE_URL` to the real HTTPS Worker origin in production, without a trailing slash or `/api/auth`.
+
+Setting `AUTH_BASE_URL` does not attach a domain or provision DNS. Keep the page and API on the same origin for these examples; a cross-origin application additionally needs explicit trusted origins, credentialed CORS, and an appropriate cookie policy—not disabled origin or CSRF checks.
+
+## Distinguish the two redirects
+
+A provider's redirect URI, such as `https://auth.example.com/api/auth/callback/github`, receives the authorization code on the server. The browser's `callbackURL`, such as `/`, selects the application page after success; email/password does not require an OAuth callback registration.
+
+Better Auth handles state, PKCE, code exchange, and session cookies. Leave callback failures on its built-in `/api/auth/error` page rather than adding a custom callback handler or an application error-query convention.
+
+## Keep credentials server-only
+
+Read public provider identifiers with `Config.String` and secrets with `Config.Redacted` during service construction. Use separate production credentials, keep environment files out of source control, and never put secrets in `VITE_*`, browser bundles, or logs—including token-bearing callback URLs.
+
+## Combine methods deliberately
+
+When adding another method, retain one Auth service, database, and session cookie; preserve the existing mail hooks and plugins, and add built-in OAuth providers to the same `socialProviders` object. Follow Better Auth's [account-linking guidance](https://www.better-auth.com/docs/concepts/users-accounts#account-linking) rather than merging users solely because their email addresses match.

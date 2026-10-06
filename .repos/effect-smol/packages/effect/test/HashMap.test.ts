@@ -157,6 +157,48 @@ describe("HashMap", () => {
       expect(entries).toEqual([["a", 1], ["b", 2]])
     })
 
+    it("preserves traversal order across every node kind", () => {
+      const expectIteration = <A>(iterator: Iterator<A>, expected: ReadonlyArray<A>) => {
+        for (const value of expected) {
+          expect(iterator.next()).toEqual({ done: false, value })
+        }
+        expect(iterator.next()).toEqual({ done: true, value: undefined })
+        expect(iterator.next()).toEqual({ done: true, value: undefined })
+      }
+
+      const empty = HashMap.empty<string, number>()
+      expectIteration(empty[Symbol.iterator](), [])
+      expectIteration(HashMap.entries(empty), [])
+      expectIteration(HashMap.keys(empty), [])
+      expectIteration(HashMap.values(empty), [])
+
+      const input = [
+        ...Array.from({ length: 16 }, (_, i) => [`leaf-${17 - i}`, 17 - i, 17 - i] as const),
+        ["nested-2", 65, 102] as const,
+        ["collision-first", 0, 1] as const,
+        ["nested-0", 1, 100] as const,
+        ["collision-second", 0, 2] as const,
+        ["nested-1", 33, 101] as const
+      ]
+      let map = empty
+      for (const [key, hash, value] of input) {
+        map = HashMap.modifyHash(map, key, hash, () => Option.some(value))
+      }
+
+      const expected: Array<[string, number]> = [
+        ["collision-first", 1],
+        ["collision-second", 2],
+        ["nested-0", 100],
+        ["nested-1", 101],
+        ["nested-2", 102],
+        ...Array.from({ length: 16 }, (_, i) => [`leaf-${i + 2}`, i + 2] as [string, number])
+      ]
+      expectIteration(map[Symbol.iterator](), expected)
+      expectIteration(HashMap.entries(map), expected)
+      expectIteration(HashMap.keys(map), expected.map(([key]) => key))
+      expectIteration(HashMap.values(map), expected.map(([, value]) => value))
+    })
+
     it("does not expose mutable collision entries", () => {
       const map = HashMap.make(["fF", 1], ["AA", 2])
       const entry = Array.from(HashMap.entries(map)).find(([key]) => key === "fF")!

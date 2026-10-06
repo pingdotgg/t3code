@@ -109,9 +109,9 @@ export interface WorkerLoaderClass extends Context.Service<
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
- * import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
- * import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+ * import { HttpServerRequest } from "effect/http/HttpServerRequest";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
+ * import * as HttpClientRequest from "effect/http/HttpClientRequest";
  *
  * export default class EvalWorker extends Cloudflare.Worker<EvalWorker>()(
  *   "EvalWorker",

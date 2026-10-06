@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
   EnvironmentId,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationInvalidSelectorError,
@@ -17,6 +18,7 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -24,18 +26,23 @@ import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcTest from "effect/unstable/rpc/RpcTest";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcTest from "effect/rpc/RpcTest";
 
+import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
 
 const scope = {
   environmentId: EnvironmentId.make("environment-1"),
-  threadId: ThreadId.make("thread-1"),
-  providerSessionId: "provider-session-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-1",
+  thread: {
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
 };
@@ -363,9 +370,9 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
       expect(error).toMatchObject({
         operation: "click",
         environmentId: scope.environmentId,
-        threadId: scope.threadId,
-        providerSessionId: scope.providerSessionId,
-        providerInstanceId: scope.providerInstanceId,
+        threadId: scope.thread.threadId,
+        providerSessionId: scope.thread.providerSessionId,
+        providerInstanceId: scope.thread.providerInstanceId,
         clientId: "client-1",
         requestId: "preview-0",
         tabId: "tab-1",
@@ -465,7 +472,7 @@ it.effect.each([
         .pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: tag,
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
       });
       expect(error.cause).toBe(remoteError);
       expect(error.message).toContain("remains on the desktop");
@@ -497,9 +504,9 @@ it.effect("distinguishes malformed remote failures", () =>
       expect(error).toMatchObject({
         operation: "status",
         environmentId: scope.environmentId,
-        threadId: scope.threadId,
-        providerSessionId: scope.providerSessionId,
-        providerInstanceId: scope.providerInstanceId,
+        threadId: scope.thread.threadId,
+        providerSessionId: scope.thread.providerSessionId,
+        providerInstanceId: scope.thread.providerInstanceId,
         clientId: "client-1",
         requestId: "preview-0",
         timeoutMs: 2_000,
@@ -519,9 +526,9 @@ it.effect("rejects calls when no connected host exists", () =>
     expect(error).toMatchObject({
       operation: "status",
       environmentId: scope.environmentId,
-      threadId: scope.threadId,
-      providerSessionId: scope.providerSessionId,
-      providerInstanceId: scope.providerInstanceId,
+      threadId: scope.thread.threadId,
+      providerSessionId: scope.thread.providerSessionId,
+      providerInstanceId: scope.thread.providerInstanceId,
     });
   }),
 );
@@ -587,8 +594,11 @@ it.effect("routes requests for background threads through an environment-level h
       const result = yield* broker.invoke<string>({
         scope: {
           ...scope,
-          threadId: backgroundThreadId,
-          providerSessionId: "provider-session-background",
+          thread: {
+            ...scope.thread,
+            threadId: backgroundThreadId,
+            providerSessionId: "provider-session-background",
+          },
         },
         operation: "status",
         input: {},
@@ -685,7 +695,7 @@ it.effect("pins a provider session to its initial host despite later focus chang
         environmentId: scope.environmentId,
         connectionId: "connection-stale",
         focused: true,
-        liveTabs: [{ threadId: scope.threadId, tabId: PreviewTabId.make("stale-tab") }],
+        liveTabs: [{ threadId: scope.thread.threadId, tabId: PreviewTabId.make("stale-tab") }],
       });
       expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
         "second",
@@ -699,7 +709,7 @@ it.effect("pins a provider session to its initial host despite later focus chang
 
       const firstPinnedScope = {
         ...scope,
-        providerSessionId: "provider-session-first-pinned",
+        thread: { ...scope.thread, providerSessionId: "provider-session-first-pinned" },
       };
       expect(
         yield* broker.invoke<string>({ scope: firstPinnedScope, operation: "status", input: {} }),
@@ -717,7 +727,10 @@ it.effect("pins a provider session to its initial host despite later focus chang
       ).toBe("first");
       expect(
         yield* broker.invoke<string>({
-          scope: { ...scope, providerSessionId: "provider-session-second-pinned" },
+          scope: {
+            ...scope,
+            thread: { ...scope.thread, providerSessionId: "provider-session-second-pinned" },
+          },
           operation: "status",
           input: {},
         }),
@@ -753,7 +766,7 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
         connectionId: connections.get("owner")!,
         focused: false,
         liveTabs: [
-          { threadId: scope.threadId, tabId: PreviewTabId.make("signed-in"), visible: true },
+          { threadId: scope.thread.threadId, tabId: PreviewTabId.make("signed-in"), visible: true },
         ],
       });
       yield* broker.focusHost({
@@ -762,7 +775,11 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
         connectionId: connections.get("other")!,
         focused: true,
         liveTabs: [
-          { threadId: scope.threadId, tabId: PreviewTabId.make("signed-in"), visible: false },
+          {
+            threadId: scope.thread.threadId,
+            tabId: PreviewTabId.make("signed-in"),
+            visible: false,
+          },
           {
             threadId: ThreadId.make("another-thread"),
             tabId: PreviewTabId.make("different-tab"),
@@ -775,7 +792,7 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
       );
       expect(
         yield* broker.invoke<string>({
-          scope: { ...scope, providerSessionId: "explicit-owner" },
+          scope: { ...scope, thread: { ...scope.thread, providerSessionId: "explicit-owner" } },
           tabId: PreviewTabId.make("signed-in"),
           operation: "snapshot",
           input: {},
@@ -783,7 +800,7 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
       ).toBe("owner");
       expect(
         yield* broker.invoke<string>({
-          scope: { ...scope, providerSessionId: "other-tab" },
+          scope: { ...scope, thread: { ...scope.thread, providerSessionId: "other-tab" } },
           tabId: PreviewTabId.make("different-tab"),
           operation: "evaluate",
           input: {},
@@ -802,7 +819,7 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
       );
       expect(
         yield* broker.invoke<string>({
-          scope: { ...scope, providerSessionId: "after-tab-closed" },
+          scope: { ...scope, thread: { ...scope.thread, providerSessionId: "after-tab-closed" } },
           operation: "evaluate",
           input: {},
         }),
@@ -1046,7 +1063,7 @@ it.effect("fails over a pinned provider session only after its host disconnects"
         environmentId: scope.environmentId,
         connectionId: firstConnectionId,
         focused: true,
-        liveTabs: [{ threadId: scope.threadId, tabId: firstTabId }],
+        liveTabs: [{ threadId: scope.thread.threadId, tabId: firstTabId }],
       });
       expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toEqual({
         host: "first",
@@ -1190,9 +1207,9 @@ it.effect("fails requests assigned to the stream that is replaced", () =>
       expect(error).toMatchObject({
         operation: "status",
         environmentId: scope.environmentId,
-        threadId: scope.threadId,
-        providerSessionId: scope.providerSessionId,
-        providerInstanceId: scope.providerInstanceId,
+        threadId: scope.thread.threadId,
+        providerSessionId: scope.thread.providerSessionId,
+        providerInstanceId: scope.thread.providerInstanceId,
         clientId: "client-1",
         requestId: "preview-0",
         timeoutMs: 15_000,
@@ -1255,9 +1272,12 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
       );
       const client = yield* RpcTest.makeClient(group).pipe(
         Effect.provide(
-          group.toLayer({
-            [WS_METHODS.previewAutomationConnect]: (host) => Stream.unwrap(broker.connect(host)),
-          }),
+          Layer.merge(
+            group.toLayer({
+              [WS_METHODS.previewAutomationConnect]: (host) => Stream.unwrap(broker.connect(host)),
+            }),
+            RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+          ),
         ),
       );
       const events = client[WS_METHODS.previewAutomationConnect](makeHost());

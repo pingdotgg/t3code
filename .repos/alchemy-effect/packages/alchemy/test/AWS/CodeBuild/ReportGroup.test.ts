@@ -87,5 +87,8 @@ test.provider(
       const after = yield* getReportGroup;
       expect(after).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:codebuild", "live"],
+    timeout: 120_000,
+  },
 );

@@ -1,9 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createPendingThreadOrder } from "../features/threads/threadOrder";
+import { makeThreadShellFixture } from "../test-fixtures";
 import { appAtomRegistry } from "./atom-registry";
 import {
   beginPendingThreadOrder,
@@ -13,19 +14,19 @@ import {
 import { environmentThreadShells } from "./threads";
 
 vi.mock("./atom-registry", async () => {
-  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  const { AtomRegistry } = await import("effect/reactivity");
   return { appAtomRegistry: AtomRegistry.make() };
 });
 vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { environmentThreadShells: { threadShellsAtom: Atom.make([]).pipe(Atom.keepAlive) } };
 });
 vi.mock("./server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { environmentServerConfigsAtom: Atom.make(new Map()).pipe(Atom.keepAlive) };
 });
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { queuedThreadKeysAtom: Atom.make(new Set<string>()).pipe(Atom.keepAlive) };
 });
 
@@ -36,17 +37,14 @@ const shellsAtom = environmentThreadShells.threadShellsAtom as Atom.Writable<
 >;
 
 function fixture() {
-  // Only section membership and order fields are read by this coordinator.
-  const rows = ["a", "b"].map(
-    (id, index) =>
-      ({
-        id: ThreadId.make(id),
-        environmentId: EnvironmentId.make("env"),
-        createdAt: `2026-06-01T0${2 - index}:00:00.000Z`,
-        archivedAt: null,
-        pinnedAt: null,
-        activeOrderKey: null,
-      }) as EnvironmentThreadShell,
+  // The shared section helper also reads lineage/settled/snooze fields, so
+  // partial casts break when it grows — build complete shells instead.
+  const rows = ["a", "b"].map((id, index) =>
+    makeThreadShellFixture({
+      id: ThreadId.make(id),
+      environmentId: EnvironmentId.make("env"),
+      createdAt: `2026-06-01T0${2 - index}:00:00.000Z`,
+    }),
   );
   appAtomRegistry.set(shellsAtom, rows);
   const pending = createPendingThreadOrder({

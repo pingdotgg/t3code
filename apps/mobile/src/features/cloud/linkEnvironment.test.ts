@@ -5,10 +5,10 @@ import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { HttpClient } from "effect/unstable/http";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { HttpClient } from "effect/http";
 
-import { MobileStorage } from "../../persistence/mobile-storage";
+import * as MobileStorage from "../../persistence/mobile-storage";
 
 import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
 
@@ -63,7 +63,7 @@ const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
 );
-const testDpopSignerLayer = Layer.succeed(
+const layerTestDpopSigner = Layer.succeed(
   ManagedRelay.ManagedRelayDpopSigner,
   ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("client-proof-key-thumbprint"),
@@ -71,13 +71,13 @@ const testDpopSignerLayer = Layer.succeed(
   }),
 );
 
-function cloudClientLayer() {
-  const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
+function layerCloudClient() {
+  const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
-    httpClientLayer,
+    layerHttpClient,
     Layer.succeed(
-      MobileStorage,
-      MobileStorage.of({
+      MobileStorage.MobileStorage,
+      MobileStorage.MobileStorage.of({
         loadSavedConnections: Effect.succeed([]),
         saveConnection: () => Effect.void,
         clearSavedConnection: () => Effect.void,
@@ -93,7 +93,7 @@ function cloudClientLayer() {
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
-    }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
+    }).pipe(Layer.provideMerge(layerTestDpopSigner), Layer.provide(layerHttpClient)),
   );
 }
 
@@ -104,9 +104,9 @@ const withCloudServices = <A, E>(
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
-    | MobileStorage
+    | MobileStorage.MobileStorage
   >,
-) => effect.pipe(Effect.provide(cloudClientLayer()));
+) => effect.pipe(Effect.provide(layerCloudClient()));
 
 function validLinkProof() {
   return "signed-environment-link-jwt";

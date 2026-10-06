@@ -2,7 +2,7 @@ import { D1Client } from "@effect/sql-d1"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Effect } from "effect"
 import * as Schema from "effect/Schema"
-import { SqlError, SqlResolver } from "effect/unstable/sql"
+import { SqlError, SqlResolver } from "effect/sql"
 import { D1Miniflare } from "./utils.ts"
 
 const seededClient = Effect.gen(function*() {

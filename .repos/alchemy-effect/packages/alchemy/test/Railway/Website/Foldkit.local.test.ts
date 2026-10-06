@@ -15,44 +15,48 @@ const fixtureDir = pathe.resolve(
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 const fixtureEntries = ["index.html", "package.json", "vite.config.ts", "src"];
 
-describe("Railway.Website.Foldkit local", () => {
-  // foldkit@0.148.2 requires SchemaTransformation.transformOrFail, absent in Effect rc.115.
-  test.provider.skip(
-    "dev runs the framework server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Railway.Website.Foldkit local",
+  { tags: ["provider:railway", "provider:railway:website", "local"] },
+  () => {
+    // foldkit@0.148.2 requires SchemaTransformation.transformOrFail, absent in Effect rc.115.
+    test.provider.skip(
+      "dev runs the framework server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-railway-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-railway-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Railway.Website.Foldkit("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Railway.Website.Foldkit("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.project).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.project).toBeUndefined();
 
-        yield* expectUrlContains(`${url}/`, "Foldkit Fixture", {
-          timeout: "90 seconds",
-          label: "dev home page",
-        });
-        yield* expectUrlContains(`${url}/counter/42`, "Foldkit Fixture", {
-          label: "spa fallback",
-        });
+          yield* expectUrlContains(`${url}/`, "Foldkit Fixture", {
+            timeout: "90 seconds",
+            label: "dev home page",
+          });
+          yield* expectUrlContains(`${url}/counter/42`, "Foldkit Fixture", {
+            label: "spa fallback",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

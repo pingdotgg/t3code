@@ -6,7 +6,7 @@ import * as Git from "alchemy/Git";
 import * as Layer from "effect/Layer";
 import { AppApi, MeLive } from "./api.ts";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { ProtocolLive } from "./protocol.ts";
 import { RefsLive, PullsLive } from "./ref-writes.ts";
 import { GitHubLive } from "./github.ts";

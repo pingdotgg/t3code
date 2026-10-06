@@ -260,6 +260,7 @@ export interface Connection extends Resource<
  * ```
  *
  * @resource
+ * @product Postgres
  */
 export const Connection = Resource<Connection>("Prisma.Connection");
 

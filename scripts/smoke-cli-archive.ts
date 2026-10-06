@@ -15,15 +15,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { windowsSystemTar } from "./build-cli-archive.ts";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
   "CliArchiveSmokeError",
@@ -73,7 +74,18 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-smoke-" });
+  const scratch = yield* fs.makeTempDirectory({ prefix: "t3-cli-smoke-" });
+  // Windows can keep t3.exe locked (EBUSY) for a moment after the server
+  // exits. A leftover scratch directory on a CI runner is harmless, so
+  // cleanup retries briefly and never fails a smoke test that passed.
+  yield* Effect.addFinalizer(() =>
+    fs.remove(scratch, { recursive: true }).pipe(
+      Effect.retry({ times: 10, schedule: Schedule.spaced("500 millis") }),
+      Effect.catch((error) =>
+        Effect.logWarning(`[cli-smoke] could not remove ${scratch}: ${error.message}`),
+      ),
+    ),
+  );
 
   // On Windows the archive is a zip and the Git Bash `tar` on PATH is GNU
   // tar; use the bsdtar Windows ships, which reads both formats.

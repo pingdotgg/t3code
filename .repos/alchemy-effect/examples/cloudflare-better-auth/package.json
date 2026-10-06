@@ -1,0 +1,24 @@
+{
+  "name": "cloudflare-better-auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:client": "bun build src/ui.ts --target browser --outdir public",
+    "dev": "bun run build:client && alchemy dev",
+    "deploy": "bun run build:client && alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/better-auth": "workspace:*",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:",
+    "effect": "catalog:",
+    "kysely": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

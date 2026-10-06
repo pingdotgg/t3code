@@ -443,7 +443,7 @@ export const RecordProvider = () =>
           zoneId: output.zoneId,
           dnsRecordId: output.recordId,
         })
-        .pipe(Effect.catch(() => Effect.void));
+        .pipe(Effect.catchTag("RecordNotFound", () => Effect.void));
     }),
 
     read: Effect.fn(function* ({ output, olds }) {
@@ -485,10 +485,8 @@ export const RecordProvider = () =>
 const observeById = (zoneId: string, dnsRecordId: string) =>
   Effect.gen(function* () {
     const r = yield* dns.getRecord({ zoneId, dnsRecordId }).pipe(
-      // Distilled tags transport errors but a 404 for a missing
-      // record surfaces as an untagged error. Swallow so the
-      // reconciler falls through to the find-by-name path.
-      Effect.catch(() => Effect.succeed(undefined)),
+      // Only a missing record should fall through to the find-by-name path.
+      Effect.catchTag("RecordNotFound", () => Effect.succeed(undefined)),
     );
     if (r === undefined) return undefined;
     return narrowRecord(r as Parameters<typeof narrowRecord>[0]);

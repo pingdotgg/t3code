@@ -21,13 +21,18 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import type * as ProviderAuthService from "./Services/ProviderAuthService.ts";
+import type * as ProviderAuthService from "./ProviderAuthService.ts";
 
 export interface ProviderAuthFlowContext {
   readonly flowId: string;
+  /** The lifetime timeout interrupts authenticate before publishing its expired result. */
+  readonly expiresAt: number;
+  readonly returnUrl?: string;
+  readonly callbackMode?: "server" | "client";
   readonly setInteraction: (
     interaction: ProviderAuthInteraction,
     respond?: (response: ProviderAuthResponse) => Effect.Effect<void, ProviderSetupError>,
+    complete?: (callbackUrl: string) => Effect.Effect<void, ProviderSetupError>,
   ) => Effect.Effect<void>;
   readonly verifying: Effect.Effect<void>;
 }
@@ -45,6 +50,7 @@ interface Flow {
   readonly id: string;
   readonly owner: string;
   readonly expiresAt: number;
+  complete?: ((callbackUrl: string) => Effect.Effect<void, ProviderSetupError>) | undefined;
   fiber?: Fiber.Fiber<void>;
   responseFiber?: Fiber.Fiber<void, ProviderSetupError>;
   respond:
@@ -60,12 +66,14 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   >;
   readonly methods: Effect.Effect<ReadonlyArray<ProviderAuthMethod>, ProviderSetupError>;
   readonly defaultMethodId?: string;
+  /** Stored account profiles can change the advertised methods after auth/logout. */
+  readonly refreshMethodsAfterAuth?: boolean;
   /** Fail with ProviderSetupError containing safe text for the user, never native token data. */
   readonly authenticate: (
     methodId: string,
     context: ProviderAuthFlowContext,
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
-  readonly logout: Effect.Effect<void, ProviderSetupError>;
+  readonly logout: Effect.Effect<void | string, ProviderSetupError>;
   readonly timeoutMs?: number;
 }) {
   const scope = yield* Scope.Scope;
@@ -139,6 +147,40 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
 
   const controller: ProviderAuthService.ProviderAuthController = {
     credentialBinding: options.credentialBinding,
+    adoptCredentials: (update, stopSessions) =>
+      Effect.gen(function* () {
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (operation !== "idle")
+              return yield* new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "import",
+                detail: "Finish or cancel the existing sign-in first.",
+              });
+            operation = "stopping";
+          }),
+        );
+        const result = yield* Effect.gen(function* () {
+          yield* stopOwnedSessions;
+          yield* stopSessions;
+          yield* update;
+          yield* refreshMethods;
+        }).pipe(Effect.exit);
+        const state: ProviderAuthState = {
+          ...empty,
+          methods: snapshot.value.state.methods ?? [],
+          phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+          message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
+        };
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            yield* SubscriptionRef.set(snapshot, { owner: null, state });
+            operation = "idle";
+          }),
+        );
+        if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+        return state;
+      }).pipe(Effect.uninterruptible),
     refreshMethods,
     invalidate: lock.withPermit(
       Effect.gen(function* () {
@@ -191,7 +233,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           );
         }),
       ),
-    start: (owner, stopSessions = Effect.void, selectedMethodId) =>
+    start: (owner, stopSessions = Effect.void, selectedMethodId, returnUrl, callbackMode) =>
       lock.withPermit(
         Effect.gen(function* () {
           if (operation === "auth" && active?.owner === owner) return snapshot.value.state;
@@ -241,10 +283,14 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
             yield* stopSessions.pipe(Effect.ensuring(stopOwnedSessions));
             yield* options.authenticate(methodId, {
               flowId: id,
-              setInteraction: (interaction, respond) =>
+              expiresAt: flow.expiresAt,
+              ...(returnUrl ? { returnUrl } : {}),
+              ...(callbackMode ? { callbackMode } : {}),
+              setInteraction: (interaction, respond, complete) =>
                 Effect.gen(function* () {
                   if (active !== flow) return;
                   flow.respond = respond;
+                  flow.complete = complete;
                   yield* publish(flow, {
                     phase: "waiting",
                     interaction,
@@ -257,6 +303,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                 }),
               verifying: Effect.gen(function* () {
                 flow.respond = undefined;
+                flow.complete = undefined;
                 yield* publish(flow, {
                   phase: "verifying",
                   interaction: null,
@@ -293,6 +340,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                 yield* lock.withPermit(
                   Effect.gen(function* () {
                     if (active !== flow) return;
+                    if (options.refreshMethodsAfterAuth) yield* refreshMethods;
                     yield* publish(flow, {
                       phase: Exit.isSuccess(result) ? "succeeded" : "failed",
                       interaction: null,
@@ -363,12 +411,24 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           return snapshot.value.state;
         }),
       ),
-    complete: () =>
-      Effect.fail(
-        new ProviderSetupError({
-          instanceId: options.instanceId,
-          operation: "complete",
-          detail: "This provider does not accept a pasted redirect URL.",
+    complete: (owner, input) =>
+      lock.withPermit(
+        Effect.gen(function* () {
+          const flow = yield* requireFlow(owner, input.flowId);
+          const interaction = snapshot.value.state.interaction;
+          if (
+            snapshot.value.state.phase !== "waiting" ||
+            interaction?.type !== "browser" ||
+            !interaction.acceptsCallback ||
+            !flow.complete
+          )
+            return yield* new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "complete",
+              detail: "This sign-in does not accept a redirect URL.",
+            });
+          yield* flow.complete(input.callbackUrl);
+          return snapshot.value.state;
         }),
       ),
     cancel: (owner, id) =>
@@ -413,13 +473,17 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
           if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
           yield* stopSessions.pipe(Effect.ensuring(stopOwnedSessions));
-          yield* options.logout;
+          const message = yield* options.logout;
+          if (options.refreshMethodsAfterAuth) yield* refreshMethods;
+          return message;
         }).pipe(Effect.exit);
         const state: ProviderAuthState = {
           ...empty,
           methods: snapshot.value.state.methods ?? [],
           phase: Exit.isSuccess(result) ? "idle" : "failed",
-          message: Exit.isSuccess(result) ? "Signed out." : "Could not sign out. Try again.",
+          message: Exit.isSuccess(result)
+            ? (result.value ?? "Signed out.")
+            : "Could not sign out. Try again.",
         };
         yield* lock.withPermit(
           Effect.gen(function* () {

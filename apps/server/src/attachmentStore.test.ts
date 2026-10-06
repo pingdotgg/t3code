@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   attachmentFileExtension,
   createAttachmentId,
+  createDeterministicAttachmentId,
   createPendingAttachmentId,
   parseAttachmentUuid,
   parseAttachmentFileExtension,
@@ -15,9 +16,31 @@ import {
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
+  threadHtmlRenderAttachmentIds,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
+  it("derives stable attachment ids for idempotent message retries", () => {
+    const first = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const retry = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const next = createDeterministicAttachmentId("thread-1", "message-1:1");
+
+    expect(first).toBe(retry);
+    expect(next).not.toBe(first);
+    expect(first && parseThreadSegmentFromAttachmentId(first)).toBe("thread-1");
+  });
+
+  it("keeps deterministic ids distinct when sanitized thread segments collide", () => {
+    const dotted = createDeterministicAttachmentId("thread.a", "message-1:0");
+    const dashed = createDeterministicAttachmentId("thread-a", "message-1:0");
+
+    expect(dotted).toBeTruthy();
+    expect(dashed).toBeTruthy();
+    expect(dotted).not.toBe(dashed);
+    expect(dotted && parseThreadSegmentFromAttachmentId(dotted)).toBe("thread-a");
+    expect(dashed && parseThreadSegmentFromAttachmentId(dashed)).toBe("thread-a");
+  });
+
   it("sanitizes thread ids when creating attachment ids", () => {
     const attachmentId = createAttachmentId("thread.folder/unsafe space");
     expect(attachmentId).toBeTruthy();
@@ -195,5 +218,29 @@ describe("attachmentStore", () => {
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("threadHtmlRenderAttachmentIds", () => {
+  it("returns pages this thread published and skips other threads' and failed calls", () => {
+    const own = createAttachmentId("thread-a", "html")!;
+    const other = createAttachmentId("thread-b", "html")!;
+    const render = (attachmentId: string, extra = {}) => ({
+      toolName: "mcp__t3-code__html_render",
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({ htmlRender: { attachmentId, title: "x", height: 300 }, ...extra }),
+        },
+      ],
+    });
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        render(own),
+        render(other),
+        render(createAttachmentId("thread-a", "html")!, { isError: true }),
+        { toolName: "mcp__t3-code__html_preview", output: render(own).output },
+      ]),
+    ).toEqual([own]);
   });
 });

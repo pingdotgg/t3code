@@ -14,7 +14,7 @@ const withState = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.provideService(effect, State, Effect.succeed(state));
 
-describe("exportState", () => {
+describe("exportState", { tags: ["unit", "local"] }, () => {
   it.effect("exports every stack/stage/resource as one document", () =>
     Effect.gen(function* () {
       const state = yield* InMemoryService({

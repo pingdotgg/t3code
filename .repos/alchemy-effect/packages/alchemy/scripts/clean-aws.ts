@@ -8,7 +8,7 @@ import { Region } from "@distilled.cloud/aws/Region";
 import { NodeServices } from "@effect/platform-node";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { parseArgs } from "node:util";
 
 const { values } = parseArgs({
