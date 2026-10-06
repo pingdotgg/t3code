@@ -275,6 +275,34 @@ describe("scoped settings writes", () => {
     });
   });
 
+  it("writes imported worktree commands and their setup action as one project entry", () => {
+    const setup = {
+      id: "setup-workspace",
+      name: "Setup Workspace",
+      command: "vp install",
+      icon: "configure" as const,
+      runOnWorktreeCreate: true,
+    };
+    const plan = planScopedSettingsPatch(checkout, [server], {
+      worktreeCommands: { create: "jw add", remove: "jw remove" },
+      defaultProjectScripts: [setup],
+    });
+    expect(plan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: {
+              worktreeCommands: { create: "jw add", remove: "jw remove" },
+              defaultProjectScripts: [setup],
+            },
+          },
+        },
+      },
+    ]);
+  });
+
   it("keeps each project's other cleanup rules when changing one rule across machines", () => {
     const machine = environment("Laptop", {
       settings: {

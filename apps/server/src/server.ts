@@ -68,6 +68,7 @@ import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import * as WorktreeCommands from "./vcs/WorktreeCommands.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -338,6 +339,7 @@ const layerGit = Layer.empty.pipe(
 );
 
 const layerGitWorkflow = GitWorkflowService.layer.pipe(
+  Layer.provide(WorktreeCommands.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService))),
   Layer.provideMerge(layerVcsDriverRegistry),
   Layer.provideMerge(layerGit),
 );

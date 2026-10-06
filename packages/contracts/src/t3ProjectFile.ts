@@ -93,6 +93,25 @@ export const T3ProjectFile = Schema.Struct({
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
     }),
   ),
+  worktreeCommands: Schema.optionalKey(
+    Schema.Struct({
+      create: Schema.optionalKey(
+        trimmedNonEmpty({
+          description:
+            "Shell command that creates the worktree in place of T3 Code's built-in step. It runs at the project root and must create a checkout of $T3CODE_BRANCH at $T3CODE_WORKTREE_PATH, or print the absolute path of the checkout it created as its last line of output.",
+        }),
+      ),
+      remove: Schema.optionalKey(
+        trimmedNonEmpty({
+          description:
+            "Shell command that removes the worktree at $T3CODE_WORKTREE_PATH in place of T3 Code's built-in step. It runs at the project root and must delete that directory.",
+        }),
+      ),
+    }).annotate({
+      description:
+        "Custom worktree commands suggested to everyone who opens this repository. T3 Code only runs them after a user imports them in project settings.",
+    }),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

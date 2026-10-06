@@ -465,6 +465,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
+    id: "worktree-create-command",
+    title: "Worktree create command",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["custom script workspace provider git worktree add clone t3.json"],
+  },
+  {
+    id: "worktree-remove-command",
+    title: "Worktree remove command",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["custom script workspace provider delete cleanup teardown t3.json"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",

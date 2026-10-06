@@ -2,6 +2,7 @@ import type {
   ProjectScript,
   ProjectScriptIcon,
   ResolvedKeybindingsConfig,
+  T3ProjectFileScript,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -106,6 +107,35 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   previewUrl: null,
   autoOpenPreview: false,
 };
+
+/** A `t3.json` script as an action to add, without a shortcut. */
+export function newScriptInputFromT3File(fileScript: T3ProjectFileScript): NewProjectScriptInput {
+  return {
+    name: fileScript.name,
+    command: fileScript.command,
+    icon: fileScript.icon ?? "play",
+    runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+    waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
+    keybinding: null,
+    previewUrl: fileScript.previewUrl ?? null,
+    autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+  };
+}
+
+/** Scripts from `t3.json` that the action list does not already have, by name or command. */
+export function importableT3FileScripts(
+  scripts: readonly ProjectScript[],
+  fileScripts: readonly T3ProjectFileScript[],
+): T3ProjectFileScript[] {
+  return fileScripts.filter(
+    (fileScript) =>
+      !scripts.some(
+        (script) =>
+          script.command === fileScript.command ||
+          script.name.toLowerCase() === fileScript.name.toLowerCase(),
+      ),
+  );
+}
 
 /** What the editor dialog should open with. `scriptId: null` means "add". */
 export interface ProjectScriptEditorRequest {
