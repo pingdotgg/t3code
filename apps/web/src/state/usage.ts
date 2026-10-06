@@ -15,6 +15,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -64,6 +65,34 @@ export function dailyFallback(input: UsageSummaryInput): UsageSummaryInput | nul
   };
 }
 
+/** Where an environment runs, as its address's host, to tell same-named ones apart. */
+function placeOf(presentation: EnvironmentPresentation): string {
+  const { target } = presentation.entry;
+  const profile = Option.getOrNull(presentation.entry.profile);
+  const url =
+    target._tag === "PrimaryConnectionTarget"
+      ? target.httpBaseUrl
+      : profile?._tag === "BearerConnectionProfile"
+        ? profile.httpBaseUrl
+        : null;
+  if (url !== null && URL.canParse(url)) return new URL(url).host;
+  return target.environmentId.slice(0, 8);
+}
+
+/**
+ * Names for the Usage page. Servers on one machine all take its name, so a
+ * name two environments share gains where each one runs.
+ */
+export function distinctLabels(
+  entries: readonly { readonly label: string; readonly place: () => string }[],
+): readonly string[] {
+  const counts = new Map<string, number>();
+  for (const { label } of entries) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return entries.map(({ label, place }) =>
+    (counts.get(label) ?? 0) > 1 ? `${label} · ${place()}` : label,
+  );
+}
+
 /**
  * Reads every environment's summary for one window.
  *
@@ -80,7 +109,13 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 
     const statuses: EnvironmentUsageStatus[] = [];
     const fallbackInput = dailyFallback(input);
-    for (const [environmentId, presentation] of presentations) {
+    const labels = distinctLabels(
+      [...presentations.values()].map((presentation) => ({
+        label: presentation.entry.target.label,
+        place: () => placeOf(presentation),
+      })),
+    );
+    for (const [index, [environmentId, presentation]] of [...presentations].entries()) {
       let result = get(serverEnvironment.usageSummary({ environmentId, input }));
       let readByDay = false;
       if (fallbackInput !== null && isRejectedWindow(result)) {
@@ -90,7 +125,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const summary = Option.getOrNull(AsyncResult.value(result));
       statuses.push({
         environmentId,
-        label: presentation.entry.target.label,
+        label: labels[index] ?? presentation.entry.target.label,
         isPending: result.waiting,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         readByDay,

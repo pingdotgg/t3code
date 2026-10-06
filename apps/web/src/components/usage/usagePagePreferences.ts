@@ -33,7 +33,7 @@ export function saveUsagePagePreferences(preferences: UsagePagePreferences): voi
 
 const EXPLORER_STORAGE_KEY = "t3code:usage-explorer:v1";
 const UsageExplorerPreferencesSchema = Schema.Struct({
-  dimension: Schema.Literals(["project", "provider", "model"]),
+  dimension: Schema.Literals(["project", "provider", "model", "environment"]),
   running: Schema.Boolean,
   columns: Schema.Array(
     Schema.Literals([

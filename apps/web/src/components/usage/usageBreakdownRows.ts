@@ -175,7 +175,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
   /**
    * Whether something an item lists under it matches the search: a project's
    * threads, a provider's accounts and models, an account's models, a model's
-   * projects. Such an item stays and opens, so the match is reachable.
+   * or an environment's projects and their threads. Such an item stays and opens, so the match is reachable.
    */
   const childMatches = (dim: BreakdownDimension, key: string, scope: readonly UsageFact[]) =>
     scope.some((fact) => {
@@ -191,7 +191,11 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
         case "account":
           return matchesQuery(fact.model, search);
         case "model":
-          return matchesQuery(nameOf("project", fact.project), search);
+        case "environment":
+          return (
+            matchesQuery(nameOf("project", fact.project), search) ||
+            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread)))
+          );
         case "thread":
           return false;
       }

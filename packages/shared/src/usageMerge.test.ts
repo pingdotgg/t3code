@@ -2,6 +2,7 @@ import {
   USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  ThreadId,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
@@ -320,6 +321,64 @@ describe("mergeUsage", () => {
         threads,
         projects: [],
       },
+    ]);
+  });
+
+  it("gives a shared directory to the environment that ran its work in T3 threads", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const ran = environment("ran", {
+      ...summary([bucket({ thread: 0 })], [source]),
+      threads: [
+        { key: "t3:ship", threadId: ThreadId.make("ship"), title: "Ship it", located: true },
+      ],
+      projects: [],
+    });
+    // Read later, but it only sees the session from outside, or (an older
+    // server) cannot split by thread at all.
+    const outside = environment("outside", {
+      ...summary([bucket({ thread: 0 })], [source]),
+      readAt: "2026-08-08T00:00:00.000Z",
+      threads: [{ key: "session:claude:s", located: true }],
+      projects: [],
+    });
+    const older = environment("older", {
+      ...summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE),
+      readAt: "2026-08-09T00:00:00.000Z",
+    });
+
+    for (const ordered of [
+      [ran, outside, older],
+      [older, outside, ran],
+    ]) {
+      const merged = mergeUsage(ordered, USAGE_CONTRACT_VERSION);
+      expect(merged.costUsd).toBe(10);
+      expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["ran"]);
+    }
+  });
+
+  it("keeps new cells from a later complete scan the owner has not read yet", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const ran = environment("ran", {
+      ...summary([bucket({ thread: 0 })], [source]),
+      threads: [{ key: "t3:ship", threadId: ThreadId.make("ship"), located: true }],
+      projects: [],
+    });
+    const later = environment("later", {
+      ...summary(
+        [bucket({ thread: 0 }), bucket({ day: "2026-08-08" as UsageDay, thread: 0, costUsd: 3 })],
+        [source],
+      ),
+      readAt: "2026-08-08T01:00:00.000Z",
+      threads: [{ key: "session:claude:s", located: true }],
+      projects: [],
+    });
+    const merged = mergeUsage([later, ran], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(13);
+    expect(
+      merged.contributions.map((entry) => [entry.environmentId, entry.buckets.length]),
+    ).toEqual([
+      ["later", 1],
+      ["ran", 1],
     ]);
   });
 

@@ -94,6 +94,7 @@ const DIMENSIONS: readonly {
   { value: "project", label: "Projects", one: "project" },
   { value: "provider", label: "Providers", one: "provider" },
   { value: "model", label: "Models", one: "model" },
+  { value: "environment", label: "Environments", one: "environment" },
   { value: "thread", label: "Threads", one: "thread" },
 ];
 
@@ -102,8 +103,11 @@ const NOUNS: Record<BreakdownDimension, readonly [string, string]> = {
   provider: ["provider", "providers"],
   account: ["account", "accounts"],
   model: ["model", "models"],
+  environment: ["environment", "environments"],
   thread: ["thread", "threads"],
 };
+const NO_FILTERS: UsageFilters = { accounts: null, environment: null, project: null, model: null };
+
 const noun = (dimension: BreakdownDimension, count: number) =>
   NOUNS[dimension][count === 1 ? 0 : 1];
 
@@ -159,16 +163,13 @@ export function UsageExplorer(props: UsageExplorerProps) {
     [environmentLabel, previous],
   );
 
-  const [filters, setFilters] = useState<UsageFilters>({
-    accounts: null,
-    project: null,
-    model: null,
-  });
+  const [filters, setFilters] = useState<UsageFilters>(NO_FILTERS);
   const [threadView, setThreadView] = useState(false);
   const [hidden, setHidden] = useState<Record<UsageDimension, ReadonlySet<string>>>(() => ({
     project: new Set(),
     provider: new Set(),
     model: new Set(),
+    environment: new Set(),
     thread: new Set(),
   }));
   const [sort, setSort] = useState<UsageSort | null>(null);
@@ -178,9 +179,18 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const [highlight, setHighlight] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
+  const environmentCount = useMemo(
+    () => new Set(data.facts.map((fact) => fact.environment)).size,
+    [data.facts],
+  );
   // Threads live inside a project: the tab works only while one is focused.
+  // Environments needs two to compare; with one, the page groups by project.
   const dimension: UsageDimension =
-    threadView && filters.project !== null && data.hasThreads ? "thread" : preferences.dimension;
+    threadView && filters.project !== null && data.hasThreads
+      ? "thread"
+      : preferences.dimension === "environment" && environmentCount < 2
+        ? "project"
+        : preferences.dimension;
   const favorites = useMemo(() => new Set(preferences.favorites), [preferences.favorites]);
 
   const resetDrill = () => {
@@ -204,18 +214,21 @@ export function UsageExplorer(props: UsageExplorerProps) {
             ? "Outside projects"
             : key === UNKNOWN_PROJECT
               ? "Unknown folder"
-              : (data.projectNames.get(key) ?? "Unknown project");
+              : ((filters.environment === null ? data.projectNames : data.projectTitles).get(key) ??
+                "Unknown project");
         case "provider":
           return PROVIDER_PRESENTATION[key as UsageProviderKind]?.label ?? key;
         case "account":
           return accountLabel(key, accountProvider.get(key) ?? (key as UsageProviderKind));
         case "model":
           return splitModelKey(key).model;
+        case "environment":
+          return environmentLabel(key);
         case "thread":
           return threadTitle(data, key);
       }
     },
-    [accountLabel, accountProvider, data],
+    [accountLabel, accountProvider, data, environmentLabel, filters.environment],
   );
 
   /* ------------------------------ facts ------------------------------ */
@@ -434,6 +447,9 @@ export function UsageExplorer(props: UsageExplorerProps) {
       } else if (step.dimension === "account") {
         next.accounts = new Set([step.key]);
         nextDimension = "model";
+      } else if (step.dimension === "environment") {
+        next.environment = step.key;
+        nextDimension = "project";
       }
     }
     setFilters(next);
@@ -443,7 +459,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
     setQuery("");
     resetDrill();
   };
-  /** Clears the deepest focus: project, then model, then provider. */
+  /** Clears the deepest focus: project, then model, then provider, then environment. */
   const back = () => {
     if (filters.project !== null) {
       setFilters({ ...filters, project: null });
@@ -454,6 +470,9 @@ export function UsageExplorer(props: UsageExplorerProps) {
     } else if (filters.accounts !== null) {
       setFilters({ ...filters, accounts: null });
       setPreference({ dimension: "provider" });
+    } else if (filters.environment !== null) {
+      setFilters({ ...filters, environment: null });
+      setPreference({ dimension: "environment" });
     }
     resetDrill();
   };
@@ -667,6 +686,16 @@ export function UsageExplorer(props: UsageExplorerProps) {
     [data.facts, filters],
   );
   const chips = [
+    filters.environment === null
+      ? null
+      : {
+          label: "Environment",
+          value: nameOf("environment", filters.environment),
+          clear: () => {
+            setFilters({ ...filters, environment: null });
+            resetDrill();
+          },
+        },
     filters.accounts === null
       ? null
       : {
@@ -703,7 +732,9 @@ export function UsageExplorer(props: UsageExplorerProps) {
         ? "All models"
         : filters.accounts !== null
           ? "All providers"
-          : null;
+          : filters.environment !== null
+            ? "All environments"
+            : null;
   const title =
     dimension === "thread" && filters.project !== null
       ? `Threads in ${nameOf("project", filters.project)}`
@@ -763,14 +794,21 @@ export function UsageExplorer(props: UsageExplorerProps) {
                 const value = next[0];
                 if (value === "thread") {
                   if (filters.project !== null) setThreadView(true);
-                } else if (value === "project" || value === "provider" || value === "model") {
+                } else if (
+                  value === "project" ||
+                  value === "provider" ||
+                  value === "model" ||
+                  value === "environment"
+                ) {
                   setThreadView(false);
                   setPreference({ dimension: value });
                 }
                 resetDrill();
               }}
             >
-              {DIMENSIONS.map((entry) => (
+              {DIMENSIONS.filter(
+                (entry) => entry.value !== "environment" || environmentCount > 1,
+              ).map((entry) => (
                 <Toggle
                   key={entry.value}
                   value={entry.value}
@@ -858,7 +896,11 @@ export function UsageExplorer(props: UsageExplorerProps) {
             ) : null}
             {dimension === "thread" ? (
               <ThreadFilters
-                facts={data.facts.filter((fact) => fact.project === filters.project)}
+                facts={data.facts.filter(
+                  (fact) =>
+                    fact.project === filters.project &&
+                    (filters.environment === null || fact.environment === filters.environment),
+                )}
                 filters={filters}
                 accountName={(account) => nameOf("account", account)}
                 onAccountsChange={setAccounts}
@@ -918,7 +960,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
               <InlineButton
                 tone="muted"
                 onClick={() => {
-                  setFilters({ accounts: null, project: null, model: null });
+                  setFilters(NO_FILTERS);
                   setThreadView(false);
                   resetDrill();
                 }}
@@ -970,9 +1012,11 @@ export function UsageExplorer(props: UsageExplorerProps) {
           Cursor history, including work run outside T3. Cost is the API list price for those
           tokens, not your bill. Work in a T3 thread is placed in that thread's project. Sessions
           started outside T3 are placed by the folder they ran in; anything outside every project
-          shows as Outside projects. Sub-agents are listed under the thread that started them. Cache
-          write cost is what writing the prompt cache cost at list price; a thread is tagged
-          cache-heavy when at least half of its own cost went there.
+          shows as Outside projects. When environments read the same history folder, its usage
+          counts once, under the environment that ran most of it in T3 threads. Sub-agents are
+          listed under the thread that started them. Cache write cost is what writing the prompt
+          cache cost at list price; a thread is tagged cache-heavy when at least half of its own
+          cost went there.
         </p>
       </details>
     </>

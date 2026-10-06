@@ -5,7 +5,7 @@
  */
 import type { UsageBucket, UsageProject, UsageProviderKind, UsageThread } from "@t3tools/contracts";
 
-export type UsageDimension = "project" | "provider" | "model" | "thread";
+export type UsageDimension = "project" | "provider" | "model" | "environment" | "thread";
 export type UsageExplorerMetric = "cost" | "tokens";
 
 /** Project key for usage whose working directory is not inside any project. */
@@ -22,6 +22,8 @@ const KEY_SEP = "\u001f";
 export interface UsageFact {
   /** `YYYY-MM-DD` for daily data, otherwise the UTC hour start. */
   readonly time: string;
+  /** Environment whose scan this usage came from. */
+  readonly environment: string;
   readonly provider: UsageProviderKind;
   /**
    * Environment and provider instance (see {@link accountKey}); the provider
@@ -430,7 +432,10 @@ export interface UsageExplorerSource {
 export interface UsageExplorerData {
   readonly facts: readonly UsageFact[];
   readonly threads: ThreadTree;
+  /** Project names, with the environment added where two share a title. */
   readonly projectNames: ReadonlyMap<string, string>;
+  /** Project titles alone, for views inside one environment. */
+  readonly projectTitles: ReadonlyMap<string, string>;
   /** Whether any environment split its usage by thread. */
   readonly hasThreads: boolean;
 }
@@ -456,6 +461,7 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
   const facts: UsageFact[] = [];
   const infos: UsageThreadInfo[] = [];
   const projectNames = new Map<string, string>();
+  const projectTitles = new Map<string, string>();
   const titleCount = new Map<string, number>();
   for (const source of sources) {
     for (const project of source.projects) {
@@ -471,6 +477,7 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
           ? `${project.title} · ${source.environmentLabel}`
           : project.title;
       projectNames.set(projectKey(source.environmentId, project.projectId), name);
+      projectTitles.set(projectKey(source.environmentId, project.projectId), project.title);
     }
     const projectOf = (thread: UsageThread | undefined) =>
       thread === undefined
@@ -500,6 +507,7 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
       const thread = bucket.thread === undefined ? undefined : source.threads[bucket.thread];
       facts.push({
         time: bucket.hourStart ?? bucket.day,
+        environment: source.environmentId,
         provider: bucket.provider,
         account: accountKey(source.environmentId, bucket.instanceId ?? bucket.provider),
         model: bucket.model,
@@ -540,7 +548,7 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
       return { ...info, provider };
     }),
   );
-  return { facts, threads, projectNames, hasThreads };
+  return { facts, threads, projectNames, projectTitles, hasThreads };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -568,6 +576,8 @@ export function keyFor(
       return fact.account;
     case "model":
       return modelKey(fact.provider, fact.model);
+    case "environment":
+      return fact.environment;
     case "thread":
       return fact.thread === null ? null : tree.rootOf(fact.thread);
   }
@@ -576,6 +586,7 @@ export function keyFor(
 export interface UsageFilters {
   /** Accounts to include; null means every account. */
   readonly accounts: ReadonlySet<string> | null;
+  readonly environment: string | null;
   readonly project: string | null;
   readonly model: string | null;
 }
@@ -583,6 +594,7 @@ export interface UsageFilters {
 export function matchesFilters(fact: UsageFact, filters: UsageFilters): boolean {
   return (
     (filters.accounts === null || filters.accounts.has(fact.account)) &&
+    (filters.environment === null || fact.environment === filters.environment) &&
     (filters.project === null || fact.project === filters.project) &&
     (filters.model === null || modelKey(fact.provider, fact.model) === filters.model)
   );
@@ -599,6 +611,7 @@ export function childDimension(
     case "account":
       return "model";
     case "model":
+    case "environment":
       return "project";
     case "project":
       return "thread";

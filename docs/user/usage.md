@@ -12,7 +12,8 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 
-Choose **Projects**, **Providers**, or **Models** to group the chart and the list below it. The
+Choose **Projects**, **Providers**, **Models**, or, with more than one environment selected,
+**Environments** to group the chart and the list below it. The
 list is the chart's legend: select a row's colour to hide or show it, and the smaller rows stack
 as **Other**. Open a row to see what it is made of, such as a project's threads or a provider's
 accounts and models. **Focus** narrows the whole page to one row; with a project focused,
@@ -58,7 +59,8 @@ your app understands. Update the app to include newly supported providers.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
-results appear as each one responds.
+results appear as each one responds. Environments on one machine that read the same history folder count
+it once, under the environment that ran most of that work in T3 threads.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.

@@ -10,6 +10,7 @@ import {
   familyTotals,
   foldFacts,
   keyFor,
+  matchesFilters,
   OTHER_SERIES,
   OUTSIDE_PROJECTS,
   rankEntries,
@@ -351,5 +352,37 @@ describe("buildBreakdownRows", () => {
       "codex",
       "codex\u001fgpt-6-sol",
     ]);
+  });
+  it("groups by environment and opens each to its own projects", () => {
+    const both = buildExplorerData([
+      source(),
+      source({ environmentId: "env-b", environmentLabel: "Desktop" }),
+    ]);
+    const rows = buildBreakdownRows(
+      input({
+        dimension: "environment",
+        facts: both.facts,
+        tree: both.threads,
+        nameOf: (_: string, key: string) => both.projectNames.get(key) ?? key,
+        open: new Set(["environment\u0002env-b"]),
+      }),
+    );
+    const items = rows.filter((row) => row.kind === "item");
+    expect(items.map((row) => `${row.depth}:${row.key}`)).toEqual([
+      "0:env-a",
+      "0:env-b",
+      "1:env-b\u001fapp",
+      `1:${UNKNOWN_PROJECT}`,
+      `1:${OUTSIDE_PROJECTS}`,
+    ]);
+    expect(items[0]?.totals.costUsd).toBe(10);
+    expect(items[2]?.share).toBeCloseTo(0.7);
+    // Focusing an environment narrows every other figure to it.
+    const focused = both.facts.filter((fact) =>
+      matchesFilters(fact, { accounts: null, environment: "env-b", project: null, model: null }),
+    );
+    expect(foldFacts(focused, (fact) => keyFor("environment", fact, both.threads))).toEqual(
+      new Map([["env-b", expect.objectContaining({ costUsd: 10 })]]),
+    );
   });
 });

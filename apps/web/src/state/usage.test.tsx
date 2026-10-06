@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   dailyFallback,
+  distinctLabels,
   isRejectedWindow,
   useUsage,
   type EnvironmentUsageStatus,
@@ -177,6 +178,19 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+});
+
+describe("distinctLabels", () => {
+  it("adds where each runs only to names environments share", () => {
+    const entry = (label: string, place: string) => ({ label, place: () => place });
+    expect(
+      distinctLabels([
+        entry("Studio", "127.0.0.1:3773"),
+        entry("Studio", "127.0.0.1:4000"),
+        entry("Laptop", "laptop.tail:3773"),
+      ]),
+    ).toEqual(["Studio · 127.0.0.1:3773", "Studio · 127.0.0.1:4000", "Laptop"]);
   });
 });
 

@@ -220,15 +220,30 @@ function dayKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
 }
 
+/** Records in a source that the environment placed in one of its own T3 threads. */
+function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number {
+  const threads = summary.threads;
+  if (threads === undefined) return 0;
+  let records = 0;
+  for (const bucket of bucketsForSource(summary, source)) {
+    if (bucket.thread !== undefined && threads[bucket.thread]?.threadId !== undefined) {
+      records += bucket.records;
+    }
+  }
+  return records;
+}
+
 /**
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * Complete scans claim a fingerprint ahead of partial scans, then the most
- * recently read scan wins within each status. A newer partial scan can still
- * contribute cells absent from an older complete scan. Environment ids break
- * ties so the result is stable when summaries have the same read time.
+ * Complete scans claim a fingerprint ahead of partial scans. Within a status,
+ * the environment that ran most of the directory's work in its own T3 threads
+ * wins, so its threads and projects keep their usage and the owner does not
+ * change between refreshes; then the most recently read scan, then the
+ * environment id. A newer scan can still contribute cells absent from an
+ * older complete one.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -255,6 +270,10 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   // A complete scan takes precedence over a newer partial scan of the same
   // directory. Partial history still contributes when no complete copy exists.
   for (const status of ["ok", "partial", "failed"] as const) {
+    const candidates = new Map<
+      string,
+      { environment: EnvironmentUsage; source: UsageSource; inThreads: number }[]
+    >();
     for (const environment of ordered) {
       for (const source of environment.summary.sources) {
         if (source.status !== status) continue;
@@ -263,19 +282,36 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
           duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
           continue;
         }
-        ownerByFingerprint.set(key, environment.environmentId);
-        ownerScanByFingerprint.set(key, { environment, source });
-        sessionsByFingerprint.set(key, source.distinctSessions);
+        const list = candidates.get(key) ?? [];
+        list.push({ environment, source, inThreads: -1 });
+        candidates.set(key, list);
+      }
+    }
+    for (const [key, list] of candidates) {
+      if (list.length > 1) {
+        for (const entry of list) {
+          entry.inThreads = recordsInT3Threads(entry.environment.summary, entry.source);
+        }
+      }
+      // A stable sort keeps the read-time order among equals. A copy, not
+      // `toSorted`: this also runs on Hermes.
+      const [owner, ...rest] = [...list].sort((a, b) => b.inThreads - a.inThreads);
+      if (owner === undefined) continue;
+      ownerByFingerprint.set(key, owner.environment.environmentId);
+      ownerScanByFingerprint.set(key, owner);
+      sessionsByFingerprint.set(key, owner.source.distinctSessions);
+      for (const { environment, source } of rest) {
+        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
       }
     }
   }
 
-  // A newer partial scan may contain usage recorded after an older complete
-  // scan. Keep cells absent from the complete scan. Aggregated cells do not
-  // reveal enough to reconcile overlapping records without double counting.
+  // A newer scan may contain usage recorded after an older complete scan.
+  // Keep cells absent from the complete scan. Aggregated cells do not reveal
+  // enough to reconcile overlapping records without double counting.
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
-      if (source.status !== "partial") continue;
+      if (source.status === "failed") continue;
       const key = fingerprintKey(source.fingerprint);
       const owner = ownerScanByFingerprint.get(key);
       if (
