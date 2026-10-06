@@ -9,7 +9,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { isEntrypoint } from "./entrypoint.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
-const makeTempDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-entrypoint-test-"));
+// Node resolves the entrypoint module's real path, so the fixtures must too: on
+// macOS the temp directory under `/var` is a link into `/private/var`.
+const makeTempDir = () =>
+  NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-entrypoint-test-")));
 
 describe("isEntrypoint", () => {
   it("uses the runtime answer when Node provides one", () => {
