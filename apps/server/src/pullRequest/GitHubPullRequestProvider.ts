@@ -101,22 +101,28 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
   };
 }
 
-/** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
+/** The tags that mean GitHub is out of reach for this account, rather than one request failing. */
 export function gitHubProviderFailure(
   error: GitHubPullRequestCli.GitHubPullRequestCliError,
 ): PullRequestProviderFailure {
-  if (error._tag === "GitHubCliUnavailableError") return { reason: "missing-tool" };
-  if (error._tag === "GitHubCliAuthenticationError") return { reason: "unauthenticated" };
-  if (error._tag === "GitHubCliRateLimitError")
-    return {
-      reason: "rate-limited",
-      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-    };
-  if (error._tag === "SourceControlRateLimitPausedError") {
-    return { reason: "rate-limited", retryAt: error.retryAt };
+  switch (error._tag) {
+    case "GitHubCliMissingError":
+      return { reason: "missing-tool" };
+    case "GitHubNotSignedInError":
+    case "GitHubApiAuthenticationError":
+      return { reason: "unauthenticated" };
+    case "GitHubApiRateLimitError":
+      return {
+        reason: "rate-limited",
+        ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+      };
+    case "SourceControlRateLimitPausedError":
+      return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiNotFoundError":
+      return { reason: "not-found" };
+    default:
+      return { reason: "failed" };
   }
-  if (error._tag === "GitHubPullRequestNotFoundError") return { reason: "not-found" };
-  return { reason: "failed" };
 }
 
 /**
@@ -196,7 +202,7 @@ export const make = Effect.gen(function* () {
       provider: "github",
       operation,
       ...gitHubProviderFailure(error),
-      detail: error.detail,
+      detail: error.message,
       cause: error,
     });
 
@@ -224,7 +230,7 @@ export const make = Effect.gen(function* () {
                 .pipe(
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      error._tag === "GitHubCliRateLimitError" ||
+                      error._tag === "GitHubApiRateLimitError" ||
                       error._tag === "SourceControlRateLimitPausedError"
                         ? Effect.fail(error)
                         : Effect.succeed({

@@ -38,10 +38,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Server-local credential scope; never put its value in RPC payloads or cache keys. */
 export const PinnedGitHubCredential = GitHubApi.PinnedGitHubCredential;
 
-export const AllowGitHubReserve = Context.Reference<boolean>(
-  "t3/sourceControl/AllowGitHubReserve",
-  { defaultValue: () => false },
-);
+export const AllowGitHubReserve = GitHubApi.AllowGitHubReserve;
 
 function commandHosts(args: ReadonlyArray<string>): Array<string | null> {
   const hosts: Array<string | null> = [];

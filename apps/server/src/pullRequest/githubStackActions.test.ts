@@ -2,15 +2,62 @@ import { expect, it } from "@effect/vitest";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
-const runGitHubStackAction = (
-  execute: GitHubCli.GitHubCli["Service"]["execute"],
-  input: Parameters<typeof runStackAction>[0],
-) => runStackAction(input).pipe(Effect.provide(Layer.mock(GitHubCli.GitHubCli)({ execute })));
+/**
+ * One request as the fake saw it, flattened to words: the path or document, then each variable
+ * or body field as `name=value`, so an assertion reads as "this request carried that value".
+ */
+type Call = ReadonlyArray<string>;
+type Send = (
+  call: Call,
+  kind: "graphql" | "rest",
+) => Effect.Effect<string, GitHubApi.GitHubApiError>;
+
+const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackAction>[0]) =>
+  runStackAction(input).pipe(
+    Effect.provide(
+      Layer.mock(GitHubApi.GitHubApi)({
+        graphql: (request) => {
+          // GitHub refuses a document that declares a variable it never uses.
+          const declared = [...request.query.matchAll(/\$(\w+)\s*:/g)].map((match) => match[1]!);
+          const unused = declared.filter(
+            (name) => !new RegExp(`\\$${name}(?!\\w)(?!\\s*:)`).test(request.query),
+          );
+          if (unused.length > 0) {
+            return Effect.die(new Error(`Variables declared but not used: ${unused.join(", ")}`));
+          }
+          return send(words(request.query, request.variables), "graphql");
+        },
+        rest: (request) =>
+          send(words(request.path, request.body), "rest").pipe(
+            Effect.map((body) => ({
+              status: 200,
+              headers: {},
+              body,
+              truncated: false,
+              invalidUtf8: false,
+            })),
+          ),
+      }),
+    ),
+  );
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+function words(head: string, fields: unknown): Call {
+  return [
+    head,
+    ...Object.entries((fields ?? {}) as Record<string, unknown>).map(
+      ([key, value]) => `${key}=${typeof value === "string" ? value : encodeJson(value)}`,
+    ),
+  ];
+}
+
+const isMutation = (call: Call) => call[0]!.startsWith("mutation");
 
 const stack = [
   {
@@ -71,21 +118,13 @@ const rebased = {
 const rebaseResponses = [branch(2, "bbb"), rebased, branch(3, "ccc", 1, ["rebased-sha"]), rebased];
 
 function fake(responses: readonly unknown[]) {
-  const calls: ReadonlyArray<string>[] = [];
-  const execute: GitHubCli.GitHubCli["Service"]["execute"] = (request) =>
+  const calls: Call[] = [];
+  const execute: Send = (call) =>
     Effect.sync(() => {
-      calls.push(request.args);
+      calls.push(call);
       const value = responses[calls.length - 1];
       if (value === undefined) throw new Error("Unexpected GitHub request");
-      return {
-        exitCode: ChildProcessSpawner.ExitCode(0),
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        stdout: JSON.stringify(value),
-        stderr: "",
-        stdoutTruncated: false,
-        stderrTruncated: false,
-        stdoutInvalidUtf8: false,
-      };
+      return encodeJson(value);
     });
   return { execute, calls };
 }
@@ -215,29 +254,25 @@ it.effect("rebases unmerged layers bottom to top without local git commands", ()
   Effect.gen(function* () {
     const api = fake([stack, access, ...rebaseResponses]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    const mutations = api.calls.filter((args) =>
-      args.some((arg) => arg.startsWith("query=mutation")),
-    );
+    const mutations = api.calls.filter(isMutation);
     expect(mutations).toHaveLength(2);
     expect(mutations[0]).toContain("id=PR_2");
     expect(mutations[0]).toContain("sha=bbb");
     expect(mutations[1]).toContain("id=PR_3");
     expect(mutations[1]).toContain("sha=ccc");
-    expect(api.calls.every((args) => args[0] === "api")).toBe(true);
   }),
 );
 
 it.effect("does not update later layers after a rebase failure", () =>
   Effect.gen(function* () {
     const api = fake([stack, access, branch(2, "bbb")]);
-    const execute: typeof api.execute = (request) =>
-      !request.args.some((arg) => arg.startsWith("query=mutation"))
-        ? api.execute(request)
+    const execute: Send = (call, kind) =>
+      !isMutation(call)
+        ? api.execute(call, kind)
         : Effect.fail(
-            new GitHubCli.GitHubCliAuthenticationError({
-              command: "gh",
-              cwd: "/repo",
-              cause: new Error("denied"),
+            new GitHubApi.GitHubApiAuthenticationError({
+              host: "github.com",
+              operation: "runGitHubStackAction",
             }),
           );
     const result = yield* runGitHubStackAction(execute, { ...input, action: "update-branch" }).pipe(
@@ -272,7 +307,6 @@ it.effect("refuses the entire rebase before mutation when a later fork denies wr
       failure: { _tag: "GitHubStackPermissionError" },
     });
     expect(api.calls).toHaveLength(2);
-    expect(api.calls.every((args) => args[0] === "api")).toBe(true);
   }),
 );
 
@@ -333,9 +367,7 @@ it.effect("skips current layers without submitting a rebase mutation", () =>
   Effect.gen(function* () {
     const api = fake([stack, access, branch(2, "bbb", 0), branch(3, "ccc", 0, ["bbb"])]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.some((args) => args.some((arg) => arg.startsWith("query=mutation")))).toBe(
-      false,
-    );
+    expect(api.calls.some((args) => isMutation(args))).toBe(false);
   }),
 );
 
@@ -380,9 +412,7 @@ it.effect("reports partial progress when a later head changes during the rebase"
     if (result._tag === "Failure") {
       expect(result.failure.message).toContain("Earlier updates remain on GitHub");
     }
-    expect(
-      api.calls.filter((args) => args.some((arg) => arg.startsWith("query=mutation"))),
-    ).toHaveLength(1);
+    expect(api.calls.filter((args) => isMutation(args))).toHaveLength(1);
   }),
 );
 
@@ -403,11 +433,7 @@ it.effect.each([false, true])("rejects a push to a processed layer, rebased=%s",
       _tag: "Failure",
       failure: { _tag: "GitHubStackChangedError", number: 2, completed: 1 },
     });
-    expect(api.calls.at(-1)?.some((arg) => arg.includes('processed:nodes(ids:["PR_2"])'))).toBe(
-      true,
-    );
-    expect(
-      api.calls.filter((args) => args.some((arg) => arg.startsWith("query=mutation"))),
-    ).toHaveLength(rebasedParent ? 1 : 0);
+    expect(api.calls.at(-1)?.includes('ids=["PR_2"]')).toBe(true);
+    expect(api.calls.filter((args) => isMutation(args))).toHaveLength(rebasedParent ? 1 : 0);
   }),
 );

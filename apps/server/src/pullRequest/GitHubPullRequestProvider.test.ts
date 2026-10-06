@@ -6,7 +6,7 @@ import * as Result from "effect/Result";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
 import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
@@ -331,7 +331,7 @@ describe("gitHubViewerPermissions", () => {
             number: 7,
           })
           .pipe(
-            Effect.provideService(GitHubCli.PinnedGitHubCredential, {
+            Effect.provideService(GitHubApi.PinnedGitHubCredential, {
               host: "github.com",
               token: Redacted.make("credential"),
               credentialFingerprint: fingerprint,
@@ -378,7 +378,7 @@ describe("gitHubViewerPermissions", () => {
               commits: [],
             }).pipe(
               Effect.flatMap((detail) =>
-                GitHubCli.PinnedGitHubCredential.pipe(
+                GitHubApi.PinnedGitHubCredential.pipe(
                   Effect.map((credential) => ({
                     ...detail,
                     viewerAccess: {
@@ -672,10 +672,9 @@ it.effect("propagates workflow discovery rate limits", () =>
         getPullRequestBaseComparison: () => Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
         listWorkflowRunsRequiringApproval: () =>
           Effect.fail(
-            new GitHubCli.GitHubCliRateLimitError({
-              command: "gh",
-              cwd: "/w",
-              cause: new Error("rate limited"),
+            new GitHubApi.GitHubApiRateLimitError({
+              host: "github.com",
+              operation: "listWorkflowRunsRequiringApproval",
             }),
           ),
         getViewerAccess: () =>

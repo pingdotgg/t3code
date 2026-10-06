@@ -117,6 +117,8 @@ export interface GitHubRestResponse {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly body: string;
   readonly truncated: boolean;
+  /** The body was not valid UTF-8, which a raw file read takes to mean binary. */
+  readonly invalidUtf8: boolean;
 }
 
 export interface GitHubRestInput {
@@ -131,6 +133,8 @@ export interface GitHubRestInput {
   /** Revalidates a cached answer. A 304 is returned rather than failed, and is free. */
   readonly ifNoneMatch?: string;
   readonly maxResponseBytes?: number;
+  /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
+  readonly timeout?: Duration.Input;
   /** Overrides `AllowGitHubReserve` for this one request. */
   readonly allowReserve?: boolean;
 }
@@ -381,11 +385,11 @@ export const make = Effect.gen(function* () {
     readonly operation: string;
     readonly request: HttpClientRequest.HttpClientRequest;
     readonly maxResponseBytes: number;
+    readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
-    readonly timeout?: Duration.Duration | undefined;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -435,7 +439,7 @@ export const make = Effect.gen(function* () {
           // 204, 304 and many refusals carry no body at all, which is an empty answer.
           Effect.catchIf(
             (error) => error.reason._tag === "EmptyBodyError",
-            () => Effect.succeed({ text: "", truncated: false }),
+            () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
           ),
         );
         return { response, collected };
@@ -468,6 +472,7 @@ export const make = Effect.gen(function* () {
                 headers,
                 body: collected.text,
                 truncated: collected.truncated,
+                invalidUtf8: collected.invalidUtf8,
               }),
             ),
           RateLimited: () =>
@@ -526,6 +531,7 @@ export const make = Effect.gen(function* () {
           operation: input.operation,
           request,
           maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+          timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined,
         }),
