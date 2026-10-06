@@ -141,8 +141,9 @@ it.effect("surfaces an unreadable link instead of writing over it", () =>
 it.effect("succeeds when the write lands but its temp directory cannot be removed", () =>
   Effect.gen(function* () {
     const renamed: Array<string> = [];
+    const removed: Array<string> = [];
     const fileSystem = FileSystem.layerNoop({
-      // Not a symlink, so the target is written in place.
+      // The target does not exist yet, so it is written in place.
       readLink: (path) =>
         Effect.fail(
           PlatformError.systemError({
@@ -157,13 +158,17 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
       writeFileString: () => Effect.void,
       rename: (_from, to) => Effect.sync(() => void renamed.push(to)),
       remove: (path) =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "PermissionDenied",
-            module: "FileSystem",
-            method: "remove",
-            pathOrDescriptor: path,
-          }),
+        Effect.sync(() => void removed.push(path)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "remove",
+                pathOrDescriptor: path,
+              }),
+            ),
+          ),
         ),
     });
 
@@ -175,5 +180,6 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
 
     assert.deepStrictEqual(result, Exit.void);
     assert.deepStrictEqual(renamed, ["/home/settings.json"]);
+    assert.deepStrictEqual(removed, ["/home/settings.json.abc123"]);
   }),
 );

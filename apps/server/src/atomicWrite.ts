@@ -28,7 +28,7 @@ export const writeFileStringAtomically = (input: {
           directory: targetDirectory,
           prefix: `${path.basename(targetPath)}.`,
         }),
-        (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore),
+        (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: true })),
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
