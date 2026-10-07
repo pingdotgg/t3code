@@ -983,6 +983,9 @@ describe("liveThoughtLine", () => {
     expect(
       liveThoughtLine("**Narrowing dispatch files**\n\nI should check the adapter. Then more."),
     ).toBe("Narrowing dispatch files");
+    expect(liveThoughtLine("**Narrowing dispatch files**\r\n\r\nI should check the adapter.")).toBe(
+      "Narrowing dispatch files",
+    );
   });
 
   it("returns unpunctuated text whole and flattens markdown", () => {

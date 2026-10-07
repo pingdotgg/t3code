@@ -761,7 +761,7 @@ export function toolGroupSummaryKind(
  * the first sentence of the reasoning text. Web and mobile both render it.
  */
 export function liveThoughtLine(markdown: string): string {
-  const heading = /^\s*\*\*([^*\n]+)\*\*[ \t]*(?:\n|$)/.exec(markdown)?.[1];
+  const heading = /^\s*\*\*([^*\r\n]+)\*\*[ \t]*\r?(?:\n|$)/.exec(markdown)?.[1];
   const text = (heading ?? markdown)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+\.)[ \t]+/gm, "")
