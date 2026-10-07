@@ -1374,6 +1374,7 @@ it.effect("ProviderSessionManagerV2 fails a turn start the provider never answer
       Effect.provide(
         layerTest({
           state,
+          idleTimeoutMs: 60_000,
           startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
             Effect.andThen(Effect.never),
           ),

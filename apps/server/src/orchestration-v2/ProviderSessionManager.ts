@@ -1521,6 +1521,7 @@ export const layerWithOptions = (
                   ),
               }),
             );
+        const compactThread = runtime.compactThread;
         return {
           ...runtime,
           subscribeEvents,
@@ -1662,6 +1663,11 @@ export const layerWithOptions = (
                 ),
               ),
             ),
+          ...(compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input) => compactThread(input).pipe(withinDeadline("compaction")),
+              }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
