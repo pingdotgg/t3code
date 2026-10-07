@@ -8,6 +8,7 @@ export function SettingsProjectOverridesSection(props: {
   readonly hasOverrides: boolean;
   readonly supportsOverrides: boolean;
   readonly pending: boolean;
+  readonly disabled?: boolean;
   readonly onClear: () => void;
 }) {
   return (
@@ -20,6 +21,7 @@ export function SettingsProjectOverridesSection(props: {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Use environment defaults"
+            disabled={props.disabled}
             onPress={props.onClear}
             className="px-2 py-2 active:opacity-70"
           >

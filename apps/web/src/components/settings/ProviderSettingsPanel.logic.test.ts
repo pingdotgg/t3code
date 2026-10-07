@@ -1,4 +1,4 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import { AuthProvidersManageScope, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -136,7 +136,7 @@ describe("provider environment access", () => {
 describe("primary operate access", () => {
   const authenticated = {
     authenticated: true as const,
-    scopes: [AuthOrchestrationOperateScope],
+    scopes: [AuthProvidersManageScope],
   };
 
   it("keeps cached session data authoritative while SWR revalidates", () => {
@@ -163,7 +163,7 @@ describe("primary operate access", () => {
     ).toBe("pending");
   });
 
-  it("treats a failed session fetch as a transport problem, not a denial", () => {
+  it("denies writes when the session fetch fails", () => {
     expect(
       resolvePrimaryOperateAccess({
         isPrimary: true,
@@ -172,7 +172,7 @@ describe("primary operate access", () => {
         isPending: false,
         hasError: true,
       }),
-    ).toBe("granted");
+    ).toBe("denied");
   });
 
   it("denies unauthenticated sessions and sessions without the operate scope", () => {
@@ -205,7 +205,7 @@ describe("primary operate access", () => {
     ).toBe("denied");
   });
 
-  it("grants desktop bridge and remote environments without blocking on the primary session", () => {
+  it("waits for explicit grants on desktop and remote environments", () => {
     expect(
       resolvePrimaryOperateAccess({
         isPrimary: true,
@@ -214,7 +214,7 @@ describe("primary operate access", () => {
         isPending: true,
         hasError: false,
       }),
-    ).toBe("granted");
+    ).toBe("pending");
     expect(
       resolvePrimaryOperateAccess({
         isPrimary: false,
@@ -223,15 +223,24 @@ describe("primary operate access", () => {
         isPending: true,
         hasError: false,
       }),
-    ).toBe("granted");
+    ).toBe("pending");
   });
 });
 
 describe("remote operate access", () => {
+  it("does not treat the old orchestration grant as provider management", () => {
+    expect(
+      resolveRemoteOperateAccess({
+        session: { authenticated: true, scopes: ["orchestration:operate"] },
+        isPending: false,
+        hasError: false,
+      }),
+    ).toBe("denied");
+  });
   it("derives access from the environment session's granted scopes", () => {
     expect(
       resolveRemoteOperateAccess({
-        session: { authenticated: true, scopes: [AuthOrchestrationOperateScope] },
+        session: { authenticated: true, scopes: [AuthProvidersManageScope] },
         isPending: false,
         hasError: false,
       }),
@@ -258,18 +267,16 @@ describe("remote operate access", () => {
     );
     expect(
       resolveRemoteOperateAccess({
-        session: { authenticated: true, scopes: [AuthOrchestrationOperateScope] },
+        session: { authenticated: true, scopes: [AuthProvidersManageScope] },
         isPending: true,
         hasError: false,
       }),
     ).toBe("granted");
   });
 
-  it("stays optimistic when the session fetch fails or an older server omits scopes", () => {
-    // Transport failures and pre-scope-reporting servers are not permission
-    // decisions; the environment RPC layer still rejects unauthorized writes.
+  it("denies writes when the session fetch fails or scopes are missing", () => {
     expect(resolveRemoteOperateAccess({ session: null, isPending: false, hasError: true })).toBe(
-      "granted",
+      "denied",
     );
     expect(
       resolveRemoteOperateAccess({
@@ -277,6 +284,6 @@ describe("remote operate access", () => {
         isPending: false,
         hasError: false,
       }),
-    ).toBe("granted");
+    ).toBe("denied");
   });
 });

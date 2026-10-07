@@ -1,3 +1,5 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
 import { useRef, useState } from "react";
 import * as Cause from "effect/Cause";
 import type { SshDeviceHostConfig } from "@t3tools/contracts";
@@ -25,6 +27,9 @@ export function useHostConnectionChecks(targets: ReadonlyArray<DeviceHostCheckTa
         targets,
         host,
         async (environmentId, input) => {
+          if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+            throw new Error("This connection cannot test device hosts.");
+          }
           const result = await test({ environmentId, input });
           if (result._tag === "Failure") throw new Error(Cause.pretty(result.cause));
           return result.value;

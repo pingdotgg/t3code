@@ -30,10 +30,10 @@ describe("resolveEnvironmentIconPickerLock", () => {
     ).toMatch(/cannot change/);
   });
 
-  it("stays open while access is still resolving so a slow session does not flicker", () => {
+  it("waits for a settings grant before allowing changes", () => {
     expect(
       resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "pending" }),
-    ).toBeNull();
+    ).toMatch(/cannot change/);
     expect(
       resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "granted" }),
     ).toBeNull();

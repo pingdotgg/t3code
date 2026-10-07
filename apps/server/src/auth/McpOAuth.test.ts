@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
-  type AuthEnvironmentScope,
+  type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -418,7 +418,7 @@ it.live("one-click approves only access the browser session holds the scopes for
       const clientId = yield* registeredClientId(handler);
       const params = authorizeParams(clientId);
       // Signs a browser in through the real route and returns its session cookie.
-      const browserCookie = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      const browserCookie = (scopes: NonNullable<AuthCreatePairingCredentialInput["scopes"]>) =>
         Effect.gen(function* () {
           const pairing = yield* auth.issuePairingCredential({ scopes });
           const response = yield* handler(

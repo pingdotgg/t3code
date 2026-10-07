@@ -1,6 +1,10 @@
 import { CheckIcon } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
-import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -9,6 +13,7 @@ import {
 
 import { cn } from "~/lib/utils";
 import { serverEnvironment } from "~/state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
 import {
@@ -115,6 +120,7 @@ function EnvironmentUpdateRow({
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
 }) {
+  const canManageProviders = useEnvironmentScope(group.environmentId, AuthProvidersManageScope);
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
@@ -126,14 +132,14 @@ function EnvironmentUpdateRow({
     case "failed":
     case "unchanged":
       trailing = (
-        <Button size="xs" variant="outline" onClick={onUpdate}>
+        <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
           Retry
         </Button>
       );
       break;
     default:
       trailing = (
-        <Button size="xs" variant="outline" onClick={onUpdate}>
+        <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
           Update
         </Button>
       );
@@ -145,6 +151,11 @@ function EnvironmentUpdateRow({
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-medium text-foreground">{group.label}</span>
         <span className={cn("truncate text-xs", rowToneClass(status.kind))}>{status.text}</span>
+        {!canManageProviders ? (
+          <span className="text-xs text-muted-foreground">
+            This connection cannot manage provider accounts.
+          </span>
+        ) : null}
       </div>
       <div className="shrink-0">{trailing}</div>
     </div>
@@ -211,6 +222,7 @@ export function ProviderUpdateEnvironmentRows({
 
   const handleUpdate = useCallback(
     async (environmentId: EnvironmentId) => {
+      if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
       const group = groupByEnvironment.get(environmentId);
       if (!group || group.candidates.length === 0) {
         return;

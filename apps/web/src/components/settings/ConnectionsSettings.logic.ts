@@ -1,5 +1,12 @@
 import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
 
+/** A missing access list says nothing about whether other clients exist. */
+export function canRevokeOtherClients(
+  clientSessions: ReadonlyArray<{ readonly current: boolean }> | null,
+): boolean {
+  return clientSessions === null || clientSessions.some((session) => !session.current);
+}
+
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 
 /**

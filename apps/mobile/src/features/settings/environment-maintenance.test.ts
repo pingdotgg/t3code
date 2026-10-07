@@ -53,6 +53,29 @@ describe("environment maintenance access", () => {
     expect(canMaintainEnvironment(null, true)).toBe(false);
   });
 
+  it.each([
+    { scopes: ["environment:maintain"], expected: true },
+    { scopes: ["orchestration:operate"], expected: false },
+    { scopes: ["providers:manage"], expected: false },
+  ] as const)("uses the advertised update permission for $scopes", ({ scopes, expected }) => {
+    expect(
+      canMaintainEnvironment(
+        {
+          authenticated: true,
+          auth: {
+            policy: "remote-reachable",
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "session",
+            serverUpdateScope: "environment:maintain",
+          },
+          scopes,
+        },
+        true,
+      ),
+    ).toBe(expected);
+  });
+
   it("requires remote desktop update support for desktop hosts", () => {
     expect(supportsEnvironmentUpdate({})).toBe(false);
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn" })).toBe(true);

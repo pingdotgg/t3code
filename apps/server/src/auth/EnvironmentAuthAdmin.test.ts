@@ -1,3 +1,4 @@
+import { AuthAdministrativeScopes } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -79,29 +80,11 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       const listedAfterRevoke = yield* environmentAuth.listSessions();
 
       expect(issued.method).toBe("bearer-access-token");
-      expect(issued.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      expect(issued.scopes).toEqual(AuthAdministrativeScopes);
       expect(issued.client.deviceType).toBe("bot");
       expect(issued.client.label).toBe("deploy-bot");
       expect(verified.sessionId).toBe(issued.sessionId);
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      expect(verified.scopes).toEqual(AuthAdministrativeScopes);
       expect(verified.method).toBe("bearer-access-token");
       expect(listedBeforeRevoke).toHaveLength(1);
       expect(listedBeforeRevoke[0]?.sessionId).toBe(issued.sessionId);

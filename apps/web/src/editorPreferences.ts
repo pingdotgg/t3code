@@ -1,4 +1,10 @@
-import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EDITORS,
+  EditorId,
+  EnvironmentAuthorizationError,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
@@ -11,6 +17,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { readEnvironmentScope } from "./state/session";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -49,9 +56,7 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   return [effectiveEditor, setLastEditor] as const;
 }
 
-export function resolveAndPersistPreferredEditor(
-  availableEditors: readonly EditorId[],
-): EditorId | null {
+function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
@@ -78,6 +83,7 @@ export function useOpenInPreferredEditor(
         | OpenInEditorError
         | PreferredEditorEnvironmentRequiredError
         | PreferredEditorUnavailableError
+        | EnvironmentAuthorizationError
       >
     > => {
       if (environmentId === null) {
@@ -85,6 +91,16 @@ export function useOpenInPreferredEditor(
           Cause.fail(
             new PreferredEditorEnvironmentRequiredError({
               targetPath,
+            }),
+          ),
+        );
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot open an editor on this environment.",
             }),
           ),
         );
