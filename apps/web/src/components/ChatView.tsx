@@ -11008,15 +11008,18 @@ export default function ChatView(props: ChatViewProps) {
 
   // Plain server threads share one ChatView, so the sender carries its thread
   // and a host only forwards to a sender for the thread it was built for.
+  // Updated after commit so a discarded render cannot lend its `onSend`.
   const annotationSenderRef = useRef<ThreadAnnotationSender | null>(null);
-  annotationSenderRef.current = activeThreadKey
-    ? {
-        threadKey: activeThreadKey,
-        send: (annotation, image) => {
-          void onSend(undefined, "auto", "foreground", { annotation, image });
-        },
-      }
-    : null;
+  useLayoutEffect(() => {
+    annotationSenderRef.current = activeThreadKey
+      ? {
+          threadKey: activeThreadKey,
+          send: (annotation, image) => {
+            void onSend(undefined, "auto", "foreground", { annotation, image });
+          },
+        }
+      : null;
+  });
   // Memoized so mounted panels re-render only when a host field changes.
   const panelHost = useMemo<PanelHost | null>(
     () =>
