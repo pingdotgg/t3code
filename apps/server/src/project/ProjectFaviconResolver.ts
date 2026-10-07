@@ -111,6 +111,12 @@ export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFav
   }
 }
 
+const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
+
+/** True when the workspace root itself is gone, e.g. a moved or deleted checkout. */
+export const isMissingWorkspaceRoot = (error: ProjectFaviconResolutionError): boolean =>
+  error.operation === "normalize-workspace" && isWorkspaceRootNotExistsError(error.cause);
+
 /** Service tag for project favicon resolution. */
 export class ProjectFaviconResolver extends Context.Service<
   ProjectFaviconResolver,

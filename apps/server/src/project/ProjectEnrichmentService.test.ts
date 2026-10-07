@@ -3,9 +3,12 @@ import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
+
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -92,6 +95,58 @@ it.effect("preserves either enrichment field when the other resolver fails", () 
       assert.isNull(repositoryFailure.repositoryIdentity);
       assert.equal(repositoryFailure.faviconPath, "/repo-fails/favicon.svg");
     }).pipe(Effect.provide(layer(layerMetadata)));
+  }),
+);
+
+it.effect("does not warn about favicons for workspace roots that no longer exist", () =>
+  Effect.gen(function* () {
+    const warnings: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      warnings.push(message);
+    });
+    const metadataLayer = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) => Effect.succeed(identity(workspaceRoot)),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: (workspaceRoot) =>
+          Effect.fail(
+            workspaceRoot === "/missing"
+              ? new ProjectFaviconResolver.ProjectFaviconResolutionError({
+                  operation: "normalize-workspace",
+                  workspaceRoot,
+                  cause: new WorkspacePaths.WorkspaceRootNotExistsError({
+                    workspaceRoot,
+                    normalizedWorkspaceRoot: workspaceRoot,
+                  }),
+                })
+              : new ProjectFaviconResolver.ProjectFaviconResolutionError({
+                  operation: "stat-candidate",
+                  workspaceRoot,
+                  cause: "favicon resolver failed",
+                }),
+          ),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      yield* service.request("/missing");
+      yield* service.request("/broken");
+
+      for (let attempt = 0; attempt < 100 && warnings.length === 0; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      assert.lengthOf(warnings, 1);
+      assert.nestedPropertyVal(warnings[0], "[1].workspaceRoot", "/broken");
+    }).pipe(
+      Effect.provide(
+        layer(metadataLayer, { concurrency: 1 }).pipe(
+          Layer.provide(Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      ),
+    );
   }),
 );
 
