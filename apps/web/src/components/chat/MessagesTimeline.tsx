@@ -1494,10 +1494,10 @@ function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  // A held drag that started on the strip is a scrub; one that started anywhere
-  // else is a text selection. While a selection crosses the strip, the strip
-  // lets the pointer through so the selection keeps following the text
-  // underneath, until the button is released.
+  // A held drag that started on the minimap (the strip or its turn buttons) is a
+  // scrub; one that started anywhere else is a text selection. While a selection
+  // crosses the minimap, the minimap lets the pointer through so the selection
+  // keeps following the text underneath, until the button is released.
   const pressedOnStripRef = useRef(false);
   const [passThrough, setPassThrough] = useState(false);
 
@@ -1589,6 +1589,16 @@ function TimelineMinimap({
             // the centered content column; with no usable gutter it goes inert.
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
+          onMouseDown={() => {
+            if (pressedOnStripRef.current) return;
+            pressedOnStripRef.current = true;
+            onMouseButtonsReleased(() => {
+              pressedOnStripRef.current = false;
+            });
+          }}
+          onMouseMove={(event) => {
+            if (event.buttons !== 0 && !pressedOnStripRef.current) setPassThrough(true);
+          }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
             width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
@@ -1640,10 +1650,7 @@ function TimelineMinimap({
             }}
             onMouseLeave={() => setActiveIndex(null)}
             onMouseMove={(event) => {
-              if (event.buttons !== 0 && !pressedOnStripRef.current) {
-                setPassThrough(true);
-                return;
-              }
+              if (event.buttons !== 0 && !pressedOnStripRef.current) return;
               updateActiveIndexFromPointer(event);
             }}
             onMouseDown={(event) => {
@@ -1651,11 +1658,6 @@ function TimelineMinimap({
                 return;
               }
               event.preventDefault();
-              if (pressedOnStripRef.current) return;
-              pressedOnStripRef.current = true;
-              onMouseButtonsReleased(() => {
-                pressedOnStripRef.current = false;
-              });
             }}
             type="button"
           >
