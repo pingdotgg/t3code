@@ -124,6 +124,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1224,6 +1225,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const pluginCatalog = yield* PluginCatalog.PluginCatalog;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2053,6 +2055,15 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
           ),
+        [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
+        [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
+        [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
+        [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
+        [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
+        [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
+        [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
+        [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
+        [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
