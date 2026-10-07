@@ -1018,6 +1018,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
+          if (view.composing || view.state.selection.empty) return false;
           if (text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
           if (!closer || from === to) return false;
