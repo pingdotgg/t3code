@@ -1683,6 +1683,20 @@ export interface CodexAdapterV2Options {
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // Codex lists models without their context window and reports it only with
+  // usage. Remember it across sessions so a turn start knows the window of a
+  // model this instance has already run. Keyed by cwd: project config can set
+  // a model's window.
+  const reportedContextWindows: Array<{
+    selection: ModelSelection;
+    cwd: string | null;
+    window: number;
+  }> = [];
+  const reportedContextWindow = (selection: ModelSelection, cwd: string | null | undefined) =>
+    reportedContextWindows.find(
+      (report) =>
+        report.cwd === (cwd ?? null) && canReuseCodexContextUsage(report.selection, selection),
+    );
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -4254,6 +4268,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
+        const reroutedTurnIds = new Set<string>();
         yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
             accumulateCodexTurnTokenUsage(
@@ -4264,6 +4279,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
+            }
+            const window = payload.tokenUsage.modelContextWindow;
+            // Subagents and rerouted turns may run another model than the selection.
+            if (
+              context.subagent === null &&
+              !reroutedTurnIds.has(payload.turnId) &&
+              window != null &&
+              window > 0
+            ) {
+              const { modelSelection: selection, runtimePolicy } = context.input;
+              const known = reportedContextWindow(selection, runtimePolicy.cwd);
+              if (known) known.window = window;
+              else reportedContextWindows.push({ selection, cwd: runtimePolicy.cwd, window });
             }
             const now = yield* DateTime.now;
             // Live context usage rides on the provider turn (#8144): the turn
@@ -4299,7 +4327,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           updateSubagentModel(payload.threadId, payload.threadSettings.model),
         );
         yield* client.handleServerNotification("model/rerouted", (payload) =>
-          updateSubagentModel(payload.threadId, payload.toModel),
+          Effect.suspend(() => {
+            reroutedTurnIds.add(payload.turnId);
+            return updateSubagentModel(payload.threadId, payload.toModel);
+          }),
         );
 
         yield* client.handleServerNotification("turn/started", (payload) =>
@@ -6332,6 +6363,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          getModelContextWindow: (selection, cwd) => reportedContextWindow(selection, cwd)?.window,
           canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
