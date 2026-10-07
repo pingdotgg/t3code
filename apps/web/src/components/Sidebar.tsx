@@ -41,8 +41,11 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
+import { environmentCatalog } from "../connection/catalog";
 import {
   resolveThreadProviderStack,
+  presentThreadShell,
   threadRuntimeCanArchive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
@@ -160,6 +163,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
@@ -168,6 +172,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { getThreadSortTimestamp } from "../lib/threadSort";
 import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -191,6 +196,8 @@ import {
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isSidebarThreadWorking,
+  createWebThreadSearchContext,
+  getThreadSearchEnvironmentNames,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -2493,6 +2500,17 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const connectionCatalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const environmentNamesById = useMemo(
+    () =>
+      new Map(
+        [...connectionCatalog.entries].map(([environmentId, entry]) => [
+          environmentId,
+          getThreadSearchEnvironmentNames(entry.target),
+        ]),
+      ),
+    [connectionCatalog.entries],
+  );
   const environmentMachineById = useEnvironmentMachines();
   const orderedProjects = useMemo(
     () =>
@@ -2864,21 +2882,67 @@ export default function Sidebar() {
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const parsedThreadSearch = useMemo(
+    () => parseThreadSearchQuery(threadSearchQuery, { now: new Date() }),
+    [threadSearchQuery],
+  );
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
-  const searchableThreads = useMemo(
-    () => [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...workingThreads,
-      ...snoozedThreads,
-      ...settledThreads,
-    ],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
-  );
   const searchEnvironmentIds = useConnectedEnvironmentIds();
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedThreadSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedThreadSearch.filters.archived
+        ? archivedSnapshots.snapshots
+            .flatMap(({ environmentId, snapshot }) =>
+              snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+            )
+            .filter(
+              (thread) =>
+                scopedProjectKeys === null ||
+                scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+            )
+            .sort(
+              (left, right) =>
+                getThreadSortTimestamp(right, "updated_at") -
+                getThreadSortTimestamp(left, "updated_at"),
+            )
+        : [
+            ...pinnedThreads,
+            ...activeThreads,
+            ...workingThreads,
+            ...snoozedThreads,
+            ...settledThreads,
+          ],
+    [
+      activeThreads,
+      archivedSnapshots.snapshots,
+      parsedThreadSearch.filters.archived,
+      pinnedThreads,
+      settledThreads,
+      snoozedThreads,
+      workingThreads,
+      scopedProjectKeys,
+    ],
+  );
+  const threadSearchContext = useMemo(
+    () =>
+      createWebThreadSearchContext({
+        projects: projectByKey,
+        environmentNames: environmentNamesById,
+        providerEntry: (thread, instanceId) =>
+          providerEntriesByEnvironment.get(thread.environmentId)?.get(instanceId),
+      }),
+    [environmentNamesById, projectByKey, providerEntriesByEnvironment],
+  );
   // useThreadSearch owns the debounce and the two-character floor.
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    parsedThreadSearch.text,
+    parsedThreadSearch.filters.archived,
+  );
   const threadSearchMatchByKey = useMemo(
     () =>
       new Map(threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const)),
@@ -2890,8 +2954,12 @@ export default function Sidebar() {
         searchableThreads,
         threadSearchQuery,
         new Set(threadSearchMatchByKey.keys()),
+        {
+          now: new Date(),
+          filterContext: threadSearchContext,
+        },
       ),
-    [searchableThreads, threadSearchQuery, threadSearchMatchByKey],
+    [searchableThreads, threadSearchQuery, threadSearchContext, threadSearchMatchByKey],
   );
   const threadSearchResultOrderKey = threadSearchResults
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
@@ -3179,9 +3247,13 @@ export default function Sidebar() {
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
+      if (thread.archivedAt !== null) {
+        void router.navigate({ to: "/settings/archived" });
+        return;
+      }
       navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
     },
-    [clearThreadSearch, navigateToThread],
+    [clearThreadSearch, navigateToThread, router],
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -5162,7 +5234,7 @@ export default function Sidebar() {
                             }),
                           ) ?? null
                         }
-                        searchQuery={threadSearchQuery}
+                        searchQuery={parsedThreadSearch.text}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
                         onFileDropThreads={handleThreadFileDrop}

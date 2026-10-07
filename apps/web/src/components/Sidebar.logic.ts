@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadProviderStack,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -8,6 +11,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import {
+  matchesThreadSearchFilters,
+  parseThreadSearchQuery,
+  type ThreadSearchMatchContext,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
@@ -23,6 +31,9 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import type { ProviderInstanceEntry } from "../providerInstances";
+import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -1071,6 +1082,41 @@ export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3t
 
 const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
 
+export function getThreadSearchEnvironmentNames(target: ConnectionTarget): ReadonlyArray<string> {
+  if (target._tag === "PrimaryConnectionTarget") return [target.label, "Local"];
+  if (isDesktopLocalConnectionTarget(target)) return [target.label, `${target.label} (Local)`];
+  return [target.label];
+}
+
+export function createWebThreadSearchContext(input: {
+  readonly projects: ReadonlyMap<
+    string,
+    { readonly title: string; readonly workspaceRoot: string }
+  >;
+  readonly environmentNames: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
+  readonly providerEntry: (
+    thread: SidebarThreadSummary,
+    instanceId: string,
+  ) => ProviderInstanceEntry | undefined;
+}): ThreadSearchMatchContext<SidebarThreadSummary> {
+  return {
+    projectName: (thread) => {
+      const project = input.projects.get(`${thread.environmentId}:${thread.projectId}`);
+      return project?.title || project?.workspaceRoot.split(/[\\/]/).pop() || "";
+    },
+    environmentNames: (thread) =>
+      input.environmentNames.get(thread.environmentId) ?? [thread.environmentId],
+    providerNames: (thread) => {
+      return resolveThreadProviderStack(thread).flatMap((instanceId) => {
+        const entry = input.providerEntry(thread, instanceId);
+        return entry ? [entry.driverKind, instanceId, entry.displayName] : [instanceId];
+      });
+    },
+    status: resolveSidebarThreadStatus,
+    activityAt: (thread) => thread.latestUserMessageAt ?? thread.updatedAt,
+  };
+}
+
 /**
  * Search the already-ordered sidebar thread collection by title or linked PR,
  * plus any thread whose messages the server matched (`contentMatchKeys`, keyed
@@ -1082,20 +1128,35 @@ export function searchSidebarThreads<
     readonly environmentId: EnvironmentId;
     readonly id: ThreadId;
     readonly title: string;
+    readonly updatedAt: string;
+    readonly branch: string | null;
   } & Parameters<typeof threadPullRequestSearchTerms>[0],
 >(
   threads: readonly T[],
   query: string,
   contentMatchKeys: ReadonlySet<string> = EMPTY_CONTENT_MATCH_KEYS,
+  options?: { readonly now?: Date; readonly filterContext?: ThreadSearchMatchContext<T> },
 ): T[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (normalizedQuery.length === 0) return [];
+  const parsed = parseThreadSearchQuery(query, { now: options?.now ?? new Date() });
+  const normalizedQuery = parsed.text.trim().toLowerCase();
+  if (normalizedQuery.length === 0 && !parsed.hasFilters) return [];
   const titleMatches: T[] = [];
   const contentMatches: T[] = [];
   for (const thread of threads) {
-    const matchesTitle = [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
-      term.toLowerCase().includes(normalizedQuery),
-    );
+    if (parsed.hasFilters && options?.filterContext === undefined) continue;
+    if (
+      options?.filterContext &&
+      !matchesThreadSearchFilters(thread, parsed.filters, options.filterContext, {
+        now: options.now ?? new Date(),
+      })
+    ) {
+      continue;
+    }
+    const matchesTitle =
+      normalizedQuery.length === 0 ||
+      [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
+        term.toLowerCase().includes(normalizedQuery),
+      );
     if (matchesTitle) {
       titleMatches.push(thread);
     } else if (

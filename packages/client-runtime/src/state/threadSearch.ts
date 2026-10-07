@@ -18,18 +18,24 @@ export interface ThreadSearchResultsState {
 }
 
 const ThreadSearchKey = Schema.fromJsonString(
-  Schema.Tuple([Schema.Array(EnvironmentId), OrchestrationSearchThreadsInput.fields.query]),
+  Schema.Tuple([
+    Schema.Array(EnvironmentId),
+    OrchestrationSearchThreadsInput.fields.query,
+    Schema.optional(Schema.Boolean),
+  ]),
 );
 const decodeThreadSearchKey = Schema.decodeUnknownOption(ThreadSearchKey);
 
 export function makeThreadSearchKey(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  archived = false,
 ): string {
-  return JSON.stringify([
-    [...environmentIds].sort((left, right) => left.localeCompare(right)),
-    query,
-  ]);
+  const sortedEnvironmentIds = [...environmentIds].sort((left, right) => left.localeCompare(right));
+  const key = archived
+    ? ([sortedEnvironmentIds, query, true] as const)
+    : ([sortedEnvironmentIds, query] as const);
+  return JSON.stringify(key);
 }
 
 function parseThreadSearchKey(key: string) {
@@ -51,6 +57,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
   readonly getSearchAtom: (
     environmentId: EnvironmentId,
     query: string,
+    archived?: boolean,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationSearchThreadsResult, E>>;
   readonly labelPrefix: string;
 }) {
@@ -61,12 +68,12 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         return { matches: [], isLoading: false };
       }
 
-      const [environmentIds, query] = parsedKey.value;
+      const [environmentIds, query, archived] = parsedKey.value;
       const matches: EnvironmentThreadSearchMatch[] = [];
       let isLoading = false;
 
       for (const environmentId of environmentIds) {
-        const result = get(options.getSearchAtom(environmentId, query));
+        const result = get(options.getSearchAtom(environmentId, query, archived));
         isLoading ||= result.waiting;
         const value = Option.getOrNull(AsyncResult.value(result));
         if (value !== null) {

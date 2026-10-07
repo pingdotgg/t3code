@@ -23,6 +23,12 @@ it("creates stable keys regardless of environment order", () => {
   );
 });
 
+it("separates archived content searches from active searches", () => {
+  expect(makeThreadSearchKey([envA], "needle")).not.toBe(
+    makeThreadSearchKey([envA], "needle", true),
+  );
+});
+
 it("creates keys without array methods unavailable in Hermes", () => {
   const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
   Reflect.deleteProperty(Array.prototype, "toSorted");

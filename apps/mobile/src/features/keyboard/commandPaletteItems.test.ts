@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  matchesThreadSearchFilters,
+  parseThreadSearchQuery,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
 
 import {
   filterCommandPaletteItems,
@@ -62,6 +66,38 @@ describe("filterCommandPaletteItems", () => {
       filterCommandPaletteItems(items, "message content", matches).map((item) => item.key),
     ).toEqual(["siva:one"]);
     expect(filterCommandPaletteItems(items, "> message content", matches)).toEqual([]);
+  });
+
+  it("applies qualifiers before including a server content match", () => {
+    const now = new Date("2026-10-07T12:00:00.000Z");
+    const context = {
+      projectName: () => "Mobile",
+      environmentNames: () => ["Local"],
+      providerNames: () => ["Codex"],
+      status: () => "ready",
+      activityAt: (thread: { updatedAt: string }) => thread.updatedAt,
+    };
+    const candidates = ["2026-10-06T12:00:00.000Z", "2026-09-01T12:00:00.000Z"].map(
+      (updatedAt, index) => ({
+        ...item(`thread:${index}`, "Unrelated title", "thread"),
+        matchesSearch: (query: string) =>
+          matchesThreadSearchFilters(
+            { updatedAt, branch: null },
+            parseThreadSearchQuery(query, { now }).filters,
+            context,
+            { now },
+          ),
+      }),
+    );
+    const matches = new Set(candidates.map((candidate) => candidate.key));
+    expect(
+      filterCommandPaletteItems(candidates, "since:7d", matches).map((candidate) => candidate.key),
+    ).toEqual(["thread:0"]);
+    expect(
+      filterCommandPaletteItems(candidates, "since:7d message", matches).map(
+        (candidate) => candidate.key,
+      ),
+    ).toEqual(["thread:0"]);
   });
 });
 

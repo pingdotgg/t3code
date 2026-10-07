@@ -36,7 +36,20 @@ export function HomeRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
-  const handleSelectThread = useHomeThreadSelection();
+  const selectThread = useHomeThreadSelection();
+  const handleSelectThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      if (thread.archivedAt !== null) {
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsArchive" },
+        });
+        return;
+      }
+      selectThread(thread);
+    },
+    [navigation, selectThread],
+  );
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
       navigation.navigate("NewTaskSheet", {

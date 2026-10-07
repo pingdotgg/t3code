@@ -13,6 +13,7 @@ import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { getThreadSortTimestamp, sortThreads } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
@@ -25,7 +26,9 @@ export function buildLinkedThreadActionItems(
   input: CommandPaletteLinkedThreads & {
     query: string;
     icon: ReactNode;
-    runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
+    runThread: (
+      thread: Pick<SidebarThreadSummary, "environmentId" | "id" | "archivedAt">,
+    ) => Promise<void>;
   },
 ): CommandPaletteActionItem[] {
   return input.threads.map((thread) => ({
@@ -35,7 +38,12 @@ export function buildLinkedThreadActionItems(
     description: thread.archivedAt === null ? "Linked thread" : "Archived thread",
     searchTerms: [input.query, thread.title],
     icon: input.icon,
-    run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
+    run: () =>
+      input.runThread({
+        environmentId: input.environmentId,
+        id: thread.id,
+        archivedAt: thread.archivedAt,
+      }),
   }));
 }
 
@@ -326,11 +334,19 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   /** Optional rich description (e.g. favicon + workspace icons). Falls back to text. */
   renderDescription?: (thread: TThread, meta: { projectTitle: string | undefined }) => ReactNode;
   getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
-  runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
+  filterThread?: (thread: TThread) => boolean;
+  includeArchived?: boolean;
+  runThread: (
+    thread: Pick<SidebarThreadSummary, "environmentId" | "id" | "archivedAt">,
+  ) => Promise<void>;
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter((thread) => thread.archivedAt === null),
+    input.threads.filter(
+      (thread) =>
+        (input.includeArchived === true || thread.archivedAt === null) &&
+        (input.filterThread?.(thread) ?? true),
+    ),
     input.sortOrder,
   );
   const visibleThreads =
@@ -448,9 +464,15 @@ export function filterCommandPaletteGroups(input: {
 }): CommandPaletteGroup[] {
   const isActionsFilter = input.query.startsWith(">");
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
-  const normalizedQuery = normalizeSearchText(searchQuery);
+  const parsedQuery = parseThreadSearchQuery(searchQuery, { now: new Date() });
+  const normalizedQuery = normalizeSearchText(parsedQuery.text);
 
   if (normalizedQuery.length === 0) {
+    if (parsedQuery.hasFilters && !isActionsFilter) {
+      return input.threadSearchItems.length > 0
+        ? [{ value: "threads-search", label: "Threads", items: input.threadSearchItems }]
+        : [];
+    }
     if (isActionsFilter) {
       return input.activeGroups.filter((group) => group.value === "actions");
     }

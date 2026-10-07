@@ -1,9 +1,10 @@
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { computeThreadMoveAvailability } from "./threadOrder";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
+import {
+  presentThreadShell,
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
   threadSearchMatchKey,
@@ -29,6 +30,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -66,6 +69,7 @@ import {
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
   buildThreadListV2Items,
+  createMobileThreadSearchContext,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   isThreadListV2ListItem,
@@ -74,6 +78,7 @@ import {
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
+  sortThreadsByActivity,
 } from "./threadListV2";
 
 /** The sidebar list: flat v2 rows with queued tasks spliced in, plus a
@@ -131,6 +136,10 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
+  const parsedSearch = useMemo(
+    () => parseThreadSearchQuery(props.searchQuery, { now: new Date() }),
+    [props.searchQuery],
+  );
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
 
@@ -191,7 +200,25 @@ function ThreadNavigationSidebarPane(
           : [],
     [options.selectedEnvironmentId, workspaceEnvironments],
   );
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedSearch.filters.archived
+        ? sortThreadsByActivity(
+            archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+              snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+            ),
+          )
+        : threads,
+    [archivedSnapshots.snapshots, parsedSearch.filters.archived, threads],
+  );
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    parsedSearch.text,
+    parsedSearch.filters.archived,
+  );
   const threadSearchMatchByKey = useMemo(() => {
     const matches = new Map<string, EnvironmentThreadSearchMatch>();
     for (const match of threadSearch.matches) {
@@ -327,6 +354,22 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
+  const threadSearchContext = useMemo(
+    () =>
+      createMobileThreadSearchContext({
+        projects: projectByKey,
+        providers: providersByEnvironmentId,
+        environmentNames: (thread) =>
+          [
+            workspaceEnvironments.find(
+              (environment) => environment.environmentId === thread.environmentId,
+            )?.environmentLabel,
+            savedConnectionsById[thread.environmentId]?.environmentLabel,
+            thread.environmentId,
+          ].filter((name): name is string => name !== undefined),
+      }),
+    [projectByKey, providersByEnvironmentId, savedConnectionsById, workspaceEnvironments],
+  );
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -369,10 +412,15 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: searchableThreads.filter(
+        (thread) => parsedSearch.filters.archived || thread.archivedAt === null,
+      ),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
-      searchQuery: props.searchQuery,
+      searchQuery: parsedSearch.text,
+      searchFilters: parsedSearch.filters,
+      searchFilterContext: threadSearchContext,
+      searchNow: new Date(),
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -397,13 +445,15 @@ function ThreadNavigationSidebarPane(
     settledShelfExpanded,
     props.selectedThreadKey,
     options.selectedEnvironmentId,
-    props.searchQuery,
+    parsedSearch,
     matchedThreadKeys,
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     threads,
+    searchableThreads,
     selectedProjectScope,
+    threadSearchContext,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -425,7 +475,7 @@ function ThreadNavigationSidebarPane(
     // (mirrors the compact Home v2 list) where they stay visible and
     // deletable while their environment is offline. Same environment scope
     // and search filter as the list.
-    const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
+    const v2SearchQuery = parsedSearch.text.trim().toLocaleLowerCase();
     const v2PendingTasks = pendingTasks.filter(
       (pendingTask) =>
         (options.selectedEnvironmentId === null ||
@@ -715,7 +765,7 @@ function ThreadNavigationSidebarPane(
                   threadId: thread.id,
                 }),
               )}
-              searchQuery={props.searchQuery}
+              searchQuery={parsedSearch.text}
               pane="sidebar"
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
@@ -814,7 +864,7 @@ function ThreadNavigationSidebarPane(
       regenerateThreadTitle,
       renameThread,
       props.onNewThreadOnBranch,
-      props.searchQuery,
+      parsedSearch,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,

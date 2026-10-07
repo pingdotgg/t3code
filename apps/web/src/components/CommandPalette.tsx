@@ -116,6 +116,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -179,9 +180,18 @@ import {
   reduceCommandPaletteUiState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import {
+  createWebThreadSearchContext,
+  getThreadSearchEnvironmentNames,
+  orderItemsByPreferredIds,
+  sortLogicalProjectsForSidebar,
+} from "./Sidebar.logic";
+import { matchesThreadSearchFilters } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { CommandPaletteContent } from "./CommandPaletteContent";
+import { CommandPaletteThreadFilters } from "./CommandPaletteThreadFilters";
 import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
@@ -699,10 +709,15 @@ function OpenCommandPaletteDialog(props: {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState(openIntent?.kind === "search" ? openIntent.query : "");
+  const paletteInputRef = useRef<HTMLInputElement>(null);
   const [linkedThreadSearch, setLinkedThreadSearch] = useState(
     openIntent?.kind === "search" ? openIntent : null,
   );
   const deferredQuery = useDeferredValue(query);
+  const parsedThreadSearch = useMemo(
+    () => parseThreadSearchQuery(deferredQuery, { now: new Date() }),
+    [deferredQuery],
+  );
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
@@ -847,8 +862,24 @@ function OpenCommandPaletteDialog(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
-  const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedThreadSearch.filters.archived ? environmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedThreadSearch.filters.archived
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+          )
+        : threads,
+    [archivedSnapshots.snapshots, parsedThreadSearch.filters.archived, threads],
+  );
+  const threadSearchQuery = currentView === null && !isActionsOnly ? parsedThreadSearch.text : "";
+  const threadSearch = useThreadSearch(
+    environmentIds,
+    threadSearchQuery,
+    parsedThreadSearch.filters.archived,
+  );
   const threadContentMatchByKey = useMemo(
     () =>
       new Map(
@@ -921,6 +952,43 @@ function OpenCommandPaletteDialog(props: {
       ),
     [environments],
   );
+  const environmentNamesById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [
+          environment.environmentId,
+          getThreadSearchEnvironmentNames(environment.entry.target),
+        ]),
+      ),
+    [environments],
+  );
+  const threadFilterProjects = useMemo(() => {
+    const seen = new Set<string>();
+    return projects.flatMap((project) => {
+      const title = project.title || project.workspaceRoot.split(/[\\/]/).pop() || "";
+      if (!title) return [];
+      const key = title.toLocaleLowerCase();
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ label: title, value: title }];
+    });
+  }, [projects]);
+  const threadFilterProviders = useMemo(() => {
+    const seen = new Set<string>();
+    return [...providerEntryByEnvironmentAndInstanceId.values()].flatMap((entry) => {
+      const key = entry.displayName.toLocaleLowerCase();
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ label: entry.displayName, value: entry.displayName }];
+    });
+  }, [providerEntryByEnvironmentAndInstanceId]);
+  const threadFilterEnvironments = useMemo(() => {
+    if (environmentIds.length <= 1) return [];
+    const labels = new Set(
+      environmentIds.map((id) => projectEnvironmentLocationById.get(id)?.label ?? id),
+    );
+    return [...labels].map((label) => ({ label, value: label }));
+  }, [environmentIds, projectEnvironmentLocationById]);
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -1136,6 +1204,16 @@ function OpenCommandPaletteDialog(props: {
   const projectTitleById = useMemo(
     () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.title])),
     [projects],
+  );
+  const threadSearchContext = useMemo(
+    () =>
+      createWebThreadSearchContext({
+        projects: projectByKey,
+        environmentNames: environmentNamesById,
+        providerEntry: (thread, instanceId) =>
+          providerEntryByEnvironmentAndInstanceId.get(`${thread.environmentId}:${instanceId}`),
+      }),
+    [environmentNamesById, projectByKey, providerEntryByEnvironmentAndInstanceId],
   );
 
   const activeThreadId = activeThread?.id;
@@ -1417,11 +1495,17 @@ function OpenCommandPaletteDialog(props: {
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
-        threads,
+        threads: searchableThreads,
+        includeArchived: parsedThreadSearch.filters.archived,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        filterThread: (thread) =>
+          !parsedThreadSearch.hasFilters ||
+          matchesThreadSearchFilters(thread, parsedThreadSearch.filters, threadSearchContext, {
+            now: new Date(),
+          }),
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
         renderDescription: (thread, { projectTitle }) => {
@@ -1466,6 +1550,10 @@ function OpenCommandPaletteDialog(props: {
             : undefined;
         },
         runThread: async (thread) => {
+          if (thread.archivedAt !== null) {
+            await navigate({ to: "/settings/archived" });
+            return;
+          }
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
@@ -1476,14 +1564,15 @@ function OpenCommandPaletteDialog(props: {
       activeThreadId,
       clientSettings.sidebarThreadSortOrder,
       navigate,
-      projectCwdById,
       projectByKey,
       projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
+      parsedThreadSearch,
+      searchableThreads,
+      threadSearchContext,
       threadContentMatchByKey,
       threadSearch.query,
-      threads,
     ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
@@ -2340,6 +2429,10 @@ function OpenCommandPaletteDialog(props: {
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
             runThread: async (thread) => {
+              if (thread.archivedAt !== null) {
+                await navigate({ to: "/settings/archived" });
+                return;
+              }
               await navigate({
                 to: "/$environmentId/$threadId",
                 params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
@@ -3411,6 +3504,15 @@ function OpenCommandPaletteDialog(props: {
               : "This connection cannot add projects."}
         </TooltipPopup>
       </Tooltip>
+    ) : currentView === null && !query.startsWith(">") ? (
+      <CommandPaletteThreadFilters
+        environments={threadFilterEnvironments}
+        inputRef={paletteInputRef}
+        onQueryChange={handleQueryChange}
+        projects={threadFilterProjects}
+        providers={threadFilterProviders}
+        query={query}
+      />
     ) : null;
 
   const footerActionLabel =
@@ -3444,6 +3546,7 @@ function OpenCommandPaletteDialog(props: {
       autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
+      inputRef={paletteInputRef}
       inputAccessory={inputAccessory}
       inputProps={{
         // The submit button is absolutely positioned over the field, so the
@@ -3456,7 +3559,9 @@ function OpenCommandPaletteDialog(props: {
                   willCreateProjectPath,
                   hasHighlightedBrowseItem,
                 })
-              : undefined,
+              : currentView === null && !query.startsWith(">")
+                ? "*:data-[slot=autocomplete-input]:pe-12!"
+                : undefined,
         placeholder: inputPlaceholder,
         ...(isSubmenu
           ? {

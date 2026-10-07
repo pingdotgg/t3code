@@ -12,6 +12,12 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
+  matchesThreadSearchFilters,
+  parseThreadSearchQuery,
+  type ThreadSearchFilters,
+  type ThreadSearchMatchContext,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
+import {
   createInboxReturnTracker,
   isThreadWorking,
   sortInboxThreadsByReturn,
@@ -84,6 +90,42 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
+
+export function createMobileThreadSearchContext(input: {
+  readonly projects: ReadonlyMap<
+    string,
+    { readonly title: string; readonly workspaceRoot: string }
+  >;
+  readonly environmentNames: (thread: EnvironmentThreadShell) => ReadonlyArray<string>;
+  readonly providers: ReadonlyMap<EnvironmentId, ReadonlyArray<ThreadListProvider>>;
+}): ThreadSearchMatchContext<EnvironmentThreadShell> {
+  return {
+    projectName: (thread) => {
+      const project = input.projects.get(`${thread.environmentId}:${thread.projectId}`);
+      return project?.title || project?.workspaceRoot.split(/[\\/]/).pop() || "";
+    },
+    environmentNames: input.environmentNames,
+    providerNames: (thread) => {
+      const providers = input.providers.get(thread.environmentId) ?? [];
+      return resolveThreadProviderStack(thread).flatMap((instanceId) => {
+        const provider = providers.find((entry) => entry.instanceId === instanceId);
+        return provider ? [provider.driver, instanceId, provider.displayName ?? ""] : [instanceId];
+      });
+    },
+    status: resolveThreadListV2Status,
+    activityAt: (thread) => thread.latestUserMessageAt ?? thread.updatedAt,
+  };
+}
+
+export function sortThreadsByActivity<
+  T extends { readonly updatedAt: string; readonly latestUserMessageAt?: string | null },
+>(threads: ReadonlyArray<T>): T[] {
+  return [...threads].sort((left, right) =>
+    (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
+      left.latestUserMessageAt ?? left.updatedAt,
+    ),
+  );
+}
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -618,6 +660,9 @@ export function buildThreadListV2Items(input: {
     readonly projectId: ProjectId;
   }> | null;
   readonly searchQuery: string;
+  readonly searchFilters?: ThreadSearchFilters;
+  readonly searchFilterContext?: ThreadSearchMatchContext<EnvironmentThreadShell>;
+  readonly searchNow?: Date;
   readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
@@ -663,7 +708,10 @@ export function buildThreadListV2Items(input: {
             pendingOrder: null,
           }),
         );
-  const query = input.searchQuery.trim().toLocaleLowerCase();
+  const parsedSearch = input.searchFilters
+    ? { text: input.searchQuery, filters: input.searchFilters, hasFilters: true }
+    : parseThreadSearchQuery(input.searchQuery, { now: input.searchNow ?? new Date() });
+  const query = parsedSearch.text.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
@@ -676,12 +724,24 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+    if (
+      (!parsedSearch.filters.archived && thread.archivedAt !== null) ||
+      thread.lineage.relationshipToParent === "subagent"
+    )
+      continue;
     // The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }
+    if (
+      parsedSearch.hasFilters &&
+      input.searchFilterContext !== undefined &&
+      !matchesThreadSearchFilters(thread, parsedSearch.filters, input.searchFilterContext, {
+        now: input.searchNow ?? new Date(),
+      })
+    )
+      continue;
     if (
       query.length > 0 &&
       !thread.title.toLocaleLowerCase().includes(query) &&
@@ -695,6 +755,10 @@ export function buildThreadListV2Items(input: {
         }),
       ) !== true
     ) {
+      continue;
+    }
+    if (parsedSearch.filters.archived) {
+      active.push(thread);
       continue;
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
@@ -726,9 +790,11 @@ export function buildThreadListV2Items(input: {
 
   // The beta inbox is time-ordered, so the saved arrangement (and any move in
   // flight) is kept but not applied until the beta is off again.
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedActive = parsedSearch.filters.archived
+    ? sortThreadsByActivity(active)
+    : workingShelfEnabled
+      ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+      : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   // Newest send first; finishing and waking again do not move a row.
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(

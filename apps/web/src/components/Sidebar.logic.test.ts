@@ -1,4 +1,8 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +22,7 @@ import {
   formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
+  getThreadSearchEnvironmentNames,
   getSidebarForkParentThreadId,
   getSidebarThreadIdsToPrewarm,
   hasUnseenCompletion,
@@ -995,11 +1000,44 @@ describe("resolveSidebarThreadStatus", () => {
 });
 
 describe("searchSidebarThreads", () => {
+  it("accepts the environment names displayed in the sidebar and palette", () => {
+    expect(
+      getThreadSearchEnvironmentNames(
+        new PrimaryConnectionTarget({
+          environmentId: localEnvironmentId,
+          label: "This device",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+        }),
+      ),
+    ).toEqual(["This device", "Local"]);
+    expect(
+      getThreadSearchEnvironmentNames(
+        new BearerConnectionTarget({
+          environmentId: localEnvironmentId,
+          connectionId: "local:wsl:Ubuntu",
+          label: "Ubuntu",
+        }),
+      ),
+    ).toEqual(["Ubuntu", "Ubuntu (Local)"]);
+    expect(
+      getThreadSearchEnvironmentNames(
+        new BearerConnectionTarget({
+          environmentId: localEnvironmentId,
+          connectionId: "remote",
+          label: "Office Mac",
+        }),
+      ),
+    ).toEqual(["Office Mac"]);
+  });
+
   const searchThread = (id: string, title: string, project: string) => ({
     environmentId: localEnvironmentId,
     id: ThreadId.make(id),
     title,
     project,
+    updatedAt: "2026-10-07T00:00:00.000Z",
+    branch: null,
   });
   const threads = [
     searchThread("thread-1", "Fix workspace search", "Alpha"),
@@ -1023,6 +1061,24 @@ describe("searchSidebarThreads", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSidebarThreads(threads, "   ")).toEqual([]);
+  });
+
+  it("applies project qualifiers to both title and content matches", () => {
+    const filterContext = {
+      projectName: (thread: (typeof threads)[number]) => thread.project,
+      environmentNames: () => ["Local"],
+      providerNames: () => ["Codex"],
+      status: () => "ready",
+      activityAt: (thread: (typeof threads)[number]) => thread.updatedAt,
+    };
+    expect(
+      searchSidebarThreads(threads, "project:Workspace", new Set(), { filterContext }),
+    ).toEqual([threads[1]]);
+    expect(
+      searchSidebarThreads(threads, "work project:Alpha", contentKeys("thread-2"), {
+        filterContext,
+      }),
+    ).toEqual([threads[0]]);
   });
 
   it("appends content-only matches after every title match", () => {

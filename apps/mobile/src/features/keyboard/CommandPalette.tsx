@@ -26,8 +26,17 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import {
+  matchesThreadSearchFilters,
+  parseThreadSearchQuery,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
+import { createMobileThreadSearchContext, sortThreadsByActivity } from "../threads/threadListV2";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { threadListEnvironmentsAtom } from "../../state/server";
+import { useAtomValue } from "@effect/atom-react";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
@@ -143,11 +152,20 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useThreadShells();
+  const projectByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+      ),
+    [projects],
+  );
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const { providersByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
   const [query, setQuery] = useState("");
+  const parsedSearch = useMemo(() => parseThreadSearchQuery(query, { now: new Date() }), [query]);
   const [selection, setSelection] = useState<string | null>(null);
   const [visible, setVisible] = useState(true);
   const pendingAction = useRef<(() => void) | null>(null);
@@ -162,7 +180,38 @@ export function CommandPalette(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedSearch.filters.archived
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+          )
+        : threads,
+    [archivedSnapshots.snapshots, parsedSearch.filters.archived, threads],
+  );
+  const threadSearchContext = useMemo(
+    () =>
+      createMobileThreadSearchContext({
+        projects: projectByKey,
+        providers: providersByEnvironmentId,
+        environmentNames: (thread) =>
+          [
+            environments.find((environment) => environment.environmentId === thread.environmentId)
+              ?.environmentLabel,
+            savedConnectionsById[thread.environmentId]?.environmentLabel,
+            thread.environmentId,
+          ].filter((name): name is string => name !== undefined),
+      }),
+    [environments, projectByKey, providersByEnvironmentId, savedConnectionsById],
+  );
+  const search = useThreadSearch(
+    searchEnvironmentIds,
+    query.startsWith(">") ? "" : parsedSearch.text,
+    parsedSearch.filters.archived,
+  );
   const matchedThreadKeys = useMemo(
     () =>
       new Set(search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId))),
@@ -260,9 +309,6 @@ export function CommandPalette(props: {
           }),
       },
     ];
-    const projectByKey = new Map(
-      projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
-    );
     const activeProject = activeThread
       ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
       : null;
@@ -316,13 +362,8 @@ export function CommandPalette(props: {
           },
         }),
     }));
-    const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null)
-      .sort((left, right) =>
-        (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
-          left.latestUserMessageAt ?? left.updatedAt,
-        ),
-      )
+    const threadItems: CommandPaletteItem[] = sortThreadsByActivity(searchableThreads)
+      .filter((thread) => parsedSearch.filters.archived || thread.archivedAt === null)
       .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
@@ -338,6 +379,10 @@ export function CommandPalette(props: {
             thread.branch ?? "",
             ...threadPullRequestSearchTerms(thread),
           ],
+          matchesSearch: () =>
+            matchesThreadSearchFilters(thread, parsedSearch.filters, threadSearchContext, {
+              now: new Date(),
+            }),
           run: () => selectThread(thread),
         };
       });
@@ -346,11 +391,14 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     navigation,
+    projectByKey,
     projects,
+    parsedSearch,
     runCommand,
     savedConnectionsById,
     selectThread,
-    threads,
+    searchableThreads,
+    threadSearchContext,
   ]);
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),
@@ -497,7 +545,7 @@ export function CommandPalette(props: {
                     searchMatch={
                       item.kind === "thread" ? contentMatchByKey.get(item.key) : undefined
                     }
-                    searchQuery={query}
+                    searchQuery={parsedSearch.text}
                     onSelect={() => close(item.run)}
                   />
                 )}

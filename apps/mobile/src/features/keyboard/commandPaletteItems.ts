@@ -1,3 +1,5 @@
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
+
 export interface CommandPaletteItem {
   readonly key: string;
   readonly kind: "action" | "project" | "thread";
@@ -5,6 +7,7 @@ export interface CommandPaletteItem {
   readonly detail?: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly run: () => void;
+  readonly matchesSearch?: (query: string) => boolean;
 }
 
 /** `>` narrows to actions, matching the desktop palette. Stable ties retain recent-thread order. */
@@ -14,11 +17,13 @@ export function filterCommandPaletteItems(
   matchedThreadKeys: ReadonlySet<string>,
 ) {
   const actionsOnly = query.startsWith(">");
-  const normalized = (actionsOnly ? query.slice(1) : query).trim().toLocaleLowerCase();
+  const parsed = parseThreadSearchQuery(actionsOnly ? query.slice(1) : query, { now: new Date() });
+  const normalized = parsed.text.trim().toLocaleLowerCase();
   const tokens = normalized.split(/\s+/);
   return items
     .flatMap((item, index) => {
       if (actionsOnly && item.kind !== "action") return [];
+      if (item.kind === "thread" && item.matchesSearch && !item.matchesSearch(query)) return [];
       if (!normalized) return item.kind === "project" ? [] : [{ item, rank: 0, index }];
       const title = item.title.toLocaleLowerCase();
       const haystack = [title, ...item.searchTerms].join(" ").toLocaleLowerCase();

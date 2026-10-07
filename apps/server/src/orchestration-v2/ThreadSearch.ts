@@ -26,7 +26,11 @@ export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   }
 }
 
-const SearchRequest = Schema.Struct({ pattern: Schema.String, limit: Schema.Int });
+const SearchRequest = Schema.Struct({
+  pattern: Schema.String,
+  limit: Schema.Int,
+  archived: Schema.Boolean,
+});
 const SearchRow = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -83,57 +87,62 @@ export const make = Effect.gen(function* () {
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,
-    execute: ({ pattern, limit }) => sql`
-      WITH candidate AS (
+    execute: ({ pattern, limit, archived }) => {
+      const archivedPredicate = archived
+        ? sql`threads.archived_at IS NOT NULL`
+        : sql`threads.archived_at IS NULL`;
+      return sql`
+        WITH candidate AS (
+          SELECT
+            threads.thread_id,
+            threads.project_id,
+            messages.role,
+            json_extract(messages.payload_json, '$.text') AS match_text,
+            messages.created_at AS message_created_at,
+            messages.message_id,
+            threads.updated_at AS thread_updated_at
+          FROM orchestration_v2_projection_messages AS messages
+          INNER JOIN orchestration_v2_projection_threads AS threads
+            ON threads.thread_id = messages.thread_id
+          INNER JOIN projection_projects AS projects
+            ON projects.project_id = threads.project_id
+          WHERE threads.deleted_at IS NULL
+            AND ${archivedPredicate}
+            AND projects.deleted_at IS NULL
+            AND messages.streaming = 0
+            AND messages.role IN ('user', 'assistant')
+            AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+        ),
+        ranked AS (
+          SELECT
+            thread_id,
+            project_id,
+            role AS source,
+            match_text,
+            message_created_at,
+            CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
+            thread_updated_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                CASE role WHEN 'user' THEN 0 ELSE 1 END ASC,
+                message_created_at DESC,
+                message_id ASC
+            ) AS thread_match_rank
+          FROM candidate
+        )
         SELECT
-          threads.thread_id,
-          threads.project_id,
-          messages.role,
-          json_extract(messages.payload_json, '$.text') AS match_text,
-          messages.created_at AS message_created_at,
-          messages.message_id,
-          threads.updated_at AS thread_updated_at
-        FROM orchestration_v2_projection_messages AS messages
-        INNER JOIN orchestration_v2_projection_threads AS threads
-          ON threads.thread_id = messages.thread_id
-        INNER JOIN projection_projects AS projects
-          ON projects.project_id = threads.project_id
-        WHERE threads.deleted_at IS NULL
-          AND threads.archived_at IS NULL
-          AND projects.deleted_at IS NULL
-          AND messages.streaming = 0
-          AND messages.role IN ('user', 'assistant')
-          AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
-      ),
-      ranked AS (
-        SELECT
-          thread_id,
-          project_id,
-          role AS source,
-          match_text,
-          message_created_at,
-          CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
-          thread_updated_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY thread_id
-            ORDER BY
-              CASE role WHEN 'user' THEN 0 ELSE 1 END ASC,
-              message_created_at DESC,
-              message_id ASC
-          ) AS thread_match_rank
-        FROM candidate
-      )
-      SELECT
-        thread_id AS "threadId",
-        project_id AS "projectId",
-        source,
-        match_text AS "matchText",
-        message_created_at AS "messageCreatedAt"
-      FROM ranked
-      WHERE thread_match_rank = 1
-      ORDER BY match_rank ASC, thread_updated_at DESC, thread_id ASC
-      LIMIT ${limit}
-    `,
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          source,
+          match_text AS "matchText",
+          message_created_at AS "messageCreatedAt"
+        FROM ranked
+        WHERE thread_match_rank = 1
+        ORDER BY match_rank ASC, thread_updated_at DESC, thread_id ASC
+        LIMIT ${limit}
+      `;
+    },
   });
 
   const search: ThreadSearch["Service"]["search"] = Effect.fn("ThreadSearch.search")(
@@ -141,6 +150,7 @@ export const make = Effect.gen(function* () {
       const rows = yield* searchRows({
         pattern: `%${escapeLikePattern(input.query)}%`,
         limit: input.limit ?? 50,
+        archived: input.archived === true,
       }).pipe(
         Effect.mapError(
           (cause) =>
