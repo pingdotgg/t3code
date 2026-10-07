@@ -374,3 +374,26 @@ export function useTurnItemDetail(
         }),
   );
 }
+
+/**
+ * A model's reading of a thread's latest provider failure. Asks nothing while
+ * `target` is null: each request spends the user's provider credits, so the
+ * caller passes a target only after the user asks. `failure` keys the cache, so
+ * a new failure on the same thread is explained anew.
+ */
+export function useProviderFailureExplanation(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly failure: string;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.providerFailureExplanation({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, revision: target.failure },
+        }),
+  );
+}

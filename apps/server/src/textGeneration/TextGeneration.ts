@@ -81,6 +81,19 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface ProviderFailureExplanationInput {
+  cwd: string;
+  /** Plain-text description of the failure and the run around it. */
+  context: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ProviderFailureExplanationResult {
+  summary: string;
+  likelyFix: string;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -112,6 +125,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Explain the most probable cause of a provider failure and a likely fix. */
+    readonly explainProviderFailure: (
+      input: ProviderFailureExplanationInput,
+    ) => Effect.Effect<ProviderFailureExplanationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +137,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "explainProviderFailure";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -171,6 +190,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    explainProviderFailure: (input) =>
+      resolveInstance(registry, "explainProviderFailure", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.explainProviderFailure(input)),
       ),
   });
 });

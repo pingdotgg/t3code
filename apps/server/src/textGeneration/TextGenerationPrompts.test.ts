@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildProviderFailureExplanationPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -12,6 +13,7 @@ import {
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -361,5 +363,30 @@ describe("normalizeCliError", () => {
 
     expect(result.detail).toBe("Failed to generate a commit message");
     expect(result.message).not.toContain("secret-token");
+  });
+});
+
+describe("buildProviderFailureExplanationPrompt", () => {
+  it("asks for a summary and a likely fix without inventing facts", () => {
+    const result = buildProviderFailureExplanationPrompt({
+      context: "Failure:\nClass: provider_error\nMessage: spawn codex ENOENT",
+    });
+
+    expect(result.prompt).toContain("summary and likelyFix");
+    expect(result.prompt).toContain("Never invent");
+    expect(result.prompt).toContain("uncertain");
+    expect(result.prompt).toContain("No markdown headings");
+    expect(result.prompt).toContain("Message: spawn codex ENOENT");
+    expect(Schema.decodeUnknownSync(result.outputSchema)({ summary: "a", likelyFix: "b" })).toEqual(
+      { summary: "a", likelyFix: "b" },
+    );
+    expect(() => Schema.decodeUnknownSync(result.outputSchema)({ summary: "a" })).toThrow();
+  });
+
+  it("bounds an oversized context", () => {
+    const result = buildProviderFailureExplanationPrompt({ context: "x".repeat(50_000) });
+
+    expect(result.prompt.length).toBeLessThan(14_000);
+    expect(result.prompt).toContain("[truncated]");
   });
 });

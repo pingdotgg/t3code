@@ -57,6 +57,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2ExplainProviderFailureError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
@@ -116,6 +117,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import * as ProviderFailureExplanationService from "./orchestration-v2/ProviderFailureExplanationService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
@@ -1215,6 +1217,8 @@ const layerWsRpc = (
         }
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const providerFailureExplanation =
+        yield* ProviderFailureExplanationService.ProviderFailureExplanationService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -1863,6 +1867,17 @@ const layerWsRpc = (
                   threadId: input.threadId,
                   message: "Failed to load turn item",
                   cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.explainProviderFailure]: (input) =>
+          providerFailureExplanation.explain({ threadId: input.threadId }).pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestrationV2ExplainProviderFailureError({
+                  threadId: input.threadId,
+                  message: error.detail,
+                  ...(error.cause === undefined ? {} : { cause: error.cause }),
                 }),
             ),
           ),

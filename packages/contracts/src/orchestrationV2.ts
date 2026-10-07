@@ -3141,6 +3141,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnItem: "orchestration.getTurnItem",
+  explainProviderFailure: "orchestration.explainProviderFailure",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -3394,6 +3395,16 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   },
 ) {}
 
+/** The message is safe to show the user: it says why no explanation was produced. */
+export class OrchestrationV2ExplainProviderFailureError extends Schema.TaggedError<OrchestrationV2ExplainProviderFailureError>()(
+  "OrchestrationV2ExplainProviderFailureError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedError<OrchestrationV2GetShellSnapshotError>()(
   "OrchestrationV2GetShellSnapshotError",
   {
@@ -3450,6 +3461,26 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
   item: Schema.NullOr(OrchestrationV2TurnItem),
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
+
+export const OrchestrationV2ExplainProviderFailureInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The failure text the client is showing. Only keys the client cache, so a new failure is explained anew. */
+  revision: Schema.optional(Schema.String),
+});
+export type OrchestrationV2ExplainProviderFailureInput =
+  typeof OrchestrationV2ExplainProviderFailureInput.Type;
+
+/** A model's reading of a thread's latest provider failure. */
+export const OrchestrationV2ExplainProviderFailureResult = Schema.Struct({
+  /** The failure that was explained, as the server redacted and stored it. */
+  failureMessage: Schema.String,
+  /** What probably happened, in one or two sentences. */
+  summary: Schema.String,
+  /** What the user can try next. */
+  likelyFix: Schema.String,
+});
+export type OrchestrationV2ExplainProviderFailureResult =
+  typeof OrchestrationV2ExplainProviderFailureResult.Type;
 
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
@@ -3512,6 +3543,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  explainProviderFailure: {
+    input: OrchestrationV2ExplainProviderFailureInput,
+    output: OrchestrationV2ExplainProviderFailureResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

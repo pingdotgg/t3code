@@ -18,6 +18,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildProviderFailureExplanationPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -63,6 +64,15 @@ export const decodeJsonReply = <S extends Schema.Top>(
     ),
   );
 };
+
+const MAX_EXPLANATION_SUMMARY_CHARS = 600;
+const MAX_EXPLANATION_FIX_CHARS = 900;
+
+/** Trims a model reply and caps it so a runaway answer cannot flood the banner. */
+function boundExplanationText(raw: string, maxChars: number): string {
+  const text = raw.trim();
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3).trimEnd()}...`;
+}
 
 /** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): TextGeneration.TextGeneration["Service"] {
@@ -144,10 +154,25 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
       };
     });
 
+  const explainProviderFailure: TextGeneration.TextGeneration["Service"]["explainProviderFailure"] =
+    Effect.fn(`${name}.explainProviderFailure`)(function* (input) {
+      const generated = yield* run({
+        operation: "explainProviderFailure",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...buildProviderFailureExplanationPrompt({ context: input.context }),
+      });
+      return {
+        summary: boundExplanationText(generated.summary, MAX_EXPLANATION_SUMMARY_CHARS),
+        likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    explainProviderFailure,
   } satisfies TextGeneration.TextGeneration["Service"];
 }

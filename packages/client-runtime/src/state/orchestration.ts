@@ -51,6 +51,14 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    // Spends provider credits, so callers only mount it after the user asks.
+    // Keyed by the failure text, which an explanation answers for good.
+    providerFailureExplanation: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:provider-failure-explanation",
+      tag: ORCHESTRATION_V2_WS_METHODS.explainProviderFailure,
+      staleTimeMs: 3_600_000,
+      idleTtlMs: 3_600_000,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,

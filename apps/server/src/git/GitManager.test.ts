@@ -330,6 +330,11 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    explainProviderFailure: () =>
+      Effect.succeed({
+        summary: "The provider failed.",
+        likelyFix: "Try again.",
+      }),
     ...overrides,
   };
 
@@ -373,6 +378,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    explainProviderFailure: (input) =>
+      implementation.explainProviderFailure(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "explainProviderFailure",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

@@ -16,3 +16,18 @@ Failed calls do not count as successful messages or creations. Waiting on a thre
 it finished, and an interrupt or cancellation request does not mean the thread stopped. When tool
 details are unavailable, summaries use a broader description instead of guessing how many threads
 were affected.
+
+## Explaining a provider error
+
+When a provider fails, an error banner appears at the top of the thread. Choose **Explain** in the
+banner to ask your text generation model, the same one that writes thread titles and commit
+messages, what probably went wrong. The answer appears in the banner as **What happened** and
+**Likely fix**. If the cause is uncertain, the answer says so.
+
+Explain runs only when you choose it, and each use spends credits on the provider behind your text
+generation model. The model sees the error text, the provider and model names, the runtime mode, your
+last message of that run, and the names of the last few actions in the run. It does not see file
+contents, command arguments, or tool output. Explaining the same error again reuses the earlier
+answer for a while. If the explanation fails, the banner says why and **Try again** is available.
+
+Usage limit errors have no Explain action, because the banner already names the cause.

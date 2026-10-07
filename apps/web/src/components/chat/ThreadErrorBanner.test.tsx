@@ -1,3 +1,4 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -84,5 +85,44 @@ describe("ThreadErrorBanner", () => {
     expect(markup).toContain("min-h-7 pt-1 sm:min-h-6 sm:pt-0.5");
     expect(markup).toContain("h-lh w-4");
     expect(markup).toContain("h-lh self-start");
+  });
+
+  describe("explain action", () => {
+    const explainTarget = {
+      environmentId: EnvironmentId.make("env-1"),
+      threadId: ThreadId.make("thread-1"),
+    };
+
+    const failureKinds = { provider: "provider_error", usage: "usage_limit" } as const; // oxlint-disable-line shadcn/no-unknown-classes -- failure classes, not CSS
+
+    it("offers Explain for a server provider failure without asking anything yet", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error="spawn codex ENOENT"
+          errorClass={failureKinds.provider}
+          explainTarget={explainTarget}
+          onDismiss={() => {}}
+        />,
+      );
+
+      expect(markup).toContain(">Explain</button>");
+      expect(markup).not.toContain("Explaining");
+      expect(markup).toContain('aria-label="Dismiss error"');
+    });
+
+    it("hides Explain for usage limits and for errors without a server thread", () => {
+      expect(
+        renderToStaticMarkup(
+          <ThreadErrorBanner
+            error="Limit reached"
+            errorClass={failureKinds.usage}
+            explainTarget={explainTarget}
+          />,
+        ),
+      ).not.toContain("Explain");
+      expect(
+        renderToStaticMarkup(<ThreadErrorBanner error="Local failure" errorClass={null} />),
+      ).not.toContain("Explain");
+    });
   });
 });
