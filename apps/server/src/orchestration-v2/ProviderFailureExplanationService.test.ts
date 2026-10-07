@@ -519,7 +519,7 @@ describe("ProviderFailureExplanationService", () => {
         const url = new URL(result.reportUrl!);
         assert.equal(url.origin + url.pathname, "https://github.com/pingdotgg/t3code/issues/new");
         assert.equal(url.searchParams.get("template"), "bug_report.yml");
-        assert.equal(url.searchParams.get("title"), "[Bug]: Provider failure");
+        assert.equal(url.searchParams.get("title"), "[Bug]: Provider failure: not installed");
         // The error and the explanation reach GitHub only if the user pastes them.
         assert.include(url.searchParams.get("actual"), "Paste the error and explanation");
         assert.notInclude(result.reportUrl!, "ENOENT");

@@ -1,24 +1,21 @@
-import { driverKeyword, keywordsForFailure, T3_REPOSITORY } from "./KnownIssueSearch.ts";
+import { categoryTermsForFailure, driverKeyword, T3_REPOSITORY } from "./KnownIssueSearch.ts";
 
 /** Browsers and GitHub both choke well before this; the form is pre-filled, not complete. */
 export const MAX_REPORT_URL_CHARS = 6_000;
 const TITLE_PREFIX = "[Bug]: ";
 const GENERIC_TITLE = "Provider failure";
-const MIN_TITLE_WORDS = 2;
 /** What the form's "Actual behavior" says until the user pastes the details the banner copied. */
 export const REPORT_ACTUAL_INSTRUCTION =
   "Paste the error and explanation from the T3 banner here, after checking it for anything private.";
 
-/** The title: only words from the search vocabulary, never any of the error's own text. */
+/** The title: the fixed terms of the categories the failure matches, never any of its own wording. */
 export function reportTitleFromFailure(message: string): string {
-  const words = keywordsForFailure(message);
-  return `${TITLE_PREFIX}${
-    words.length >= MIN_TITLE_WORDS ? `${GENERIC_TITLE}: ${words.join(" ")}` : GENERIC_TITLE
-  }`;
+  const terms = categoryTermsForFailure(message);
+  return `${TITLE_PREFIX}${terms.length === 0 ? GENERIC_TITLE : `${GENERIC_TITLE}: ${terms.join(", ")}`}`;
 }
 
 export interface ProviderFailureReportInput {
-  /** Read only to choose title words from the fixed vocabulary. It is never placed in the link. */
+  /** Read only to choose which fixed category terms name the title. It is never placed in the link. */
   readonly failureMessage: string;
   readonly driver: string | null;
   readonly runtimeMode: string;
@@ -29,7 +26,7 @@ export interface ProviderFailureReportInput {
 
 /**
  * A link to GitHub's bug form with only safe, structured data filled in: a
- * title of vocabulary words, the provider, runtime mode and OS, and the version.
+ * title of fixed category terms, the provider, runtime mode and OS, and the version.
  * The error, the explanation and the model name (which can be custom) are not in
  * the link; the client copies them for the user to
  * paste after checking them. Fields are the issue form's ids in

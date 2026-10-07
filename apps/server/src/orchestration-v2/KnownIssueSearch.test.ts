@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -13,75 +15,144 @@ const PRIVATE_WORDS = [
   "buildhost",
   "acquisition",
   "plans",
-  "plan",
+  "billing",
+  "migration",
+  "internal",
   "hunter2",
   "alex",
   "example",
 ];
 
+const categoryTerms = KnownIssueSearch.KNOWN_ISSUE_CATEGORIES.map((category) => category.term);
+
 describe("buildKnownIssueQuery", () => {
-  it("builds from the fixed vocabulary only, dropping T3 guidance", () => {
+  it("names the kinds of failure it matched and nothing the message said", () => {
     const query = KnownIssueSearch.buildKnownIssueQuery({
       message:
         "The provider could not start this turn: Failed to read attachment '3f2b8c1e-aaaa-4bbb-8ccc-0123456789ab'. Retry the turn; if it keeps failing, check the provider setup and server logs.",
       driver: "codex",
     });
-    assert.equal(query, `start turn failed read attachment codex ${REPO_SUFFIX}`);
+    assert.equal(query, `attachment read turn start codex ${REPO_SUFFIX}`);
   });
 
-  it("reads internal ids as the vocabulary words they contain, nothing else", () => {
+  // Each of these once sent words of a private name, because punctuation was dropped before matching.
+  it.each([
+    ["Failed to read repo billing-migration: permission denied", "permission denied codex"],
+    ["Connection refused by auth.billing.internal", "connection refused codex"],
+    ["Failed to authenticate token : correcthorse", null],
+    ["Invalid API_KEY: correcthorse", null],
+    ["Connection refused by buildhost while reading the stream", "connection refused codex"],
+    ["Failed to read repo acquisition-plans: permission denied", "permission denied codex"],
+    ["Failed to read /Users/alex/.env: permission denied", "permission denied codex"],
+    [
+      "Failed to reach https://api.example.com/v1?key=hunter2 connection reset",
+      "connection reset codex",
+    ],
+  ])("sends only fixed category terms for %j", (message, expected) => {
+    const query = KnownIssueSearch.buildKnownIssueQuery({ message, driver: "codex" });
+    assert.equal(query, expected === null ? null : `${expected} ${REPO_SUFFIX}`);
+    for (const word of PRIVATE_WORDS) assert.notInclude(query ?? "", word);
+  });
+
+  it("does not build a phrase out of dotted or hyphenated names", () => {
+    for (const message of [
+      "auth.billing.internal rejected it",
+      "billing-migration: permission-denied",
+      "see not.installed and timed-out and rate.limit",
+      "xpermission denied",
+      "permission deniedx",
+    ]) {
+      assert.isNull(KnownIssueSearch.buildKnownIssueQuery({ message, driver: "codex" }), message);
+    }
+  });
+
+  it("still matches a phrase that ends a sentence", () => {
     assert.equal(
       KnownIssueSearch.buildKnownIssueQuery({
-        message: "Claude provider turn provider-turn:abc is still active.",
-        driver: "claudeAgent",
+        message: "Request failed: permission denied.",
+        driver: null,
       }),
-      `turn still active claude ${REPO_SUFFIX}`,
+      `permission denied ${REPO_SUFFIX}`,
     );
   });
 
-  // Each of these once sent the private value to a public search.
-  it.each([
-    ["Invalid API_KEY: correcthorse", "correcthorse"],
-    ["Failed to authenticate token : correcthorse", "correcthorse"],
-    ["Connection refused by buildhost while reading the stream", "buildhost"],
-    ["Failed to read repo acquisition-plans: permission denied", "acquisition"],
-    ["Failed to checkout branch acquisition-plan: permission denied", "plan"],
-    ["Failed to read /Users/alex/.env: permission denied", "alex"],
-    ["Failed to reach https://api.example.com/v1?key=hunter2 connection reset", "example"],
-  ])("keeps %j from leaking %s", (message, privateWord) => {
-    const query = KnownIssueSearch.buildKnownIssueQuery({ message, driver: null });
-    for (const word of PRIVATE_WORDS) {
-      assert.notInclude(query ?? "", word);
-    }
-    assert.notInclude(query ?? "", privateWord);
+  it("keeps at most three categories, in priority order", () => {
+    const query = KnownIssueSearch.buildKnownIssueQuery({
+      message: "timed out: permission denied, rate limit hit, connection refused, sandbox",
+      driver: null,
+    });
+    assert.equal(query, `rate limit permission denied timeout ${REPO_SUFFIX}`);
   });
 
-  it("searches nothing when fewer than two vocabulary words match", () => {
-    assert.isNull(
-      KnownIssueSearch.buildKnownIssueQuery({
-        message: "Invalid API_KEY: correcthorse",
-        driver: "codex",
-      }),
-    );
+  it("searches nothing when no category matches", () => {
     assert.isNull(
       KnownIssueSearch.buildKnownIssueQuery({
         message: "Failed. '/Users/alex/x' 12345 3f2b8c1e-aaaa-4bbb-8ccc-0123456789ab",
         driver: "codex",
       }),
     );
-    // The driver does not count toward the two words.
-    assert.isNull(KnownIssueSearch.buildKnownIssueQuery({ message: "timeout", driver: "codex" }));
   });
 
-  it("keeps at most six vocabulary words", () => {
-    const query = KnownIssueSearch.buildKnownIssueQuery({
-      message: "attachment image read start turn session open resume stream closed timeout timed",
-      driver: null,
-    });
-    assert.equal(query, `attachment image read start turn session ${REPO_SUFFIX}`);
+  // The failures T3 itself writes, and common provider errors.
+  it.each([
+    ["Failed to read attachment 'a-b'", "attachment read"],
+    ["Claude provider turn provider-turn:abc is still active.", "turn still active"],
+    ["Cursor provider turn x is still active.", "turn still active"],
+    [
+      "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+      "turn start",
+    ],
+    ["Claude could not start the turn.", "turn start"],
+    ["Provider turn failed to start", "turn start"],
+    [
+      "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
+      "session open",
+    ],
+    ["Provider session failed to open", "session open"],
+    [
+      "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.",
+      "resume",
+    ],
+    [
+      "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.",
+      "event stream closed",
+    ],
+    ["The OpenCode event stream was lost and could not reconnect.", "event stream closed"],
+    [
+      "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.",
+      "rollback",
+    ],
+    [
+      "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model.",
+      "context handoff",
+    ],
+    ["Claude stopped: an image in the conversation could not be processed.", "image processing"],
+    [
+      "Claude could not authenticate. For subscription login, run `claude auth login`.",
+      "authentication",
+    ],
+    ["401 Unauthorized", "authentication"],
+    ["You have hit your usage limit", "usage limit"],
+    ["429 Too Many Requests", "rate limit"],
+    ["spawn codex ENOENT", "not installed"],
+    ["zsh: command not found: codex", "not installed"],
+    ["Request timed out", "timeout"],
+    ["The operation timed out.", "timeout"],
+    ["connect ECONNREFUSED 127.0.0.1:4096", "connection refused"],
+    ["read ECONNRESET", "connection reset"],
+    ["The prompt is too long for the context window", "context window"],
+    [
+      "Claude is still running background agents or commands, and this model or setting change would end them.",
+      "background work",
+    ],
+    ["Claude could not resume a deferred tool call: the tool is no longer available.", "resume"],
+    ["JavaScript heap out of memory", "out of memory"],
+    ["write failed: no space left on device", "no space left"],
+  ])("recognizes %j as %s", (message, term) => {
+    assert.include(KnownIssueSearch.categoryTermsForFailure(message), term);
   });
 
-  it("only emits vocabulary words and fixed driver keywords, whatever the input", () => {
+  it("emits only category terms, the repository qualifiers, and fixed driver keywords, whatever the input", () => {
     const drivers = [
       null,
       "claudeAgent",
@@ -96,13 +167,13 @@ describe("buildKnownIssueQuery", () => {
     ];
     const messages = [
       "Invalid API_KEY: correcthorse",
-      "Failed to authenticate token : correcthorse timed out with buildhost refused",
+      "Failed to read repo billing-migration: permission denied, timed out, rate limit, connection refused, sandbox, mcp",
+      "Connection refused by auth.billing.internal",
       "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
-      "Request to https://internal.corp/x failed: connection reset, permission denied, sandbox crashed",
-      "Ünïcode 😀 failed to read attachment in /home/me/acquisition-plans",
+      "Ünïcode 😀 failed to read attachment in /home/me/acquisition-plans permission denied",
     ];
     const allowed = new Set([
-      ...KnownIssueSearch.KNOWN_ISSUE_VOCABULARY,
+      ...categoryTerms.flatMap((term) => term.split(" ")),
       "claude",
       "codex",
       "cursor",
@@ -117,8 +188,9 @@ describe("buildKnownIssueQuery", () => {
         const query = KnownIssueSearch.buildKnownIssueQuery({ message, driver });
         if (query === null) continue;
         assert.isTrue(query.endsWith(` ${REPO_SUFFIX}`));
-        const words = query.slice(0, -REPO_SUFFIX.length - 1).split(" ");
-        for (const word of words) assert.isTrue(allowed.has(word), `${word} is not allowed`);
+        for (const word of query.slice(0, -REPO_SUFFIX.length - 1).split(" ")) {
+          assert.isTrue(allowed.has(word), `${word} is not allowed`);
+        }
       }
     }
   });
@@ -152,6 +224,7 @@ describe("selectKnownIssue", () => {
 
 const makeSearch = (
   respond: (request: HttpClientRequest.HttpClientRequest) => Response | Error,
+  options: { readonly delay?: Duration.Input } = {},
 ) => {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   const layer = KnownIssueSearch.layerWithHttpClient.pipe(
@@ -161,9 +234,14 @@ const makeSearch = (
         HttpClient.make((request) => {
           requests.push(request);
           const answer = respond(request);
-          return answer instanceof Error
-            ? Effect.die(answer)
-            : Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+          const reply =
+            answer instanceof Error
+              ? Effect.die(answer)
+              : Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+          // The clock moves while the answer is on its way.
+          return options.delay === undefined
+            ? reply
+            : Effect.sleep(options.delay).pipe(Effect.andThen(reply));
         }),
       ),
     ),
@@ -190,7 +268,8 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
   });
 
 const MESSAGE = "Failed to read attachment";
-const QUERY = `failed read attachment codex ${REPO_SUFFIX}`;
+const QUERY = `attachment read codex ${REPO_SUFFIX}`;
+const OTHER_MESSAGE = "Request timed out";
 const oneIssue = (title = "Attachment read fails") =>
   json({ items: [{ number: 7, title, state: "open", html_url: "https://evil.example/x" }] });
 
@@ -324,7 +403,7 @@ describe("KnownIssueSearch", () => {
         Effect.gen(function* () {
           assert.equal((yield* search()).length, 1);
           // A different query is paused; the same one is cached.
-          assert.deepEqual(yield* search("Failed to open session"), []);
+          assert.deepEqual(yield* search(OTHER_MESSAGE), []);
           assert.equal(requests.length, 1);
         }),
       );
@@ -357,6 +436,153 @@ describe("KnownIssueSearch", () => {
           assert.deepEqual(yield* search(), []);
           fail = false;
           assert.equal((yield* search()).length, 1);
+          assert.equal(requests.length, 2);
+        }),
+      );
+    }),
+  );
+
+  it.effect("measures the wait from when the answer arrives, not from when the request left", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const { requests, run } = makeSearch(
+        () => (calls++ === 0 ? json({ message: "wait" }, 429, { "retry-after": "1" }) : oneIssue()),
+        { delay: "2 seconds" },
+      );
+      yield* run((search) =>
+        Effect.gen(function* () {
+          const first = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(first);
+          assert.equal(requests.length, 1);
+
+          // The answer came at 2 s asking for one second: nothing before 3 s.
+          yield* TestClock.adjust("900 millis");
+          assert.deepEqual(yield* search(), []);
+          assert.equal(requests.length, 1);
+
+          yield* TestClock.adjust("200 millis");
+          const second = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("2 seconds");
+          assert.equal((yield* Fiber.join(second)).length, 1);
+          assert.equal(requests.length, 2);
+        }),
+      );
+    }),
+  );
+
+  it.effect("turns an epoch reset into a deadline when the answer arrives", () =>
+    Effect.gen(function* () {
+      // Sent at 0, answered at 2 s, resets at 20 s: searches wait until then.
+      let calls = 0;
+      const { requests, run } = makeSearch(
+        () =>
+          calls++ === 0
+            ? json({ message: "limit" }, 403, {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "20",
+              })
+            : oneIssue(),
+        { delay: "2 seconds" },
+      );
+      yield* run((search) =>
+        Effect.gen(function* () {
+          const first = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(first);
+          yield* TestClock.adjust("17 seconds");
+          assert.deepEqual(yield* search(), []);
+          assert.equal(requests.length, 1);
+        }),
+      );
+    }),
+  );
+
+  it.effect("shares one request among identical searches made at once", () =>
+    Effect.gen(function* () {
+      const { requests, run } = makeSearch(() => oneIssue(), { delay: "1 second" });
+      const results = yield* run((search) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(
+            Effect.all(
+              Array.from({ length: 20 }, () => search()),
+              { concurrency: "unbounded" },
+            ),
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          return yield* Fiber.join(fiber);
+        }),
+      );
+
+      assert.equal(requests.length, 1);
+      assert.equal(results.length, 20);
+      for (const candidates of results) assert.equal(candidates[0]?.number, 7);
+    }),
+  );
+
+  it.effect("does not share a search between different queries", () =>
+    Effect.gen(function* () {
+      const { requests, run } = makeSearch(() => oneIssue(), { delay: "1 second" });
+      yield* run((search) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(
+            Effect.all([search(MESSAGE), search(OTHER_MESSAGE)], { concurrency: 2 }),
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          yield* Fiber.join(fiber);
+        }),
+      );
+      assert.equal(requests.length, 2);
+    }),
+  );
+
+  it.effect("clears a failed shared search so the next call tries again", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const { requests, run } = makeSearch(() => (calls++ === 0 ? json({}, 500) : oneIssue()), {
+        delay: "1 second",
+      });
+      yield* run((search) =>
+        Effect.gen(function* () {
+          const failing = yield* Effect.forkChild(
+            Effect.all([search(), search(), search()], { concurrency: "unbounded" }),
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          assert.deepEqual(yield* Fiber.join(failing), [[], [], []]);
+          assert.equal(requests.length, 1);
+
+          const retry = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          assert.equal((yield* Fiber.join(retry)).length, 1);
+          assert.equal(requests.length, 2);
+        }),
+      );
+    }),
+  );
+
+  it.effect("clears an interrupted search, and those sharing it get no candidates", () =>
+    Effect.gen(function* () {
+      const { requests, run } = makeSearch(() => oneIssue(), { delay: "1 second" });
+      yield* run((search) =>
+        Effect.gen(function* () {
+          const leader = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          const follower = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* Fiber.interrupt(leader);
+          assert.deepEqual(yield* Fiber.join(follower), []);
+
+          const retry = yield* Effect.forkChild(search());
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          assert.equal((yield* Fiber.join(retry)).length, 1);
           assert.equal(requests.length, 2);
         }),
       );

@@ -26,10 +26,7 @@ describe("buildProviderFailureReportUrl", () => {
 
     assert.equal(parsed.origin + parsed.pathname, "https://github.com/pingdotgg/t3code/issues/new");
     assert.equal(params.get("template"), "bug_report.yml");
-    assert.equal(
-      params.get("title"),
-      "[Bug]: Provider failure: start turn failed read attachment token",
-    );
+    assert.equal(params.get("title"), "[Bug]: Provider failure: attachment read, turn start");
     assert.equal(params.get("actual"), REPORT_ACTUAL_INSTRUCTION);
     assert.equal(
       params.get("environment"),
@@ -127,12 +124,33 @@ describe("buildProviderFailureReportUrl", () => {
 });
 
 describe("reportTitleFromFailure", () => {
-  it("uses only vocabulary words, in order, at most six", () => {
+  it("uses only fixed category terms, in priority order, at most three", () => {
     assert.equal(
       reportTitleFromFailure(
-        "Connection reset by buildhost: stream closed, timeout, session crashed, permission denied, sandbox killed",
+        "Connection refused by buildhost: timed out, session crashed, permission denied, sandbox killed",
       ),
-      "[Bug]: Provider failure: connection reset stream closed timeout session",
+      "[Bug]: Provider failure: permission denied, timeout, connection refused",
+    );
+  });
+
+  // These once put the words of a private name in the title.
+  it("never forms a term from a dotted or hyphenated name", () => {
+    for (const message of [
+      "Failed to read repo billing-migration: permission denied",
+      "Connection refused by auth.billing.internal",
+    ]) {
+      const title = reportTitleFromFailure(message);
+      for (const leaked of ["billing", "migration", "auth", "internal", "repo"]) {
+        assert.notInclude(title, leaked);
+      }
+    }
+    assert.equal(
+      reportTitleFromFailure("Failed to read repo billing-migration: permission denied"),
+      "[Bug]: Provider failure: permission denied",
+    );
+    assert.equal(
+      reportTitleFromFailure("Connection refused by auth.billing.internal"),
+      "[Bug]: Provider failure: connection refused",
     );
   });
 });
