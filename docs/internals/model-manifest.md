@@ -25,3 +25,10 @@ models.
 Model data is schema-validated configuration. Tests should cover resolver, cache,
 and adapter semantics with synthetic model names, so adding a model never requires
 tests that repeat the configuration.
+
+`benchmarks` carries third-party coding scores for the picker's Pareto line. The
+server passes it to clients unchanged in the config snapshot, and the client
+matches variants to the models each ready instance reports. Refresh it with
+`pnpm benchmarks:refresh` (`scripts/refresh-model-benchmarks.ts`), which reads the Slopalytics JS bundle
+because the site has no JSON endpoint, then format and review the diff. Keep the
+section last in the file; the script rewrites it in place and bumps `updatedAt`.

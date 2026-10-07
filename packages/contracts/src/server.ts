@@ -23,7 +23,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities } from "./model.ts";
+import { ModelCapabilities, OptionalModelBenchmarks } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
@@ -694,6 +694,8 @@ export const ServerConfig = Schema.Struct({
    * stays absent for subscribers that did not opt in.
    */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /** Benchmark scores from the model manifest. Absent on older servers. */
+  modelBenchmarks: OptionalModelBenchmarks,
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
