@@ -1,5 +1,9 @@
 import { assert } from "@effect/vitest";
-import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2ThreadProjection,
+  ProviderReplayTranscript,
+} from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
@@ -12,6 +16,11 @@ import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./input.ts";
 
 const SUBAGENT_TEXTS = ["SUB_STEP_1", "SUB_STEP_2", "SUB_FINAL_REPORT"];
 const SUBAGENT_COMMANDS = ["sleep 3 && echo SUB_DONE_1", "sleep 3 && echo SUB_DONE_2"];
+// The subagent's own task_progress, one per step, as the recording reports it.
+const SUBAGENT_PROGRESS = [
+  "Running Sleep 3 seconds then echo SUB_DONE_1",
+  "Running Sleep 3 seconds then echo SUB_DONE_2",
+];
 
 function assistantTexts(projection: OrchestrationV2ThreadProjection): ReadonlyArray<string> {
   return projection.turnItems.flatMap((item) =>
@@ -26,8 +35,8 @@ function commandTexts(projection: OrchestrationV2ThreadProjection): ReadonlyArra
 }
 
 // Every frame the background subagent emits arrives after the root turn's
-// result, so it reaches the adapter through the wake buffer and drains into
-// the continuation turn. None of it may land in the parent thread.
+// result, while the root is idle. Its work reaches its child thread as it
+// runs, before its end wakes the root, and none of it lands in the parent.
 export function assertClaudeBackgroundSubagentAfterRootOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -97,4 +106,62 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
       `subagent command ${command} must be in the child thread`,
     );
   }
+  // The subagent works while the root is idle, so its steps and progress are
+  // stored as they happen. Its end starts continuation run 2, which drains
+  // the wake buffer; none of the subagent's work may wait there for it.
+  const continuationStartIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === projection.runs[1]?.id &&
+      event.payload.status === "starting",
+  );
+  assert.isAtLeast(continuationStartIndex, 0);
+  const assertStoredWhileIdle = (
+    label: string,
+    matches: (event: OrchestrationV2DomainEvent) => boolean,
+  ) => {
+    const index = result.domainEvents.findIndex(matches);
+    assert.isAtLeast(index, 0, `${label} is stored`);
+    assert.isBelow(index, continuationStartIndex, `${label} is stored before the root wakes`);
+  };
+  for (const text of SUBAGENT_TEXTS) {
+    assertStoredWhileIdle(
+      `subagent text ${text}`,
+      (event) =>
+        event.type === "message.updated" &&
+        event.payload.threadId === subagent.childThreadId &&
+        event.payload.text.trim() === text,
+    );
+  }
+  for (const command of SUBAGENT_COMMANDS) {
+    assertStoredWhileIdle(
+      `completed subagent command ${command}`,
+      (event) =>
+        event.type === "turn-item.updated" &&
+        event.payload.threadId === subagent.childThreadId &&
+        event.payload.type === "command_execution" &&
+        event.payload.status === "completed" &&
+        event.payload.input.includes(command),
+    );
+  }
+  for (const progress of SUBAGENT_PROGRESS) {
+    assertStoredWhileIdle(
+      `subagent progress "${progress}"`,
+      (event) =>
+        event.type === "subagent.updated" &&
+        event.payload.id === subagent.id &&
+        event.payload.progress === progress,
+    );
+  }
+  // The drain stores nothing in the child thread, so nothing is stored twice.
+  assert.isFalse(
+    result.domainEvents
+      .slice(continuationStartIndex)
+      .some(
+        (event) =>
+          (event.type === "message.updated" || event.type === "turn-item.updated") &&
+          event.payload.threadId === subagent.childThreadId,
+      ),
+    "the continuation run stores none of the subagent's work",
+  );
 }
