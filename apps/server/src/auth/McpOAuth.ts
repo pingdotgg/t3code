@@ -108,15 +108,14 @@ export const authorizationServerMetadata = (
 
 /** A redirect URI an MCP client may register: loopback http, or any https. */
 const parseRedirect = (value: string): URL | undefined => {
-  if (value.length > MAX_REDIRECT_URI_LENGTH) return undefined;
+  // No fragment, not even an empty one, which `URL.hash` reports as "" (RFC 6749 §3.1.2).
+  if (value.length > MAX_REDIRECT_URI_LENGTH || value.includes("#")) return undefined;
   try {
     const url = new URL(value);
     const allowed =
       url.protocol === "https:" ||
       (url.protocol === "http:" && LOOPBACK_HOSTNAMES.has(url.hostname));
-    return allowed && url.username === "" && url.password === "" && url.hash === ""
-      ? url
-      : undefined;
+    return allowed && url.username === "" && url.password === "" ? url : undefined;
   } catch {
     return undefined;
   }

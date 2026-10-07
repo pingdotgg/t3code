@@ -186,6 +186,8 @@ it.live("registers loopback and https clients and never redirects for an unverif
       for (const refused of [
         "http://bot.example/callback",
         "https://user:pass@bot.example/callback",
+        "https://bot.example/callback#",
+        "http://localhost/callback#",
         "javascript:alert(1)",
       ]) {
         const response = yield* register(handler, refused);
