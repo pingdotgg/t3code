@@ -46,7 +46,7 @@ export default defineRule({
   },
   create(context) {
     const { allowRawClientAccess, allowGuardInstallation } = readOptions(context.options);
-    const report = (node: Parameters<typeof context.report>[0]["node"]) =>
+    const report = (node: NonNullable<Parameters<typeof context.report>[0]["node"]>) =>
       context.report({
         node,
         message:
