@@ -1138,6 +1138,66 @@ it.effect("runs a worktree request against a non-repository project as a root la
   }),
 );
 
+it.effect("keeps the claimed folder when a retried launch never dispatched its message", () =>
+  Effect.gen(function* () {
+    // The first attempt claims the folder and then fails to dispatch the message,
+    // so the retry has a launch receipt but no message receipt. The thread still
+    // owns that folder, and the retry must prepare it rather than the shared root.
+    const claimed: Array<string> = [];
+    const harness = makeHarness({
+      isGitRepository: () => Effect.succeed(false),
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        folderForThread: (input) =>
+          Effect.sync(() => {
+            claimed.push(input.threadId);
+            return input.projectId === projectId
+              ? Option.some("/scratch/folder-partial")
+              : Option.none();
+          }),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:scratch-partial",
+        thread: "thread:launch:scratch-partial",
+        message: "Review this",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+
+      // The accepted create with no message behind it, which is what a failed
+      // dispatch leaves behind.
+      const threadId = ThreadId.make("thread:launch:scratch-partial");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: input.commandId,
+        threadId,
+        projectId,
+        title: input.title,
+        modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: null,
+        worktreePath: "/scratch/folder-partial",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.lengthOf(claimed, 0);
+
+      const retried = yield* launches.launch(input);
+      assert.isTrue(retried.resumed);
+      // The retry claims no second folder; it prepares the one already bound.
+      assert.lengthOf(claimed, 0);
+      assert.equal(retried.projection.thread.worktreePath, "/scratch/folder-partial");
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-partial");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("replays a degraded worktree request without detecting the repository again", () =>
   Effect.gen(function* () {
     // The second attempt would fail if it detected again. Its run already recorded

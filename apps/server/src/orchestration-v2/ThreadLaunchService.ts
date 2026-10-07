@@ -883,13 +883,13 @@ const make = Effect.gen(function* () {
         // A retried root launch prepares the folder its first attempt bound, so
         // a Scratch thread keeps its own. Other root launches bind no folder.
         const boundWorktreePath = projection.thread.worktreePath;
-        // A replay prepares the workspace its accepted run recorded. Re-deriving
-        // it here would let a changed answer replace what the thread already
-        // bound, so the recorded strategy wins whenever there is one.
+        // A replay prepares the workspace its accepted run recorded. A run this
+        // attempt just created only echoes the strategy above, so reading it back
+        // would shadow the bound-folder recovery a partial launch still needs.
         const recordedStrategy =
-          runId === null
-            ? undefined
-            : projection.runs.find((run) => run.id === runId)?.workspacePreparation;
+          messageWasAlreadyAccepted && runId !== null
+            ? projection.runs.find((run) => run.id === runId)?.workspacePreparation
+            : undefined;
         const preparationStrategy: ThreadLaunchWorkspaceStrategy =
           recordedStrategy ??
           (Option.isSome(launchReceipt) &&
