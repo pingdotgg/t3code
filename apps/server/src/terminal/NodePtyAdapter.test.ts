@@ -179,6 +179,7 @@ it.effect.each(["win32", "linux", "darwin"] as const)(
         }
       });
 
+      process.kill("SIGHUP");
       process.kill("SIGTERM");
       process.kill("SIGKILL");
       process.kill();
@@ -186,8 +187,8 @@ it.effect.each(["win32", "linux", "darwin"] as const)(
       assert.deepEqual(
         nativeProcess.kill.mock.calls,
         platform === "win32"
-          ? [[undefined], [undefined], [undefined]]
-          : [["SIGTERM"], ["SIGKILL"], [undefined]],
+          ? [[undefined], [undefined], [undefined], [undefined]]
+          : [["SIGHUP"], ["SIGTERM"], ["SIGKILL"], [undefined]],
       );
     }).pipe(Effect.provide(layerTestFor(platform))),
 );

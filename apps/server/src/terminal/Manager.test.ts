@@ -1741,11 +1741,13 @@ it.layer(
 
       const closeFiber = yield* manager.close({ threadId: "thread-1" }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("10 millis");
+      yield* TestClock.adjust("9 millis");
+      assert.deepEqual(process.killSignals, ["SIGHUP"]);
+
+      yield* TestClock.adjust("1 millis");
       yield* Fiber.join(closeFiber);
 
-      assert.equal(process.killSignals[0], "SIGTERM");
-      expect(process.killSignals).toContain("SIGKILL");
+      assert.deepEqual(process.killSignals, ["SIGHUP", "SIGKILL"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2892,11 +2894,13 @@ it.layer(
 
       const closeScope = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("10 millis");
+      yield* TestClock.adjust("9 millis");
+      assert.deepEqual(process.killSignals, ["SIGHUP"]);
+
+      yield* TestClock.adjust("1 millis");
       yield* Fiber.join(closeScope);
 
-      assert.equal(process.killSignals[0], "SIGTERM");
-      expect(process.killSignals).toContain("SIGKILL");
+      assert.deepEqual(process.killSignals, ["SIGHUP", "SIGKILL"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
