@@ -1796,14 +1796,7 @@ function SavedBackendListRow({
         </MenuPopup>
       </Menu>
       {editOpen ? (
-        <EditEnvironmentDialog
-          environment={environment}
-          onClose={() => setEditOpen(false)}
-          onManageRoutes={() => {
-            setEditOpen(false);
-            setRoutesOpen(true);
-          }}
-        />
+        <EditEnvironmentDialog environment={environment} onClose={() => setEditOpen(false)} />
       ) : null}
     </EnvironmentRow>
   );

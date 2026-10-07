@@ -19,11 +19,9 @@ import { Label } from "../ui/label";
 export function EditEnvironmentDialog({
   environment,
   onClose,
-  onManageRoutes,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly onClose: () => void;
-  readonly onManageRoutes: () => void;
 }) {
   const id = useId();
   const [nickname, setNickname] = useState(environment.entry.nickname ?? "");
@@ -62,34 +60,21 @@ export function EditEnvironmentDialog({
           <DialogDescription>Choose how this environment appears on this device.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={id}>Nickname</Label>
-              <Input
-                id={id}
-                value={nickname}
-                onChange={(event) => setNickname(event.target.value)}
-                placeholder={environment.entry.target.label}
-                aria-describedby={`${id}-hint`}
-                disabled={saving}
-                autoComplete="off"
-                autoFocus
-              />
-              <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-                Leave blank to use the inferred name, {environment.entry.target.label}.
-              </p>
-            </div>
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={saving}
-                onClick={onManageRoutes}
-              >
-                Manage connection routes
-              </Button>
-            </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={id}>Nickname</Label>
+            <Input
+              id={id}
+              value={nickname}
+              onChange={(event) => setNickname(event.target.value)}
+              placeholder={environment.entry.target.label}
+              aria-describedby={`${id}-hint`}
+              disabled={saving}
+              autoComplete="off"
+              autoFocus
+            />
+            <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+              Leave blank to use the inferred name, {environment.entry.target.label}.
+            </p>
           </div>
         </DialogPanel>
         <DialogFooter>
