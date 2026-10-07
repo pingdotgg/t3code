@@ -12,6 +12,8 @@ export type UsageExplorerMetric = "cost" | "tokens";
 export const OUTSIDE_PROJECTS = "\u0000outside";
 /** Project key for usage the server could not place (older servers, Cursor). */
 export const UNKNOWN_PROJECT = "\u0000unknown";
+/** Thread key for usage no thread holds, so the Threads chart adds up to its total. */
+export const NOT_IN_THREAD = "\u0000none";
 /** Series key for the stacked tail beyond the coloured top series. */
 export const OTHER_SERIES = "\u0000other";
 
@@ -584,7 +586,7 @@ export function keyFor(
     case "environment":
       return fact.environment;
     case "thread":
-      return fact.thread === null ? null : tree.rootOf(fact.thread);
+      return fact.thread === null ? NOT_IN_THREAD : tree.rootOf(fact.thread);
   }
 }
 

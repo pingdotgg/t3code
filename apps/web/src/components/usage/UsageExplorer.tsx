@@ -64,6 +64,7 @@ import {
   matchesFilters,
   metricOf,
   modelKey,
+  NOT_IN_THREAD,
   OTHER_SERIES,
   OUTSIDE_PROJECTS,
   speedCostOf,
@@ -108,6 +109,8 @@ const NOUNS: Record<BreakdownDimension, readonly [string, string]> = {
   environment: ["environment", "environments"],
   thread: ["thread", "threads"],
 };
+const NOT_IN_THREAD_COLOR = "color-mix(in srgb, var(--muted-foreground) 45%, transparent)";
+
 const NO_FILTERS: UsageFilters = { accounts: null, environment: null, project: null, model: null };
 
 const noun = (dimension: BreakdownDimension, count: number) =>
@@ -249,7 +252,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
         case "environment":
           return environmentLabel(key);
         case "thread":
-          return threadTitle(data, key);
+          return key === NOT_IN_THREAD ? "Not in a thread" : threadTitle(data, key);
       }
     },
     [accountLabel, accountProvider, data, environmentLabel, filters.environment],
@@ -323,15 +326,26 @@ export function UsageExplorer(props: UsageExplorerProps) {
     );
     return foldFacts(unfiltered, (fact) => keyFor(dimension, fact, data.threads));
   }, [data.facts, data.threads, dimension, filters]);
-  const { series, seriesOf, colorOf } = useMemo(
-    () =>
-      buildSeries(totalsByKey, allByKey, metric, (key) =>
-        dimension === "provider"
-          ? PROVIDER_PRESENTATION[key as UsageProviderKind]?.color
-          : undefined,
-      ),
-    [allByKey, dimension, metric, totalsByKey],
-  );
+  const { series, seriesOf, colorOf } = useMemo(() => {
+    // Usage no thread holds is always its own band, as it is its own row.
+    const none = dimension === "thread" ? totalsByKey.get(NOT_IN_THREAD) : undefined;
+    const threaded =
+      none === undefined
+        ? totalsByKey
+        : new Map([...totalsByKey].filter(([key]) => key !== NOT_IN_THREAD));
+    const built = buildSeries(threaded, allByKey, metric, (key) =>
+      dimension === "provider" ? PROVIDER_PRESENTATION[key as UsageProviderKind]?.color : undefined,
+    );
+    if (none === undefined || metricOf(none, metric) <= 0) return built;
+    return {
+      series: [
+        ...built.series,
+        { key: NOT_IN_THREAD, color: NOT_IN_THREAD_COLOR, members: [NOT_IN_THREAD] },
+      ],
+      seriesOf: (key: string) => (key === NOT_IN_THREAD ? NOT_IN_THREAD : built.seriesOf(key)),
+      colorOf: (key: string) => (key === NOT_IN_THREAD ? NOT_IN_THREAD_COLOR : built.colorOf(key)),
+    };
+  }, [allByKey, dimension, metric, totalsByKey]);
   const bins = useMemo(
     () => timelineBins(timeline, timeline.binMinutes, timeZone),
     [timeZone, timeline],

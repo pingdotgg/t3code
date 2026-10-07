@@ -11,6 +11,7 @@ import {
   foldFacts,
   keyFor,
   matchesFilters,
+  NOT_IN_THREAD,
   OTHER_SERIES,
   OUTSIDE_PROJECTS,
   rankEntries,
@@ -142,6 +143,8 @@ describe("thread families", () => {
     const families = familyTotals(data.facts, data.threads);
     expect(families.get("env-a\u001ft3:parent")).toMatchObject({ costUsd: 7, descendants: 1 });
     expect(keyFor("thread", data.facts[1]!, data.threads)).toBe("env-a\u001ft3:parent");
+    // Usage no thread holds has a key of its own, so the Threads chart adds up.
+    expect(keyFor("thread", data.facts[4]!, data.threads)).toBe(NOT_IN_THREAD);
   });
 });
 
