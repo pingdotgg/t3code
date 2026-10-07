@@ -284,7 +284,6 @@ patchedDependencies:
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
-  react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
 
 peerDependencyRules:
   allowAny:

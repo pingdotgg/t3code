@@ -43,6 +43,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { ThreadInspectorContentStack } from "../threads/thread-inspector-content-stack";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
@@ -561,9 +562,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
           key={JSON.stringify([environmentId, cwd])}
           entries={entriesQuery.entries}
           loadedDirectories={entriesQuery.loadedDirectories}
+          loadingDirectories={entriesQuery.loadingDirectories}
           onLoadDirectory={entriesQuery.loadDirectory}
           error={entriesQuery.error}
           isPending={entriesQuery.isPending}
+          isRefreshing={entriesQuery.isRefreshing}
           searchQuery={searchQuery}
           searchTruncated={entriesQuery.searchTruncated}
           selectedPath={null}
@@ -751,8 +754,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   // Hand the file navigator to the workspace so it renders beside the
   // navigator, outside this screen's native header.
   const renderWorkspaceInspector = useCallback(
-    () => renderInspector(inspectorHeaderInset),
-    [inspectorHeaderInset, renderInspector],
+    () => (
+      <ThreadInspectorContentStack
+        mode="files"
+        resetKeys={[threadId, cwd]}
+        renderFiles={() => renderInspector(inspectorHeaderInset)}
+      />
+    ),
+    [cwd, inspectorHeaderInset, renderInspector, threadId],
   );
   useRegisterWorkspaceInspector(fileInspector.supported ? renderWorkspaceInspector : undefined);
 

@@ -3,11 +3,9 @@ import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens"
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 
 /**
- * The patched mail-style toolbar is built natively from iOS 26 Liquid Glass
- * UIKit (`UIGlassEffect`) with no earlier fallback: pre-26 the native side
- * silently drops the item and hides the navigation toolbar entirely. Screens
- * that send it must fall back to standard search/toolbar primitives when this
- * is false.
+ * Group search, filtering, and composition on platforms with Liquid Glass.
+ * The v5 header adapter turns this intent into UISearchController and native
+ * toolbar items. Earlier iOS versions use separate search and toolbar options.
  */
 export const NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED = NATIVE_LIQUID_GLASS_SUPPORTED;
 
@@ -20,12 +18,7 @@ type NativeMailSearchToolbarInput = Omit<
 >;
 
 /**
- * Builds the patched react-native-screens Mail-style bottom search toolbar.
- *
- * Keeping this behind an app-level helper makes the iOS-only RNS patch an
- * explicit layout primitive instead of a per-screen object literal. Android can
- * keep using platform-specific header/search primitives without depending on
- * this helper.
+ * Describe the thread-list search and actions for the native header adapter.
  */
 export function createNativeMailSearchToolbarItem(
   input: NativeMailSearchToolbarInput,

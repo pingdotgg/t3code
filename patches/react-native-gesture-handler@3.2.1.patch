@@ -149,3 +149,56 @@ index 1e1246f709feb04c01cf3221472cc1219a8fffac..f526d4fe2d2738becbe8d29c59d1105a
  }>;
  
  export interface SwipeableMethods {
+diff --git a/apple/Handlers/RNPanHandler.m b/apple/Handlers/RNPanHandler.m
+--- a/apple/Handlers/RNPanHandler.m
++++ b/apple/Handlers/RNPanHandler.m
+@@ -31,6 +31,7 @@
+ @property (nonatomic) CGFloat failOffsetYStart;
+ @property (nonatomic) CGFloat failOffsetYEnd;
+ @property (nonatomic) CGFloat activateAfterLongPress;
++@property (nonatomic) BOOL handlingTouchStart;
+ 
+ #if !TARGET_OS_OSX && !TARGET_OS_TV
+ @property (atomic, readonly, strong) RNGHStylusData *stylusData;
+@@ -126,9 +127,14 @@
+ 
+ - (void)interactionsBegan:(NSSet *)touches withEvent:(UIEvent *)event
+ {
+-  if (self.state == UIGestureRecognizerStatePossible && ![self.delegate gestureRecognizerShouldBegin:self]) {
+-    self.state = UIGestureRecognizerStateFailed;
+-    return;
++  if (self.state == UIGestureRecognizerStatePossible) {
++    self.handlingTouchStart = touches.count > 0;
++    BOOL shouldBegin = [self.delegate gestureRecognizerShouldBegin:self];
++    self.handlingTouchStart = NO;
++    if (!shouldBegin) {
++      self.state = UIGestureRecognizerStateFailed;
++      return;
++    }
+   }
+ 
+   if (touches.count == 0) {
+@@ -476,6 +482,23 @@
+ 
+ - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
+ {
++#if !TARGET_OS_OSX && !TARGET_OS_TV
++  RNBetterPanGestureRecognizer *recognizer = (RNBetterPanGestureRecognizer *)gestureRecognizer;
++  if (!recognizer.handlingTouchStart && recognizer.allowedScrollTypesMask != 0 && recognizer.numberOfTouches == 0) {
++    // Trackpad scroll events can begin without touchesMoved enforcing failure
++    // offsets. Reject vertical scrolling before a horizontal row pan cancels
++    // the enclosing UIScrollView. The manual touch-start preflight above has
++    // no current translation yet, so leave that path to the touch callbacks.
++    CGPoint translation = [recognizer translationInView:recognizer.view.window];
++    BOOL horizontalOnly = (!isnan(recognizer.activeOffsetXStart) || !isnan(recognizer.activeOffsetXEnd)) &&
++        isnan(recognizer.activeOffsetYStart) && isnan(recognizer.activeOffsetYEnd);
++    if ([recognizer shouldFailUnderCustomCriteria] ||
++        (horizontalOnly && fabs(translation.y) > fabs(translation.x))) {
++      return NO;
++    }
++  }
++#endif
++
+   RNGestureHandlerState savedState = _lastState;
+   BOOL shouldBegin = [super gestureRecognizerShouldBegin:gestureRecognizer];
+   _lastState = savedState;
