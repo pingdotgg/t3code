@@ -1252,3 +1252,25 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
     ),
   );
 });
+
+describe("isSnoozed", () => {
+  const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
+  it("wakes for completed work after the snooze, but not an interrupted run", () => {
+    expect(ThreadSettlementService.isSnoozed(shell(snoozed), NOW_MS)).toBe(true);
+    expect(
+      ThreadSettlementService.isSnoozed(
+        shell({ ...snoozed, status: "interrupted", latestRunCompletedAt: at(-DAY_MS) }),
+        NOW_MS,
+      ),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isSnoozed(
+        shell({ ...snoozed, status: "completed", latestRunCompletedAt: at(-DAY_MS) }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isSnoozed(shell({ ...snoozed, snoozedUntil: at(-1) }), NOW_MS),
+    ).toBe(false);
+  });
+});

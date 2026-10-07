@@ -295,6 +295,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   ),
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   settled: Schema.optional(Schema.Boolean),
+  snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
@@ -303,6 +304,8 @@ export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInp
 
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
+  /** Paste this whenever you mention the thread, so the user can click to open it. */
+  link: Schema.String,
   title: Schema.String,
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
@@ -315,6 +318,9 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
+  snoozed: Schema.Boolean,
+  /** When a snoozed thread wakes; null when it is not snoozed. */
+  snoozedUntil: Schema.NullOr(IsoDateTime),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -347,6 +353,8 @@ export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInp
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
   threadId: ThreadId,
+  /** Paste this whenever you mention the thread, so the user can click to open it. */
+  link: Schema.String,
   projectId: ProjectId,
   title: Schema.String,
   createdBy: OrchestrationV2Actor,
@@ -370,6 +378,9 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
+  snoozed: Schema.Boolean,
+  /** When a snoozed thread wakes; null when it is not snoozed. */
+  snoozedUntil: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

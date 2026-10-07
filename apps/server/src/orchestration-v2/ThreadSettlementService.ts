@@ -163,6 +163,39 @@ export function isAutoSettlementCandidate(
   return wokeOnError || wokeOnCompletion;
 }
 
+/**
+ * Whether a thread is parked on its snooze: its wake time is in the future and
+ * it has not raised its hand with a pending request, a fresh failure, or work
+ * that completed after the snooze. Server twin of the client's
+ * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
+ * difference: a failure counts as fresh when its run completed after the
+ * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
+ * update time, so a rename can wake a failed thread there but not here.
+ */
+export function isSnoozed(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt" | "status" | "pendingRuntimeRequest"
+  >,
+  nowMs: number,
+): boolean {
+  const snoozedUntilMs = toMillis(thread.snoozedUntil);
+  if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
+  if (thread.pendingRuntimeRequest !== null) return false;
+  const snoozedAtMs = toMillis(thread.snoozedAt);
+  const completedAtMs = toMillis(thread.latestRunCompletedAt);
+  const wokeOnError =
+    thread.status === "failed" &&
+    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
+  // Like the client, only a run that completed wakes it; an interrupt or cancel does not.
+  const wokeOnCompletion =
+    thread.status === "completed" &&
+    snoozedAtMs !== null &&
+    completedAtMs !== null &&
+    completedAtMs > snoozedAtMs;
+  return !wokeOnError && !wokeOnCompletion;
+}
+
 export function resolveAutoSettlementAt(input: {
   readonly thread: ProjectionStore.ProjectionSettlementCandidate;
   readonly pullRequest: SettlementPullRequest | null;
