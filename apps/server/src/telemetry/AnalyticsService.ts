@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -74,8 +75,11 @@ const TelemetryEnvConfig = Config.all({
     Config.withDefault("https://us.i.posthog.com"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
-  flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
-  maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
+  flushBatchSize: Config.schema(
+    Schema.Int.check(Schema.isGreaterThan(0)),
+    "T3CODE_TELEMETRY_FLUSH_BATCH_SIZE",
+  ).pipe(Config.withDefault(20)),
+  maxBufferedEvents: Config.schema(Schema.Natural, "T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
   wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
@@ -215,7 +219,7 @@ export const make = Effect.gen(function* () {
 
   // Sends batches until the buffer is empty or a send fails. A failed batch is
   // kept for the next flush, and dropped after MAX_BATCH_ATTEMPTS failed sends.
-  const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+  const flushBatches = Effect.gen(function* () {
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
@@ -248,14 +252,16 @@ export const make = Effect.gen(function* () {
       });
       return;
     }
-  }).pipe(flushLock.withPermit);
+  });
+
+  const flush = flushBatches.pipe(flushLock.withPermit);
 
   const flushWhenDue = Effect.gen(function* () {
     const { retryAt } = yield* Ref.get(deliveryRef);
     if ((yield* Clock.currentTimeMillis) >= retryAt) {
-      yield* flush;
+      yield* flushBatches;
     }
-  });
+  }).pipe(flushLock.withPermit);
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
