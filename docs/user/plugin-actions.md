@@ -55,11 +55,11 @@ An action appears only where its target is known:
 - **Thread menu**: thread actions for that thread, from the sidebar or the
   chat header on web and desktop, and under **Plugin actions** in a thread's
   long-press menu on mobile.
-- **Slash menu**: type `/` at the start of a line, or anywhere in your
-  message on mobile. In an open thread you see
-  that thread's actions; in a new, unsent thread only environment and project
-  actions appear. Picking one removes the typed command from your message and
-  leaves the rest of the message as it was.
+- **Slash menu**: type `/` at the start of a line in your message, on web,
+  desktop and mobile. In an open thread you see that thread's actions; in a
+  new, unsent thread only environment and project actions appear. Picking one
+  removes the typed command from your message and leaves the rest of the
+  message as it was.
 
 The result appears as a toast on web and desktop, or an alert on mobile.
 
