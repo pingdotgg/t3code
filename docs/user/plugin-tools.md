@@ -1,8 +1,8 @@
 # Plugin tools
 
 A trusted local plugin can offer tools that agents call through T3 Code's own
-MCP server. Plugins are code that runs as your OS user, so only add plugins you
-trust.
+MCP server. Plugins are code that runs as the T3 Code server's OS account, so
+only add plugins you trust.
 
 ## Offering a tool
 
