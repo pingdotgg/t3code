@@ -5791,7 +5791,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <WorkLogDetails kind="media">
           {agentMessage?.message ? (
             <SentAgentMessageBubble text={agentMessage.message} onImageExpand={onImageExpand} />
-          ) : workEntry.projectedItem ? (
+          ) : summarizedAgentMessage && workEntry.projectedItem ? (
             <SummarizedAgentMessage
               projectedItem={workEntry.projectedItem}
               workspaceRoot={workspaceRoot}
@@ -5853,7 +5853,11 @@ function SentAgentMessageBubble(props: {
 }) {
   const ctx = use(TimelineRowCtx);
   return (
-    <div className="max-h-96 overflow-auto rounded-2xl bg-message p-3 text-message-foreground select-text">
+    // Keys on a link inside the bubble act on the link, not the row's toggle.
+    <div
+      className="max-h-96 overflow-auto rounded-2xl bg-message p-3 text-message-foreground select-text"
+      onKeyDown={stopRowToggle}
+    >
       <ChatMarkdown
         className="text-message-foreground"
         text={props.text}
