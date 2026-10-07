@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  ThreadId,
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
@@ -150,3 +152,44 @@ describe("command permissions", () => {
     }
   });
 });
+
+it.effect(
+  "requires source control alone for git, and both grants when attaching a worktree to a thread",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const git = createCommandPermissions(runtime, WS_METHODS.vcsInit);
+        expect((yield* git.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthSourceControlWriteScope,
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes: [AuthSourceControlWriteScope] }),
+        );
+        yield* git.authorize(registry, env);
+        const prepare = createCommandPermissions(runtime, WS_METHODS.gitPreparePullRequestThread);
+        const input = {
+          cwd: "/repo",
+          reference: "123",
+          mode: "worktree",
+          threadId: ThreadId.make("thread"),
+        };
+        expect(registry.get(prepare.permissionAtom(env, input))).toBe(false);
+        expect(
+          (yield* prepare.authorize(registry, env, input).pipe(Effect.flip)).requiredScope,
+        ).toBe(AuthOrchestrationOperateScope);
+        yield* prepare.authorize(registry, env, { ...input, threadId: undefined });
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthSourceControlWriteScope, AuthOrchestrationOperateScope],
+          }),
+        );
+        expect(registry.get(prepare.permissionAtom(env, input))).toBe(true);
+        yield* prepare.authorize(registry, env, input);
+      }),
+    ),
+);

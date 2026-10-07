@@ -30,6 +30,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
   type DesktopWslState,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -103,6 +105,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -1039,6 +1042,7 @@ function OpenCommandPaletteDialog(props: {
     [addProjectEnvironmentOptions, environments],
   );
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   // A desktop-local secondary backend (today: the WSL backend). The picker is
@@ -2418,6 +2422,16 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Cannot add project",
+            description: "This connection cannot add projects.",
+          }),
+        );
+        return;
+      }
       const projectId = newProjectId();
       const createResult = await createProject({
         environmentId: input.environmentId,
@@ -2607,9 +2621,20 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const rawDestination = (destinationPathInput ?? query).trim();
-    if (rawDestination.length === 0 || isRemoteProjectCloning) {
+    if (
+      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthSourceControlWriteScope) ||
+      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthOrchestrationOperateScope)
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Clone unavailable",
+          description: "This connection needs permission to write source control and add projects.",
+        }),
+      );
       return;
     }
+    if (rawDestination.length === 0 || isRemoteProjectCloning) return;
 
     if (isUnsupportedWindowsProjectPath(rawDestination, browseEnvironmentPlatform)) {
       toastManager.add(
@@ -2948,9 +2973,21 @@ function OpenCommandPaletteDialog(props: {
         getCommandPaletteInputPlaceholder(paletteMode));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
+  const canWriteSourceControl = useEnvironmentScope(
+    addProjectCloneFlow?.environmentId ?? null,
+    AuthSourceControlWriteScope,
+  );
+  const canCreateClonedProject = useEnvironmentScope(
+    addProjectCloneFlow?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const canCloneProject = canWriteSourceControl && canCreateClonedProject;
+  const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
+    canCreateProject &&
+    (!isCloneDestinationStep || canCloneProject) &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
     canSubmitBrowsePath &&
@@ -2960,7 +2997,6 @@ function OpenCommandPaletteDialog(props: {
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
-  const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const submitActionLabel = isCloneDestinationStep
     ? willCreateProjectPath
       ? "Create & Clone"
@@ -3327,9 +3363,10 @@ function OpenCommandPaletteDialog(props: {
               className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={
+                !canCreateProject ||
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
                 relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
+                (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))
               }
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -3355,7 +3392,11 @@ function OpenCommandPaletteDialog(props: {
           </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {submitActionLabel} ({addShortcutLabel})
+          {isCloneDestinationStep && !canCloneProject
+            ? "This connection needs permission to write source control and add projects."
+            : canCreateProject
+              ? `${submitActionLabel} (${addShortcutLabel})`
+              : "This connection cannot add projects."}
         </TooltipPopup>
       </Tooltip>
     ) : null;

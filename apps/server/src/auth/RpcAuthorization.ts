@@ -1,6 +1,7 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
+  clientRpcRequiredScopes,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -120,15 +121,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsRunAction]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsUpdate]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsComment]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsUpdateComment]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsSubmitReview]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsReplyToThread]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsSetThreadResolution]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsSetReaction]: AuthOrchestrationOperateScope,
-  [WS_METHODS.pullRequestsSetFilesViewed]: AuthOrchestrationOperateScope,
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
@@ -136,15 +128,8 @@ export const RPC_REQUIRED_SCOPES = {
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsRequestReviewers]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
-  [WS_METHODS.pullRequestsSetLabels]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
-  [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
@@ -167,16 +152,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
-  [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
-  [WS_METHODS.gitRunStackedAction]: AuthOrchestrationOperateScope,
-  [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationOperateScope,
-  [WS_METHODS.gitPreparePullRequestThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
-  [WS_METHODS.vcsCreateWorktree]: AuthOrchestrationOperateScope,
-  [WS_METHODS.vcsRemoveWorktree]: AuthOrchestrationOperateScope,
-  [WS_METHODS.vcsCreateRef]: AuthOrchestrationOperateScope,
-  [WS_METHODS.vcsSwitchRef]: AuthOrchestrationOperateScope,
-  [WS_METHODS.vcsInit]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthReviewWriteScope,
   [WS_METHODS.reviewGetDiffFileContents]: AuthReviewWriteScope,
   [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
@@ -246,13 +223,20 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
+const requiredScopesForRpcCall = (
+  method: string,
+  payload: unknown,
+): ReadonlyArray<AuthEnvironmentScope> => {
+  if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  const guarded = clientRpcRequiredScopes(method, payload);
+  if (guarded.length > 0) return guarded;
+  return [requiredScopeForRpcMethod(method)];
+};
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes =
-      rpc._tag === WS_METHODS.serverUpdateSettings
-        ? requiredScopesForSettingsUpdate(payload)
-        : [requiredScopeForRpcMethod(rpc._tag)];
+    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));
   });

@@ -1,5 +1,7 @@
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthSourceControlWriteScope,
   WS_METHODS,
   type SourceControlPublishRepositoryResult,
 } from "@t3tools/contracts";
@@ -168,3 +170,23 @@ describe("source control environment atoms", () => {
     ),
   );
 });
+
+// Transport fixtures have a source-control-only session; authorization edge cases
+// are exercised by commandPermissions.test.ts.
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+}));
+const grantedSessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make(
+    AsyncResult.success({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "test",
+      },
+      scopes: [AuthSourceControlWriteScope],
+    }),
+  ),
+);
