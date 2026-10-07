@@ -96,13 +96,7 @@
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": [
-      "claude-fable-5-1",
-      "claude-opus-5-5",
-      "claude-sonnet-5-5",
-      "claude-sonnet-5",
-      "claude-haiku-5-5"
-    ],
+    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
@@ -727,7 +721,7 @@
         {
           "slug": "claude-opus-5-5",
           "name": "Claude Opus 5.5",
-          "aliases": ["opus-5.5", "claude-opus-5.5"],
+          "aliases": ["opus", "opus-5.5", "claude-opus-5.5"],
           "status": "current",
           "badge": "new",
           "profile": "opus-5-5",
@@ -736,7 +730,7 @@
         {
           "slug": "claude-sonnet-5-5",
           "name": "Claude Sonnet 5.5",
-          "aliases": ["sonnet-5.5", "claude-sonnet-5.5"],
+          "aliases": ["sonnet", "sonnet-5.5", "claude-sonnet-5.5"],
           "status": "current",
           "badge": "new",
           "profile": "sonnet-5",
@@ -768,8 +762,8 @@
         {
           "slug": "claude-opus-5",
           "name": "Claude Opus 5",
-          "aliases": ["opus", "opus-5", "claude-opus-5.0", "claude-opus-5-0"],
-          "status": "current",
+          "aliases": ["opus-5", "claude-opus-5.0", "claude-opus-5-0"],
+          "status": "legacy",
           "profile": "opus-5",
           "adapter": {
             "claudeCode": {
@@ -817,8 +811,8 @@
         {
           "slug": "claude-sonnet-5",
           "name": "Claude Sonnet 5",
-          "aliases": ["sonnet", "sonnet-5", "claude-sonnet-5.0", "claude-sonnet-5-0"],
-          "status": "current",
+          "aliases": ["sonnet-5", "claude-sonnet-5.0", "claude-sonnet-5-0"],
+          "status": "legacy",
           "profile": "sonnet-5"
         },
         {
@@ -831,7 +825,7 @@
         {
           "slug": "claude-haiku-5-5",
           "name": "Claude Haiku 5.5",
-          "aliases": ["haiku-5.5", "claude-haiku-5.5"],
+          "aliases": ["haiku", "haiku-5.5", "claude-haiku-5.5"],
           "status": "current",
           "badge": "new",
           "profile": "haiku-5-5",
@@ -840,7 +834,7 @@
         {
           "slug": "claude-haiku-4-5",
           "name": "Claude Haiku 4.5",
-          "aliases": ["haiku", "haiku-4.5", "claude-haiku-4.5", "claude-haiku-4-5-20251001"],
+          "aliases": ["haiku-4.5", "claude-haiku-4.5", "claude-haiku-4-5-20251001"],
           "status": "legacy",
           "profile": "haiku-4-5"
         }
