@@ -502,6 +502,12 @@ export interface ProviderAdapterV2SessionRuntime {
    */
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /**
+   * Adapters whose native process captured credentials at launch report when
+   * those have since been renewed. The session manager then replaces the idle
+   * session on its next open instead of reusing a process that fails auth.
+   */
+  readonly hasStaleCredentials?: Effect.Effect<boolean>;
+  /**
    * Per-provider-thread pending work for root-run ingestion stop gates. When
    * present, RunExecutionService uses only this probe (never the session-wide
    * hasPendingBackgroundWork) so sibling native threads cannot pin an

@@ -1534,7 +1534,10 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
+  hooks: Pick<
+    CodexAdapterV2Options,
+    "onUsageLimits" | "resolveRuntime" | "currentRuntimeRevision"
+  > = {},
 ) =>
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
@@ -1627,6 +1630,11 @@ export interface CodexAdapterV2Options {
    * Codex with a current access token.
    */
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  /**
+   * The revision `resolveRuntime` would launch with now. A session whose
+   * process launched with an older revision reports stale credentials.
+   */
+  readonly currentRuntimeRevision?: Effect.Effect<string, ProviderSetupError>;
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
@@ -6029,6 +6037,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
+          // App-server reads its access token from the environment only at launch.
+          ...(resolvedRuntime === undefined || adapterOptions.currentRuntimeRevision === undefined
+            ? {}
+            : {
+                hasStaleCredentials: adapterOptions.currentRuntimeRevision.pipe(
+                  Effect.map((revision) => revision !== resolvedRuntime.revision),
+                  Effect.orElseSucceed(() => false),
+                ),
+              }),
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
           // against a long-delayed resume. Codex emits no resume-expected
