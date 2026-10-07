@@ -1,6 +1,9 @@
 import type {
+  EnvironmentId,
   OrchestrationV2ExplainProviderFailureResult,
   OrchestrationV2ProviderFailureClass,
+  RunId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 /** Usage limits have a known cause and a dedicated recovery path, so nothing is spent explaining them. */
@@ -9,6 +12,22 @@ export function canExplainThreadError(input: {
   readonly hasTarget: boolean;
 }): boolean {
   return input.hasTarget && input.errorClass !== "usage_limit";
+}
+
+/**
+ * Identifies one explanation request. The banner keys its explanation on this,
+ * so moving to another thread, environment or run with the same error text
+ * starts fresh instead of showing, or later receiving, the old answer.
+ */
+export function threadErrorExplanationKey(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly runId: RunId | null;
+  },
+  error: string,
+): string {
+  return [target.environmentId, target.threadId, target.runId ?? "", error].join("\u0000");
 }
 
 export type ThreadErrorExplanationState =

@@ -1,3 +1,4 @@
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,6 +6,7 @@ import {
   explanationStateFromFailure,
   explanationStateFromResult,
   THREAD_ERROR_CHANGED_MESSAGE,
+  threadErrorExplanationKey,
 } from "./ThreadErrorExplanation.logic";
 
 describe("canExplainThreadError", () => {
@@ -63,5 +65,34 @@ describe("explanationStateFromFailure", () => {
       kind: "failed",
       message: "The environment request failed.",
     });
+  });
+});
+
+describe("threadErrorExplanationKey", () => {
+  const target = {
+    environmentId: EnvironmentId.make("environment-a"),
+    threadId: ThreadId.make("thread-a"),
+    runId: RunId.make("run-a"),
+  };
+
+  it("starts fresh on another thread, environment or run with the same error text", () => {
+    const key = threadErrorExplanationKey(target, "Provider crashed");
+    expect(
+      threadErrorExplanationKey(
+        { ...target, threadId: ThreadId.make("thread-b") },
+        "Provider crashed",
+      ),
+    ).not.toBe(key);
+    expect(
+      threadErrorExplanationKey(
+        { ...target, environmentId: EnvironmentId.make("environment-b") },
+        "Provider crashed",
+      ),
+    ).not.toBe(key);
+    expect(
+      threadErrorExplanationKey({ ...target, runId: RunId.make("run-b") }, "Provider crashed"),
+    ).not.toBe(key);
+    expect(threadErrorExplanationKey(target, "Provider crashed again")).not.toBe(key);
+    expect(threadErrorExplanationKey(target, "Provider crashed")).toBe(key);
   });
 });

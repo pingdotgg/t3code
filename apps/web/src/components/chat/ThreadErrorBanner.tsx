@@ -12,7 +12,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { ThreadErrorExplanation } from "./ThreadErrorExplanation";
-import { canExplainThreadError } from "./ThreadErrorExplanation.logic";
+import { canExplainThreadError, threadErrorExplanationKey } from "./ThreadErrorExplanation.logic";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -90,7 +90,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           )}
           {canExplain && explainTarget !== null ? (
             <ThreadErrorExplanation
-              key={error}
+              key={threadErrorExplanationKey(explainTarget, error)}
               environmentId={explainTarget.environmentId}
               threadId={explainTarget.threadId}
               runId={explainTarget.runId}

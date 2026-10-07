@@ -197,6 +197,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
+          // A request with no project runs on untrusted text; the read-only
+          // sandbox still lets the shell read absolute paths, so turn it off.
+          ...(cwd === null ? ["--config", "features.shell_tool=false"] : []),
           "--model",
           model,
           "--config",

@@ -207,7 +207,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         {
           output: JSON.stringify({ summary: "The session ended.", likelyFix: "Start a new turn." }),
           isolatedFrom: process.cwd(),
-          requireArg: "-s read-only",
+          requireArg: "-s read-only --config features.shell_tool=false",
           stdinMustContain: "Message: boom",
         },
         (textGeneration) =>
@@ -232,6 +232,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           body: "\n- added migration\n- updated tests\n",
         }),
         stdinMustNotContain: "branch must be a short semantic git branch fragment",
+        forbidArg: "features.shell_tool=false",
       },
       (textGeneration) =>
         Effect.gen(function* () {
