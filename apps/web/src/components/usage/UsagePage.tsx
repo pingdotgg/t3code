@@ -162,14 +162,12 @@ export function UsagePage() {
   // The Change column compares with the same span just before; read it only then.
   const wantsPrevious = !showingLimits && explorerPreferences.columns.includes("change");
   const previous = useUsage(wantsPrevious ? previousWindow(window) : null, selectedEnvironmentIds);
-  // Change compares like for like only when every environment with usage now
-  // also answered for the span before, live or saved.
-  const previousCoversCurrent = selectedEnvironments.every(
-    (environment) =>
-      environment.summary === null ||
-      previous.selectedEnvironments.some(
-        (entry) => entry.environmentId === environment.environmentId && entry.summary !== null,
-      ),
+  // Change compares like for like only when every environment that adds usage
+  // now, after shared folders count once, also answered for the span before.
+  const previousCoversCurrent = merged.contributingEnvironments.every((environmentId) =>
+    previous.selectedEnvironments.some(
+      (entry) => entry.environmentId === environmentId && entry.summary !== null,
+    ),
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const selectedEnvironmentIdList = useMemo(
