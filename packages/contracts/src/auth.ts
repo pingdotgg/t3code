@@ -83,6 +83,7 @@ export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthSettingsWriteScope = "settings:write" as const;
 export const AuthProvidersManageScope = "providers:manage" as const;
 export const AuthEnvironmentMaintainScope = "environment:maintain" as const;
+export const AuthPreviewOperateScope = "preview:operate" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
 export const AuthSourceControlWriteScope = "source-control:write" as const;
 export const AuthFilesystemReadScope = "filesystem:read" as const;
@@ -99,6 +100,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
@@ -126,6 +128,7 @@ export const AuthStandardClientScopes = [
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
