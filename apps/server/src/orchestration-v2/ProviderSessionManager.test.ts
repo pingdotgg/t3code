@@ -460,7 +460,7 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
-  /** Once armed, holds the next call of that registry step until it is interrupted. */
+  /** Once armed, the next call of that registry step hangs until interrupted or crashes. */
   readonly pauseMcpRegistry?: PauseMcpRegistry;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
@@ -566,6 +566,7 @@ const layerTestMcpRegistry = Layer.effect(
 
 interface PauseMcpRegistry {
   readonly step: "resolve" | "setPluginToolGrants";
+  readonly outcome: "hang" | "crash";
   readonly armed: Ref.Ref<boolean>;
   readonly paused: Deferred.Deferred<void>;
 }
@@ -581,7 +582,13 @@ const layerPausingMcpRegistry = (pause: PauseMcpRegistry) =>
           : Ref.getAndSet(pause.armed, false).pipe(
               Effect.flatMap((armed) =>
                 armed
-                  ? Deferred.succeed(pause.paused, undefined).pipe(Effect.andThen(Effect.never))
+                  ? Deferred.succeed(pause.paused, undefined).pipe(
+                      Effect.andThen(
+                        pause.outcome === "hang"
+                          ? Effect.never
+                          : Effect.die(new Error(`${step} crashed`)),
+                      ),
+                    )
                   : run,
               ),
             );
@@ -2228,11 +2235,13 @@ it.effect(
 );
 
 it.effect.each([
-  ["checking it", "resolve"],
-  ["updating its plugin tool grants", "setPluginToolGrants"],
+  ["stopped while checking it", "resolve", "hang"],
+  ["stopped while updating its plugin tool grants", "setPluginToolGrants", "hang"],
+  ["crashed while checking it", "resolve", "crash"],
+  ["crashed while updating its plugin tool grants", "setPluginToolGrants", "crash"],
 ] as const)(
-  "ProviderSessionManagerV2 revokes a reused credential after a resume stopped while %s",
-  ([, step]) =>
+  "ProviderSessionManagerV2 revokes a reused credential after a resume %s",
+  ([, step, outcome]) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const armed = yield* Ref.make(false);
@@ -2244,8 +2253,8 @@ it.effect.each([
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
-        const owner = ThreadId.make(`thread-provider-session-manager-${step}-stop-owner`);
-        const threadId = ThreadId.make(`thread-provider-session-manager-${step}-stop`);
+        const owner = ThreadId.make(`thread-provider-session-manager-${step}-${outcome}-owner`);
+        const threadId = ThreadId.make(`thread-provider-session-manager-${step}-${outcome}`);
         const providerSessionId = idAllocator.derive.providerSession({
           providerInstanceId: modelSelection.instanceId,
         });
@@ -2268,7 +2277,7 @@ it.effect.each([
             threadId,
             providerSessionId,
             now,
-            nativeThreadId: `native-${step}-stop`,
+            nativeThreadId: `native-${step}-${outcome}`,
           }),
         });
         // The thread gets a credential, then detaches and keeps it for a re-attach.
@@ -2278,18 +2287,23 @@ it.effect.each([
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
 
-        // A re-attach is stopped while it reuses that credential.
+        // A re-attach is stopped, or crashes, while it reuses that credential.
         yield* Ref.set(armed, true);
         const stopped = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
-        yield* Fiber.interrupt(stopped);
+        // A crashed attach is logged and rolled back rather than failing the resume.
+        yield* outcome === "hang" ? Fiber.interrupt(stopped) : Fiber.await(stopped);
 
         // Nothing holds the credential now, so a terminal release revokes it.
         yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
         assert.isUndefined(yield* registry.resolve(token));
       }).pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 60_000, pauseMcpRegistry: { step, armed, paused } }),
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            pauseMcpRegistry: { step, outcome, armed, paused },
+          }),
         ),
       );
     }),

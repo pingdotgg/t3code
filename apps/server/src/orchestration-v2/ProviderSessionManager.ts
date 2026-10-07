@@ -509,7 +509,7 @@ export const layerWithOptions = (
                   reserveMcpCredential(threadId, existing.providerSessionId);
                   const rawToken = existing.authorizationHeader.replace(/^Bearer\s+/, "");
                   // The caller only learns of the reservation once this returns,
-                  // so a stop while resolving or updating grants must drop it here.
+                  // so a stop or crash while resolving or updating grants must drop it here.
                   const reused = yield* Effect.gen(function* () {
                     const resolved = yield* mcpSessionRegistry.resolve(rawToken);
                     if (
@@ -531,7 +531,7 @@ export const layerWithOptions = (
                     );
                     return true;
                   }).pipe(
-                    Effect.onInterrupt(() =>
+                    Effect.onError(() =>
                       Effect.sync(() =>
                         dropMcpCredentialReservation(threadId, existing.providerSessionId),
                       ),
