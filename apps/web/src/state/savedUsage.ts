@@ -246,20 +246,19 @@ export function trimSavedUsage(
   live: readonly UsageSummary[],
   saved: ReadonlyMap<string, UsageSummary>,
 ): ReadonlyMap<string, UsageSummary> {
-  const taken = new Set(
-    live.flatMap((summary) =>
-      summary.sources
-        .filter((source) => source.status === "ok" || source.status === "partial")
-        .map((source) => fingerprintKey(source.fingerprint)),
-    ),
-  );
+  // Only a folder that was actually read claims it; a failed read holds nothing.
+  const claims = (summary: UsageSummary) =>
+    summary.sources
+      .filter((source) => source.status === "ok" || source.status === "partial")
+      .map((source) => fingerprintKey(source.fingerprint));
+  const taken = new Set(live.flatMap(claims));
   const trimmed = new Map<string, UsageSummary>();
   const newestFirst = [...saved].sort(
     ([, a], [, b]) => (Date.parse(b.readAt) || 0) - (Date.parse(a.readAt) || 0),
   );
   for (const [environmentId, summary] of newestFirst) {
     const kept = withoutSources(summary, taken);
-    for (const source of kept.sources) taken.add(fingerprintKey(source.fingerprint));
+    for (const key of claims(kept)) taken.add(key);
     trimmed.set(environmentId, kept);
   }
   return trimmed;

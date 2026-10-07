@@ -162,6 +162,23 @@ describe("trimSavedUsage", () => {
     expect(trimmed.get("old")?.buckets).toEqual([]);
   });
 
+  it("does not let a newer saved read that failed take a folder", () => {
+    const good = read("2026-09-30T10:00:00Z", ["/a"], [pathed("/a", 10)]);
+    const newer = read("2026-09-30T11:00:00Z", ["/a"], []);
+    const failed = {
+      ...newer,
+      sources: newer.sources.map((item) => ({ ...item, status: "failed" as const })),
+    };
+    const trimmed = trimSavedUsage(
+      [],
+      new Map([
+        ["good", good],
+        ["failed", failed],
+      ]),
+    );
+    expect(trimmed.get("good")?.buckets).toHaveLength(1);
+  });
+
   it("does not let a failed live read take a folder", () => {
     const failed = { ...read("2026-10-01T10:00:00Z", ["/a"], []) };
     const live = {
