@@ -37,7 +37,7 @@ a key the manifest does not declare rejects.
 
 Secrets are write-only for clients: a client learns only whether a secret is
 saved, never its value. T3 Code stores each secret as a plain-text file,
-readable only by your OS user, in the server's secrets directory. It is not
+readable only by the server's OS account, in the server's secrets directory. It is not
 encrypted.
 
 ## Plugin storage
