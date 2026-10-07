@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or verify.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -55,7 +56,7 @@ const input = {
   alert: false,
 };
 
-function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: Response[]) {
+function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: Response[]) {
   const http = HttpClient.make((request) => {
     requests.push(request);
     const response = responses.shift();
@@ -198,7 +199,7 @@ describe("FCM delivery", () => {
         });
       }).pipe(
         Effect.provide(
-          testLayer(requests, [
+          layerTest(requests, [
             Response.json({ access_token: "access-token" }),
             Response.json({ name: "one" }),
             Response.json({ name: "two" }),
@@ -219,7 +220,7 @@ describe("FCM delivery", () => {
       expect(requests[3]!.headers.authorization).toBe("Bearer fresh-token");
     }).pipe(
       Effect.provide(
-        testLayer(requests, [
+        layerTest(requests, [
           Response.json({ access_token: "old-token" }),
           Response.json({}, { status: 401 }),
           Response.json({ access_token: "fresh-token" }),
@@ -249,6 +250,6 @@ describe("FCM delivery", () => {
         .pipe(Effect.flip);
       expect(error.operation).toBe("send");
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(testLayer(requests, [])));
+    }).pipe(Effect.provide(layerTest(requests, [])));
   });
 });

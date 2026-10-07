@@ -12,11 +12,11 @@ import {
   CommandId,
   SecretRef,
   SecretRequestError,
-  type SecretRequestFailureReason,
   type ProjectId,
   type SecretRequestAnswerInput,
   type ThreadId,
 } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac.
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
@@ -62,9 +62,6 @@ const StoredSecret = Schema.fromJsonString(
 const encodeStored = Schema.encodeEffect(StoredSecret);
 const decodeStored = Schema.decodeUnknownOption(StoredSecret);
 
-const fail = (reason: SecretRequestFailureReason, cause?: unknown) =>
-  new SecretRequestError({ reason, ...(cause === undefined ? {} : { cause }) });
-
 export class SecretRequests extends Context.Service<
   SecretRequests,
   {
@@ -109,19 +106,19 @@ const make = Effect.gen(function* () {
           turnItemTypes: ["secret_request"],
           messageRoles: [],
         })
-        .pipe(Effect.mapError((cause) => fail("load_failed", cause)));
+        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
       const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
       if (item?.type !== "secret_request" || item.runId === null || item.nodeId === null) {
-        return yield* fail("not_found");
+        return yield* new SecretRequestError({ reason: "not_found" });
       }
       if (item.secretStatus !== "pending") {
-        return yield* fail("already_answered");
+        return yield* new SecretRequestError({ reason: "already_answered" });
       }
       // The agent is waiting inside the run that asked; once it has ended,
       // nobody will ever receive the ref, so a value saved now would be lost.
       const run = records.runs.find((candidate) => candidate.id === item.runId);
       if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
-        return yield* fail("agent_stopped");
+        return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
       // Store first: the card only says saved once the value is kept. Create,
       // not set: a second answer racing this one must not replace the value.
@@ -140,7 +137,9 @@ const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void),
-            Effect.mapError((error) => fail("store_failed", error)),
+            Effect.mapError(
+              (error) => new SecretRequestError({ reason: "store_failed", cause: error }),
+            ),
           );
       }
       const secretStatus = input.answer.type === "save" ? "saved" : "declined";
@@ -158,7 +157,7 @@ const make = Effect.gen(function* () {
           secretStatus,
         })
         .pipe(
-          Effect.mapError((cause) => fail("record_failed", cause)),
+          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
           // The card still says pending, so the user can save again; the value
           // stored above would make that retry look already answered.
           Effect.tapError(() =>
@@ -176,11 +175,13 @@ const make = Effect.gen(function* () {
           turnItemTypes: ["secret_request"],
           messageRoles: [],
         })
-        .pipe(Effect.mapError((cause) => fail("record_failed", cause)));
+        .pipe(
+          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
+        );
       const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
       if (card?.type === "secret_request" && card.secretStatus !== "saved") {
         yield* removeLogged(storeName(refFor(salt, input.threadId, item.id)));
-        return yield* fail("agent_stopped");
+        return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
     }).pipe(Effect.withSpan("SecretRequests.answer"));
 
@@ -217,25 +218,26 @@ const make = Effect.gen(function* () {
 
   const consumeRef = (input: { readonly ref: SecretRef; readonly projectId: ProjectId }) =>
     Effect.gen(function* () {
-      if (!REF_PATTERN.test(input.ref)) return yield* fail("invalid_ref");
+      if (!REF_PATTERN.test(input.ref))
+        return yield* new SecretRequestError({ reason: "invalid_ref" });
       const stored = yield* store
         .get(storeName(input.ref))
-        .pipe(Effect.mapError((cause) => fail("read_failed", cause)));
+        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "read_failed", cause })));
       const decoded = Option.flatMap(stored, (bytes) =>
         decodeStored(new TextDecoder().decode(bytes)),
       );
       if (Option.isNone(decoded) || decoded.value.projectId !== input.projectId) {
-        return yield* fail("ref_unavailable");
+        return yield* new SecretRequestError({ reason: "ref_unavailable" });
       }
       if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
         // The hourly sweep retries a removal that fails here.
         yield* removeLogged(storeName(input.ref));
-        return yield* fail("ref_expired");
+        return yield* new SecretRequestError({ reason: "ref_expired" });
       }
       // One use: the value moves into whatever consumed it. If it cannot be
       // deleted, it is not handed out, so a ref is never used twice.
       if (!(yield* removeLogged(storeName(input.ref)))) {
-        return yield* fail("consume_failed");
+        return yield* new SecretRequestError({ reason: "consume_failed" });
       }
       return decoded.value.value;
     });

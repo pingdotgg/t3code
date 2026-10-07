@@ -690,7 +690,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
 );
 
 /** Prunes settled effect rows once the server is active, then every hour. */
-export const pruneWorkerLive = Layer.effectDiscard(
+export const layerPruneWorker = Layer.effectDiscard(
   Effect.gen(function* () {
     const outbox = yield* EffectOutboxV2;
     yield* forkParked(

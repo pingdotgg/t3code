@@ -36,12 +36,12 @@ catalog:
   "@effect/platform-node-shared": 4.0.1
   "@effect/sql-pg": 4.0.1
   "@effect/sql-sqlite-do": 4.0.1
-  "@effect/tsgo": 0.41.0
+  "@effect/tsgo": 0.46.1
   "@effect/vitest": 4.0.1
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.3.0-beta.10
+  "@pierre/diffs": 1.5.2
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -51,8 +51,10 @@ catalog:
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: 7.0.2
+  undici: 8.11.2
   vite: npm:@voidzero-dev/vite-plus-core@1.0.0
   vite-plus: 1.0.0
+  ws: 8.22.0
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
@@ -235,6 +237,10 @@ overrides:
   node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
+  # Ranges from @effect/platform-node, jsdom, unifont, Expo and libsql otherwise
+  # settle on two patch releases of each major. Older majors stay as they are.
+  "undici@^8": "catalog:"
+  "ws@^8": "catalog:"
   vite: "catalog:"
   vite-plus: "catalog:"
   yaml: "catalog:"
@@ -264,7 +270,9 @@ patchedDependencies:
   "@opencode/client@2.0.23": patches/@opencode__client@2.0.23.patch
   "@opencode/protocol@2.0.23": patches/@opencode__protocol@2.0.23.patch
   "@opencode/schema@2.0.23": patches/@opencode__schema@2.0.23.patch
-  "@pierre/diffs@1.3.0-beta.10": patches/@pierre%2Fdiffs@1.3.0-beta.10.patch
+  # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
+  # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
+  "@pierre/diffs@1.5.2": patches/@pierre%2Fdiffs@1.5.2.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch

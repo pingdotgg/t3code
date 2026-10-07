@@ -16,6 +16,7 @@ import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
 
 /** The flags that pin every agent-device command to one device. */
@@ -119,7 +120,7 @@ const pickDevice = (
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
 const handlers = {
-  device_list: (input) =>
+  device_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -145,7 +146,8 @@ const handlers = {
         open,
       };
     }).pipe(Effect.mapError(toolError)),
-  device_open: (input) =>
+  ),
+  device_open: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -203,7 +205,8 @@ const handlers = {
         quickStart: agentDeviceQuickStart(device, targetArgs, command),
       };
     }).pipe(Effect.mapError(toolError)),
-  device_screenshot: (input) =>
+  ),
+  device_screenshot: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -229,7 +232,8 @@ const handlers = {
         },
       };
     }).pipe(Effect.mapError(toolError)),
-  device_close: (input) =>
+  ),
+  device_close: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -241,7 +245,8 @@ const handlers = {
       });
       return {};
     }).pipe(Effect.mapError(toolError)),
-} satisfies Parameters<typeof DeviceToolkit.toLayer>[0];
+  ),
+} satisfies McpToolAccess.Handlers<typeof DeviceToolkit.tools>;
 
 /** Width and height from the IHDR chunk; a PNG that lacks one reports 0×0. */
 export function pngDimensions(png: Uint8Array): { width: number; height: number } {
@@ -258,8 +263,8 @@ export function pngDimensions(png: Uint8Array): { width: number; height: number 
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
-export const DeviceStandardToolkitHandlersLive = DeviceStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = McpToolAccess.toLayer(DeviceStandardToolkit, standardHandlers);
 
-export const DeviceScreenshotToolkitHandlersLive = DeviceScreenshotToolkit.toLayer({
+export const layerScreenshot = McpToolAccess.toLayer(DeviceScreenshotToolkit, {
   device_screenshot,
 });

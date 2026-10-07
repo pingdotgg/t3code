@@ -1,46 +1,20 @@
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
-import * as HttpServer from "effect/http/HttpServer";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import type { OtlpTracer } from "effect/observability";
+import * as Tracer from "effect/Tracer";
 
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
-import { makeRelayTraceLayer } from "./observability.ts";
+import * as Observability from "./observability.ts";
 
-interface ExportedRequest {
-  readonly authorization: string | undefined;
-  readonly body: string;
-  readonly dataset: string | undefined;
-}
-
-const otlpAttributeValue = (value: {
-  readonly stringValue?: string | null;
-  readonly boolValue?: boolean | null;
-  readonly intValue?: string | number | null;
-  readonly doubleValue?: number | null;
-}) => value.stringValue ?? value.boolValue ?? value.intValue ?? value.doubleValue;
-
-const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
-
-it.effect("exports schema error fields as span attributes", () =>
+it.effect("adds schema error fields to spans on the current tracer", () =>
   Effect.gen(function* () {
-    const exportedRequest = yield* Deferred.make<ExportedRequest>();
-    yield* HttpServer.serveEffect(
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        yield* Deferred.succeed(exportedRequest, {
-          authorization: request.headers.authorization,
-          body: yield* request.text,
-          dataset: request.headers["x-axiom-dataset"],
-        });
-        return HttpServerResponse.empty({ status: 204 });
-      }),
-    );
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
 
     yield* Effect.fail(
       new EnvironmentConnector.EnvironmentConnectNotAuthorized({
@@ -51,44 +25,16 @@ it.effect("exports schema error fields as span attributes", () =>
     ).pipe(
       Effect.withSpan("relay.test.schema_error"),
       Effect.exit,
-      Effect.provide(
-        makeRelayTraceLayer({
-          tracesEndpoint: "/v1/traces",
-          tracesDatasetName: "relay-test-traces",
-          ingestToken: Redacted.make("test-token"),
-        }),
-      ),
+      Observability.withSchemaErrorSpanAttributes,
+      Effect.withTracer(tracer),
     );
 
-    const request = yield* Deferred.await(exportedRequest).pipe(Effect.timeout("1 second"));
-    const payload = (yield* decodeJson(request.body)) as OtlpTracer.TraceData;
-    const resourceAttributes = Object.fromEntries(
-      payload.resourceSpans
-        .flatMap((resourceSpan) => resourceSpan.resource.attributes)
-        .map((attribute) => [attribute.key, otlpAttributeValue(attribute.value)]),
-    );
-    const span = payload.resourceSpans
-      .flatMap((resourceSpan) => resourceSpan.scopeSpans)
-      .flatMap((scopeSpan) => scopeSpan.spans)
-      .find((candidate) => candidate.name === "relay.test.schema_error");
-    const attributes = Object.fromEntries(
-      (span?.attributes ?? []).map((attribute) => [
-        attribute.key,
-        otlpAttributeValue(attribute.value),
-      ]),
-    );
-
-    expect(request.authorization).toBe("Bearer test-token");
-    expect(request.dataset).toBe("relay-test-traces");
-    expect(resourceAttributes).toMatchObject({
-      "service.name": "t3code-relay",
-      "service.namespace": "t3code",
-    });
-    expect(attributes).toMatchObject({
+    expect(spans.map((span) => span.name)).toEqual(["relay.test.schema_error"]);
+    expect(Object.fromEntries(spans[0]!.attributes)).toMatchObject({
       "error.type": "EnvironmentConnectNotAuthorized",
       "error.environmentId": "environment-1",
       "error.operation": "connect",
       "error.reason": "managed_endpoint_allocation_not_ready",
     });
-  }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
+  }),
 );

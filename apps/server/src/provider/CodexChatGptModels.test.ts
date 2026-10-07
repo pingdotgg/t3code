@@ -1,4 +1,3 @@
-// @effect-diagnostics preferSchemaOverJson:off - Mock HTTP responses use JSON fixtures.
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";

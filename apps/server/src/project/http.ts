@@ -12,6 +12,7 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
@@ -29,7 +30,7 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
 });
 
-export const projectHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "projects",
   Effect.fnUntraced(function* (handlers) {
@@ -43,6 +44,7 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* projects.snapshot.pipe(
+            traceLocalHandlerWork,
             Effect.catch((cause) => failEnvironmentInternal("project_snapshot_failed", cause)),
           );
         }),
@@ -53,7 +55,9 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           const operation = projectMutationOperation(projects, args.payload);
-          return yield* startup.enqueueCommand(operation).pipe(Effect.catch(failProjectMutation));
+          return yield* startup
+            .enqueueCommand(operation)
+            .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));
         }),
       );
   }),

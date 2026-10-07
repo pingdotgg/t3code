@@ -13,8 +13,8 @@ import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -28,7 +28,7 @@ import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
 // Real repository detection: the service only asks the Git workflow whether
 // the data dir is inside a checkout.
-const gitWorkflowLayer = Layer.unwrap(
+const layerGitWorkflow = Layer.unwrap(
   Effect.gen(function* () {
     const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
     return Layer.mock(GitWorkflow.GitWorkflowService)({
@@ -41,7 +41,7 @@ const gitWorkflowLayer = Layer.unwrap(
   }),
 ).pipe(Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))));
 
-const enrichmentLayer = ProjectEnrichmentService.layer.pipe(
+const layerEnrichment = ProjectEnrichmentService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
@@ -54,7 +54,7 @@ const enrichmentLayer = ProjectEnrichmentService.layer.pipe(
   ),
 );
 
-const realGitLayer = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
+const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   /** A git driver for failures real git cannot produce on demand. */
@@ -69,7 +69,7 @@ interface HarnessOptions {
  * The service over a real ProjectService and real git, with its data dir at
  * `baseDir`.
  */
-const makeLayer = (baseDir: string, options?: HarnessOptions) =>
+const layer = (baseDir: string, options?: HarnessOptions) =>
   ManagedProjectFolders.layer.pipe(
     Layer.provide(
       options?.projects === undefined
@@ -79,12 +79,12 @@ const makeLayer = (baseDir: string, options?: HarnessOptions) =>
             ProjectService.ProjectService.pipe(Effect.map(options.projects)),
           ),
     ),
-    Layer.provideMerge(ProjectServiceLayerLive),
-    Layer.provideMerge(enrichmentLayer),
+    Layer.provideMerge(RuntimeLayer.layerProjectService),
+    Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
-    Layer.provideMerge(gitWorkflowLayer),
-    Layer.provideMerge(options?.git ?? realGitLayer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(layerGitWorkflow),
+    Layer.provideMerge(options?.git ?? layerRealGit),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -106,7 +106,7 @@ const withScratch = <A, E>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-managed-folders-" });
-    return yield* body({ baseDir }).pipe(Effect.provide(makeLayer(baseDir, options)));
+    return yield* body({ baseDir }).pipe(Effect.provide(layer(baseDir, options)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
@@ -142,7 +142,7 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(makeLayer(baseDir)));
+    }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

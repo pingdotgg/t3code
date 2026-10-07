@@ -270,20 +270,28 @@ const makeReplayAdapter = (
     );
   });
 
-const replayServerConfig = (scenario: string) =>
+const layerReplayServerConfig = (scenario: string) =>
   Layer.effect(ServerConfig.ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
     Layer.provide(NodeServices.layer),
   );
 
-function makeRegistryLayer(
+function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
   options?: { readonly replayGate?: ProviderReplayGate },
 ) {
   return Layer.unwrap(
     makeReplayAdapter(transcript, { external: true, ...options }).pipe(
-      Effect.map((adapter) => ProviderAdapterRegistry.makeLayer([adapter])),
+      Effect.map((adapter) => ProviderAdapterRegistry.layerFromAdapters([adapter])),
     ),
-  ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), IdAllocator.layer)));
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerReplayServerConfig(transcript.scenario),
+        IdAllocator.layer,
+        NodeServices.layer,
+      ),
+    ),
+  );
 }
 
 /**
@@ -320,7 +328,13 @@ export const openCode2ReplayRuntime = (
       },
     });
   }).pipe(
-    Effect.provide(Layer.mergeAll(replayServerConfig("opencode2_adapter"), IdAllocator.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        layerReplayServerConfig("opencode2_adapter"),
+        IdAllocator.layer,
+        NodeServices.layer,
+      ),
+    ),
   );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
@@ -340,5 +354,5 @@ export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHar
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: makeRegistryLayer,
+  makeProviderAdapterRegistryLayer: layerRegistry,
 };

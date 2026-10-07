@@ -24,7 +24,7 @@ import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay, relayProtectedErrorMessage } from "@t3tools/client-runtime/relay";
 
-import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {
   finishRelayClientInstall,
@@ -193,7 +193,7 @@ export function readPrimaryCloudLinkState(input: {
     return yield* client.connect
       .linkState({ headers: {} })
       .pipe(Effect.mapError(environmentApiError("Could not read environment cloud link state.")));
-  }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
+  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }
 
 export function updatePrimaryCloudPreferences(input: {
@@ -212,7 +212,7 @@ export function updatePrimaryCloudPreferences(input: {
       .pipe(
         Effect.mapError(environmentApiError("Could not update environment cloud preferences.")),
       );
-  }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
+  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }
 
 export function unlinkPrimaryEnvironmentFromCloud(input: {
@@ -245,7 +245,7 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
           ),
         );
     }
-  }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
+  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }
 
 // "publish_only" links the environment to the relay for agent-activity
@@ -346,5 +346,5 @@ export function linkPrimaryEnvironmentToCloud(input: {
         },
       })
       .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));
-  }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
+  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }

@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as AuthPairingLinks from "./AuthPairingLinks.ts";
 import * as AuthSessions from "./AuthSessions.ts";
 import * as PersistenceErrors from "./Errors.ts";
-import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
+import * as SqlitePersistence from "./Sqlite.ts";
 import * as ProviderSessionRuntime from "./ProviderSessionRuntime.ts";
 
 const issuedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -16,12 +16,12 @@ const expiresAt = DateTime.makeUnsafe("2027-06-20T00:00:00.000Z");
 const now = DateTime.makeUnsafe("2026-06-21T00:00:00.000Z");
 const scopes: ReadonlyArray<AuthEnvironmentScope> = ["access:read"];
 
-const authSessionLayer = AuthSessions.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
-const authPairingLinkLayer = AuthPairingLinks.layer.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerAuthSession = AuthSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
+const layerAuthPairingLink = AuthPairingLinks.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
-const providerSessionRuntimeLayer = ProviderSessionRuntime.layer.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerProviderSessionRuntime = ProviderSessionRuntime.layer.pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
 describe("persistence error correlation", () => {
@@ -101,7 +101,7 @@ describe("persistence error correlation", () => {
         "SQL error in AuthSessionRepository.revokeAllExcept:query",
       );
       assert.notInclude(revokeOtherError.message, DateTime.formatIso(now));
-    }).pipe(Effect.provide(authSessionLayer)),
+    }).pipe(Effect.provide(layerAuthSession)),
   );
 
   it.effect("correlates pairing-link create and revoke failures by id only", () =>
@@ -179,7 +179,7 @@ describe("persistence error correlation", () => {
       assert.deepStrictEqual(revokeError.correlation, { pairingLinkId: id });
       assert.notInclude(revokeError.message, credential);
       assert.notInclude(revokeError.message, DateTime.formatIso(now));
-    }).pipe(Effect.provide(authPairingLinkLayer)),
+    }).pipe(Effect.provide(layerAuthPairingLink)),
   );
 
   it.effect("skips undecodable provider runtime rows and correlates SQL failures by thread", () =>
@@ -256,6 +256,6 @@ describe("persistence error correlation", () => {
       );
       assert.notInclude(sqlFailure.message, runtimePayload);
       assert.notInclude(sqlFailure.message, lastSeenAt);
-    }).pipe(Effect.provide(providerSessionRuntimeLayer)),
+    }).pipe(Effect.provide(layerProviderSessionRuntime)),
   );
 });

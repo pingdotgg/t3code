@@ -3,7 +3,6 @@ import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CloudManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
 import { readHoldWebhooksWhileOffline, readRelayConnection } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -15,9 +14,8 @@ import { makeRelayEnvironmentClient } from "./relayEnvironmentClient.ts";
  * next backoff step. Nothing happens unless the environment opted in.
  */
 const wakeHeldHooks = Effect.fn("HeldHooksWaker.wake")(function* () {
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  if (!(yield* readHoldWebhooksWhileOffline(secrets))) return false;
-  const connection = yield* readRelayConnection(secrets);
+  if (!(yield* readHoldWebhooksWhileOffline)) return false;
+  const connection = yield* readRelayConnection;
   if (connection === null) return false;
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const client = yield* makeRelayEnvironmentClient(connection);

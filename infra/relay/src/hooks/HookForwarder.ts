@@ -23,13 +23,8 @@ import {
 } from "@t3tools/shared/relayJwt";
 
 import * as RelayConfiguration from "../Config.ts";
-import {
-  MANAGED_ENDPOINT_KEY_PATTERN,
-  managedEndpointTunnelNameForKey,
-} from "../deploymentConfig.ts";
-import { validateManagedEndpoint } from "../environments/EnvironmentConnector.ts";
-import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
-import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
+import { MANAGED_ENDPOINT_KEY_PATTERN } from "../deploymentConfig.ts";
+import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import { sendUpstream, TUNNEL_OFFLINE_STATUS } from "./upstream.ts";
 
@@ -143,34 +138,6 @@ const hookNotFound = () => errorResponse(404, "hook_not_found");
 /** Longer than the inbox holds a request, so a held delivery's proof still verifies. */
 const DELIVERY_PROOF_LIFETIME_SECONDS = 25 * 60 * 60;
 
-const signDeliveryProof = (input: {
-  readonly settings: RelayConfiguration.RelayConfiguration["Service"];
-  readonly environmentId: string;
-  readonly deliveryId: string;
-  readonly receivedAt: string;
-  readonly hookId: string;
-  readonly jti: string;
-}) =>
-  Effect.gen(function* () {
-    const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
-    return yield* signRelayJwt({
-      privateKey: Redacted.value(input.settings.cloudMintPrivateKey),
-      typ: RELAY_HOOK_DELIVERY_TYP,
-      payload: {
-        iss: normalizeRelayIssuer(input.settings.relayIssuer),
-        aud: `t3-env:${input.environmentId}`,
-        sub: input.environmentId,
-        jti: input.jti,
-        iat: now,
-        exp: now + DELIVERY_PROOF_LIFETIME_SECONDS,
-        environmentId: EnvironmentId.make(input.environmentId),
-        deliveryId: input.deliveryId,
-        receivedAt: input.receivedAt,
-        hookId: input.hookId,
-      } satisfies RelayHookDeliveryProofPayload,
-    });
-  }).pipe(Effect.orDie);
-
 /** Methods a webhook can arrive with; HEAD reaches the GET route and is refused. */
 const FORWARDED_METHODS = new Set(["GET", "POST", "PUT", "PATCH"]);
 
@@ -266,56 +233,40 @@ const readCappedBody = (request: HttpServerRequest.HttpServerRequest) =>
     );
   });
 
-/**
- * The ready managed endpoint a webhook URL's endpoint key names, with whether
- * its link opted in to holding webhooks while offline. The key is the tunnel
- * name's hash of user and environment, so it names exactly one allocation and
- * at most one active link; nobody else can link their way onto it.
- */
-export const resolveHookEndpoint = Effect.fn("relay.hooks.resolve_endpoint")(function* (
-  endpointKey: string,
-) {
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-  const settings = yield* RelayConfiguration.RelayConfiguration;
-  if (!settings.managedEndpointNamespace) return null;
-  const allocation = yield* allocations.getByTunnelName(
-    managedEndpointTunnelNameForKey(settings.managedEndpointNamespace, endpointKey),
-  );
-  if (allocation === null) return null;
-  const [link] = yield* links.findActiveManagedForEnvironment({
-    environmentId: allocation.environmentId,
-    userId: allocation.userId,
-  });
-  if (!link) return null;
-  const result = validateManagedEndpoint({
-    link,
-    allocation,
-    baseDomain: settings.managedEndpointBaseDomain,
-  });
-  if (Result.isFailure(result)) return null;
-  return {
-    ...result.success,
-    environmentId: allocation.environmentId,
-    holdWhileOffline: link.holdWebhooksWhileOffline,
-  };
-});
-
-/** The endpoint key of an environment's own managed endpoint, for authenticated callers. */
-export const endpointKeyForTunnelName = (namespace: string, tunnelName: string): string | null => {
-  const prefix = managedEndpointTunnelNameForKey(namespace, "");
-  const key = tunnelName.startsWith(prefix) ? tunnelName.slice(prefix.length) : "";
-  return MANAGED_ENDPOINT_KEY_PATTERN.test(key) ? key : null;
-};
-
 const make = Effect.gen(function* () {
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+  const heldHooks = yield* HeldHooks.HeldHooks;
   const settings = yield* RelayConfiguration.RelayConfiguration;
   const httpClient = yield* HttpClient.HttpClient;
   const rateLimiter = yield* HookRateLimiter;
   const inbox = yield* HookInbox.HookInbox;
   const crypto = yield* Crypto.Crypto;
+
+  const signDeliveryProof = (input: {
+    readonly environmentId: string;
+    readonly deliveryId: string;
+    readonly receivedAt: string;
+    readonly hookId: string;
+    readonly jti: string;
+  }) =>
+    Effect.gen(function* () {
+      const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+      return yield* signRelayJwt({
+        privateKey: Redacted.value(settings.cloudMintPrivateKey),
+        typ: RELAY_HOOK_DELIVERY_TYP,
+        payload: {
+          iss: normalizeRelayIssuer(settings.relayIssuer),
+          aud: `t3-env:${input.environmentId}`,
+          sub: input.environmentId,
+          jti: input.jti,
+          iat: now,
+          exp: now + DELIVERY_PROOF_LIFETIME_SECONDS,
+          environmentId: EnvironmentId.make(input.environmentId),
+          deliveryId: input.deliveryId,
+          receivedAt: input.receivedAt,
+          hookId: input.hookId,
+        } satisfies RelayHookDeliveryProofPayload,
+      });
+    }).pipe(Effect.orDie);
 
   const handle = Effect.fn("relay.hooks.forward")(function* (
     request: HttpServerRequest.HttpServerRequest,
@@ -357,10 +308,7 @@ const make = Effect.gen(function* () {
       return errorResponse(413, "payload_too_large");
     }
 
-    const endpoint = yield* resolveHookEndpoint(parsed.endpointKey).pipe(
-      Effect.provideService(EnvironmentLinks.EnvironmentLinks, links),
-      Effect.provideService(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
-      Effect.provideService(RelayConfiguration.RelayConfiguration, settings),
+    const endpoint = yield* heldHooks.resolveEndpoint(parsed.endpointKey).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Failed to resolve hook endpoint", {
           endpointKey: parsed.endpointKey,
@@ -398,7 +346,6 @@ const make = Effect.gen(function* () {
     // trace context came from the relay. Signed once here and stored with a
     // held request, so the inbox never needs the signing key.
     const proof = yield* signDeliveryProof({
-      settings,
       environmentId: endpoint.environmentId,
       deliveryId,
       receivedAt,
@@ -499,7 +446,7 @@ export const layer = Layer.effect(HookForwarder, make);
  * re-reads the encoded path segments from the request so the token and hook
  * id reach the environment byte for byte, and streams the body itself.
  */
-export const hooksApi = HttpApiBuilder.group(
+export const layerApi = HttpApiBuilder.group(
   RelayApi,
   "hooks",
   Effect.fnUntraced(function* (handlers) {

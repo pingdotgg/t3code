@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as ErrorReporter from "effect/ErrorReporter";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
@@ -22,6 +23,7 @@ import {
   callRpc,
   decodeExtNotificationRegistration,
   decodeExtRequestRegistration,
+  isolateNotificationHandler,
   runHandler,
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
@@ -838,9 +840,12 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     registration: BufferedNotificationHandler<A>,
     notification: A,
   ) =>
-    Effect.forEach(registration.handlers, (handler) => handler(notification).pipe(Effect.ignore), {
-      discard: true,
-    });
+    // One handler failing or dying does not stop the others, or the reader.
+    Effect.forEach(
+      registration.handlers,
+      (handler) => isolateNotificationHandler(handler(notification)),
+      { discard: true },
+    );
 
   const flushBufferedNotifications = <A>(registration: BufferedNotificationHandler<A>) =>
     Effect.suspend(() => {
@@ -971,7 +976,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     method,
   });
 
-  const clientHandlerLayer = AcpRpcs.CompatClientRpcs.toLayer(
+  const layerClientHandler = AcpRpcs.CompatClientRpcs.toLayer(
     AcpRpcs.CompatClientRpcs.of({
       [CLIENT_METHODS.session_request_permission]: (payload, { requestId }) =>
         runHandler(
@@ -1099,9 +1104,12 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     }),
   );
 
-  yield* RpcServer.make(AcpRpcs.CompatClientRpcs).pipe(
+  yield* RpcServer.make(AcpRpcs.CompatClientRpcs, { disableFatalDefects: true }).pipe(
+    // runHandler logs handler defects with their method. A reporter inherited
+    // from the caller (a WebSocket request, say) would log them again.
+    Effect.provideService(ErrorReporter.CurrentErrorReporters, new Set()),
     Effect.provideService(RpcServer.Protocol, transport.serverProtocol),
-    Effect.provide(clientHandlerLayer),
+    Effect.provide(layerClientHandler),
     Effect.forkScoped,
   );
 

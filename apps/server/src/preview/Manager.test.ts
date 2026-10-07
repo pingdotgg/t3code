@@ -1,9 +1,14 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
-import { Effect, PubSub } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import { expect } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const DRAIN_LIMIT = 100;
@@ -35,7 +40,13 @@ const collectEvents = Effect.gen(function* () {
   return collector;
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
-it.layer(PreviewManager.layer)("PreviewManager", (it) => {
+const layer = PreviewManager.layer.pipe(
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-manager-" })),
+  Layer.provide(NodeCrypto.layer),
+  Layer.provide(NodeServices.layer),
+);
+
+it.layer(layer)("PreviewManager", (it) => {
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
@@ -86,6 +97,75 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       });
       const listed = yield* manager.list({ threadId });
       expect(listed.sessions.find((s) => s.tabId === opened.tabId)?.profileId).toBe("work");
+    }),
+  );
+
+  it.effect("lets any client size, theme, and zoom a server tab", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId, runtime: "server" });
+      const viewport = {
+        _tag: "preset",
+        presetId: "iphone-12-pro",
+        width: 390,
+        height: 844,
+      } as const;
+      yield* manager.resize({ threadId, tabId: opened.tabId, viewport });
+      const adjusted = yield* manager.adjust({
+        threadId,
+        tabId: opened.tabId,
+        colorScheme: "dark",
+        zoomFactor: 1.25,
+      });
+      expect(adjusted).toMatchObject({ viewport, colorScheme: "dark", zoomFactor: 1.25 });
+      // One-off requests go to the server's browser and leave the tab's state alone.
+      yield* manager.adjust({ threadId, tabId: opened.tabId, hardReload: true, clear: "cache" });
+      const events = (yield* collector.drain).filter((event) => event.type === "resized");
+      expect(events.at(-1)).toMatchObject({
+        request: { hardReload: true, clear: "cache" },
+        snapshot: { colorScheme: "dark", zoomFactor: 1.25 },
+      });
+      expect(events.at(-2)).not.toHaveProperty("request");
+    }),
+  );
+
+  it.effect("reissues presentation requests without replaying them on navigation", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId, runtime: "server", reveal: false });
+      yield* manager.requestReveal({ threadId, tabId: opened.tabId, force: true });
+      const first = (yield* manager.list({ threadId })).sessions[0];
+      expect(first?.reveal).toBe(true);
+      expect(first?.revealRequest?.force).toBe(true);
+      // Server tabs report navigation through their controlling browser.
+      const refused = yield* manager
+        .navigate({ threadId, tabId: opened.tabId, url: "localhost:5173" })
+        .pipe(Effect.flip);
+      expect(refused._tag).toBe("PreviewControlRequiredError");
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        serverControlled: true,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      expect((yield* manager.list({ threadId })).sessions[0]?.revealRequest).toEqual(
+        first?.revealRequest,
+      );
+      yield* manager.requestReveal({ threadId, tabId: opened.tabId, force: false });
+      const second = (yield* manager.list({ threadId })).sessions[0];
+      expect(second?.revealRequest?.id).not.toBe(first?.revealRequest?.id);
+      expect(second?.revealRequest?.force).toBe(false);
+      const events = yield* collector.drain;
+      const last = events.at(-1);
+      expect(last?.type).toBe("navigated");
+      if (last?.type === "navigated")
+        expect(last.snapshot.revealRequest).toEqual(second?.revealRequest);
     }),
   );
 
@@ -261,6 +341,46 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       );
       expect(error._tag).toBe("PreviewSessionLookupError");
     }),
+  );
+
+  it.effect(
+    "rejects client status reports for server tabs without changing state or emitting events",
+    () =>
+      Effect.gen(function* () {
+        const threadId = freshThreadId();
+        const manager = yield* PreviewManager.PreviewManager;
+        const opened = yield* manager.open({ threadId, runtime: "server", reveal: false });
+        const collector = yield* collectEvents;
+        const before = yield* manager.list({ threadId });
+        const input = {
+          threadId,
+          tabId: opened.tabId,
+          navStatus: {
+            _tag: "Success" as const,
+            url: "http://localhost:5173/changed",
+            title: "Changed",
+          },
+          canGoBack: true,
+          canGoForward: true,
+        };
+        const rejected = yield* manager.reportStatus(input).pipe(Effect.flip);
+        expect(rejected._tag).toBe("PreviewControlRequiredError");
+        expect(yield* manager.list({ threadId })).toEqual(before);
+        expect(yield* collector.drain).toEqual([]);
+
+        yield* manager.reportStatus({ ...input, serverControlled: true });
+        expect((yield* manager.list({ threadId })).sessions[0]).toMatchObject({
+          navStatus: input.navStatus,
+          canGoBack: true,
+          canGoForward: true,
+        });
+        const events = yield* collector.drain;
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+          type: "navigated",
+          snapshot: { navStatus: input.navStatus },
+        });
+      }),
   );
 
   it.effect("reportStatus emits failed for LoadFailed nav", () =>
