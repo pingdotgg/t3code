@@ -1,4 +1,7 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  backgroundWorkHoldsSettle,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -280,7 +283,7 @@ export const make = Effect.gen(function* () {
       // Candidates never have a live run or a pending request.
       if (
         thread.settleWhenIdleAt == null ||
-        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+        backgroundWorkHoldsSettle(thread.pendingBackgroundTasks ?? [])
       )
         continue;
       const uuid = yield* crypto.randomUUIDv4;

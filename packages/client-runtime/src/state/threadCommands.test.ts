@@ -135,6 +135,16 @@ describe("remote thread lifecycle commands", () => {
       },
       { settledOverride: "settled", settleWhenIdleAt: null },
     ],
+    [
+      "settles past a pull request watch",
+      {
+        status: "completed" as const,
+        pendingBackgroundTasks: [
+          { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" },
+        ],
+      },
+      { settledOverride: "settled", settleWhenIdleAt: null },
+    ],
   ] as const)("%s at once and restores it when the server rejects", ([, thread, expected]) =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

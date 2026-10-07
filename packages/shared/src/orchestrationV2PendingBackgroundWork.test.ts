@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
+  backgroundWorkHoldsSettle,
   derivePendingBackgroundWork,
   turnItemUpdateCanEndBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
@@ -562,6 +563,11 @@ describe("derivePendingBackgroundWork kinds", () => {
         },
       ]);
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+      // Settle stops watches, so a filed thread does not wait on one.
+      expect(backgroundWorkHoldsSettle(tasks)).toBe(false);
+      expect(backgroundWorkHoldsSettle([...tasks, { taskId: "agent", kind: "subagent" }])).toBe(
+        true,
+      );
     });
 
     it("keeps a thread that never ran waiting on its watch", () => {

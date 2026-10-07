@@ -3308,7 +3308,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("rejects settling a thread while a run is active", () =>
+  it.effect("files a thread with an active run instead of settling it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-layer-active-settle-thread");
@@ -3356,20 +3356,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(nonEmptyClaim, Orchestrator.OrchestratorDispatchError);
 
-      const error = yield* orchestrator
-        .dispatch({
-          type: "thread.settle",
-          commandId: CommandId.make("runtime-layer-active-settle"),
-          threadId,
-        })
-        .pipe(Effect.flip);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-active-settle"),
+        threadId,
+      });
 
-      assert.equal(error._tag, "OrchestratorDispatchError");
+      // The run keeps going; the thread settles once it finishes.
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "starting");
+      assert.isNotNull(projection.thread.settleWhenIdleAt);
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
-      assert.isNotNull(projection.thread.unsettledAt);
     }),
   );
 

@@ -76,6 +76,21 @@ export function backgroundWorkHoldsCompletion(
   return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind));
 }
 
+/**
+ * Whether background work keeps a thread filed with Settle from settling.
+ * Pull request watches do not: Settle stops them, the same as on an idle
+ * thread, so waiting on one would hold the thread until the PR closes.
+ */
+export function backgroundWorkHoldsSettle(
+  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "taskId">>,
+): boolean {
+  return tasks.some(
+    (task) =>
+      !task.taskId.startsWith(PULL_REQUEST_WATCH_TASK_ID_PREFIX) &&
+      backgroundWorkKindHoldsCompletion(task.kind),
+  );
+}
+
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
   switch (kind) {
     case "command":
@@ -286,6 +301,8 @@ export function derivePendingBackgroundWork(input: {
   return Array.from(byTaskId.values());
 }
 
+const PULL_REQUEST_WATCH_TASK_ID_PREFIX = "pull-request-watch:";
+
 function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
@@ -294,7 +311,7 @@ function pullRequestWatchTasks(
       ? []
       : [
           {
-            taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
+            taskId: `${PULL_REQUEST_WATCH_TASK_ID_PREFIX}${threadPullRequestKeyOf(link)}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
           },

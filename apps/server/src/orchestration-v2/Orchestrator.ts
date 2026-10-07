@@ -2591,9 +2591,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const automaticQueuedRuns = projection.runs.filter(
         (run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId),
       );
+      // A held queue waits for the user to resume it, so it never finishes on
+      // its own. A held user message blocks settling; held automatic runs are
+      // cancelled below like any other.
+      const isHeld = (run: (typeof projection.runs)[number]) =>
+        run.status === "queued" && run.queueHeld === true;
+      const heldUserRunExists = projection.runs.some(
+        (run) => isHeld(run) && !automaticQueuedRuns.includes(run),
+      );
       const runActive = projection.runs.some(
         (run) =>
           ["preparing", "queued", "starting", "running", "waiting"].includes(run.status) &&
+          !isHeld(run) &&
           (settleMode === "when-idle" || !automaticQueuedRuns.includes(run)),
       );
       const pendingRequests = projection.runtimeRequests.filter(
@@ -2618,10 +2627,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           ));
       const rejected =
-        settleMode === "when-idle"
+        heldUserRunExists ||
+        (settleMode === "when-idle"
           ? thread.settleWhenIdleAt == null || working || pendingRequests.length > 0
           : blockingRequestExists ||
-            (working && (settleMode === "automatic" || pendingRequests.length > 0));
+            (working && (settleMode === "automatic" || pendingRequests.length > 0)));
       if (rejected) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

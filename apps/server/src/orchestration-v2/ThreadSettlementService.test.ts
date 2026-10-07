@@ -1174,7 +1174,7 @@ describe("filed thread settlement", () => {
     ),
   );
 
-  it.effect("waits for work that wakes the agent but not for a dev server", () =>
+  it.effect("waits for work that wakes the agent but not for a dev server or a PR watch", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1187,14 +1187,24 @@ describe("filed thread settlement", () => {
           ...filed,
           pendingBackgroundTasks: [{ taskId: "agent", kind: "subagent" }],
         });
+        // Settle stops the watch, so it must not hold the thread until the PR closes.
+        const pullRequestWatch = makeThread("pull-request-watch", {
+          ...filed,
+          pendingBackgroundTasks: [
+            { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" },
+          ],
+        });
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([devServer, subagent]),
+          snapshot: makeSnapshot([devServer, subagent, pullRequestWatch]),
           settings: noAutomaticRules,
         });
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          expect(yield* Ref.get(fixture.deferredCommands)).toEqual([devServer.id]);
+          expect(yield* Ref.get(fixture.deferredCommands)).toEqual([
+            devServer.id,
+            pullRequestWatch.id,
+          ]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
