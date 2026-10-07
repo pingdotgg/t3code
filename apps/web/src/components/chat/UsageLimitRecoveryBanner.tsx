@@ -78,16 +78,14 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
         {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
       </Button>
-      {!snoozed ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pending || Date.parse(resetAt!) <= nowMs}
-          onClick={() => void toggle("snooze")}
-        >
-          {pending ? "Saving..." : "Snooze until reset"}
-        </Button>
-      ) : null}
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={pending || (!snoozed && Date.parse(resetAt!) <= nowMs)}
+        onClick={() => void toggle("snooze")}
+      >
+        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+      </Button>
       {error ? (
         <p role="alert" className="basis-full text-xs text-destructive">
           {error}
