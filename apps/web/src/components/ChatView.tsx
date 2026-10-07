@@ -7831,7 +7831,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "thread.previousTurn" || command === "thread.nextTurn") {
-        // A repeat would measure from mid-animation scroll and skip turns unevenly.
+        // Held keys repeat every ~30ms, which would blur through the whole thread.
         if (
           !event.repeat &&
           !turnNavigationRef.current?.jumpToTurn(

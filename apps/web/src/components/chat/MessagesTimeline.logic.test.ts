@@ -32,6 +32,8 @@ import {
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   resolveTimelineTurnJumpIndex,
+  resolveTimelineTurnJumpDurationMs,
+  easeTimelineTurnJump,
   workEntryDisplayLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
@@ -4925,5 +4927,25 @@ describe("resolveTimelineTurnJumpIndex", () => {
     expect(
       resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 0, itemTops: [0, null, 3000] }),
     ).toBe(2);
+  });
+});
+
+describe("resolveTimelineTurnJumpDurationMs", () => {
+  it("grows with distance in either direction and stays bounded", () => {
+    const short = resolveTimelineTurnJumpDurationMs(100);
+    const long = resolveTimelineTurnJumpDurationMs(1600);
+    expect(short).toBeGreaterThanOrEqual(180);
+    expect(long).toBeGreaterThan(short);
+    expect(resolveTimelineTurnJumpDurationMs(-1600)).toBe(long);
+    expect(resolveTimelineTurnJumpDurationMs(1_000_000)).toBe(420);
+  });
+});
+
+describe("easeTimelineTurnJump", () => {
+  it("starts at 0, ends at 1, and front-loads the movement", () => {
+    expect(easeTimelineTurnJump(0)).toBe(0);
+    expect(easeTimelineTurnJump(1)).toBe(1);
+    expect(easeTimelineTurnJump(0.5)).toBeGreaterThan(0.8);
+    expect(easeTimelineTurnJump(2)).toBe(1);
   });
 });

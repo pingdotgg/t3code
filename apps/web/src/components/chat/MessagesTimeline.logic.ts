@@ -372,6 +372,23 @@ export function resolveTimelineMinimapCurrentIndex(input: {
 /** Turn jumps land a prompt this far below the viewport top. */
 export const TIMELINE_TURN_JUMP_VIEW_OFFSET = 24;
 
+const TIMELINE_TURN_JUMP_MIN_MS = 180;
+const TIMELINE_TURN_JUMP_MAX_MS = 420;
+
+/** Short hops stay snappy; long ones get more time so the reader can follow. */
+export function resolveTimelineTurnJumpDurationMs(distancePx: number): number {
+  return Math.min(
+    TIMELINE_TURN_JUMP_MAX_MS,
+    TIMELINE_TURN_JUMP_MIN_MS + Math.sqrt(Math.abs(distancePx)) * 5,
+  );
+}
+
+/** Ease-out: the scroll answers the keypress at once, then settles. */
+export function easeTimelineTurnJump(progress: number): number {
+  const clamped = Math.min(1, Math.max(0, progress));
+  return 1 - (1 - clamped) ** 3;
+}
+
 /**
  * The prompt a turn jump should land on, relative to where the last jump
  * would have placed one. Unlike the minimap's current marker, reading the
