@@ -61,7 +61,23 @@ describe("plugin IPC line decoder", () => {
     });
     const text = `{"message":"${"é".repeat(300)}"}`;
     for (const byte of Buffer.from(`${text}\n`)) decode(Buffer.from([byte]));
-    expect(lines).toEqual([[text, Buffer.byteLength(text)]]);
+    expect(lines).toEqual([[text, Buffer.byteLength(text) + 1]]);
+  });
+
+  it("charges empty lines against the read budget", () => {
+    let paused = false;
+    const budget = makeReadBudget({
+      maxBytes: 100,
+      pause: () => (paused = true),
+      resume: () => (paused = false),
+    });
+    const decode = makeLineDecoder({
+      maxBytes: 100,
+      onLine: (_line, bytes) => budget.hold(bytes),
+      onOverflow: () => expect.unreachable(),
+    });
+    decode(Buffer.from("\n".repeat(150)));
+    expect(paused).toBe(true);
   });
 
   it("stops at the limit for a line trickled in one byte at a time", () => {

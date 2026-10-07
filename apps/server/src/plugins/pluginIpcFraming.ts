@@ -85,7 +85,8 @@ export const makeLineDecoder = (input: {
         if (piece.length > 0) append(piece);
         return;
       }
-      const bytes = buffered + piece.length;
+      // The delimiter counts too, so even an empty line holds read budget.
+      const bytes = buffered + piece.length + 1;
       const line = (
         pending === undefined || buffered === 0
           ? piece
