@@ -30,17 +30,9 @@ export function ThreadDetailsCard({
     ? resolveThreadDetailsCardLayout({
         container: canvas.container,
         lane: canvas.lane,
-        frame: null,
       })
     : null;
-  const placement = canvas
-    ? resolveThreadDetailsCardLayout({
-        container: canvas.container,
-        lane: canvas.lane,
-        frame: canvas.layout.frame,
-        overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
-      })
-    : null;
+  const placement = preferredPlacement;
   const mode = placement ? "inline" : "popover";
   const inlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),

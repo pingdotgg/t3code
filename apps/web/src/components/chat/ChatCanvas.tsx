@@ -8,26 +8,21 @@ import {
   type CSSProperties,
 } from "react";
 import { ChatCanvasContext } from "./ChatCanvasContext";
-import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
-import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import { resolveChatCanvasLayout, type ChatCanvasDetailsCard } from "./chatCanvasLayout";
 
 /**
  * Owns the available conversation space. Cards only report where they sit; the
  * canvas decides when chat moves over to make room for them.
  */
 export function ChatCanvas({
-  composerOverlayElement,
   children,
   ...props
-}: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
-  composerOverlayElement: HTMLElement | null;
-}) {
+}: Omit<ComponentProps<"div">, "className" | "style" | "ref">) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
-  const [preview, setPreview] = useState<ChatCanvasPreview | null>(null);
-  const [detailsCard, setDetailsCard] = useState<PreviewMiniPlayerObstacles["detailsCard"]>(null);
-  const reportDetailsCard = useCallback((next: PreviewMiniPlayerObstacles["detailsCard"]) => {
+  const [detailsCard, setDetailsCard] = useState<ChatCanvasDetailsCard | null>(null);
+  const reportDetailsCard = useCallback((next: ChatCanvasDetailsCard | null) => {
     setDetailsCard((current) =>
       current?.left === next?.left &&
       current?.right === next?.right &&
@@ -42,26 +37,8 @@ export function ChatCanvas({
     padding: 20,
     maxChatWidth: 768,
     minChatWidth: 640,
-    composerHeight: 0,
     timelineGutter: 0,
   });
-  const reportPreview = useCallback((next: ChatCanvasPreview) => {
-    setPreview((current) =>
-      current?.key === next.key &&
-      current.width === next.width &&
-      current.lastInteraction === next.lastInteraction &&
-      current.position?.x === next.position?.x &&
-      current.position?.y === next.position?.y &&
-      current.source.width === next.source.width &&
-      current.source.height === next.source.height
-        ? current
-        : next,
-    );
-  }, []);
-  const clearPreview = useCallback(
-    (key: string) => setPreview((current) => (current?.key === key ? null : current)),
-    [],
-  );
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
@@ -74,7 +51,6 @@ export function ChatCanvas({
         padding: Number.parseFloat(styles.paddingLeft),
         maxChatWidth: Number.parseFloat(styles.width),
         minChatWidth: Number.parseFloat(styles.minWidth),
-        composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
         timelineGutter: timelineElement
           ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
           : 0,
@@ -91,23 +67,19 @@ export function ChatCanvas({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     observer.observe(probe);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
     if (timelineElement) observer.observe(timelineElement);
     return () => observer.disconnect();
-  }, [composerOverlayElement, timelineElement]);
+  }, [timelineElement]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
     return {
       container,
       lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
-      previewKey: preview?.key ?? null,
-      reportPreview,
-      clearPreview,
+      layout: resolveChatCanvasLayout({ ...measurements, container, detailsCard }),
       registerTimeline,
       reportDetailsCard,
     };
-  }, [measurements, preview, detailsCard, reportPreview, clearPreview, reportDetailsCard]);
+  }, [measurements, detailsCard, reportDetailsCard]);
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
@@ -115,7 +87,6 @@ export function ChatCanvas({
         {...props}
         ref={elementRef}
         data-chat-canvas
-        data-preview-overlaps-chat={layout.overlapsChat || undefined}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col"
         style={
           {

@@ -28,7 +28,9 @@ export function BrowserSurfaceSlot(props: {
 
   useLayoutEffect(() => {
     const element = elementRef.current;
-    if (!element) return;
+    // A closing panel can remain mounted for its animation, but must hand the
+    // browser to the floating player as soon as it stops being visible.
+    if (!element || !visible) return;
     let lease = acquireBrowserSurface(tabId, fitSourceContent);
     const update = () => {
       const rect = element.getBoundingClientRect();
@@ -77,7 +79,7 @@ export function BrowserSurfaceSlot(props: {
       if (updateRef.current === update) updateRef.current = null;
       lease.release();
     };
-  }, [fitSourceContent, tabId]);
+  }, [fitSourceContent, tabId, visible]);
 
   useLayoutEffect(() => {
     presentationRef.current = { visible, cornerRadius, zIndex };
