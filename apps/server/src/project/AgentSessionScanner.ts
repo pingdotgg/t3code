@@ -562,6 +562,26 @@ function isT3ManagedWorktree(
   );
 }
 
+/** `core.bare` from a git config file. A bare key without a value means true. */
+function isBareGitConfig(configText: string): boolean {
+  let inCore = false;
+  let bare = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.startsWith("[")) {
+      inCore = /^\[\s*core\s*\]/i.test(line);
+      continue;
+    }
+    if (!inCore) continue;
+    const match = /^bare\s*(?:=\s*([^#;]*))?(?:[#;].*)?$/i.exec(line);
+    if (match === null) continue;
+    const value = match[1]?.trim().toLowerCase();
+    bare =
+      value === undefined || value === "true" || value === "yes" || value === "on" || value === "1";
+  }
+  return bare;
+}
+
 /** Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes. */
 function extractCwd(line: string): string | null {
   let parsed: unknown;
@@ -691,8 +711,12 @@ export const make = Effect.gen(function* () {
    * stays cheap. A `.git` file is a `gitdir:` pointer. When it points into a
    * `worktrees/` directory the checkout is a linked worktree, which
    * onboarding skips because its history belongs to the main checkout.
-   * Submodules use the same pointer shape but live under `modules/`, and
-   * are offered like any other repository.
+   * A bare repository has no main checkout, so its linked worktrees are the
+   * only places sessions can run; those are offered like any other
+   * repository, with the origin read from the shared config that the
+   * worktree's `commondir` file names. Submodules use the same pointer
+   * shape but live under `modules/`, and are offered like any other
+   * repository.
    */
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
@@ -705,6 +729,7 @@ export const make = Effect.gen(function* () {
     const gitStats = yield* statOption(gitPath);
     if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
+    let linkedWorktree = false;
     if (gitStats.value.type !== "Directory") {
       const pointer = yield* fileSystem
         .readFileString(gitPath)
@@ -712,11 +737,19 @@ export const make = Effect.gen(function* () {
       const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
       if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
       gitDir = path.resolve(directory, target);
-      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
+      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) {
+        const commonDir = yield* fileSystem
+          .readFileString(path.join(gitDir, "commondir"))
+          .pipe(Effect.orElseSucceed(() => ""));
+        if (commonDir.trim().length === 0) return { _tag: "Worktree" } as const;
+        gitDir = path.resolve(gitDir, commonDir.trim());
+        linkedWorktree = true;
+      }
     }
     const configText = yield* fileSystem
       .readFileString(path.join(gitDir, "config"))
       .pipe(Effect.orElseSucceed(() => ""));
+    if (linkedWorktree && !isBareGitConfig(configText)) return { _tag: "Worktree" } as const;
     const originUrl = parseOriginUrlFromGitConfig(configText);
     return {
       _tag: "Repository",

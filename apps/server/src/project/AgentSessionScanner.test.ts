@@ -904,9 +904,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           path.join(repo, ".git", "config"),
           '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
         );
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
         yield* fileSystem.writeFileString(
           path.join(worktree, ".git"),
-          `gitdir: ${path.join(repo, ".git", "worktrees", "wt")}\n`,
+          `gitdir: ${worktreeGitDir}\n`,
         );
         yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
         yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
@@ -945,6 +948,59 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             path: repo,
             git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
           },
+        ]);
+      }),
+    );
+
+    it.effect("offers linked worktrees of a bare repository as their own projects", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        // Bare layout: `<bare>/.git` is the bare repository and the linked
+        // worktrees are siblings inside `<bare>`.
+        const bare = yield* makeTempDir("t3code-workspace-bare-");
+        const bareGitDir = path.join(bare, ".git");
+        yield* fileSystem.makeDirectory(bareGitDir);
+        yield* fileSystem.writeFileString(
+          path.join(bareGitDir, "config"),
+          '[core]\n\tbare = true\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n',
+        );
+        const linkWorktree = (checkout: string, name: string) =>
+          Effect.gen(function* () {
+            const gitDir = path.join(bareGitDir, "worktrees", name);
+            yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+            yield* fileSystem.makeDirectory(checkout, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(checkout, ".git"), `gitdir: ${gitDir}\n`);
+          });
+        const dev = path.join(bare, "dev");
+        const prod = path.join(bare, "prod");
+        yield* linkWorktree(dev, "dev");
+        yield* linkWorktree(prod, "prod");
+        // A T3 sandbox checked out from the bare repository stays excluded.
+        const managed = path.join(configBaseDir, "worktrees", "t3code", "wt-bare");
+        yield* linkWorktree(managed, "wt-bare");
+
+        for (const [index, cwd] of [bare, dev, prod, managed].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
+            contents: claudeSessionLine(cwd),
+            mtimeMs: Date.parse(`2026-01-0${index + 1}T00:00:00.000Z`),
+          });
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        const git = { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" };
+        expect(
+          result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+        ).toEqual([
+          { path: prod, git },
+          { path: dev, git },
+          { path: bare, git },
         ]);
       }),
     );
@@ -2361,6 +2417,70 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual(["newer-session"]);
         expect(contentReads).toEqual([newerPath]);
         expect(openCounts.get(olderPath)).toBe(1);
+      }),
+    );
+
+    it.effect("imports sessions that ran in a linked worktree of a bare repository", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const bare = yield* makeTempDir("t3code-workspace-bare-");
+        const worktreeGitDir = path.join(bare, ".git", "worktrees", "dev");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(bare, ".git", "config"),
+          "[core]\n\tbare = true\n",
+        );
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        const workspace = path.join(bare, "dev");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-dev.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "bare-worktree-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Ship the worktree" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-root.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "bare-root-session", cwd: bare },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Root only" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual([
+          "bare-worktree-session",
+        ]);
       }),
     );
 
