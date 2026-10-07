@@ -35,6 +35,7 @@ export function BranchPicker({
   statusText,
   originControl,
   extraControls,
+  keepOpenOnItemPress = false,
   popupProps,
   renderItem,
   getItemType,
@@ -54,6 +55,7 @@ export function BranchPicker({
   statusText: string | null;
   originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   extraControls?: ReactNode;
+  keepOpenOnItemPress?: boolean;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
   getItemType?: ((value: string) => string) | undefined;
@@ -147,7 +149,13 @@ export function BranchPicker({
           animated: false,
         });
       }}
-      onOpenChange={handleOpenChange}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && keepOpenOnItemPress && details.reason === "item-press") {
+          details.cancel();
+          return;
+        }
+        handleOpenChange(nextOpen);
+      }}
       open={open}
       value={value}
     >

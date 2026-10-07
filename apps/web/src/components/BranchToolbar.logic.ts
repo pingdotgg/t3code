@@ -238,6 +238,19 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
+export function resolveNewRefBase(
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
+  currentGitBranch: string | null,
+): string {
+  return (
+    refs.find((ref) => ref.isDefault)?.name ??
+    refs.find((ref) => ref.name === "main")?.name ??
+    refs.find((ref) => ref.name === "master")?.name ??
+    currentGitBranch ??
+    "HEAD"
+  );
+}
+
 export function resolveLocalCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
@@ -320,4 +333,20 @@ export function shouldIncludeBranchPickerItem(input: {
     sanitizedQuery !== normalizedQuery &&
     lowerItemValue.includes(sanitizedQuery)
   );
+}
+
+export function buildBranchPickerItems(input: {
+  branchNames: ReadonlyArray<string>;
+  createBranchItemValue: string | null;
+  hasExactBranchMatch: boolean;
+  checkoutPullRequestItemValue: string | null;
+}): string[] {
+  const items = [...input.branchNames];
+  if (input.createBranchItemValue && !input.hasExactBranchMatch) {
+    items.unshift(input.createBranchItemValue);
+  }
+  if (input.checkoutPullRequestItemValue) {
+    items.unshift(input.checkoutPullRequestItemValue);
+  }
+  return items;
 }

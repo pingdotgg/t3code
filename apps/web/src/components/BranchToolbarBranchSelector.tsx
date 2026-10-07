@@ -48,6 +48,7 @@ import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  buildBranchPickerItems,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -55,6 +56,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveNewRefBase,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -223,6 +225,8 @@ export function BranchToolbarBranchSelector({
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
+  const [pendingNewRefName, setPendingNewRefName] = useState<string | null>(null);
+  const [selectedNewRefBase, setSelectedNewRefBase] = useState<string | null>(null);
 
   const branchStatusQuery = useEnvironmentQuery(
     branchCwd === null
@@ -255,10 +259,14 @@ export function BranchToolbarBranchSelector({
   const worktreeBranch = draftThread?.worktreeBranch ?? null;
   const worktreeName = draftThread?.worktreeName ?? null;
   const checkoutPullRequestItemValue =
-    canChangeThreadBranch && prReference && onCheckoutPullRequestRequest
+    pendingNewRefName === null &&
+    canChangeThreadBranch &&
+    prReference &&
+    onCheckoutPullRequestRequest
       ? `__checkout_pull_request__:${prReference}`
       : null;
   const canCreateBranch =
+    pendingNewRefName === null &&
     canChangeThreadBranch &&
     (!isSelectingWorktreeBase || draftThread !== null) &&
     trimmedBranchQuery.length > 0;
@@ -272,11 +280,12 @@ export function BranchToolbarBranchSelector({
     : null;
   const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
   const pickerCreateBranchItemValue = hasExactBranchMatch ? null : createBranchItemValue;
-  const branchPickerItems = [
-    ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
-    ...refs.map((refName) => refName.name),
-    ...(pickerCreateBranchItemValue ? [pickerCreateBranchItemValue] : []),
-  ];
+  const branchPickerItems = buildBranchPickerItems({
+    branchNames: refs.map((ref) => ref.name),
+    checkoutPullRequestItemValue,
+    createBranchItemValue,
+    hasExactBranchMatch,
+  });
   const filteredBranchPickerItems =
     normalizedBranchQuery.length === 0
       ? branchPickerItems
@@ -294,6 +303,17 @@ export function BranchToolbarBranchSelector({
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  // Keep the default independent of the search used to choose a different base.
+  const newRefDefaultsQuery = useEnvironmentQuery(
+    pendingNewRefName !== null && branchCwd !== null
+      ? vcsEnvironment.listRefs({ environmentId, input: { cwd: branchCwd, limit: 100 } })
+      : null,
+  );
+  const newRefBase =
+    selectedNewRefBase ??
+    (newRefDefaultsQuery.data
+      ? resolveNewRefBase(newRefDefaultsQuery.data.refs, currentGitBranch)
+      : null);
   const sourceControlPresentation = getSourceControlPresentation(
     branchStatusQuery.data?.sourceControlProvider,
   );
@@ -461,18 +481,24 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const createRef = (rawName: string) => {
+  const createRef = (rawName: string, baseRefName: string) => {
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
 
     if (isSelectingWorktreeBase && draftThread) {
+      setThreadBranch(baseRefName, null);
       setDraftThreadContext(draftId ?? threadRef, { worktreeBranch: name });
+      setPendingNewRefName(null);
+      setSelectedNewRefBase(null);
       setBranchQuery("");
       return;
     }
 
     setIsBranchMenuOpen(false);
+    setPendingNewRefName(null);
+    setSelectedNewRefBase(null);
+    setBranchQuery("");
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
@@ -483,6 +509,7 @@ export function BranchToolbarBranchSelector({
         input: {
           cwd: branchCwd,
           refName: name,
+          baseRefName,
           switchRef: true,
         },
       });
@@ -538,6 +565,8 @@ export function BranchToolbarBranchSelector({
     }
     if (!open) {
       setBranchQuery("");
+      setPendingNewRefName(null);
+      setSelectedNewRefBase(null);
     }
   };
 
@@ -608,10 +637,15 @@ export function BranchToolbarBranchSelector({
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);
     } else if (itemValue === createBranchItemValue) {
-      createRef(trimmedBranchQuery);
+      setPendingNewRefName(sanitizeNewRefName(trimmedBranchQuery));
+      setSelectedNewRefBase(null);
+      setBranchQuery("");
     } else {
       const refName = branchByName.get(itemValue);
-      if (refName) selectBranch(refName);
+      if (refName) {
+        if (pendingNewRefName !== null) setSelectedNewRefBase(refName.name);
+        else selectBranch(refName);
+      }
     }
   }
 
@@ -646,7 +680,7 @@ export function BranchToolbarBranchSelector({
           value={itemValue}
           onClick={() => selectPickerItem(itemValue)}
         >
-          <span className="truncate">
+          <span className="block min-w-0 truncate">
             {isSelectingWorktreeBase ? "Create worktree branch" : "Create new ref"} &quot;
             {newRefName}&quot;
           </span>
@@ -688,7 +722,8 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       onOpenChange={handleOpenChange}
       onSelectItem={selectPickerItem}
-      value={resolvedActiveBranch}
+      keepOpenOnItemPress={true}
+      value={pendingNewRefName !== null ? newRefBase : resolvedActiveBranch}
       query={branchQuery}
       onQueryChange={setBranchQuery}
       hasNextPage={hasNextPage}
@@ -704,7 +739,42 @@ export function BranchToolbarBranchSelector({
             : "branch"
       }
       extraControls={
-        isSelectingWorktreeBase ? (
+        pendingNewRefName !== null ? (
+          <div className="space-y-2 border-t border-border/60 px-3 py-2">
+            <p className="break-all text-sm font-medium">
+              Create {isSelectingWorktreeBase ? "worktree branch" : "ref"} &quot;{pendingNewRefName}
+              &quot;
+            </p>
+            <p className="break-all text-xs text-muted-foreground">
+              Choose a base ref.{" "}
+              {newRefBase
+                ? `Based on ${newRefBase}`
+                : (newRefDefaultsQuery.error ?? "Loading default ref...")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setBranchQuery(pendingNewRefName);
+                  setPendingNewRefName(null);
+                  setSelectedNewRefBase(null);
+                }}
+              >
+                Back
+              </Button>
+              <Button
+                size="sm"
+                disabled={!canChangeThreadBranch || newRefBase === null || isBranchActionPending}
+                onClick={() => {
+                  if (newRefBase !== null) createRef(pendingNewRefName, newRefBase);
+                }}
+              >
+                Create {isSelectingWorktreeBase ? "worktree branch" : "ref"}
+              </Button>
+            </div>
+          </div>
+        ) : isSelectingWorktreeBase ? (
           <div className="border-t border-border/60 px-3 py-2">
             <label htmlFor={worktreeNameInputId} className="text-xs text-muted-foreground">
               Worktree name
@@ -747,7 +817,7 @@ export function BranchToolbarBranchSelector({
         ) : null
       }
       originControl={
-        isSelectingWorktreeBase
+        pendingNewRefName === null && isSelectingWorktreeBase
           ? { checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }
           : undefined
       }

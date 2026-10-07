@@ -4287,6 +4287,61 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
+    it.effect("creates refs from the selected local or remote base instead of HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const baseCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/base", baseCommit]);
+        yield* driver.createRef({ cwd, refName: "feature/current", switchRef: true });
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "Feature-only commit"]);
+        const featureCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+        assert.notEqual(featureCommit, baseCommit);
+
+        yield* driver.createRef({ cwd, refName: "feature/implicit" });
+        assert.equal(yield* git(cwd, ["rev-parse", "feature/implicit"]), featureCommit);
+
+        yield* driver.createRef({
+          cwd,
+          refName: "feature/from-local",
+          baseRefName: initialBranch,
+        });
+        assert.equal(yield* git(cwd, ["rev-parse", "feature/from-local"]), baseCommit);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/current");
+
+        const created = yield* driver.createRef({
+          cwd,
+          refName: "feature/from-remote",
+          baseRefName: "origin/base",
+          switchRef: true,
+        });
+        assert.equal(created.refName, "feature/from-remote");
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), baseCommit);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/from-remote");
+      }),
+    );
+
+    it.effect("fails without creating a ref when its selected base does not exist", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver
+          .createRef({
+            cwd,
+            refName: "feature/invalid-base",
+            baseRefName: "missing-base",
+            switchRef: true,
+          })
+          .pipe(Effect.flip);
+        assert.equal(yield* git(cwd, ["branch", "--list", "feature/invalid-base"]), "");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
+
     it.effect("lists root and upstream metadata and optionally includes matching remote refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

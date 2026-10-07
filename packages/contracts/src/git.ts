@@ -202,6 +202,7 @@ export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
+  baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   switchRef: Schema.optional(Schema.Boolean),
 });
 export type VcsCreateRefInput = typeof VcsCreateRefInput.Type;
