@@ -203,6 +203,33 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
+function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<TTag>,
+  | EnvironmentRpcStreamFailure<TTag>
+  | EnvironmentRpcUnavailableError
+  | EnvironmentAuthorizationError,
+  EnvironmentSupervisor.EnvironmentSupervisor
+> {
+  return Stream.unwrap(
+    authorizeRequest(tag, input).pipe(
+      Effect.andThen(currentSession()),
+      Effect.map((session) => {
+        const method = session.client[tag] as (
+          input: EnvironmentRpcInput<TTag>,
+        ) => Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>;
+        return method(input);
+      }),
+    ),
+  ).pipe(
+    Stream.withSpan("EnvironmentRpc.runStream", {
+      attributes: { "rpc.method": tag },
+    }),
+  );
+}
+
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   /** Reports protocol or programming defects without changing their recovery policy. */
   readonly onDefect?: (

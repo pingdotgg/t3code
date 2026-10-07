@@ -214,7 +214,9 @@ export function ThreadAutomationsPanel(props: {
                       variant="ghost"
                       part="icon"
                       aria-label={`Run ${task.title} now`}
-                      disabled={!canOperate || busyTaskId !== null || task.lastRunStatus === "running"}
+                      disabled={
+                        !canOperate || busyTaskId !== null || task.lastRunStatus === "running"
+                      }
                       onClick={() => void runNow(task)}
                     >
                       <PlayIcon className="size-3.5" />
