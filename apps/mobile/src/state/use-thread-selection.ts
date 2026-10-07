@@ -158,7 +158,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     return message === null ? null : { message, outcome };
   }, [creationOutcome, queuedMessagesByThreadKey, selectedThreadKey]);
   // Until the creation is delivered the server has no thread to subscribe
-  // to; subscribing anyway would retry "not found" for the whole setup.
+  // to. Every detail reader must use this ref, not the route id: an earlier
+  // read gets a definitive not-found, which the thread state keeps as deleted.
   const selectedThreadDetailRef =
     selectedThreadShell !== null ||
     pendingCreation === null ||

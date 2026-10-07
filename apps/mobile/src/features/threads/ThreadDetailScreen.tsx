@@ -22,6 +22,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   RuntimeRequestId,
+  ScopedThreadRef,
   ServerConfig as T3ServerConfig,
   ThreadId,
   UsageLimitsReport,
@@ -150,6 +151,11 @@ export interface ThreadDetailScreenProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
   readonly selectedThread: EnvironmentThreadShell;
+  /**
+   * Read thread details through this, not `selectedThread.id`: it stays null until
+   * a queued creation reaches the server; see `useThreadSelection`.
+   */
+  readonly selectedThreadDetailRef: ScopedThreadRef | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -318,10 +324,7 @@ const USER_INPUT_TOGGLE_TIMING = {
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
-  const reportedModelSelection = useThreadReportedModelSelection({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
+  const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
@@ -391,14 +394,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
-  const queuedCount = useThreadQueuedCount({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
-  const turnSubagents = useThreadTurnSubagents({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
+  const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
+  const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   // A provider-native subagent shows status instead of a composer.

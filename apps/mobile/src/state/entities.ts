@@ -28,6 +28,9 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
   Atom.withLabel("mobile-server-config:empty"),
 );
+const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
+  Atom.withLabel("mobile-thread:empty"),
+);
 
 /** Resolves when the project event reaches the live client store. */
 export function waitForProject(
@@ -93,6 +96,9 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 const selectReportedModelSelection = (thread: EnvironmentThread | null) =>
   thread === null ? null : deriveReportedModelSelection(thread.projection);
 
-export function useThreadReportedModelSelection(ref: ScopedThreadRef) {
-  return useAtomValue(environmentThreadDetails.threadAtom(ref), selectReportedModelSelection);
+export function useThreadReportedModelSelection(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ATOM : environmentThreadDetails.threadAtom(ref),
+    selectReportedModelSelection,
+  );
 }

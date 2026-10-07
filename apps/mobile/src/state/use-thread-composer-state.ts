@@ -180,6 +180,7 @@ export function useThreadComposerState() {
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
+    selectedThreadDetailRef,
     selectedEnvironmentRuntime,
   } = useThreadSelection();
   const selectedThreadProjection = useSelectedThreadProjection();
@@ -307,12 +308,9 @@ export function useThreadComposerState() {
   // Steering needs a live provider turn the adapter can interrupt; the queue
   // workflow already derives that from the session's capabilities.
   const queueWorkflow = useAtomValue(
-    selectedThreadShell === null
+    selectedThreadDetailRef === null
       ? EMPTY_QUEUE_WORKFLOW_ATOM
-      : environmentThreadDetails.queueWorkflowAtom({
-          environmentId: selectedThreadShell.environmentId,
-          threadId: selectedThreadShell.id,
-        }),
+      : environmentThreadDetails.queueWorkflowAtom(selectedThreadDetailRef),
   );
   const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true;
   const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
