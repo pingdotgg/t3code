@@ -1786,7 +1786,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const base = {
         type: "turn.terminal" as const,
         driver,
-        providerThreadId: state.providerThread.id,
+        // The provider thread the turn started on. After a native fork the
+        // session's own thread has a fresh id, and the terminal must name the
+        // thread the start was recorded against.
+        providerThreadId: turn.providerTurn.providerThreadId,
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
@@ -2825,12 +2828,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * reconciles. Retried a few times; the caller fails everything after that.
      */
     const reconnect = Effect.gen(function* () {
+      // Returned on any failure, including the interrupt a closing session
+      // sends a reconnect still in flight, so a spawned server can idle-stop.
       const scope = yield* Scope.make();
-      const next = yield* borrow.pipe(
-        Effect.provideService(Scope.Scope, scope),
-        Effect.tapError(() => Scope.close(scope, Exit.void)),
-      );
-      const stream = yield* next.events.pipe(Effect.tapError(() => Scope.close(scope, Exit.void)));
+      const { next, stream } = yield* Effect.gen(function* () {
+        const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
+        return { next, stream: yield* next.events };
+      }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
       client = next.client;

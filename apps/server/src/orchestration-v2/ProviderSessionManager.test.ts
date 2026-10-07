@@ -128,6 +128,30 @@ const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+// Once armed, holds the next attach write until the writer is interrupted.
+const layerPausingAttachEventSink = (pause: {
+  readonly armed: Ref.Ref<boolean>;
+  readonly paused: Deferred.Deferred<void>;
+}) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        write: (input) =>
+          Effect.gen(function* () {
+            const attach = input.events.some((event) => event.type === "provider-session.attached");
+            if (attach && (yield* Ref.getAndSet(pause.armed, false))) {
+              yield* Deferred.succeed(pause.paused, undefined);
+              return yield* Effect.never;
+            }
+            return yield* delegate.write(input);
+          }),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
@@ -244,11 +268,13 @@ function makeProviderThread(input: {
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
+  readonly nativeThreadId?: string;
 }): OrchestrationV2ProviderThread {
+  const nativeThreadId = input.nativeThreadId ?? "native-thread";
   return {
     id: input.idAllocator.derive.providerThread({
       driver: CODEX_DRIVER,
-      nativeThreadId: "native-thread",
+      nativeThreadId,
     }),
     driver: CODEX_DRIVER,
     providerInstanceId: modelSelection.instanceId,
@@ -257,7 +283,7 @@ function makeProviderThread(input: {
     ownerNodeId: null,
     nativeThreadRef: {
       driver: CODEX_DRIVER,
-      nativeId: "native-thread",
+      nativeId: nativeThreadId,
       strength: "strong",
     },
     nativeConversationHeadRef: null,
@@ -294,9 +320,29 @@ function makeProviderAdapter(
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
+    readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    /** Registers the process's closeCount finalizer before `beforeOpen` runs. */
+    readonly spawnBeforeOpen?: boolean;
+    /** Completed when a hanging scope close reaches its wedged finalizer. */
+    readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
 ): ProviderAdapterV2Shape {
+  const countClose = Effect.addFinalizer(() =>
+    Ref.update(state, (current) => ({
+      ...current,
+      closeCount: current.closeCount + 1,
+    })),
+  );
+  // Registered after countClose so it runs first on scope close, wedging the
+  // close before the closeCount finalizer, like a provider process that never
+  // yields its message stream.
+  const hangClose = Effect.addFinalizer(() =>
+    (options.scopeCloseReached === undefined
+      ? Effect.void
+      : Deferred.succeed(options.scopeCloseReached, undefined)
+    ).pipe(Effect.andThen(Effect.never)),
+  );
   return {
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
@@ -304,10 +350,20 @@ function makeProviderAdapter(
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
+        if (options.spawnBeforeOpen === true) {
+          yield* countClose;
+          if (options.hangSessionScopeClose === true) yield* hangClose;
+        }
+        if (options.mcpConfigs !== undefined && options.spawnBeforeOpen === true) {
+          yield* Ref.update(options.mcpConfigs, (configs) => [
+            ...configs,
+            McpProviderSession.readMcpProviderSession(input.threadId),
+          ]);
+        }
         if (options.beforeOpen !== undefined) {
           yield* options.beforeOpen(input);
         }
-        if (options.mcpConfigs !== undefined) {
+        if (options.mcpConfigs !== undefined && options.spawnBeforeOpen !== true) {
           yield* Ref.update(options.mcpConfigs, (configs) => [
             ...configs,
             McpProviderSession.readMcpProviderSession(input.threadId),
@@ -329,17 +385,9 @@ function makeProviderAdapter(
             eventQueues,
           };
         });
-        yield* Effect.addFinalizer(() =>
-          Ref.update(state, (current) => ({
-            ...current,
-            closeCount: current.closeCount + 1,
-          })),
-        );
-        if (options.hangSessionScopeClose === true) {
-          // Registered last so it runs first on scope close, wedging the
-          // close before the closeCount finalizer, like a provider process
-          // that never yields its message stream.
-          yield* Effect.addFinalizer(() => Effect.never);
+        if (options.spawnBeforeOpen !== true) {
+          yield* countClose;
+          if (options.hangSessionScopeClose === true) yield* hangClose;
         }
 
         return {
@@ -365,7 +413,7 @@ function makeProviderAdapter(
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => Effect.void,
+          startTurn: () => options.startTurn ?? Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -408,18 +456,29 @@ function layerTest(input: {
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
+  readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
+  /** Once armed, holds the next credential lookup until it is interrupted. */
+  readonly pauseResolve?: {
+    readonly armed: Ref.Ref<boolean>;
+    readonly paused: Deferred.Deferred<void>;
+  };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
+  readonly startTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly spawnBeforeOpen?: boolean;
+  readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
       ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
-      : input.failReleaseEventWrites
-        ? layerFailingReleaseEventSink
-        : layerTestEventSink;
+      : input.pauseAttachWrite !== undefined
+        ? layerPausingAttachEventSink(input.pauseAttachWrite)
+        : input.failReleaseEventWrites
+          ? layerFailingReleaseEventSink
+          : layerTestEventSink;
   const layerRegistry = ProviderAdapterRegistry.layerSingle(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -432,9 +491,18 @@ function layerTest(input: {
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
+      ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
+      ...(input.scopeCloseReached === undefined
+        ? {}
+        : { scopeCloseReached: input.scopeCloseReached }),
     }),
   );
+  const layerConfiguredMcpRegistry =
+    input.pauseResolve === undefined
+      ? layerTestMcpRegistry
+      : layerPausingMcpRegistry(input.pauseResolve);
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -449,7 +517,7 @@ function layerTest(input: {
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
-    layerTestMcpRegistry,
+    layerConfiguredMcpRegistry,
     ProviderSessionManager.layerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
@@ -460,7 +528,7 @@ function layerTest(input: {
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
-          layerTestMcpRegistry,
+          layerConfiguredMcpRegistry,
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
@@ -488,6 +556,28 @@ const layerTestMcpRegistry = Layer.effect(
   Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment)),
   Layer.provide(NodeServices.layer),
 );
+
+const layerPausingMcpRegistry = (pause: {
+  readonly armed: Ref.Ref<boolean>;
+  readonly paused: Deferred.Deferred<void>;
+}) =>
+  Layer.effect(
+    McpSessionRegistry.McpSessionRegistry,
+    Effect.gen(function* () {
+      const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+      return McpSessionRegistry.McpSessionRegistry.of({
+        ...delegate,
+        resolve: (rawToken) =>
+          Ref.getAndSet(pause.armed, false).pipe(
+            Effect.flatMap((armed) =>
+              armed
+                ? Deferred.succeed(pause.paused, undefined).pipe(Effect.andThen(Effect.never))
+                : delegate.resolve(rawToken),
+            ),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestMcpRegistry));
 
 function makeBrowserAccessProject(projectId: ProjectId): Project {
   return {
@@ -997,6 +1087,498 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   }),
 );
 
+it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const handshakeStarted = yield* Deferred.make<void>();
+    const holdHandshake = yield* Ref.make(true);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-interrupted-open");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+
+      const opening = yield* manager
+        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(handshakeStarted);
+      const issued = (yield* Ref.get(mcpConfigs)).at(-1);
+      const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(token);
+      assert.isDefined(yield* registry.resolve(token!));
+
+      // A Stop while the provider is still starting.
+      yield* Fiber.interrupt(opening);
+
+      // The process started for this open is stopped, and the credential minted
+      // for it revoked.
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.isUndefined(yield* registry.resolve(token!));
+      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+
+      // Nothing of the interrupted open is left behind: the next open starts a
+      // fresh process with a fresh credential that a later release revokes,
+      // which a leaked reservation would prevent.
+      yield* Ref.set(holdHandshake, false);
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const replacement = (yield* Ref.get(mcpConfigs)).at(-1);
+      const replacementToken = replacement?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(replacementToken);
+      assert.notEqual(replacementToken, token);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.providerSessions.at(-1)?.status, "ready");
+
+      yield* manager.close(providerSessionId);
+      assert.isUndefined(yield* registry.resolve(replacementToken!));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          mcpConfigs,
+          beforeOpen: () =>
+            Ref.get(holdHandshake).pipe(
+              Effect.flatMap((hold) =>
+                hold
+                  ? Deferred.succeed(handshakeStarted, undefined).pipe(Effect.andThen(Effect.never))
+                  : Effect.void,
+              ),
+            ),
+          // The process is spawned before the handshake that is interrupted.
+          spawnBeforeOpen: true,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope close hangs", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const handshakeStarted = yield* Deferred.make<void>();
+    const scopeCloseReached = yield* Deferred.make<void>();
+    const releaseRetry = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-interrupted-hung-open");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+
+      const opening = yield* manager
+        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(handshakeStarted);
+      const issued = (yield* Ref.get(mcpConfigs)).at(-1);
+      const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(token);
+
+      // The interrupt starts cleanup; the scope close then never finishes.
+      const interrupter = yield* Fiber.interrupt(opening).pipe(Effect.forkChild);
+      yield* Deferred.await(scopeCloseReached);
+
+      // The session cleanup already ran, ahead of the stuck close.
+      assert.isUndefined(yield* registry.resolve(token!));
+      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      // The close is time-boxed, so the interrupter returns and the session's
+      // open lock is free for the next open.
+      yield* TestClock.adjust("30 seconds");
+      yield* Fiber.join(interrupter);
+      yield* Deferred.succeed(releaseRetry, undefined);
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+
+      // Its close hangs as well; release it while the test clock can still move.
+      const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      yield* Fiber.join(stopping);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          mcpConfigs,
+          // The first open hangs in its handshake; the retry completes.
+          beforeOpen: () =>
+            Deferred.isDone(handshakeStarted).pipe(
+              Effect.flatMap((retry) =>
+                retry
+                  ? Deferred.await(releaseRetry)
+                  : Deferred.succeed(handshakeStarted, undefined).pipe(
+                      Effect.andThen(Effect.never),
+                    ),
+              ),
+            ),
+          spawnBeforeOpen: true,
+          hangSessionScopeClose: true,
+          scopeCloseReached,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 releases an idle session whose turn start was stopped", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const startTurnReached = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-stopped-turn-start");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const starting = yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "stopped before the provider accepted it",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(startTurnReached);
+
+      // Stop lands while the provider is still accepting the turn. No terminal
+      // event follows, so the session must count itself idle again.
+      yield* Fiber.interrupt(starting);
+      yield* TestClock.adjust("2 seconds");
+      yield* Effect.yieldNow;
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a shared session busy when another thread's start is stopped early",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const projectId = ProjectId.make("project-provider-session-manager-shared-stopped-start");
+      // Blocks the next project read, so a re-attach can be stopped before its
+      // start marks the session busy.
+      const holdProjectRead = yield* Ref.make(false);
+      const projectReadHeld = yield* Deferred.make<void>();
+      const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
+        getById: (requestedProjectId) =>
+          Ref.get(holdProjectRead).pipe(
+            Effect.flatMap((hold) =>
+              hold
+                ? Deferred.succeed(projectReadHeld, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.succeed(Option.some(makeBrowserAccessProject(requestedProjectId))),
+            ),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadA = ThreadId.make("thread-provider-session-manager-shared-stopped-a");
+        const threadB = ThreadId.make("thread-provider-session-manager-shared-stopped-b");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadA, now, projectId }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadB, now, projectId }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: threadA,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: threadB,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const startTurn = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+            return yield* runtime.startTurn({
+              appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+              threadId,
+              runId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId }),
+              providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+                text: "turn",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            });
+          });
+
+        // B's turn is accepted and still running.
+        yield* startTurn(threadB);
+
+        // A detaches, and its next start is stopped while re-attaching, before
+        // it marks the session busy.
+        yield* manager.detach({ providerSessionId, threadId: threadA });
+        yield* Ref.set(holdProjectRead, true);
+        const startingA = yield* startTurn(threadA).pipe(Effect.forkChild);
+        yield* Deferred.await(projectReadHeld);
+        yield* Fiber.interrupt(startingA);
+
+        // B's running turn keeps the session busy past the idle timeout.
+        yield* TestClock.adjust("2 seconds");
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            projectServiceLayer,
+            serverSettingsLayer: ServerSettings.layerTest({
+              projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: true } },
+            }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a shared session busy when a stopped start still ends its turn",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      // A's adapter start installs its turn, then is stopped mid-request; like
+      // OpenCode2, the adapter still ends that turn with turn.terminal later.
+      const holdStart = yield* Ref.make(false);
+      const startHeld = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadA = ThreadId.make("thread-provider-session-manager-stopped-ended-a");
+        const threadB = ThreadId.make("thread-provider-session-manager-stopped-ended-b");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadA, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadB, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: threadA,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: threadB,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThreadOf = (threadId: ThreadId) =>
+          makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${threadId}`,
+          });
+        const startTurn = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+            return yield* runtime.startTurn({
+              appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+              threadId,
+              runId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId }),
+              providerThread: providerThreadOf(threadId),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+                text: "turn",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            });
+          });
+
+        // B's turn is accepted and still running.
+        yield* startTurn(threadB);
+
+        // A's start is stopped after the adapter began the turn.
+        yield* Ref.set(holdStart, true);
+        const startingA = yield* startTurn(threadA).pipe(Effect.forkChild);
+        yield* Deferred.await(startHeld);
+        yield* Fiber.interrupt(startingA);
+
+        // The adapter ends A's turn anyway.
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThreadOf(threadA).id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-stopped-a",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+
+        // B's running turn keeps the session busy past the idle timeout.
+        yield* TestClock.adjust("2 seconds");
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            startTurn: Ref.get(holdStart).pipe(
+              Effect.flatMap((hold) =>
+                hold
+                  ? Deferred.succeed(startHeld, undefined).pipe(Effect.andThen(Effect.never))
+                  : Effect.void,
+              ),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 stops a session still opening when its layer shuts down", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const handshakeStarted = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-shutdown-during-open");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      // Detached, like an open the layer does not own: only the session
+      // scope's parent can stop its process when the layer closes.
+      yield* manager
+        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+        .pipe(Effect.forkDetach);
+      yield* Deferred.await(handshakeStarted);
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen: () =>
+            Deferred.succeed(handshakeStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          spawnBeforeOpen: true,
+        }),
+      ),
+    );
+
+    assert.equal((yield* Ref.get(state)).closeCount, 1);
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts down", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -1366,6 +1948,228 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a thread attached when an earlier attach of it is interrupted",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const armed = yield* Ref.make(false);
+      const paused = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-attach-race-owner");
+        const threadId = ThreadId.make("thread-provider-session-manager-attach-race");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: owner,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const resume = runtime.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-attach-race",
+          }),
+        });
+
+        // The first attach of the thread is stopped after attaching it, while
+        // a second attach of the same thread is already on its way.
+        yield* Ref.set(armed, true);
+        const first = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(paused);
+        const second = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.interrupt(first);
+        yield* Fiber.join(second);
+
+        // The second attach owns the thread's attachment and credential.
+        const config = McpProviderSession.readMcpProviderSession(threadId);
+        assert.isDefined(config);
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, pauseAttachWrite: { armed, paused } }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a replacement session's attachment when a stale attach is interrupted",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const armed = yield* Ref.make(false);
+      const paused = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const eventStore = yield* EventStore.EventStoreV2;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-stale-attach-owner");
+        const threadId = ThreadId.make("thread-provider-session-manager-stale-attach");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: owner,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        // An attach of the thread to this session stalls mid-write...
+        yield* Ref.set(armed, true);
+        const stale = yield* runtime
+          .resumeThread({
+            threadId,
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+              nativeThreadId: "native-stale-attach",
+            }),
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(paused);
+
+        // ...while the session is replaced and the thread opens the new one.
+        yield* manager.release({ providerSessionId, reason: "runtime_error" });
+        const replacement = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const config = McpProviderSession.readMcpProviderSession(threadId);
+        assert.isDefined(config);
+
+        yield* Fiber.interrupt(stale);
+
+        // The replacement keeps the thread and its credential.
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+          config!.providerSessionId,
+        );
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+        // Still attached: resuming on the replacement does not attach the thread again.
+        const attachedEvents = eventStore
+          .read({ threadId, eventType: "provider-session.attached" })
+          .pipe(
+            Stream.runCollect,
+            Effect.map((events) => events.length),
+          );
+        const attachedBefore = yield* attachedEvents;
+        yield* replacement.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-stale-attach",
+          }),
+        });
+        assert.equal(yield* attachedEvents, attachedBefore);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, pauseAttachWrite: { armed, paused } }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 revokes a reused credential after a resume stopped while checking it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const armed = yield* Ref.make(false);
+      const paused = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-resolve-stop-owner");
+        const threadId = ThreadId.make("thread-provider-session-manager-resolve-stop");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: owner,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const resume = runtime.resumeThread({
+          threadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-resolve-stop",
+          }),
+        });
+        // The thread gets a credential, then detaches and keeps it for a re-attach.
+        yield* resume;
+        yield* manager.detach({ providerSessionId, threadId });
+        const config = McpProviderSession.readMcpProviderSession(threadId);
+        assert.isDefined(config);
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+
+        // A re-attach is stopped while it checks whether that credential is reusable.
+        yield* Ref.set(armed, true);
+        const stopped = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(paused);
+        yield* Fiber.interrupt(stopped);
+
+        // Nothing holds the credential now, so a terminal release revokes it.
+        yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        assert.isUndefined(yield* registry.resolve(token));
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, pauseResolve: { armed, paused } }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP credentials", () =>
@@ -3011,17 +3815,20 @@ it.effect(
           providerInstanceId: modelSelection.instanceId,
           threadId: firstThreadId,
         });
+        // Each thread has its own native thread on the shared session.
         const firstProviderThread = makeProviderThread({
           idAllocator,
           threadId: firstThreadId,
           providerSessionId,
           now,
+          nativeThreadId: "native-thread-a",
         });
         const secondProviderThread = makeProviderThread({
           idAllocator,
           threadId: secondThreadId,
           providerSessionId,
           now,
+          nativeThreadId: "native-thread-b",
         });
         const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
         const secondRunId = idAllocator.derive.run({ threadId: secondThreadId, ordinal: 1 });
