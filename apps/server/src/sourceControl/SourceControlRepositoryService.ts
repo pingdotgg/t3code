@@ -27,6 +27,7 @@ import {
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { missingHttpsCredentialDetail } from "../vcs/gitCredentialHint.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -336,9 +337,10 @@ export const make = Effect.gen(function* () {
               operation: "cloneRepository",
               provider: input.provider ?? "unknown",
               detail:
-                stderrTail.length > 0
+                missingHttpsCredentialDetail(stderrTail.join("\n")) ??
+                (stderrTail.length > 0
                   ? stderrTail.join(" ")
-                  : "The repository could not be cloned.",
+                  : "The repository could not be cloned."),
               cause,
             }),
         ),

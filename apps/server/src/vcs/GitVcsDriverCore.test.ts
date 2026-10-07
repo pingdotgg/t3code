@@ -838,6 +838,29 @@ it.effect.each([
     expected: "could not authenticate",
   },
   {
+    name: "no HTTPS credential for GitHub",
+    stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    expected: "Run `gh auth login`, then `gh auth setup-git`",
+  },
+  {
+    name: "no HTTPS credential for another host",
+    stderr:
+      "fatal: could not read Password for 'https://me@git.example.com': terminal prompts disabled",
+    expected: "Set up a Git credential helper for git.example.com",
+  },
+  {
+    name: "no HTTPS credential for an IPv6 host with a username",
+    stderr:
+      "fatal: could not read Password for 'https://secret-fetch-token@[::1]:8443': terminal prompts disabled",
+    expected: "Set up a Git credential helper for [::1] on",
+  },
+  {
+    name: "no HTTPS credential for an unparseable host",
+    stderr:
+      "fatal: could not read Password for 'https://me@secret-fetch-token%40git.example.com': terminal prompts disabled",
+    expected: "could not authenticate",
+  },
+  {
     name: "DNS failure",
     stderr: "fatal: Could not resolve host: example.com",
     expected: "could not reach the remote",

@@ -102,6 +102,11 @@ clone runs in the background: you can write your first prompt, and sending waits
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer.
 
+Clones and fetches run on the T3 Code server and cannot prompt for a password, so an HTTPS URL
+for a private repository needs Git credentials on that machine. A GitHub token in Settings does
+not cover Git itself: for GitHub, run `gh auth login` and then `gh auth setup-git` on the server,
+or use the repository's SSH URL.
+
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.

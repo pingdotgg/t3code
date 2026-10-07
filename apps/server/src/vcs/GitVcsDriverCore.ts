@@ -36,6 +36,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { missingHttpsCredentialDetail } from "./gitCredentialHint.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -550,6 +551,8 @@ function isMissingWorktreeStderr(stderr: string): boolean {
 // Fetch stderr can contain remote credentials. Only fixed diagnoses may enter
 // persisted errors; unrecognized output keeps the generic failure message.
 function fetchFailureDetail(stderr: string): string | undefined {
+  const missingCredential = missingHttpsCredentialDetail(stderr);
+  if (missingCredential !== undefined) return missingCredential;
   const lines = stderr.split(/\r?\n/).map((line) => line.trim());
   if (
     lines.some((line) =>

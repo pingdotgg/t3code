@@ -407,6 +407,48 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("says how to set up credentials when an HTTPS clone has none", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-no-creds-" });
+    const error = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.url,
+          destinationPath: path.join(parent, "t3code"),
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: (input) =>
+              Effect.gen(function* () {
+                yield* (
+                  input.progress?.onStderrLine?.(
+                    "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+                  ) ?? Effect.void
+                );
+                return yield* new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  detail: "Git command exited with a non-zero status.",
+                  exitCode: 128,
+                });
+              }),
+          },
+        }),
+      ),
+    );
+
+    assert.include(error.detail, "no HTTPS credentials for github.com");
+    assert.include(error.detail, "`gh auth setup-git`");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("strips embedded credentials from the remote URL it reports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
