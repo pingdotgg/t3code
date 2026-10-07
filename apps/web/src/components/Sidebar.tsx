@@ -606,7 +606,7 @@ function SnoozeMenuButton(props: {
             // size is set here because MenuItem owns its own effects.
             <div
               key={preset.id}
-              className="flex items-center [&>[data-favorite-remove]]:w-0 [&>[data-favorite-remove]]:overflow-hidden [&>[data-favorite-remove]]:px-0 [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:w-7 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:w-7 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:w-7 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
+              className="flex items-center [&>[data-favorite-remove]]:w-0 [&>[data-favorite-remove]]:overflow-hidden [&>[data-favorite-remove]]:border-0 [&>[data-favorite-remove]]:px-0 [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:w-7 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:w-7 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:w-7 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
             >
               {item}
               <MenuItem
