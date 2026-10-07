@@ -17,7 +17,6 @@ import {
   requiredScopeForDeviceList,
 } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
-import { rpcInstrumentationLayer } from "../observability/RpcInstrumentation.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -152,7 +151,6 @@ describe("RPC scope middleware", () => {
               Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
             ),
             RpcAuthorization.layer([AuthOrchestrationReadScope]),
-            rpcInstrumentationLayer,
           ),
         ),
       );

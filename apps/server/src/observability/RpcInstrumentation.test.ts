@@ -23,7 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { RPC_REQUIRED_SCOPES } from "../auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
-import { rpcInstrumentationLayer } from "./RpcInstrumentation.ts";
+import { RpcInstrumentation, rpcInstrumentationLayer } from "./RpcInstrumentation.ts";
 
 type WsRpcMethod = keyof typeof RPC_REQUIRED_SCOPES;
 
@@ -34,7 +34,7 @@ const groupOf = <const Tags extends ReadonlyArray<WsRpcMethod>>(...tags: Tags) =
       (tag): tag is Exclude<WsRpcMethod, Tags[number]> =>
         !(tags as ReadonlyArray<string>).includes(tag),
     ),
-  );
+  ).middleware(RpcInstrumentation);
 
 /** The middleware ws.ts installs for a connection with `scopes`. */
 const connectionMiddleware = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>

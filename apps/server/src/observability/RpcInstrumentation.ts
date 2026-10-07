@@ -1,21 +1,11 @@
-import {
-  ORCHESTRATION_V2_WS_METHODS,
-  RpcInstrumentation,
-  WS_METHODS,
-  type WsRpcGroup,
-} from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
+import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
-import * as RpcSchema from "effect/rpc/RpcSchema";
+import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
-import { outcomeFromExit } from "./Attributes.ts";
-import { metricAttributes, rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -216,27 +206,13 @@ const RPC_METHODS_WITH_TRACING_DISABLED: ReadonlySet<string> = new Set([
   WS_METHODS.serverSignalProcess,
 ]);
 
-const recordRpcMetrics = (
-  method: string,
-  startedAt: bigint,
-  exit: Exit.Exit<unknown, unknown>,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    yield* Metric.update(
-      Metric.withAttributes(rpcRequestDuration, metricAttributes({ method })),
-      Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
-    );
-    yield* Metric.update(
-      Metric.withAttributes(
-        rpcRequestsTotal,
-        metricAttributes({
-          method,
-          outcome: outcomeFromExit(exit),
-        }),
-      ),
-      1,
-    );
-  });
+/**
+ * Records each WebSocket RPC's span and request metrics. `ws.ts` adds it to the server's group
+ * after `RpcScopeAuthorization`, so it wraps authorization and also records rejected calls.
+ */
+export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation>()(
+  "t3/server/RpcInstrumentation",
+) {}
 
 /**
  * Wraps each WebSocket RPC call in its `ws.rpc.<method>` span and records its request counter and
@@ -246,17 +222,9 @@ const recordRpcMetrics = (
  */
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
-  const measured = RpcSchema.isStreamSchema(rpc.successSchema)
-    ? Effect.flatMap(Clock.monotonicTimeNanos, (startedAt) =>
-        Effect.onExit(effect, (exit) => recordRpcMetrics(method, startedAt, exit)),
-      )
-    : effect.pipe(
-        withMetrics({
-          counter: rpcRequestsTotal,
-          timer: rpcRequestDuration,
-          attributes: { method },
-        }),
-      );
+  const measured = effect.pipe(
+    withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+  );
 
   if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
     return measured.pipe(Effect.provideService(References.TracerEnabled, false));
