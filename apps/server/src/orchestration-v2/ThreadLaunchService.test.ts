@@ -1138,6 +1138,57 @@ it.effect("runs a worktree request against a non-repository project as a root la
   }),
 );
 
+it.effect("replays a degraded worktree request without detecting the repository again", () =>
+  Effect.gen(function* () {
+    // The second attempt would fail if it detected again. Its run already recorded
+    // the folder the first attempt claimed, so the replay must not depend on it.
+    let detections = 0;
+    const harness = makeHarness({
+      isGitRepository: () =>
+        Effect.sync(() => ++detections).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 1
+              ? Effect.succeed(false)
+              : Effect.fail(
+                  new GitCommandError({
+                    operation: "isGitRepository",
+                    command: "git-rev-parse",
+                    cwd: "/scratch",
+                    detail: "Git is unreachable right now.",
+                  }),
+                ),
+          ),
+        ),
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        folderForThread: (input) =>
+          Effect.sync(() =>
+            input.projectId === projectId
+              ? Option.some("/scratch/folder-replayed-worktree")
+              : Option.none(),
+          ),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:scratch-worktree-replay",
+        thread: "thread:launch:scratch-worktree-replay",
+        message: "Review this",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      const launched = yield* launches.launch(input);
+      assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-replayed-worktree");
+
+      const replayed = yield* launches.launch(input);
+      assert.isTrue(replayed.resumed);
+      assert.equal(detections, 1);
+      assert.equal(replayed.projection.thread.worktreePath, "/scratch/folder-replayed-worktree");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect(
   "fails a worktree request against a non-Git repository instead of running it at the root",
   () =>

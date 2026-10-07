@@ -743,14 +743,26 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
+        // Derived from the command id, so a replay of an accepted launch is known
+        // before any detection runs.
+        const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+        const messageWasAlreadyAccepted =
+          input.initialMessage === undefined
+            ? false
+            : Option.isSome(yield* readReceipt(input, messageCommandId));
+
         // A worktree needs a Git repository. The Scratch project is a folder, not
         // a checkout, so a worktree request there becomes a root launch, which the
         // block below answers with a folder of its own. Resolved before the
         // strategy is recorded on the run, so a retry replays what happened. Only
         // "no VCS at all" degrades: a non-Git repository keeps its own
         // unsupported-VCS failure instead of being treated as a shared folder.
+        // An accepted launch already recorded the answer its run will prepare, so
+        // detecting again could only fail a replay or contradict what the thread
+        // bound.
         const requestedStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "worktree" &&
+          !messageWasAlreadyAccepted &&
           !(yield* git
             .isGitRepository(project.workspaceRoot)
             .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))))
@@ -820,11 +832,7 @@ const make = Effect.gen(function* () {
         }
 
         let runId: RunId | null = null;
-        let messageWasAlreadyAccepted = false;
         if (input.initialMessage !== undefined) {
-          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
-          const messageReceipt = yield* readReceipt(input, messageCommandId);
-          messageWasAlreadyAccepted = Option.isSome(messageReceipt);
           const messageId =
             input.initialMessage.messageId ??
             (yield* ids.allocate
