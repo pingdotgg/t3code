@@ -225,6 +225,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server lists and runs plugin actions (`pluginActions.*`). Absent on older
       servers, so clients must not call or subscribe to those methods. */
   pluginActions: Schema.optionalKey(Schema.Boolean),
+  /** Server serves isolated plugin views (`pluginViews.*`). Absent on older
+      servers, so clients must not call or subscribe to those methods. */
+  pluginViews: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

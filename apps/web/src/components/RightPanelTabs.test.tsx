@@ -55,6 +55,27 @@ describe("right panel surface actions", () => {
       unavailableReason: "Diff is only available for server threads in Git repositories.",
     });
   });
+
+  it("lists offered plugin views after the panels, with no launcher letter", () => {
+    const actions = rightPanelSurfaceActions({
+      ...inputs(),
+      pluginViews: [
+        { surfaceId: "plugin-view:installation-1:board", title: "Board", onOpen: () => undefined },
+      ],
+    });
+    expect(actions.at(-1)).toMatchObject({
+      id: "plugin-view:installation-1:board",
+      label: "Board",
+      shortcut: "",
+      available: true,
+    });
+    // The Mod+T menu and the empty launcher match letters; a plugin view never claims one.
+    for (const key of ["b", "Board", ""]) {
+      expect(surfaceShortcutActionForKey(actions, shortcutEvent(key))?.id).not.toBe(
+        "plugin-view:installation-1:board",
+      );
+    }
+  });
 });
 
 function shortcutEvent(

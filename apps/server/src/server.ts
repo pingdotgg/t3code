@@ -70,6 +70,7 @@ import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
+import * as PluginViews from "./plugins/PluginViews.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -429,7 +430,11 @@ const layerDevice = DeviceService.layer.pipe(
 );
 
 // Zero enabled plugins means zero plugin processes; each starts on first use.
-const layerPlugin = Layer.mergeAll(PluginTools.layer, PluginSettings.layer()).pipe(
+const layerPlugin = Layer.mergeAll(
+  PluginTools.layer,
+  PluginSettings.layer(),
+  PluginViews.layer,
+).pipe(
   Layer.provideMerge(PluginCatalog.layer()),
   Layer.provide(PluginSupervisor.layer()),
   // Shared with the event feed: the catalogue starts event cursors on enable.

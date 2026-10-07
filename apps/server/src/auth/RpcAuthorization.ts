@@ -136,6 +136,10 @@ export const RPC_REQUIRED_SCOPES = {
   // turn; it cannot change what code runs.
   [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
+  // A view call runs the plugin's own `view:` handlers, like an action a client takes.
+  [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

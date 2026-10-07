@@ -33,6 +33,7 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { shouldVetoViewFrameNavigation } from "./pluginViewNavigation.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
@@ -646,6 +647,23 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
+    });
+    // Plugin views may not navigate themselves; see pluginViewNavigation.ts.
+    window.webContents.on("will-frame-navigate", (event) => {
+      if (event.isMainFrame) return;
+      if (
+        !shouldVetoViewFrameNavigation({
+          url: event.url,
+          frame: event.frame,
+          initiator: event.initiator,
+          mainFrame: window.webContents.mainFrame,
+        })
+      )
+        return;
+      event.preventDefault();
+      void runPromise(
+        logWindowInfo("refused a plugin view navigation", { url: event.url.slice(0, 120) }),
+      );
     });
 
     // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the

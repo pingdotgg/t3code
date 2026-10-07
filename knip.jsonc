@@ -34,6 +34,7 @@
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
         "src/plugins/testFixtures/**/*.mjs",
+        "src/plugins/testFixtures/**/*.js",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.

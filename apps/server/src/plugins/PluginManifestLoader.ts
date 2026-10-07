@@ -4,6 +4,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_VIEWS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
   type PluginInstallationId,
@@ -21,6 +22,7 @@ const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
   "actions",
+  PLUGIN_VIEWS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;

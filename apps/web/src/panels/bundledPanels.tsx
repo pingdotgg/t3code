@@ -1,4 +1,4 @@
-import { FileDiff, Files, Globe2, Smartphone, TerminalSquare } from "lucide-react";
+import { FileDiff, Files, Globe2, Puzzle, Smartphone, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -73,9 +73,23 @@ const bundledPanels = createPanelRegistry([
     unavailableReason: "Files are only available when a project is open.",
     load: () => import("./files/FilesSidePanel"),
   },
+  {
+    // One definition hosts every plugin view. Its launcher rows and tab titles come from the
+    // environment's views snapshot, so it has no letter of its own.
+    id: "plugin-view",
+    title: "Plugin view",
+    icon: Puzzle,
+    launcherKey: "",
+    unavailableHint: "Available when an enabled plugin offers a view.",
+    unavailableReason: "Plugin views appear when an enabled plugin in this environment offers one.",
+    load: () => import("./pluginView/PluginViewSidePanel"),
+  },
 ]);
 
 export type SidePanelId = (typeof bundledPanels.definitions)[number]["id"];
+
+/** Panels the launcher lists by their own definition; plugin views are listed per view. */
+export type LauncherSidePanelId = Exclude<SidePanelId, "plugin-view">;
 
 /** Metadata for launchers and tabs; reading it never loads a panel body. */
 export function getSidePanelMetadata(id: SidePanelId): PanelMetadata {

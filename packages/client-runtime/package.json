@@ -187,6 +187,18 @@
       "types": "./src/state/pluginActions.ts",
       "default": "./src/state/pluginActions.ts"
     },
+    "./state/pluginViews": {
+      "types": "./src/state/pluginViews.ts",
+      "default": "./src/state/pluginViews.ts"
+    },
+    "./plugin-views/document": {
+      "types": "./src/pluginViews/viewDocument.ts",
+      "default": "./src/pluginViews/viewDocument.ts"
+    },
+    "./plugin-views/bridge": {
+      "types": "./src/pluginViews/viewBridge.ts",
+      "default": "./src/pluginViews/viewBridge.ts"
+    },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
