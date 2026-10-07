@@ -631,6 +631,10 @@
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
     },
+    "./cuaDriverHostOptions": {
+      "types": "./src/cuaDriverHostOptions.ts",
+      "import": "./src/cuaDriverHostOptions.ts"
+    },
     "./cuaDriverRelease": {
       "types": "./src/cuaDriverRelease.ts",
       "import": "./src/cuaDriverRelease.ts"

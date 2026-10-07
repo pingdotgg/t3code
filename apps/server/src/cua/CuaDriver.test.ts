@@ -56,6 +56,9 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
     Effect.succeed("/driver"),
     Effect.succeed({
       EmbeddedCuaDriverHost: class {
+        static withOptions() {
+          return new this();
+        }
         constructor() {
           creates++;
         }
@@ -127,6 +130,9 @@ describe("Cua Driver failure boundaries", () => {
         Effect.succeed("/driver"),
         Effect.succeed({
           EmbeddedCuaDriverHost: class {
+            static withOptions() {
+              return new this();
+            }
             constructor() {
               throw cause;
             }

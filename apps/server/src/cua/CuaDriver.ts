@@ -6,7 +6,12 @@ import type {
   DesktopCuaDriverReport,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
+import { cuaDriverHostOptions } from "@t3tools/shared/cuaDriverHostOptions";
+import type {
+  EmbeddedCuaDriverHost,
+  EmbeddedDriverConnection,
+  EmbeddedDriverHostOptions,
+} from "@trycua/cua-driver/embedded";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -315,10 +320,11 @@ export const make = Effect.fn("CuaDriver.make")(function* (
 });
 
 type StandaloneHostModule = {
-  readonly EmbeddedCuaDriverHost: new (
-    path: string,
-    hostBundleId: string,
-  ) => Pick<EmbeddedCuaDriverHost, "start" | "stop" | "waitForExit" | "uniffiDestroy">;
+  readonly EmbeddedCuaDriverHost: {
+    readonly withOptions: (
+      options: EmbeddedDriverHostOptions,
+    ) => Pick<EmbeddedCuaDriverHost, "start" | "stop" | "waitForExit" | "uniffiDestroy">;
+  };
 };
 
 // A Node single-executable cannot `import()` the external SDK from disk, and the SDK exposes
@@ -352,6 +358,7 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
   resolveBinary: Effect.Effect<string, CuaDriverInstallError>,
   loadEmbedded: Effect.Effect<StandaloneHostModule, CuaDriverSdkLoadError>,
 ) {
+  const platform = yield* HostProcess.Platform;
   const mutex = yield* Semaphore.make(1);
   let occupied = false;
   // Return a lazy acquisition effect so one factory owns all subsequent host attempts.
@@ -363,7 +370,10 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
       const binaryPath = yield* resolveBinary;
       const { EmbeddedCuaDriverHost } = yield* loadEmbedded;
       const host = yield* Effect.try({
-        try: () => new EmbeddedCuaDriverHost(binaryPath, "com.t3tools.t3code.server"),
+        try: () =>
+          EmbeddedCuaDriverHost.withOptions(
+            cuaDriverHostOptions(binaryPath, "com.t3tools.t3code.server", platform, process.env),
+          ),
         catch: (cause) => new CuaDriverHostCreateError({ binaryPath, cause }),
       });
       occupied = true;
