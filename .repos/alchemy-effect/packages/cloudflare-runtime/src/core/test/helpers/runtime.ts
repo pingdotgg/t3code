@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
 import * as Internet from "../../globals/Internet.ts";
@@ -67,7 +67,7 @@ export const localRuntimeLayer = Runtime.RuntimeLive.pipe(
   Layer.provideMerge(Registry.RegistryLive),
   Layer.provideMerge(Paths.PathsLive),
   Layer.provideMerge(Docker.DockerLive),
-  Layer.provide(Workerd.WorkerdLive),
+  Layer.provideMerge(Workerd.WorkerdLive),
   Layer.provide(configProvider()),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
 );

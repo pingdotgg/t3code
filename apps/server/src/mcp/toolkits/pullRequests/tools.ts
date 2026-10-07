@@ -1,5 +1,6 @@
 import {
   McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
   PositiveInt,
   PullRequestState,
   ThreadPullRequestLinkSource,
@@ -7,15 +8,17 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as Tool from "effect/unstable/ai/Tool";
-import * as Toolkit from "effect/unstable/ai/Toolkit";
+import * as Tool from "effect/ai/Tool";
+import * as Toolkit from "effect/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,
 ];
@@ -96,15 +99,6 @@ export class PullRequestThreadRequiredError extends Schema.TaggedError<PullReque
   }
 }
 
-export class PullRequestThreadAboveLimitsError extends Schema.TaggedError<PullRequestThreadAboveLimitsError>()(
-  "PullRequestThreadAboveLimitsError",
-  { threadId: Schema.String },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} cannot be changed from here: it runs with broader permissions than this caller, or the calling thread has no active run.`;
-  }
-}
-
 export class PullRequestThreadNotFoundError extends Schema.TaggedError<PullRequestThreadNotFoundError>()(
   "PullRequestThreadNotFoundError",
   { threadId: Schema.String },
@@ -150,6 +144,15 @@ export class PullRequestNotOpenError extends Schema.TaggedError<PullRequestNotOp
   }
 }
 
+export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRequestWatchFromSubagentError>()(
+  "PullRequestWatchFromSubagentError",
+  {},
+) {
+  override get message(): string {
+    return "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
+  }
+}
+
 export class PullRequestListFailedError extends Schema.TaggedError<PullRequestListFailedError>()(
   "PullRequestListFailedError",
   { cause: Schema.Defect() },
@@ -160,18 +163,19 @@ export class PullRequestListFailedError extends Schema.TaggedError<PullRequestLi
 }
 
 export const PullRequestToolError = Schema.Union([
+  OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
   PullRequestUrlInvalidError,
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestThreadRequiredError,
-  PullRequestThreadAboveLimitsError,
   PullRequestThreadNotFoundError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
   PullRequestWatchFailedError,
   PullRequestNotOpenError,
+  PullRequestWatchFromSubagentError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -289,7 +293,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Have T3 Code watch an open pull request for this thread, linking it first if needed. T3 Code checks it every minute and wakes you with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Use this to monitor or babysit a pull request instead of polling, sleeping, or running a watcher. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. Watching ends when the pull request merges or closes, when its thread settles, when T3 Code cannot read it for 15 minutes, or when you call unwatch_pull_request. Unsettle the thread before starting a new watch.",
+    "Have T3 Code watch an open pull request for this thread, linking it first if needed. T3 Code checks it every two minutes and wakes you with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict with its base. Use this to monitor or babysit a pull request instead of polling, sleeping, or running a watcher. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. While T3 Code watches, the thread stays in the user's Working list, not their inbox. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox. Watching ends when the pull request merges or closes, when its thread settles or is archived, when T3 Code fails to read it 8 times in a row (a host rate limit only delays it), when the user stops this thread, or when you call unwatch_pull_request. Unsettle the thread before starting a new watch. A subagent cannot watch: its parent thread owns the pull request.",
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,

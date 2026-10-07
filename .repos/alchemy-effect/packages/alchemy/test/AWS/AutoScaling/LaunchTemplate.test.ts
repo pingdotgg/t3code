@@ -16,45 +16,55 @@ const { test } = Test.make({ providers: AWS.providers() });
 // paginated result. (The greenfield read path depends on the distilled `ec2`
 // patch that types `InvalidLaunchTemplateName.NotFoundException` on
 // `describeLaunchTemplates` — landed in patches/ec2.json.)
-test.provider("list enumerates the deployed launch template", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed launch template",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    // Launch templates do not validate the AMI at creation time; fall back to a
-    // syntactically valid id if the lookup returns nothing.
-    const imageId = amazonLinux2023();
+      // Launch templates do not validate the AMI at creation time; fall back to a
+      // syntactically valid id if the lookup returns nothing.
+      const imageId = amazonLinux2023();
 
-    const template = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* LaunchTemplate("ListLaunchTemplate", {
-          launchTemplateName: "alchemy-test-lt-list",
-          imageId,
-          instanceType: "t3.micro",
-        });
-      }),
-    );
-
-    const provider = yield* Provider.findProvider(LaunchTemplate);
-    const all = yield* provider.list();
-
-    expect(
-      all.some((t) => t.launchTemplateId === template.launchTemplateId),
-    ).toBe(true);
-
-    yield* stack.destroy();
-
-    // Out-of-band proof the template is gone: describing the deleted name
-    // raises the typed `InvalidLaunchTemplateName.NotFoundException`.
-    const remaining = yield* ec2
-      .describeLaunchTemplates({
-        LaunchTemplateNames: ["alchemy-test-lt-list"],
-      } as any)
-      .pipe(
-        Effect.map((r) => (r.LaunchTemplates ?? []).length),
-        Effect.catchTag("InvalidLaunchTemplateName.NotFoundException", () =>
-          Effect.succeed(0),
-        ),
+      const template = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* LaunchTemplate("ListLaunchTemplate", {
+            launchTemplateName: "alchemy-test-lt-list",
+            imageId,
+            instanceType: "t3.micro",
+          });
+        }),
       );
-    expect(remaining).toBe(0);
-  }),
+
+      const provider = yield* Provider.findProvider(LaunchTemplate);
+      const all = yield* provider.list();
+
+      expect(
+        all.some((t) => t.launchTemplateId === template.launchTemplateId),
+      ).toBe(true);
+
+      yield* stack.destroy();
+
+      // Out-of-band proof the template is gone: describing the deleted name
+      // raises the typed `InvalidLaunchTemplateName.NotFoundException`.
+      const remaining = yield* ec2
+        .describeLaunchTemplates({
+          LaunchTemplateNames: ["alchemy-test-lt-list"],
+        } as any)
+        .pipe(
+          Effect.map((r) => (r.LaunchTemplates ?? []).length),
+          Effect.catchTag("InvalidLaunchTemplateName.NotFoundException", () =>
+            Effect.succeed(0),
+          ),
+        );
+      expect(remaining).toBe(0);
+    }),
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:autoscaling",
+      "provider:aws:ec2",
+      "live",
+    ],
+  },
 );

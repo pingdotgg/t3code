@@ -28,7 +28,7 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { Atom, AsyncResult } from "effect/unstable/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
@@ -1783,6 +1783,26 @@ describe("proactive completed diff guard", () => {
         checkpoint: changedCheckpoint,
         isGitRepo: true,
         activeSurfaceKind: "pull-request",
+      }),
+    ).toBe("ignore");
+  });
+
+  it("leaves an already open diff and its chosen scope alone", () => {
+    const largeCheckpoint = {
+      status: "ready",
+      files: Array.from({ length: 3 }, (_, index) => ({
+        path: `src/app-${index}.ts`,
+        kind: "modified" as const,
+        additions: 20,
+        deletions: 0,
+      })),
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: largeCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "diff",
       }),
     ).toBe("ignore");
   });

@@ -18,7 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../../config.ts";
@@ -31,7 +31,7 @@ import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";

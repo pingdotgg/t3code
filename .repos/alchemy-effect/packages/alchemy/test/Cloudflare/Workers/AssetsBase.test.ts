@@ -101,5 +101,8 @@ test.provider(
         ),
       );
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 300_000,
+  },
 );

@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
 import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
@@ -131,7 +131,6 @@ export const preparePairingRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = bearerConnectionId(descriptor.environmentId, target.httpBaseUrl);

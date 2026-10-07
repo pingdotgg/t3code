@@ -25,7 +25,9 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -35,9 +37,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as NodeCrypto from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -597,11 +599,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   AcpRegistryCatalog["Service"],
   never,
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
   | ServerSettings.ServerSettingsService
 > {
+  const crypto = yield* Crypto.Crypto;
+  const sha256Hex = (data: Uint8Array) =>
+    crypto.digest("SHA-256", data).pipe(Effect.map(Hex.encode), Effect.orDie);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
@@ -731,17 +737,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     .readFileString(registryCachePath)
     .pipe(Effect.flatMap(decodeRegistryText), Effect.option);
 
-  const writeRegistryCache = (text: string) => {
-    const temporaryPath = `${registryCachePath}.${process.pid}-${NodeCrypto.randomUUID()}.tmp`;
-    return fileSystem
-      .makeDirectory(registryDirectory, { recursive: true })
-      .pipe(
-        Effect.andThen(fileSystem.writeFileString(temporaryPath, text)),
-        Effect.andThen(fileSystem.rename(temporaryPath, registryCachePath)),
-        Effect.ensuring(fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore)),
-        Effect.ignore,
-      );
-  };
+  const writeRegistryCache = (text: string) =>
+    crypto.randomUUIDv4.pipe(
+      Effect.flatMap((id) => {
+        const temporaryPath = `${registryCachePath}.${process.pid}-${id}.tmp`;
+        return fileSystem
+          .makeDirectory(registryDirectory, { recursive: true })
+          .pipe(
+            Effect.andThen(fileSystem.writeFileString(temporaryPath, text)),
+            Effect.andThen(fileSystem.rename(temporaryPath, registryCachePath)),
+            Effect.ensuring(fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore)),
+          );
+      }),
+      Effect.ignore,
+    );
 
   const fetchRegistry = Effect.fn("AcpRegistryCatalog.fetchRegistry")(function* () {
     yield* assertHttpsUrl(registryUrl, "ACP Registry index URL must use HTTPS.");
@@ -928,17 +937,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         );
   });
 
-  const packageReceiptPath = (
-    agentId: string,
-    distribution: "npx" | "uvx",
-    managerPath: string,
-  ) => {
-    const managerId = NodeCrypto.createHash("sha256")
-      .update(`${distribution}\0${managerPath}`)
-      .digest("hex")
-      .slice(0, 16);
-    return path.join(packageReceiptsDirectory, `${agentId}-${managerId}.json`);
-  };
+  const packageReceiptPath = (agentId: string, distribution: "npx" | "uvx", managerPath: string) =>
+    sha256Hex(new TextEncoder().encode(`${distribution}\0${managerPath}`)).pipe(
+      Effect.map((digest) =>
+        path.join(packageReceiptsDirectory, `${agentId}-${digest.slice(0, 16)}.json`),
+      ),
+    );
 
   const readPackageReceipt = Effect.fn("AcpRegistryCatalog.readPackageReceipt")(function* (
     agent: AcpRegistryAgent,
@@ -947,7 +951,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     managerPath: string,
   ) {
     const receipt = yield* fileSystem
-      .readFileString(packageReceiptPath(agent.id, distribution, managerPath))
+      .readFileString(yield* packageReceiptPath(agent.id, distribution, managerPath))
       .pipe(
         Effect.map(decodePackageInstallReceipt),
         Effect.orElseSucceed(() => Option.none()),
@@ -991,7 +995,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const writePackageReceipt = Effect.fn("AcpRegistryCatalog.writePackageReceipt")(
     function* (receipt: AcpRegistryPackageInstallReceipt) {
-      const receiptPath = packageReceiptPath(
+      const receiptPath = yield* packageReceiptPath(
         receipt.agentId,
         receipt.distribution,
         receipt.managerPath,
@@ -1409,7 +1413,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             ),
         }),
       );
-      const hash = NodeCrypto.createHash("sha256");
+      // Hash while streaming: archives can be up to MAX_ARCHIVE_BYTES, and
+      // Effect's Crypto only digests a whole buffer.
+      const hash = sha256.create();
       let downloadedBytes = 0;
       yield* response.stream.pipe(
         Stream.tap((chunk) => {
@@ -1447,7 +1453,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         }),
       );
       if (target.sha256 !== undefined) {
-        const actual = hash.digest("hex");
+        const actual = Hex.encode(hash.digest());
         if (actual !== target.sha256.toLowerCase()) {
           return yield* new AcpRegistryError({
             reason: "checksum_mismatch",
@@ -1916,16 +1922,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ),
       )
       .pipe(
-        Effect.catchTag(
-          "ServerSettingsError",
-          (cause) =>
+        Effect.catchTags({
+          ServerSettingsError: (cause) =>
             new AcpRegistryError({
               reason: "install_failed",
               detail:
                 "Could not read provider settings while checking managed ACP binary references.",
               cause,
             }),
-        ),
+        }),
       );
 
   return AcpRegistryCatalog.of({

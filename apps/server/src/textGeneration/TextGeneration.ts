@@ -9,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";

@@ -9,11 +9,13 @@ import PrismaHostContainerWorker from "./worker.ts";
  * Dev-only stack for the #1334 Prisma-from-container path: a local
  * `@prisma/dev` database handed to an arbitrary image as `DATABASE_URL`.
  */
+export const state = Alchemy.inMemoryState();
+
 export default Alchemy.Stack(
   "PrismaHostContainerStack",
   {
     providers: Layer.merge(Cloudflare.providers(), Prisma.providers()),
-    state: Cloudflare.state(),
+    state,
   },
   Effect.gen(function* () {
     const worker = yield* PrismaHostContainerWorker;

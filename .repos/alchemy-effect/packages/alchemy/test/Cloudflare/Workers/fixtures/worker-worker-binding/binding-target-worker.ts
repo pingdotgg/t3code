@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Effect-native worker that exposes a single RPC method (`greet`) plus a

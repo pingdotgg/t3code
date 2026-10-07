@@ -1,3 +1,4 @@
+import { type EnvironmentId } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { setThreadChangeRequestSnapshot } from "./ThreadStatusIndicators";
@@ -52,6 +53,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
+  AuthOrchestrationOperateScope,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
@@ -158,7 +160,8 @@ import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
-import { useAtomCommand } from "../state/use-atom-command";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -170,7 +173,11 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { buildDraftActionMenuItems, buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import {
+  buildDraftActionMenuItems,
+  buildThreadActionMenuItems,
+  threadActionRequiresOperate,
+} from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -295,6 +302,26 @@ const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 // Working beta: when this client saw each thread leave the Working shelf.
 // Module scope keeps the inbox order across routes that unmount the sidebar.
 const inboxReturns = createInboxReturnTracker();
+
+function canOperateThreads(
+  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
+): boolean {
+  return threads.every((thread) =>
+    readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+  );
+}
+
+function checkThreadOperations(
+  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
+): boolean {
+  if (canOperateThreads(threads)) return true;
+  toastManager.add({
+    type: "error",
+    title: "Thread action unavailable",
+    description: "This connection cannot change one or more selected threads.",
+  });
+  return false;
+}
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -619,11 +646,13 @@ function SortableThreadRow(props: {
   id: string;
   disabled: boolean;
   contextDrag: boolean;
+  environmentId: EnvironmentId;
   children: (bag: SortableThreadRowBag) => ReactNode;
 }) {
+  const canOperateThread = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.id,
-    disabled: { draggable: props.disabled },
+    disabled: { draggable: props.disabled || !canOperateThread },
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
   // dnd-kit memoizes each field but not the bag, so the memoized row would
@@ -1173,6 +1202,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  useEffect(() => {
+    if (!canOperateThread && isRenaming) onCancelRename();
+  }, [canOperateThread, isRenaming, onCancelRename]);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
@@ -1209,7 +1242,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitCwd, includeRemote: false },
         })
       : null,
   );
@@ -1258,7 +1291,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const topStatus =
     status === "working"
       ? {
-          label: "Working",
+          // A native /goal keeps the agent going across turns until it is met.
+          label: thread.goal?.status === "active" ? "Goal" : "Working",
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
@@ -1388,7 +1422,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   );
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
-      if (isRenaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      if (
+        !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
+        isRenaming ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
         return;
       }
       if ((event.target as HTMLElement).closest("button, a, input")) return;
@@ -1496,7 +1537,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Snooze is offered only where it can succeed: capability-gated and never
   // on blocked-on-you work or queued turns (the server rejects both).
   const showSnoozeButton =
-    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+    canOperateThread &&
+    props.snoozeSupported &&
+    canSnooze(thread, { now: new Date().toISOString() });
+  const showHoverActions =
+    (canOperateThread && props.settlementSupported) || showSnoozeButton || hasUnsentDraft;
   // If the thread becomes blocked while the popover is open, the button
   // unmounts without firing onOpenChange(false). Deriving the flag keeps a
   // stale true from permanently hiding the status label / pinning the
@@ -1599,52 +1644,53 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     isActive: props.isActive,
   });
 
-  const title = isRenaming ? (
-    <input
-      autoFocus
-      value={renamingTitle}
-      aria-label="Thread title"
-      onChange={(event) => onRenameTitleChange(event.target.value)}
-      onFocus={(event) => event.currentTarget.select()}
-      onKeyDown={handleRenameKeyDown}
-      onBlur={handleRenameBlur}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
-    />
-  ) : (
-    <span
-      aria-hidden
-      className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
-        shouldRecede ? "font-normal" : "font-medium",
-        variant === "card"
-          ? cn(
-              "truncate",
-              shouldRecede
-                ? "text-secondary-label"
-                : isUnread || isWoke || status === "input"
-                  ? "text-foreground"
-                  : status === "failed"
-                    ? "text-foreground/95"
-                    : "text-foreground/90",
-            )
-          : cn(
-              "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
-              shouldRecede
-                ? "text-secondary-label/70"
-                : props.isActive || isWoke || status === "input"
-                  ? "text-foreground"
-                  : isUnread
-                    ? "text-muted-foreground"
-                    : "text-secondary-label/70",
-            ),
-        isRegeneratingTitle && "opacity-55",
-      )}
-    >
-      {thread.title}
-    </span>
-  );
+  const title =
+    isRenaming && canOperateThread ? (
+      <input
+        autoFocus
+        value={renamingTitle}
+        aria-label="Thread title"
+        onChange={(event) => onRenameTitleChange(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={handleRenameKeyDown}
+        onBlur={handleRenameBlur}
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
+      />
+    ) : (
+      <span
+        aria-hidden
+        className={cn(
+          "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+          shouldRecede ? "font-normal" : "font-medium",
+          variant === "card"
+            ? cn(
+                "truncate",
+                shouldRecede
+                  ? "text-secondary-label"
+                  : isUnread || isWoke || status === "input"
+                    ? "text-foreground"
+                    : status === "failed"
+                      ? "text-foreground/95"
+                      : "text-foreground/90",
+              )
+            : cn(
+                "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
+                shouldRecede
+                  ? "text-secondary-label/70"
+                  : props.isActive || isWoke || status === "input"
+                    ? "text-foreground"
+                    : isUnread
+                      ? "text-muted-foreground"
+                      : "text-secondary-label/70",
+              ),
+          isRegeneratingTitle && "opacity-55",
+        )}
+      >
+        {thread.title}
+      </span>
+    );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   // Stacks show their layer count; multiple unrelated links show their total count.
@@ -1705,7 +1751,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
-    props.pinningSupported && !sortable?.isDragging ? (
+    props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -2203,7 +2249,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitCwd, includeRemote: false },
         })
       : null,
   );
@@ -2349,7 +2395,7 @@ export default function Sidebar() {
     archiveThread,
     deleteThread,
   } = useThreadActions();
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -3179,6 +3225,7 @@ export default function Sidebar() {
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const startThreadRename = useCallback((threadRef: ScopedThreadRef, title: string) => {
+    if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
     setRenamingThreadKey(scopedThreadKey(threadRef));
     setRenamingTitle(title);
   }, []);
@@ -3186,6 +3233,7 @@ export default function Sidebar() {
   const commitThreadRename = useCallback(
     (threadRef: ScopedThreadRef, title: string, originalTitle: string) => {
       void (async () => {
+        if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
         const trimmed = title.trim();
         setRenamingThreadKey(null);
         if (trimmed.length === 0) {
@@ -3959,6 +4007,17 @@ export default function Sidebar() {
           : plan.kind === "reorder-pinned" || plan.kind === "move-active"
             ? plan.assignments
             : [];
+      // A drop rewrites the dragged row and every row it renumbers, so all of
+      // them must be writable before any of them changes.
+      if (
+        !checkThreadOperations(
+          [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
+            const thread = threadByKey.get(key);
+            return thread ? [thread] : [];
+          }),
+        )
+      )
+        return;
       const drop = {
         key: activeKey,
         sourceSection: activeSection,
@@ -4173,6 +4232,9 @@ export default function Sidebar() {
         const thread = threadByKeyRef.current.get(threadKey);
         return thread ? [thread] : [];
       });
+      const settlingThreads = selectedThreads.filter(
+        (thread) => thread.settledOverride !== "settled",
+      );
       const canSnoozeSelection = selectedThreads.every(
         (thread) =>
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
@@ -4205,31 +4267,73 @@ export default function Sidebar() {
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
-            ...(unpinMenuItem ? [unpinMenuItem] : []),
-            { id: "settle", label: `Settle (${count})` },
+            ...(unpinMenuItem
+              ? [{ ...unpinMenuItem, disabled: !canOperateThreads(pinnedSelectedThreads) }]
+              : []),
+            {
+              id: "settle",
+              label: `Settle (${count})`,
+              disabled: settlingThreads.length === 0 || !canOperateThreads(settlingThreads),
+            },
             ...(canSnoozeSelection
               ? [
                   {
                     id: "snooze",
                     label: `Snooze (${count})`,
+                    disabled: !canOperateThreads(selectedThreads),
                     children: [
                       ...snoozePresets.map((preset) => ({
                         id: `snooze:${preset.id}`,
                         label: `${preset.label} (${preset.whenLabel})`,
+                        disabled: !canOperateThreads(selectedThreads),
                       })),
-                      { id: "snooze:custom", label: "Custom…", separatorBefore: true },
+                      {
+                        id: "snooze:custom",
+                        label: "Custom…",
+                        separatorBefore: true,
+                        disabled: !canOperateThreads(selectedThreads),
+                      },
                     ],
                   },
                 ]
               : []),
-            ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
+            ...(titleRegenerationMenuItem
+              ? [
+                  {
+                    ...titleRegenerationMenuItem,
+                    disabled:
+                      titleRegenerationMenuItem.disabled ||
+                      !canOperateThreads(regeneratableTitleThreads),
+                  },
+                ]
+              : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
-            { id: "delete", label: `Delete (${count})`, destructive: true },
+            {
+              id: "delete",
+              label: `Delete (${count})`,
+              destructive: true,
+              disabled: !canOperateThreads(selectedThreads),
+            },
           ],
           position,
         ),
       );
-      if (clicked._tag === "Failure") return;
+      if (clicked._tag === "Failure" || clicked.value === null) return;
+      const actionTargets =
+        clicked.value === "unpin"
+          ? pinnedSelectedThreads
+          : clicked.value === "regenerate-title"
+            ? regeneratableTitleThreads
+            : clicked.value === "settle"
+              ? settlingThreads.flatMap((thread) => {
+                  const current = threadByKeyRef.current.get(
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                  );
+                  return current && current.settledOverride !== "settled" ? [current] : [];
+                })
+              : selectedThreads;
+      if (clicked.value === "settle" && actionTargets.length === 0) return;
+      if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
           clicked.value === "snooze:custom"
@@ -4302,7 +4406,11 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value === "settle") {
-        settleThreads(threadKeys);
+        settleThreads(
+          actionTargets.map((thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ),
+        );
         clearSelection();
         return;
       }
@@ -4327,6 +4435,15 @@ export default function Sidebar() {
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
       }
+      if (
+        !checkThreadOperations(
+          threadKeys.flatMap((threadKey) => {
+            const thread = threadByKeyRef.current.get(threadKey);
+            return thread ? [thread] : [];
+          }),
+        )
+      )
+        return;
       const { deletedThreadKeys, firstFailure } = await deleteSelectedThreadEntries({
         entries: threadKeys.map((threadKey) => ({ threadKey })),
         delete: async ({ threadKey }, deletedThreadKeys) => {
@@ -4468,6 +4585,10 @@ export default function Sidebar() {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              canOperate: readEnvironmentScope(
+                threadRef.environmentId,
+                AuthOrchestrationOperateScope,
+              ),
               branch: thread.branch ?? null,
               projectFilter: threadProjectGroup
                 ? {
@@ -4494,7 +4615,8 @@ export default function Sidebar() {
             position,
           ),
         );
-        if (clicked._tag === "Failure") return;
+        if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -5227,6 +5349,7 @@ export default function Sidebar() {
                             key={threadKey}
                             id={threadKey}
                             contextDrag={isContextDrag}
+                            environmentId={thread.environmentId}
                             disabled={
                               renamingThreadKey === threadKey ||
                               section === "working" ||

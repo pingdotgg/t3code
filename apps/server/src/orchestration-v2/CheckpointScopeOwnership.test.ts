@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,11 +20,12 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-const projectionLayer = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-  SqlitePersistenceMemory,
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+const layerProjection = Layer.mergeAll(
+  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  SqlitePersistence.layerMemory,
   IdAllocator.layer,
+  NodeCrypto.layer,
 );
 it.effect("resolves the thread baseline after a second root run replaces scope ownership", () =>
   Effect.gen(function* () {
@@ -38,6 +40,11 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     const providerThreadId = ProviderThreadId.make("provider-thread:audit-root-scope");
     const providerInstanceId = ProviderInstanceId.make("codex");
     const scopeId = yield* ids.allocate.checkpointScope({ threadId, name: "root" });
+    const checkpointRefs = [
+      yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 }),
+      yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 1 }),
+      yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 2 }),
+    ];
     const baselineId = CheckpointId.make("checkpoint:audit-root-scope:0");
     const firstCheckpointId = CheckpointId.make("checkpoint:audit-root-scope:1");
     const secondCheckpointId = CheckpointId.make("checkpoint:audit-root-scope:2");
@@ -154,7 +161,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
             input.ordinal === 0 ? null : input.ordinal === 1 ? baselineId : firstCheckpointId,
           ordinalWithinScope: input.ordinal,
           appRunOrdinal: input.appRunOrdinal,
-          ref: checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: input.ordinal }),
+          ref: checkpointRefs[input.ordinal]!,
           status: "ready" as const,
           files: [],
           capturedAt: now,
@@ -205,7 +212,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     assert.equal(context.checkpointScopes.length, 1);
     assert.equal(context.checkpointScopes[0]?.runId, secondRunId);
 
-    const queryLayer = CheckpointDiffQuery.layer.pipe(
+    const layerQuery = CheckpointDiffQuery.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -214,14 +221,8 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
           Layer.mock(CheckpointStore.CheckpointStore)({
             diffCheckpoints: (input) => {
               assert.equal(input.cwd, "/prepared-repo");
-              assert.equal(
-                input.fromCheckpointRef,
-                checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 }),
-              );
-              assert.equal(
-                input.toCheckpointRef,
-                checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 2 }),
-              );
+              assert.equal(input.fromCheckpointRef, checkpointRefs[0]);
+              assert.equal(input.toCheckpointRef, checkpointRefs[2]);
               return Effect.succeed("two-run diff");
             },
           }),
@@ -231,7 +232,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     const result = yield* Effect.gen(function* () {
       const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       return yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
-    }).pipe(Effect.provide(queryLayer));
+    }).pipe(Effect.provide(layerQuery));
     assert.equal(result.diff, "two-run diff");
-  }).pipe(Effect.provide(projectionLayer)),
+  }).pipe(Effect.provide(layerProjection)),
 );

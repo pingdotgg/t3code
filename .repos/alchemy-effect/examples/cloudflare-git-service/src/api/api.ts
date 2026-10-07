@@ -1,9 +1,9 @@
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Session, Unauthorized } from "./auth.ts";
 /** The application owns the API, including Git's groups and its middleware. */
 import * as Git from "alchemy/Git";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApi from "effect/http-api/HttpApi";
 import { Authentication } from "./middleware.ts";
 import { AppRoutes } from "./routes.ts";
 

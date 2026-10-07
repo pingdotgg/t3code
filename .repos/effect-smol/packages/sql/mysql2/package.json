@@ -1,6 +1,6 @@
 {
   "name": "@effect/sql-mysql2",
-  "version": "4.0.0-rc.115",
+  "version": "4.0.1",
   "type": "module",
   "license": "MIT",
   "description": "A MySQL toolkit for Effect",
@@ -68,6 +68,6 @@
     "effect": "workspace:^"
   },
   "dependencies": {
-    "mysql2": "^3.24.3"
+    "mysql2": "^3.24.4"
   }
 }

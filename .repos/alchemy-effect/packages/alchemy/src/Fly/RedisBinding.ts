@@ -12,8 +12,9 @@ import { REDIS_URL_ENV, RedisUrlMissing, type Redis } from "./Redis.ts";
  *
  * Each `{Op}Http.ts` is a thin `Layer.effect` over {@link makeRedisBinding}.
  * Deploy-time registers the Redis add-on on the host so Service reconcile
- * writes `REDIS_URL`. Runtime commands use that URL internally — callers
- * never read `Config.Redacted`.
+ * can attach it. The URL travels as `yield* redis.url` (RuntimeContext
+ * set/get). `REDIS_URL` written as an App secret is a fallback, not the
+ * primary path.
  *
  * The RESP client lives in `alchemy/Redis`. This file only wires the
  * Fly host binding.
@@ -53,14 +54,15 @@ export const makeRedisBinding = <Client>(options: {
         }
       }
 
-      const url = redisUrlFromEnv.pipe(
-        Effect.mapError(
-          () =>
-            new RedisUrlMissing({
-              name: asPlain(redis.name) ?? redis.LogicalId,
-            }),
-        ),
-      );
+      const urlFromResource = yield* redis.url;
+      const missing = new RedisUrlMissing({
+        name: asPlain(redis.name) ?? redis.LogicalId,
+      });
+      const url: Url = Effect.gen(function* () {
+        const fromOutput = asPlain(yield* urlFromResource);
+        if (fromOutput !== undefined) return fromOutput;
+        return yield* redisUrlFromEnv.pipe(Effect.mapError(() => missing));
+      });
       return options.makeClient(url);
     }),
   );

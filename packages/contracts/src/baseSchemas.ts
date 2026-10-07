@@ -13,7 +13,18 @@ export const TrimmedString = Schema.String.pipe(
     }),
   ),
 );
-export const TrimmedNonEmptyString = TrimmedString.check(Schema.isNonEmpty());
+/**
+ * Non-empty once trimmed. A `TrimmedString` only trims when decoding or
+ * encoding, so `make` and encode see the untrimmed value: a plain
+ * `isNonEmpty` would accept `" "` there and encode it to `""`, which no
+ * longer decodes.
+ */
+const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0, {
+  expected: "a non-blank string",
+  toJsonSchema: () => [{ minLength: 1 }, true],
+  arbitraryConstraint: { minLength: 1 },
+});
+export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
@@ -108,7 +119,7 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
  *
  * Decoding runs each value through its own schema, so transformations (dates,
  * trimming, decoding defaults) apply as usual. Only values that schema
- * rejects are dropped; encoding is the plain encoding.
+ * rejects are dropped, on either side.
  *
  * For a tagged union, prefer {@link ForwardCompatibleUnion}: it drops only
  * values whose tag this build does not know, so a known member with a broken
@@ -119,16 +130,41 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
     Schema.UndefinedOr(element).pipe(
       // An element this build cannot read becomes a hole, filtered out below.
       Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+      // Likewise an element that cannot be encoded is sent as a hole, so one
+      // bad element costs only itself rather than the whole payload.
+      Schema.catchEncoding(() => Effect.succeedSome(undefined)),
     ),
   ).pipe(
     Schema.decodeTo(
-      Schema.Array(Schema.toType(element)),
+      Schema.Array(
+        Schema.UndefinedOr(Schema.toType(element)).pipe(
+          Schema.catchEncoding(() => Effect.succeedSome(undefined)),
+        ),
+      ).check(
+        // The holes above are an encoding detail: a decoded value has none, so
+        // `Schema.is` and `make` still reject an array that does. Aborts, so a
+        // later check on the array never sees a hole.
+        Schema.makeFilter(
+          (values) => {
+            // Every index, not `every`, which skips the holes of a sparse array.
+            for (let index = 0; index < values.length; index++) {
+              if (values[index] === undefined) return false;
+            }
+            return true;
+          },
+          { expected: "an array without holes" },
+          true,
+        ),
+      ),
       SchemaTransformation.transform<
         ReadonlyArray<Element["Type"]>,
         ReadonlyArray<Element["Type"] | undefined>
       >({
         decode: (values) => values.filter((value) => value !== undefined),
-        encode: (values) => values,
+        // An element that fails its own checks is dropped before the wire, so
+        // a wrapper that reads the encoded array as JSON values never meets
+        // the hole it left.
+        encode: (values) => values.filter((value) => value !== undefined),
       }),
     ),
   ) as unknown as ForwardCompatibleArray<Element>;
@@ -271,8 +307,8 @@ const knownTags = (
 /**
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
-const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+const makeEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) => {
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand));
 };
 
 export const ThreadId = makeEntityId("ThreadId");
@@ -349,6 +385,9 @@ export type RuntimeRequestId = typeof RuntimeRequestId.Type;
 export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
 export type RuntimeTaskId = typeof RuntimeTaskId.Type;
 export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
+/** A one-use handle to a secret the user entered for an agent; the agent never sees the value. */
+export const SecretRef = makeEntityId("SecretRef");
+export type SecretRef = typeof SecretRef.Type;
 export type ScheduledTaskId = typeof ScheduledTaskId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;

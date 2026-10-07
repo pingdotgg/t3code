@@ -37,7 +37,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import {
   DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
@@ -341,7 +341,6 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
         credential: bootstrap.credential,
         dpopProof: bootstrapProof,
-        scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
       }).pipe(
         Effect.mapError(mapRemoteDpopEnvironmentError),

@@ -130,5 +130,5 @@ test.provider(
         replaced.ruleGroupId,
       );
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:wafv2", "live"], timeout: 120_000 },
 );

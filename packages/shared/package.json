@@ -115,6 +115,10 @@
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
     },
+    "./htmlRender": {
+      "types": "./src/htmlRender.ts",
+      "import": "./src/htmlRender.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
@@ -162,6 +166,10 @@
     "./dpop": {
       "types": "./src/dpop.ts",
       "import": "./src/dpop.ts"
+    },
+    "./desktopBootstrapToken": {
+      "types": "./src/desktopBootstrapToken.ts",
+      "import": "./src/desktopBootstrapToken.ts"
     },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
@@ -234,6 +242,10 @@
     "./assistantCitations": {
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
+    },
+    "./threadLinks": {
+      "types": "./src/threadLinks.ts",
+      "import": "./src/threadLinks.ts"
     },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
@@ -390,6 +402,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./mcpApp": {
+      "types": "./src/mcpApp.ts",
+      "import": "./src/mcpApp.ts"
     }
   },
   "scripts": {

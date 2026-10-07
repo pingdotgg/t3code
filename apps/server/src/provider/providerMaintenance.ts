@@ -7,6 +7,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -17,8 +18,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
@@ -702,17 +703,20 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 /**
  * Turn a one-shot resolution into the shape drivers expose: a cached read for
  * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked.
+ * ownership derived before the user clicked. An interrupted resolution is not
+ * cached, so the next read resolves again.
  */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
-  const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    resolve,
-    MAINTENANCE_CAPABILITIES_CACHE_TTL,
-  );
+  const cache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: MAINTENANCE_CAPABILITIES_CACHE_TTL,
+    lookup: () => resolve,
+  });
+  const cached = Cache.get(cache, undefined);
   return (options?: { readonly fresh?: boolean }) =>
-    options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;
+    options?.fresh ? Cache.invalidate(cache, undefined).pipe(Effect.andThen(cached)) : cached;
 });
 
 function deriveVersionAdvisory(input: {

@@ -14,10 +14,9 @@ import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
-import * as NodeCrypto from "node:crypto";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -50,7 +49,7 @@ function settings(input: Partial<AcpRegistrySettings> = {}): AcpRegistrySettings
   });
 }
 
-function resolverLayer(
+function layerResolver(
   execute: Parameters<typeof HttpClient.make>[0],
   environment: NodeJS.ProcessEnv = process.env,
 ) {
@@ -253,7 +252,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.die("unexpected registry request for a local provider");
         }),
@@ -310,7 +309,7 @@ describe("AcpRegistrySupport", () => {
       }
     }).pipe(
       Effect.scoped,
-      Effect.provide(resolverLayer(() => Effect.die("unexpected registry request"))),
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
     ),
   );
 
@@ -353,7 +352,7 @@ describe("AcpRegistrySupport", () => {
       }
     }).pipe(
       Effect.scoped,
-      Effect.provide(resolverLayer(() => Effect.die("unexpected registry request"))),
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
     ),
   );
 
@@ -402,7 +401,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -443,7 +442,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -483,7 +482,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -519,7 +518,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -572,7 +571,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -587,7 +586,8 @@ describe("AcpRegistrySupport", () => {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
           args: ["acp"],
-          sha256: NodeCrypto.createHash("sha256").update(binaryBytes).digest("hex"),
+          // SHA-256 of binaryBytes.
+          sha256: "97b29a636d7ddf7bf3567ae4d48c0f2a9b03943fd808b6efbf74f1dd3db131b7",
         },
       },
     });
@@ -616,7 +616,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           const response =
             request.url === registryUrl
@@ -646,7 +646,8 @@ describe("AcpRegistrySupport", () => {
             archive: archiveUrl,
             cmd: "./bin/example-agent",
             args: ["acp"],
-            sha256: NodeCrypto.createHash("sha256").update(binaryBytes).digest("hex"),
+            // SHA-256 of binaryBytes.
+            sha256: "e1eb7c905b91c400af2ec858628aec22866bfda1383b93ceb73ae01d9769fb31",
           },
         },
       });
@@ -704,7 +705,7 @@ describe("AcpRegistrySupport", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          resolverLayer((request) => {
+          layerResolver((request) => {
             requests.push(request.url);
             return Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -822,7 +823,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -863,7 +864,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.yieldNow.pipe(
             Effect.as(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
@@ -900,7 +901,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -942,7 +943,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -977,7 +978,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -1012,7 +1013,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -1056,7 +1057,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -1101,7 +1102,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1141,7 +1142,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
           ),
@@ -1177,7 +1178,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1211,7 +1212,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1240,7 +1241,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused")));
         }),
@@ -1279,7 +1280,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
           { PATH: "" },
@@ -1329,7 +1330,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -1395,7 +1396,7 @@ describe("AcpRegistrySupport", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          resolverLayer((request) =>
+          layerResolver((request) =>
             Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused"))),
           ),
         ),
@@ -1433,7 +1434,7 @@ describe("AcpRegistrySupport", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(resolverLayer(() => Effect.die("unexpected HTTP request"))),
+      Effect.provide(layerResolver(() => Effect.die("unexpected HTTP request"))),
     ),
   );
 
@@ -1508,7 +1509,7 @@ describe("AcpRegistrySupport", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          resolverLayer((request) => {
+          layerResolver((request) => {
             if (request.url === registryUrl) {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1563,7 +1564,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -1607,7 +1608,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,

@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
@@ -27,7 +27,7 @@ const INFO_BODY =
 const UNAUTHORIZED_BODY = '{"_tag":"UnauthorizedError","message":"Authentication required"}';
 const SPA_BODY = "<!doctype html><html><head><title>OpenCode</title></head></html>";
 
-const serverReplying = (reply: {
+const layerServerReplying = (reply: {
   readonly status: number;
   readonly contentType?: string;
   readonly body: string;
@@ -58,7 +58,7 @@ describe("OpenCode2Server.verifyServer", () => {
   it.effect("returns the version of an authenticated OpenCode 2 server", () =>
     Effect.gen(function* () {
       const version = yield* verify(
-        serverReplying({ status: 200, contentType: "application/json", body: INFO_BODY }),
+        layerServerReplying({ status: 200, contentType: "application/json", body: INFO_BODY }),
       );
       assert.strictEqual(version, "2.0.18");
     }),
@@ -67,7 +67,11 @@ describe("OpenCode2Server.verifyServer", () => {
   it.effect("reports a rejected password, not a wrong server", () =>
     Effect.gen(function* () {
       const error = yield* verify(
-        serverReplying({ status: 401, contentType: "application/json", body: UNAUTHORIZED_BODY }),
+        layerServerReplying({
+          status: 401,
+          contentType: "application/json",
+          body: UNAUTHORIZED_BODY,
+        }),
       ).pipe(Effect.flip);
       assert.include(error.detail, "rejected the server password");
     }),
@@ -76,7 +80,7 @@ describe("OpenCode2Server.verifyServer", () => {
   // 1.x rejects a wrong password with an empty 401, which the client cannot decode.
   it.effect("reports an empty-body 401 as a rejected password", () =>
     Effect.gen(function* () {
-      const error = yield* verify(serverReplying({ status: 401, body: "" })).pipe(Effect.flip);
+      const error = yield* verify(layerServerReplying({ status: 401, body: "" })).pipe(Effect.flip);
       assert.include(error.detail, "rejected the server password");
     }),
   );
@@ -85,7 +89,7 @@ describe("OpenCode2Server.verifyServer", () => {
     Effect.gen(function* () {
       for (const status of [500, 502]) {
         const error = yield* verify(
-          serverReplying({ status, contentType: "text/plain", body: "upstream failed" }),
+          layerServerReplying({ status, contentType: "text/plain", body: "upstream failed" }),
         ).pipe(Effect.flip);
         assert.include(error.detail, `returned HTTP ${status}`);
       }
@@ -96,7 +100,7 @@ describe("OpenCode2Server.verifyServer", () => {
   it.effect("rejects a server that answers with the web UI's HTML", () =>
     Effect.gen(function* () {
       const error = yield* verify(
-        serverReplying({ status: 200, contentType: "text/html", body: SPA_BODY }),
+        layerServerReplying({ status: 200, contentType: "text/html", body: SPA_BODY }),
       ).pipe(Effect.flip);
       assert.include(error.detail, "is not an OpenCode 2 server");
     }),
@@ -129,24 +133,26 @@ describe("OpenCode2Server error details", () => {
       Effect.provide(
         Layer.mergeAll(
           OpenCode2Client.layer.pipe(Layer.provide(httpClient)),
-          OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
         ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     );
 
   it.effect("never include the server URL", () =>
     Effect.gen(function* () {
-      const hanging = Layer.succeed(
+      const layerHanging = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.never),
       );
-      const timedOut = yield* detailFor(hanging).pipe(Effect.forkChild);
+      const timedOut = yield* detailFor(layerHanging).pipe(Effect.forkChild);
       yield* TestClock.adjust("10 seconds");
       const details = [
         yield* detailFor(FetchHttpClient.layer),
-        yield* detailFor(serverReplying({ status: 401, body: "" })),
-        yield* detailFor(serverReplying({ status: 502, contentType: "text/plain", body: "" })),
-        yield* detailFor(serverReplying({ status: 200, contentType: "text/html", body: SPA_BODY })),
+        yield* detailFor(layerServerReplying({ status: 401, body: "" })),
+        yield* detailFor(layerServerReplying({ status: 502, contentType: "text/plain", body: "" })),
+        yield* detailFor(
+          layerServerReplying({ status: 200, contentType: "text/html", body: SPA_BODY }),
+        ),
         yield* Fiber.join(timedOut),
       ];
       assert.deepStrictEqual(details, [
@@ -244,7 +250,7 @@ describe("OpenCode2Server spawned server", () => {
         Effect.provide(
           Layer.mergeAll(
             OpenCode2Client.layer,
-            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
         ),
       ),

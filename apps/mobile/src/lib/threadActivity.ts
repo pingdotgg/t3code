@@ -5,8 +5,10 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
+  turnItemDetailRevision,
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -47,6 +49,7 @@ import type {
   OrchestrationV2UserMessageInputIntent,
   RunAttemptId,
   ScheduledTaskId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import {
@@ -57,7 +60,13 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
+import type { McpAppReference } from "@t3tools/shared/mcpApp";
+import {
+  compactDynamicToolOutput,
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 export type PendingApproval = ThreadPendingApproval;
@@ -155,12 +164,32 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly activity: ThreadFeedActivity;
+    }
+  | {
+      /** A page a completed `html_render` call published, shown in place of its work row. */
+      readonly type: "html-render";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly render: HtmlRenderReference;
+    }
+  | {
+      /** An MCP App a completed tool call captured, hosted in place of its work row. */
+      readonly type: "mcp-app";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      /** The thread and item that own the app; a fork's inherited app is its source's. */
+      readonly sourceThreadId: ThreadId;
+      readonly itemId: TurnItemId;
+      readonly revision: string;
+      readonly app: McpAppReference;
     };
 
 export type ThreadFeedEntry = ThreadFeedEntryContent & { readonly continuesWorkLog?: boolean };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -312,6 +341,13 @@ export function isContextHandoffActivityGroup(entry: ThreadFeedActivityGroup): b
   );
 }
 
+export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "secret_request"
+  );
+}
+
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
 }
@@ -411,7 +447,13 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
 }
 
 function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
-  return item.type === "fork" || item.type === "thread_created" || item.type === "system_notice";
+  return (
+    item.type === "fork" ||
+    item.type === "thread_created" ||
+    item.type === "system_notice" ||
+    // An answerable card: it must stand alone and never fold away with the run.
+    item.type === "secret_request"
+  );
 }
 
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
@@ -528,6 +570,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "fork":
     case "thread_created":
       return "zap";
+    case "secret_request":
+      return "lock";
   }
 }
 
@@ -581,6 +625,8 @@ function itemSummary(
       return "Thread forked";
     case "thread_created":
       return "Thread created";
+    case "secret_request":
+      return item.label;
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -638,6 +684,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "fork":
     case "thread_created":
       return item.targetThreadId;
+    case "secret_request":
+      return item.reason || null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1020,7 +1068,9 @@ function deriveThreadFeedRunFolds(
     const runId =
       entry.type === "message" && entry.message.role === "assistant"
         ? (entry.message.runId ?? runlessKey)
-        : entry.type === "activity-group"
+        : entry.type === "activity-group" ||
+            entry.type === "html-render" ||
+            entry.type === "mcp-app"
           ? (entry.runId ?? runlessKey)
           : null;
     if (!runId) continue;
@@ -1072,13 +1122,18 @@ function deriveThreadFeedRunFolds(
           (entry) =>
             entry.id !== firstAssistantId &&
             entry.id !== terminalAssistantId &&
+            entry.type !== "html-render" &&
+            entry.type !== "mcp-app" &&
             !(
               entry.type === "activity-group" &&
               entry.activities.some(
                 (activity) =>
                   activity.prominent ||
                   activity.projectedItem.item.type === "notification" ||
-                  activity.projectedItem.item.type === "handoff",
+                  activity.projectedItem.item.type === "handoff" ||
+                  // A child still working outlives its settled launching run;
+                  // its group stays visible while any member is live.
+                  isLiveSubagentTurnItem(activity.projectedItem.item),
               )
             ),
         )
@@ -1134,7 +1189,7 @@ const trailingReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedA
 
 /** A steer or subsequent activity ends thinking even if the provider omits its completion. */
 function settleSupersededReasoning(
-  entry: Extract<ThreadFeedEntry, { readonly type: "message" | "activity-group" }>,
+  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>,
   tail: boolean,
 ) {
   if (entry.type !== "activity-group") return entry;
@@ -1700,6 +1755,42 @@ export function buildThreadFeed(
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+    // A running or failed render stays an ordinary work row.
+    const render =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? htmlRenderFromToolItem(item)
+        : undefined;
+    if (render) {
+      const entry: RawThreadFeedEntry = {
+        type: "html-render",
+        id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        render,
+      };
+      projectedEntriesCache.set(row, { attemptId, entry });
+      entries.push(entry);
+      continue;
+    }
+    const app =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? mcpAppFromToolItem(item)
+        : undefined;
+    if (app) {
+      const entry: RawThreadFeedEntry = {
+        type: "mcp-app",
+        id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        app,
+      };
+      projectedEntriesCache.set(row, { attemptId, entry });
+      entries.push(entry);
+      continue;
+    }
     if (item.type === "user_message" || item.type === "assistant_message") {
       const updatedAt = DateTime.formatIso(item.updatedAt);
       const entry: RawThreadFeedEntry = {

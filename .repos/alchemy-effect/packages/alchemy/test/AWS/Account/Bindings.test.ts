@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import AccountTestFunctionLive, { AccountTestFunction } from "./handler";
 
 const testOptions = { providers: AWS.providers() };
@@ -68,150 +68,163 @@ const getJson = (path: string) =>
     }),
   );
 
-describe.sequential("Account Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "Account test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
+describe.sequential(
+  "Account Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:account",
+      "provider:aws:lambda",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "Account test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("Account test setup: deploying fixture");
-      const attrs = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* AccountTestFunction;
-        }).pipe(Effect.provide(AccountTestFunctionLive)),
-      );
+        yield* Effect.logInfo("Account test setup: deploying fixture");
+        const attrs = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* AccountTestFunction;
+          }).pipe(Effect.provide(AccountTestFunctionLive)),
+        );
 
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `Account test setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `Account test setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `Account test setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      );
-    }),
-    { timeout: 240_000 },
-  );
-
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
-
-  describe("binding registration", () => {
-    test.provider("all 5 capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/bindings")) as { bound: string[] };
-        expect(response.bound).toEqual([
-          "getAccountInformation",
-          "getContactInformation",
-          "getAlternateContact",
-          "listRegions",
-          "getRegionOptStatus",
-        ]);
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Account test setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
       }),
+      { timeout: 240_000 },
     );
-  });
 
-  describe("GetAccountInformation", () => {
-    test.provider("reads the account's metadata", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/account-info")) as
-          | {
-              ok: true;
-              accountId: string | null;
-              accountState: string | null;
-              hasAccountName: boolean;
-            }
-          | { ok: false; tag: string };
-        expect(response.ok).toBe(true);
-        if (response.ok) {
-          expect(response.accountId).toMatch(/^\d{12}$/);
-          expect(response.accountState).toBe("ACTIVE");
-        }
-      }),
-    );
-  });
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
-  describe("GetContactInformation", () => {
-    test.provider("reads the account's primary contact", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/contact-info")) as
-          | { ok: true; hasFullName: boolean; hasCountryCode: boolean }
-          | { ok: false; tag: string };
-        expect(response.ok).toBe(true);
-        if (response.ok) {
-          // Every account has a primary contact with a name and country.
-          expect(response.hasFullName).toBe(true);
-          expect(response.hasCountryCode).toBe(true);
-        }
-      }),
-    );
-  });
-
-  describe("GetAlternateContact", () => {
-    test.provider(
-      "reads the billing contact or surfaces the typed not-found tag",
-      (_stack) =>
+    describe("binding registration", () => {
+      test.provider("all 5 capabilities initialize in the runtime", (_stack) =>
         Effect.gen(function* () {
-          const response = (yield* getJson("/alternate-contact")) as
-            | { ok: true; contactType: string | null }
+          const response = (yield* getJson("/bindings")) as { bound: string[] };
+          expect(response.bound).toEqual([
+            "getAccountInformation",
+            "getContactInformation",
+            "getAlternateContact",
+            "listRegions",
+            "getRegionOptStatus",
+          ]);
+        }),
+      );
+    });
+
+    describe("GetAccountInformation", () => {
+      test.provider("reads the account's metadata", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/account-info")) as
+            | {
+                ok: true;
+                accountId: string | null;
+                accountState: string | null;
+                hasAccountName: boolean;
+              }
             | { ok: false; tag: string };
+          expect(response.ok).toBe(true);
           if (response.ok) {
-            expect(response.contactType).toBe("BILLING");
-          } else {
-            // The BILLING alternate contact isn't set on the account — the
-            // typed tag proves the grant (an IAM gap would surface
-            // AccessDeniedException, which getJson polls away and would
-            // fail the assertion below).
-            expect(response.tag).toBe("ResourceNotFoundException");
+            expect(response.accountId).toMatch(/^\d{12}$/);
+            expect(response.accountState).toBe("ACTIVE");
           }
         }),
-    );
-  });
+      );
+    });
 
-  describe("ListRegions", () => {
-    test.provider("lists the account's regions with opt statuses", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/regions")) as
-          | { ok: true; count: number; regionNames: string[] }
-          | { ok: false; tag: string };
-        expect(response.ok).toBe(true);
-        if (response.ok) {
-          expect(response.count).toBeGreaterThanOrEqual(1);
-          expect(response.regionNames).toContain("us-east-1");
-        }
-      }),
-    );
-  });
+    describe("GetContactInformation", () => {
+      test.provider("reads the account's primary contact", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/contact-info")) as
+            | { ok: true; hasFullName: boolean; hasCountryCode: boolean }
+            | { ok: false; tag: string };
+          expect(response.ok).toBe(true);
+          if (response.ok) {
+            // Every account has a primary contact with a name and country.
+            expect(response.hasFullName).toBe(true);
+            expect(response.hasCountryCode).toBe(true);
+          }
+        }),
+      );
+    });
 
-  describe("GetRegionOptStatus", () => {
-    test.provider("reads us-east-1's opt status", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/region-opt-status")) as
-          | {
-              ok: true;
-              regionName: string | null;
-              regionOptStatus: string | null;
+    describe("GetAlternateContact", () => {
+      test.provider(
+        "reads the billing contact or surfaces the typed not-found tag",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/alternate-contact")) as
+              | { ok: true; contactType: string | null }
+              | { ok: false; tag: string };
+            if (response.ok) {
+              expect(response.contactType).toBe("BILLING");
+            } else {
+              // The BILLING alternate contact isn't set on the account — the
+              // typed tag proves the grant (an IAM gap would surface
+              // AccessDeniedException, which getJson polls away and would
+              // fail the assertion below).
+              expect(response.tag).toBe("ResourceNotFoundException");
             }
-          | { ok: false; tag: string };
-        expect(response.ok).toBe(true);
-        if (response.ok) {
-          expect(response.regionName).toBe("us-east-1");
-          expect(response.regionOptStatus).toBe("ENABLED_BY_DEFAULT");
-        }
-      }),
-    );
-  });
-});
+          }),
+      );
+    });
+
+    describe("ListRegions", () => {
+      test.provider("lists the account's regions with opt statuses", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/regions")) as
+            | { ok: true; count: number; regionNames: string[] }
+            | { ok: false; tag: string };
+          expect(response.ok).toBe(true);
+          if (response.ok) {
+            expect(response.count).toBeGreaterThanOrEqual(1);
+            expect(response.regionNames).toContain("us-east-1");
+          }
+        }),
+      );
+    });
+
+    describe("GetRegionOptStatus", () => {
+      test.provider("reads us-east-1's opt status", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/region-opt-status")) as
+            | {
+                ok: true;
+                regionName: string | null;
+                regionOptStatus: string | null;
+              }
+            | { ok: false; tag: string };
+          expect(response.ok).toBe(true);
+          if (response.ok) {
+            expect(response.regionName).toBe("us-east-1");
+            expect(response.regionOptStatus).toBe("ENABLED_BY_DEFAULT");
+          }
+        }),
+      );
+    });
+  },
+);

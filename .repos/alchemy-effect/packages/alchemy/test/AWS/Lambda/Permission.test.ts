@@ -46,7 +46,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -86,7 +86,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 180_000 },
 );
 
 // Out-of-band proof that the trailing destroy removed the host function (and

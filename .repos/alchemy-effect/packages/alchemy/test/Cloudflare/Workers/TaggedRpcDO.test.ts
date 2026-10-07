@@ -7,12 +7,12 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
+import * as RpcClient from "effect/rpc/RpcClient";
+import { RpcClientError } from "effect/rpc/RpcClientError";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import { CounterRpcs } from "./fixtures/tagged-rpc-do/group.ts";
 import Stack from "./fixtures/tagged-rpc-do/stack.ts";
 
@@ -231,7 +231,15 @@ test(
       }),
     );
   }).pipe(logLevel),
-  { timeout: testTimeout },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: testTimeout,
+  },
 );
 
 test(
@@ -270,7 +278,15 @@ test(
     );
     expect(value).toBe(2);
   }).pipe(logLevel),
-  { timeout: testTimeout },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: testTimeout,
+  },
 );
 
 test(
@@ -298,7 +314,15 @@ test(
     expect(fromB.status).toBe(200);
     expect((yield* fromB.json) as { value: number }).toEqual({ value: 2 });
   }).pipe(logLevel),
-  { timeout: testTimeout },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: testTimeout,
+  },
 );
 
 test(
@@ -354,7 +378,15 @@ test(
     expect(d1.value).toBe(2);
     expect(dox.value).toBe(1);
   }).pipe(logLevel),
-  { timeout: testTimeout },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: testTimeout,
+  },
 );
 
 test(
@@ -417,5 +449,13 @@ test(
       }),
     );
   }).pipe(logLevel),
-  { timeout: testTimeout },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: testTimeout,
+  },
 );

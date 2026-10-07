@@ -43,6 +43,7 @@ import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentCompo
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
+import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -50,6 +51,7 @@ import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
+import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
@@ -548,6 +550,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadQueue",
   "ThreadReviewComment",
   "ThreadDevicePreview",
+  "ThreadBrowserPreview",
   "ThreadSettingsSheet",
 ]);
 
@@ -705,6 +708,15 @@ const RootStackConfig = createNativeStackNavigator({
         navigationBarHidden: true,
       },
     }),
+    ThreadBrowserPreview: createNativeStackScreen({
+      screen: BrowserPreviewRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/browser`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
+      },
+    }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/review`,
@@ -735,6 +747,15 @@ const RootStackConfig = createNativeStackNavigator({
       screen: ThreadFileScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadMcpApp: createNativeStackScreen({
+      screen: McpAppFullscreenScreen,
+      linking: `${THREAD_LINKING_PREFIX}/apps/:itemId`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
+      },
     }),
     ThreadAttachment: createNativeStackScreen({
       screen: AttachmentFileScreen,

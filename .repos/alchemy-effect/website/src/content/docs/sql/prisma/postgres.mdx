@@ -1,0 +1,216 @@
+---
+title: Postgres
+description: Connect Prisma ORM v8 to Postgres and run Effect-native queries, streams, prepared statements, and transactions independently of your cloud provider.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `@prisma/orm-postgres@8.0.0-rc.11`;
+export const devDeps = `prisma@8.0.0-rc.15`;
+
+Prisma ORM v8 uses a contract to type queries and plan migrations. The same
+Effect-native client works with a connection from configuration or a runtime
+binding; choose a database in [SQL databases](/sql/databases).
+
+:::caution
+This integration targets **PostgreSQL 17+ only** — no MySQL or D1. Prisma v8
+is a contract-first rewrite, not the earlier Prisma Client API. Use the ORM
+and CLI release candidates pinned by your Alchemy release; expect breaking
+changes between RC versions.
+:::
+
+Prisma ORM and its CLI are optional Alchemy peers:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Start with a contract
+
+Follow [Contracts](/sql/prisma/contracts) to define `User` and `Post` in PSL
+or TypeScript and configure `prisma.config.ts`. PSL-first projects must
+generate the client before compiling or bundling. Both forms use the same
+query APIs and [migration resources](/sql/prisma/migrations).
+
+## Connect
+
+```typescript
+// src/queries.ts
+import * as PrismaPostgres from "alchemy/Prisma/ORM/Postgres";
+import * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
+import { contract } from "./prisma/contract.ts";
+
+export const makeQueries = <E, R>(
+  connectionString: Effect.Effect<Redacted.Redacted<string>, E, R>,
+) =>
+  Effect.gen(function* () {
+    const db = yield* PrismaPostgres.Postgres(connectionString, { contract });
+    return {
+      listUsers: () => db.orm.public.User.all(),
+    };
+  });
+```
+
+Pass an Effect that resolves a redacted URL, such as
+`Config.Redacted("DATABASE_URL")` or a runtime binding's `connectionString`.
+Wrap an already resolved redacted URL with `Effect.succeed(url)`.
+
+For a PSL-first contract, replace the database construction with the
+[generated factory](/sql/prisma/contracts#query-a-psl-contract):
+
+```typescript
+import { makeDatabase } from "./prisma/generated/client.ts";
+
+const db = yield* makeDatabase(connectionString);
+```
+
+Neither factory connects at initialization. Construct the query service once,
+then call its methods inside a runtime execution scope or an explicit
+`Effect.scoped` block. The client is built on first use in each scope and
+`close()` runs when that scope settles; see [Connection lifecycle](/sql/effect-sql/lifecycle).
+Migration resources connect separately when applying migrations.
+
+## Configure validation for Workers
+
+Native TypeScript contracts need Arktype's `jitless: true` configuration before
+importing the contract builder, with the bootstrap preserved from tree-shaking.
+Follow [Worker validation setup](/cloudflare/data/prisma#configure-validation-for-workers),
+including its `arktype` dependency. Ordinary Node and Bun applications, and
+PSL-first Workers using the emitted contract, do not need this bootstrap.
+
+## Connect in a Worker
+
+The [Cloudflare integration](/cloudflare/data/prisma) owns Neon provisioning,
+Hyperdrive, migration resources, and Worker deployment. Its connection Effect
+works with either factory above; shared query code does not need those resources.
+
+## Queries are Effects
+
+The `orm` lane is namespaced per Postgres schema (`db.orm.public.*`). Every
+terminal yields an Effect with typed errors. Queries are lazy and re-runnable:
+`Effect.retry` re-issues the query.
+
+```typescript
+const user = yield* db.orm.public.User.where({ email })
+  .include("posts")
+  .first();
+
+if (user) {
+  yield* db.orm.public.Post.create({ title, authorId: user.id });
+}
+
+// row types narrow with the chain: select projects, include augments
+const slim = yield* db.orm.public.User.select("id", "email").all();
+```
+
+`update` and `delete` require a prior `.where(...)` at compile time.
+SQL integrity violations have distinct `Prisma.*` tags: `UniqueViolationError`,
+`ForeignKeyViolationError`, `NotNullViolationError`, and `CheckViolationError`.
+Other statement failures are `QueryError` with `sqlState`; connection failures
+are `ConnectionError` with the driver's `transient` hint. Prisma's structured
+codes split into `OrmError` and `RuntimeError` with a typed `code` field:
+
+```typescript
+const outcome = yield* db.orm.public.User.create({ email, name }).pipe(
+  Effect.catchTag("Prisma.UniqueViolationError", () =>
+    Effect.succeed("already registered"),
+  ),
+);
+```
+
+## Query polymorphic models
+
+For PSL contracts declaring `@@discriminator` and `@@base`, narrow the base
+collection with `variant()`. Both single-table and multi-table variants use
+the same Effect terminals:
+
+```typescript
+const bugs = yield* db.orm.public.Task.variant("Bug")
+  .where((bug) => bug.severity.eq("critical"))
+  .include("assignee")
+  .all();
+```
+
+The narrowed row keeps its literal discriminator and variant fields. `include`
+can load relations declared by that variant. `select` removes unselected scalar
+fields while preserving included relations. Scalar reducers such as `count`
+and `combine` are only available when refining a to-many relation.
+
+For generation and validation constraints on polymorphic contracts, see
+[Contracts: Validate rows without a database](/sql/prisma/contracts#validate-rows-without-a-database).
+
+## The sql lane and raw SQL
+
+`db.sql` is Prisma's pure query builder — plans are data, no
+connection behind them — and `db.execute` / `db.stream` run them:
+
+```typescript
+const plan = db.sql.public.User.select("id", "email").build();
+const rows = yield* db.execute(plan);          // Effect<{id, email}[]>
+const feed = db.stream(plan);                  // Stream<{id, email}>
+```
+
+The Stream surfaces consume Prisma's async iterators. Its long-lived Postgres
+driver buffers raw results, so using a Stream does not guarantee bounded memory.
+
+## Prepared queries
+
+A prepared query retains its typed parameters and resolves the current
+execution's client each time it runs:
+
+```typescript
+const findUser = yield* db.prepare({ email: "pg/text@1" }, (sql, params) =>
+  sql.public.User
+    .select("id", "email")
+    .where((fields, fns) => fns.eq(fields.email, params.email))
+    .build(),
+);
+const users = yield* findUser.query({ email: "alice@example.com" });
+const stream = findUser.query({ email: "alice@example.com" }).stream;
+```
+
+An affected-count plan instead returns a handle with `execute(params)`, which
+produces statement statistics. Inside a transaction, `tx.prepare` binds both
+query and mutation handles to that transaction's connection.
+
+## Transactions
+
+`db.transaction` runs an Effect on a dedicated connection — commit on
+success, rollback on failure or interruption. `tx.rollback()` aborts
+with a typed `Prisma.RollbackError`:
+
+```typescript
+yield* db.transaction((tx) =>
+  Effect.gen(function* () {
+    const user = yield* tx.orm.public.User.create({ email, name });
+    if (!invited) return yield* tx.rollback();
+    return user;
+  }),
+);
+```
+
+Native extensions or query surfaces outside the Effect facade remain available
+through `db.use((client) => ...)`. Prefer the Effect-native methods when available
+so failures and execution remain in the Effect runtime.
+
+## Where next
+
+- [Contracts](/sql/prisma/contracts) — PSL and TypeScript authoring, generation,
+  and standalone Effect row schemas.
+- [Migrations](/sql/prisma/migrations) — review and apply contract changes.
+- [SQL databases](/sql/databases) — database choices and canonical deployment guides.
+- [TypeScript-first example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-neon-prisma)
+  or [PSL-first example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-neon-prisma-psl).
+- [Effect SQL: Postgres](/sql/effect-sql/postgres) — tagged-template SQL without an ORM.
