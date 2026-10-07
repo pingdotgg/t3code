@@ -3,6 +3,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
+  settleProjectScript,
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
 
@@ -60,6 +61,8 @@ export interface ProjectSetupScriptRunnerInput {
   readonly projectCwd?: string;
   readonly worktreePath: string;
   readonly preferredTerminalId?: string;
+  /** Which project script to run. Defaults to the worktree setup script. */
+  readonly trigger?: "setup" | "settle";
   readonly project?: {
     readonly id: ProjectId;
     readonly workspaceRoot: string;
@@ -225,6 +228,9 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const startedAtMs = yield* Clock.currentTimeMillis;
       const done = yield* Deferred.make<ProjectSetupScriptCompletion>();
+      // The shell redraws its prompt just after the sentinel. Closing before
+      // that would read the redraw as new activity and keep an idle shell.
+      const promptReturned = yield* Deferred.make<void>();
       let lineBuffer = "";
       let settled = false;
 
@@ -278,15 +284,26 @@ export const make = Effect.gen(function* () {
           if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
             lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
           }
-          return Effect.forEach(lines, handleLine, { discard: true });
+          return Effect.forEach(lines, handleLine, { discard: true }).pipe(
+            // A prompt has no newline, so it is what remains once the sentinel is in.
+            Effect.andThen(
+              Effect.suspend(() =>
+                settled && lineBuffer.length > 0
+                  ? Deferred.succeed(promptReturned, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            ),
+          );
         }
         if (event.type === "exited" || event.type === "closed") {
-          return settle(null);
+          return settle(null).pipe(Effect.andThen(Deferred.succeed(promptReturned, undefined)));
         }
         return Effect.void;
       });
 
       const completion = Deferred.await(done).pipe(
+        // A shell with an empty prompt never prints one; do not wait forever.
+        Effect.tap(() => Deferred.await(promptReturned).pipe(Effect.timeoutOption("1 second"))),
         Effect.ensuring(Effect.sync(() => unsubscribe())),
       );
       return { completion, unsubscribe };
@@ -348,14 +365,23 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    const script = setupProjectScript(resolveProjectScripts(settings, project));
+    const trigger = input.trigger ?? "setup";
+    const scripts = resolveProjectScripts(settings, project);
+    const script =
+      trigger === "settle" ? settleProjectScript(scripts) : setupProjectScript(scripts);
     if (!script) {
       return {
         status: "no-script",
       } as const;
     }
 
-    const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
+    // A thread settles again after it is resumed, and an earlier settle shell
+    // may still be busy; typing into it would feed its foreground program.
+    const terminalId =
+      input.preferredTerminalId ??
+      (trigger === "settle"
+        ? `settle-${script.id}-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 8)}`
+        : `setup-${script.id}`);
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({

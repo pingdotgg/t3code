@@ -320,6 +320,7 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
+  releaseClaimedRoles,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
@@ -5231,14 +5232,10 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectScripts.map((script) => script.id),
       );
       const nextScript = buildProjectScript(nextId, input);
-      const nextScripts = input.runOnWorktreeCreate
-        ? [
-            ...activeProjectScripts.map((script) =>
-              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-            ),
-            nextScript,
-          ]
-        : [...activeProjectScripts, nextScript];
+      const nextScripts = [
+        ...activeProjectScripts.map((script) => releaseClaimedRoles(script, input)),
+        nextScript,
+      ];
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -5266,11 +5263,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const updatedScript = buildProjectScript(existingScript.id, input);
       const nextScripts = activeProjectScripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
+        script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
       );
 
       return persistProjectScripts({

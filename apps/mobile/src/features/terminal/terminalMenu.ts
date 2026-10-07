@@ -156,10 +156,6 @@ export function resolveProjectScriptTerminalId(input: {
   return nextTerminalId(input.existingTerminalIds, input.uniqueSuffix);
 }
 
-export function projectScriptMenuLabel(script: ProjectScript): string {
-  return script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name;
-}
-
 export function projectScriptMenuIcon(icon: ProjectScript["icon"]) {
   if (icon === "test") return "flask";
   if (icon === "lint") return "checklist";
