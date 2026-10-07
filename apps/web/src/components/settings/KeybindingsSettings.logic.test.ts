@@ -327,10 +327,11 @@ describe("KeybindingsSettings.logic", () => {
         "composer.cycleHost",
         "thread.stop",
         "usage.open",
+        "thread.markUnread",
         "script.setup-db.run",
       ]),
     );
-    for (const command of ["thread.stop", "composer.cycleHost"]) {
+    for (const command of ["thread.stop", "composer.cycleHost", "thread.markUnread"]) {
       expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command)).toBe(
         false,
       );
