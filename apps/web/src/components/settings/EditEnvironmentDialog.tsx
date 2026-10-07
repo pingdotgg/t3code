@@ -79,16 +79,6 @@ export function EditEnvironmentDialog({
                 Leave blank to use the inferred name, {environment.entry.target.label}.
               </p>
             </div>
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-              <dt className="text-muted-foreground">Environment ID</dt>
-              <dd className="break-all select-text">{environment.environmentId}</dd>
-              {environment.displayUrl ? (
-                <>
-                  <dt className="text-muted-foreground">Address</dt>
-                  <dd className="break-all select-text">{environment.displayUrl}</dd>
-                </>
-              ) : null}
-            </dl>
             <div>
               <Button
                 type="button"
