@@ -51,7 +51,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
-import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
+import {
+  canRunPluginActionsNow,
+  runPluginAction,
+  usePluginActions,
+} from "../../state/plugin-actions";
 import {
   type PluginActionContext,
   pluginActionsAt,
@@ -247,6 +251,7 @@ export function useComposerCommandMenu({
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
+  const pluginActionRunningRef = useRef(false);
   const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
   }, []);
@@ -665,11 +670,25 @@ export function useComposerCommandMenu({
 
       if (item.type === "plugin-action") {
         // Keep the typed command when this connection may no longer run actions.
-        if (environmentId === null || !canRunPluginActions) return;
+        // The live grant is read because the menu may predate a permission change.
+        if (
+          environmentId === null ||
+          !canRunPluginActions ||
+          !canRunPluginActionsNow(environmentId)
+        ) {
+          return;
+        }
+        // A second tap before this render's draft updates must not run it twice.
+        if (pluginActionRunningRef.current) return;
+        pluginActionRunningRef.current = true;
         const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
         setSelection({ start: cleared.cursor, end: cleared.cursor });
         onChangeDraftMessage(cleared.text);
-        void runPluginAction({ environmentId, action: item.action, target: item.target });
+        void runPluginAction({ environmentId, action: item.action, target: item.target }).finally(
+          () => {
+            pluginActionRunningRef.current = false;
+          },
+        );
         return;
       }
       if (

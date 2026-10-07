@@ -59,7 +59,7 @@ export function buildPluginActionItems(input: {
     readonly environmentId: EnvironmentId;
     readonly action: PluginAction;
     readonly target: PluginActionTarget;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
 }): CommandPaletteActionItem[] {
   if (!input.canOperate) return [];
   const { environmentId } = input;
@@ -75,7 +75,9 @@ export function buildPluginActionItems(input: {
     title: labels[index] ?? action.title,
     description: action.description ?? action.pluginName,
     icon: input.icon,
-    run: () => input.runAction({ environmentId, action, target }),
+    run: async () => {
+      await input.runAction({ environmentId, action, target });
+    },
   }));
 }
 

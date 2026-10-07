@@ -45,7 +45,9 @@ const openDashboard: PluginAction = {
 };
 
 const pluginActionsMock = vi.hoisted(() => ({
-  runPluginAction: vi.fn<(input: unknown) => Promise<void>>(async () => undefined),
+  runPluginAction: vi.fn<(input: unknown) => Promise<boolean>>(async () => true),
+  // The live operate grant, which can change after the menu was offered.
+  canRunNow: true,
 }));
 
 // The environment's action list and the RPC that runs one are the boundaries.
@@ -54,6 +56,7 @@ vi.mock("../../state/pluginActions", () => ({
 }));
 vi.mock("../../pluginActions", () => ({
   runPluginAction: pluginActionsMock.runPluginAction,
+  canRunPluginActionsNow: () => pluginActionsMock.canRunNow,
 }));
 
 const modelSelection = createModelSelection(instanceId, "gpt-5.4");
@@ -107,7 +110,8 @@ beforeEach(() => {
   // ProseMirror measures the caret to keep it in view after each edit.
   Range.prototype.getClientRects ??= () => document.createElement("div").getClientRects();
   Range.prototype.getBoundingClientRect ??= () => new DOMRect();
-  pluginActionsMock.runPluginAction.mockClear();
+  pluginActionsMock.runPluginAction.mockReset().mockResolvedValue(true);
+  pluginActionsMock.canRunNow = true;
   // Both server-thread tests type into the same thread's draft.
   useComposerDraftStore.getState().setPrompt(threadRef, "");
   useComposerDraftStore.getState().setPrompt(draftId, "");
@@ -162,6 +166,9 @@ function composerProps(
     sendDisabledReason: null,
     isPreparingWorktree: false,
     bannerItems: [],
+    resumeCompactionTokens: null,
+    keepFullHistory: false,
+    onToggleKeepFullHistory: noop,
     environmentUnavailable: null,
     activePendingApproval: null,
     pendingApprovals: [],
@@ -241,10 +248,12 @@ function composerProps(
 async function renderComposer(route: "server" | "draft", canOperateThread = true) {
   const onSend = vi.fn<ChatComposerProps["onSend"]>();
   const promptRef: React.RefObject<string> = { current: "" };
-  await act(async () =>
-    root.render(<ChatComposer {...composerProps(route, onSend, promptRef, canOperateThread)} />),
-  );
-  return { onSend, promptRef };
+  const render = (canOperate: boolean) =>
+    act(async () =>
+      root.render(<ChatComposer {...composerProps(route, onSend, promptRef, canOperate)} />),
+    );
+  await render(canOperateThread);
+  return { onSend, promptRef, render };
 }
 
 function promptEditor(): HTMLElement & { editor?: Editor } {
@@ -372,5 +381,63 @@ describe("ChatComposer plugin actions in the slash menu", () => {
     expect(pluginActionsMock.runPluginAction).not.toHaveBeenCalled();
     expect(promptRef.current).toBe("please\n/depl now");
     expect(editorLines()).toEqual(["please", "/depl now"]);
+  });
+
+  it("keeps the typed command when the grant is lost while the menu is open", async () => {
+    const { promptRef, render } = await renderComposer("server");
+    await typePrompt("please\n/depl", " now");
+    expect(menuOption("/deploy").textContent).toContain("Deploy this thread");
+
+    await render(false);
+    await pressEnter();
+
+    expect(pluginActionsMock.runPluginAction).not.toHaveBeenCalled();
+    expect(promptRef.current).toBe("please\n/depl now");
+  });
+
+  it("reads the live grant when the action is picked and keeps the draft if it is gone", async () => {
+    const { promptRef } = await renderComposer("server");
+    await typePrompt("please\n/depl", " now");
+    expect(menuOption("/deploy").textContent).toContain("Deploy this thread");
+
+    // The cached grant still offers the action, but the connection lost it.
+    pluginActionsMock.canRunNow = false;
+    await pressEnter();
+
+    expect(pluginActionsMock.runPluginAction).not.toHaveBeenCalled();
+    expect(promptRef.current).toBe("please\n/depl now");
+    expect(editorLines()).toEqual(["please", "/depl now"]);
+  });
+
+  it("removes the command when it is picked, before the action settles, and runs it once", async () => {
+    let finish: (ran: boolean) => void = () => {};
+    pluginActionsMock.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { promptRef } = await renderComposer("server");
+    await typePrompt("please\n/depl", " now");
+
+    await pressEnter();
+    expect(promptRef.current).toBe("please\n now");
+    // The command is gone, so picking again has nothing to run.
+    await pressEnter();
+    await act(async () => finish(true));
+
+    expect(pluginActionsMock.runPluginAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the draft alone when the action settles after the composer is gone", async () => {
+    let finish: (ran: boolean) => void = () => {};
+    pluginActionsMock.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await renderComposer("server");
+    await typePrompt("please\n/depl", " now");
+    await pressEnter();
+
+    await act(async () => root.unmount());
+    useComposerDraftStore.getState().setPrompt(threadRef, "/depl newer draft");
+    await act(async () => finish(true));
+
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+      "/depl newer draft",
+    );
+    root = createRoot(container);
   });
 });

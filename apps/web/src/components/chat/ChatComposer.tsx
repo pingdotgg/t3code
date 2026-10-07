@@ -268,7 +268,7 @@ import {
   composerSuggestionOptionId,
 } from "./ComposerCommandMenu";
 import { pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
-import { runPluginAction } from "../../pluginActions";
+import { canRunPluginActionsNow, runPluginAction } from "../../pluginActions";
 import { usePluginActions } from "../../state/pluginActions";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -4076,7 +4076,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (item.type === "plugin-action") {
         // Keep the typed command when this connection may no longer run actions.
-        if (!canOperateThread) return;
+        // The live grant is read because the menu may predate a permission change.
+        if (!canOperateThread || !canRunPluginActionsNow(environmentId)) return;
         // Runs now, like the built-ins; nothing reaches the agent as prompt text.
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),

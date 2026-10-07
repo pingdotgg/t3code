@@ -13,7 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const fixture = vi.hoisted(() => ({
   actions: [] as ReadonlyArray<unknown>,
   canOperate: true,
-  runPluginAction: vi.fn(async () => {}),
+  // The live operate grant, which can change after the menu was offered.
+  canRunNow: true,
+  runPluginAction: vi.fn(async (_input: unknown) => true),
+  onChangeDraftMessage: vi.fn((_draft: string) => {}),
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../state/queries", () => ({
@@ -36,6 +39,7 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/plugin-actions", () => ({
   usePluginActions: () => fixture.actions,
   runPluginAction: fixture.runPluginAction,
+  canRunPluginActionsNow: () => fixture.canRunNow,
 }));
 
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -82,7 +86,10 @@ function Composer(props: {
     selectedProviderStatus: null,
     hasThread: props.currentThreadId !== null,
     hasCompactableConversation: false,
-    onChangeDraftMessage: setDraft,
+    onChangeDraftMessage: (next) => {
+      fixture.onChangeDraftMessage(next);
+      setDraft(next);
+    },
     onUpdateInteractionMode,
     onUsageLimits,
   });
@@ -96,7 +103,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.actions = [deploy, dashboard];
   fixture.canOperate = true;
-  fixture.runPluginAction.mockClear();
+  fixture.canRunNow = true;
+  fixture.runPluginAction.mockReset().mockResolvedValue(true);
+  fixture.onChangeDraftMessage.mockClear();
   onUpdateInteractionMode.mockClear();
   onUsageLimits.mockClear();
   root = createRoot(document.createElement("div"));
@@ -116,9 +125,14 @@ async function openMenu(draft: string, caret: number, currentThreadId: ThreadId 
   return latest.menu!.items.filter((item) => item.type === "plugin-action");
 }
 
-async function pick(label: string) {
+function offered(label: string) {
   const item = latest.menu!.items.find((candidate) => candidate.label === label);
   if (!item) throw new Error(`Expected ${label} in the menu`);
+  return item;
+}
+
+async function pick(label: string) {
+  const item = offered(label);
   await act(async () => latest.menu!.onSelect(item));
 }
 
@@ -175,5 +189,66 @@ describe("picking a plugin action from the slash menu", () => {
 
     expect(latest.draft).toBe(draft);
     expect(fixture.runPluginAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the typed command when the grant is lost while the menu is open", async () => {
+    const draft = "ship it\n/depl";
+    await openMenu(draft, draft.length, threadId);
+    const stale = offered("/deploy");
+
+    fixture.canOperate = false;
+    await act(async () =>
+      root.render(
+        createElement(Composer, { initialDraft: draft, currentThreadId: threadId, report }),
+      ),
+    );
+    await act(async () => latest.menu!.onSelect(stale));
+
+    expect(fixture.runPluginAction).not.toHaveBeenCalled();
+    expect(latest.draft).toBe(draft);
+  });
+
+  it("reads the live grant when the action is picked and keeps the draft if it is gone", async () => {
+    const draft = "ship it\n/depl";
+    await openMenu(draft, draft.length, threadId);
+
+    // The cached grant still offers the action, but the connection lost it.
+    fixture.canRunNow = false;
+    await pick("/deploy");
+
+    expect(fixture.runPluginAction).not.toHaveBeenCalled();
+    expect(latest.draft).toBe(draft);
+  });
+
+  it("removes the command when it is picked, before the action settles, and runs it once", async () => {
+    let finish: (ran: boolean) => void = () => {};
+    fixture.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await openMenu("ship it\n/depl", "ship it\n/depl".length, threadId);
+    const stale = offered("/deploy");
+    const staleMenu = latest.menu!;
+
+    // Two taps land on the same render before the draft updates.
+    await act(async () => {
+      staleMenu.onSelect(stale);
+      staleMenu.onSelect(stale);
+    });
+    expect(latest.draft).toBe("ship it\n");
+    await act(async () => finish(true));
+
+    expect(fixture.runPluginAction).toHaveBeenCalledOnce();
+  });
+
+  it("writes no draft when the action settles after the composer is gone", async () => {
+    let finish: (ran: boolean) => void = () => {};
+    fixture.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await openMenu("ship it\n/depl", "ship it\n/depl".length, threadId);
+    await pick("/deploy");
+    expect(fixture.onChangeDraftMessage).toHaveBeenCalledExactlyOnceWith("ship it\n");
+
+    await act(async () => root.unmount());
+    await act(async () => finish(true));
+
+    expect(fixture.onChangeDraftMessage).toHaveBeenCalledOnce();
+    root = createRoot(document.createElement("div"));
   });
 });
