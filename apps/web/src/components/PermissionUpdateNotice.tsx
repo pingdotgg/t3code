@@ -36,28 +36,33 @@ function EnvironmentPermissionNotice({
       // An unavailable store must not prevent the notice.
     }
     shown.add(environmentId);
+    const persistDismissal = () => {
+      try {
+        setLocalStorageItem(key, true, Schema.Boolean);
+      } catch {
+        // The in-memory marker still prevents repeats during this launch.
+      }
+    };
+    const dismiss = () => {
+      persistDismissal();
+      toastManager.close(id);
+    };
     const id = toastManager.add({
       title: `Permissions have changed for ${label}`,
       description:
         "This connection still uses the old permissions, so some actions may no longer be available. Pair again using a new link with the permissions you need.",
       timeout: 0,
-      onClose: () => {
-        try {
-          setLocalStorageItem(key, true, Schema.Boolean);
-        } catch {
-          // The in-memory marker still prevents repeats during this launch.
-        }
-      },
+      onClose: persistDismissal,
       actionProps: {
         children: "Open Connections",
         onClick: () => {
-          toastManager.close(id);
+          dismiss();
           void navigate({ to: "/settings/connections" });
         },
       },
       data: {
         actionLayout: "stacked-end",
-        secondaryActionProps: { children: "Dismiss", onClick: () => toastManager.close(id) },
+        secondaryActionProps: { children: "Dismiss", onClick: dismiss },
         secondaryActionVariant: "ghost",
       },
     });

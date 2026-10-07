@@ -61,7 +61,6 @@ it("keeps the notice visible and persists dismissal, with a route to pairing set
   notice.actionProps.onClick();
   expect(state.navigate).toHaveBeenCalledWith({ to: "/settings/connections" });
   expect(state.close).toHaveBeenCalledWith("notice");
-  notice.onClose();
   expect(state.save).toHaveBeenCalledWith(
     `t3code:permission-update:v1:env-${state.id}`,
     true,
@@ -95,4 +94,18 @@ it("does not warn for a granular grant", async () => {
   state.session.value.permissions.push("filesystem:read");
   await render();
   expect(state.add).not.toHaveBeenCalled();
+});
+
+it("persists the secondary dismissal without relying on the toast close callback", async () => {
+  await render();
+  const notice = state.add.mock.calls[0]![0] as {
+    data: { secondaryActionProps: { onClick: () => void } };
+  };
+  notice.data.secondaryActionProps.onClick();
+  expect(state.save).toHaveBeenCalledWith(
+    `t3code:permission-update:v1:env-${state.id}`,
+    true,
+    expect.anything(),
+  );
+  expect(state.close).toHaveBeenCalledWith("notice");
 });
