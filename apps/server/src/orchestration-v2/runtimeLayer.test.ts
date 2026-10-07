@@ -4684,6 +4684,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const events = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make(`manual-resume:${reason}`);
+        const switchedModelSelection = {
+          instanceId: alternateInstanceId,
+          model: "gpt-5.5",
+        } satisfies ModelSelection;
         const projectId = ProjectId.make(`manual-resume:project:${reason}`);
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
@@ -4816,6 +4820,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           manualContinuationOfRunId: source.id,
           text: "Continue where you left off.",
           attachments: [],
+          // A usage limit is often sidestepped by continuing on another provider.
+          ...(reason === "usage_limit" ? { modelSelection: switchedModelSelection } : {}),
           dispatchMode: { type: "start_immediately" as const },
           createdBy: "user" as const,
           creationSource: "web" as const,
@@ -4825,6 +4831,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.lengthOf(after.runs, 3);
         assert.equal(after.runs[1]?.status, "queued");
         assert.equal(after.runs[2]?.status, "starting");
+        const expectedModelSelection =
+          reason === "usage_limit" ? switchedModelSelection : modelSelection;
+        assert.deepEqual(after.runs[2]?.modelSelection, expectedModelSelection);
+        assert.deepEqual(after.thread.modelSelection, expectedModelSelection);
         assert.equal(
           (yield* orchestrator.dispatch(resume("second")).pipe(Effect.exit))._tag,
           "Failure",

@@ -2139,16 +2139,17 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
       true;
-  const resumableRunId = useMemo(() => {
+  const resumableRun = useMemo(() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
-    if (run?.status === "interrupted") return run.id;
+    if (run?.status === "interrupted") return run;
     return run?.status === "failed" &&
       serverRuntime?.lastErrorClass === "usage_limit" &&
       latestRootProviderFailure(run, serverProjection.turnItems)?.class === "usage_limit"
-      ? run.id
+      ? run
       : null;
   }, [isServerThread, serverProjection, serverRuntime?.lastErrorClass]);
+  const resumableRunId = resumableRun?.id ?? null;
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -8604,11 +8605,14 @@ export default function ChatView(props: ChatViewProps) {
           interactionMode,
         });
         if (settingsResult._tag === "Failure") return settingsResult;
+        // A model picked after the run stopped (say, to get past a usage limit) carries the turn.
+        const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
         const turnResult = await startThreadTurn({
           environmentId,
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -11533,6 +11537,7 @@ export default function ChatView(props: ChatViewProps) {
                               isConnecting={isConnecting}
                               isSendBusy={isSendBusy || isSavingQueuedEdit || isResuming}
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
+                              resumeRunModelSelection={resumableRun?.modelSelection ?? null}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
                                 !canOperateThread

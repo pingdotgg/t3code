@@ -44,6 +44,8 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   canResume?: boolean;
+  /** Set when the composer's model differs from the run being resumed: resume continues with it. */
+  resumeModelName?: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
@@ -100,6 +102,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   canResume = false,
+  resumeModelName = null,
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
   onSubmitMessage,
@@ -316,6 +319,34 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuPopup>
         </Menu>
       </div>
+    );
+  }
+
+  if (showResume && resumeModelName) {
+    const continueLabel = `Continue with ${resumeModelName}`;
+    return (
+      <Tooltip key="continue">
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className={cn(messageActionPillClassName, "h-9 sm:h-8", compact ? "px-3" : "px-4")}
+              {...pointerFocusProps}
+              onClick={onResume}
+              disabled={sendBlocked}
+              aria-label={continueLabel}
+            />
+          }
+        >
+          {isConnecting || isSendBusy ? (
+            <Spinner size="sm" aria-hidden="true" />
+          ) : (
+            <PlayIcon className="size-3.5 fill-current" aria-hidden="true" />
+          )}
+          {compact ? "Continue" : continueLabel}
+        </TooltipTrigger>
+        <TooltipPopup>{sendDisabledReason ?? continueLabel}</TooltipPopup>
+      </Tooltip>
     );
   }
 
