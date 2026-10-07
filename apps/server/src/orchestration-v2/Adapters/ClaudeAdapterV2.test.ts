@@ -2229,6 +2229,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         processQueues,
         offerAndWait,
         offeredMessages,
+        // The uuid Claude echoes on the turn answering the nth offered prompt.
+        promptUuid: (index: number) => {
+          const uuid = offeredMessages[index]?.uuid;
+          if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
+          return uuid;
+        },
         permissionModeChanges,
         continuationRequests,
         events,
@@ -4421,12 +4427,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const continuationAttempt = RunAttemptId.make("attempt-claude-wake-callback-3");
           const planToolUseId = "toolu_01WakePlanExitPlanMode";
           const planMarkdown = "# Wake plan\n\n1. Report the background result.";
-          const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attemptId: RunAttemptId) {
-            return claudeSdkFrame({
+          const stamp = (frame: SDKMessage, promptIndex: number) =>
+            claudeSdkFrame({
               ...frame,
-              user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attemptId),
+              user_message_uuid: harness.promptUuid(promptIndex),
             });
-          });
           const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
           const planToolUse = claudeSdkFrame({
             type: "assistant",
@@ -4479,12 +4484,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               runtimePolicy,
             }),
           );
-          yield* Queue.offer(harness.sdkMessages, yield* stamp(wakeTaskStarted, firstAttempt));
+          yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, 0));
           yield* Queue.offer(
             harness.sdkMessages,
-            yield* stamp(
+            stamp(
               makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000740", result: "STARTED" }),
-              firstAttempt,
+              0,
             ),
           );
           yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -4541,22 +4546,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           // The prompt's own turn follows and echoes its uuid.
           yield* Queue.offer(
             harness.sdkMessages,
-            yield* stamp(
+            stamp(
               makeAssistantTextFrame({
                 uuid: "00000000-0000-4000-8000-000000000743",
                 text: "USER_REPLY",
               }),
-              userAttempt,
+              1,
             ),
           );
           yield* Queue.offer(
             harness.sdkMessages,
-            yield* stamp(
+            stamp(
               makeResultFrame({
                 uuid: "00000000-0000-4000-8000-000000000744",
                 result: "USER_REPLY",
               }),
-              userAttempt,
+              1,
             ),
           );
           yield* awaitUntil(() => harness.terminalEvents().length === 2, "user turn terminal");
@@ -4721,12 +4726,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const firstAttempt = RunAttemptId.make("attempt-claude-wake-approval-1");
         const userAttempt = RunAttemptId.make("attempt-claude-wake-approval-2");
         const bashToolUseId = "toolu_01WakeApprovalBash";
-        const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attemptId: RunAttemptId) {
-          return claudeSdkFrame({
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
+          claudeSdkFrame({
             ...frame,
-            user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
-        });
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -4741,16 +4745,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000780", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000781", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -4845,12 +4849,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const firstAttempt = RunAttemptId.make("attempt-claude-echo-debris-1");
         const secondAttempt = RunAttemptId.make("attempt-claude-echo-debris-2");
-        const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attemptId: RunAttemptId) {
-          return claudeSdkFrame({
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
+          claudeSdkFrame({
             ...frame,
-            user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
-        });
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -4865,16 +4868,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // The first turn echoes on its first frame: this process echoes early.
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000760", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000761", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -4899,16 +4902,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, staleTaskNotificationResult);
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000762", text: "Two." }),
-            secondAttempt,
+            1,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000763", result: "Two." }),
-            secondAttempt,
+            1,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
@@ -4944,12 +4947,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const firstAttempt = RunAttemptId.make("attempt-claude-echo-1");
         const secondAttempt = RunAttemptId.make("attempt-claude-echo-2");
-        const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attemptId: RunAttemptId) {
-          return claudeSdkFrame({
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
+          claudeSdkFrame({
             ...frame,
-            user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
-        });
         const assistantTexts = () =>
           harness.events.flatMap((event) =>
             event.type === "message.updated" && event.message.role === "assistant"
@@ -4969,22 +4971,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        assert.equal(
-          harness.offeredMessages[0]?.uuid,
-          yield* ClaudeAdapterV2.claudePromptUuid(firstAttempt),
-        );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000701", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -5014,6 +5012,118 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
         assert.deepEqual(assistantTexts(), ["One.", "Two."]);
         assert.equal(harness.terminalEvents()[1]?.status, "failed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("gives the same run attempt a fresh prompt uuid on every offer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Two servers sharing a database copy allocate identical run attempt
+        // ids and resume the same Claude session. Claude acks a prompt whose
+        // uuid its transcript already holds without ever running a turn.
+        const original = yield* makeWakeHarness;
+        const copy = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        for (const harness of [original, copy]) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-shared-copy"),
+              text: "Continue where you left off.",
+              attachments: [],
+            }),
+          );
+        }
+        assert.notEqual(original.promptUuid(0), copy.promptUuid(0));
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("fails a prompt Claude completes without starting a turn for it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Claude answers a prompt whose uuid its transcript already holds with
+        // a lone completed lifecycle frame and never runs a turn for it.
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-duplicate-prompt"),
+            text: "Bump this PR to the latest main.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(0),
+            state: "completed",
+            uuid: "00000000-0000-4000-8000-000000000790",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+        const [terminal] = harness.terminalEvents();
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.threadDisposition, "reusable");
+        assert.include(terminal.failure.message, "never started a turn");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps a started prompt running until its result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-started-prompt"),
+            text: "Bump this PR to the latest main.",
+            attachments: [],
+          }),
+        );
+        const lifecycle = (state: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(0),
+            state,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        yield* Queue.offer(
+          harness.sdkMessages,
+          lifecycle("queued", "00000000-0000-4000-8000-000000000791"),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          lifecycle("started", "00000000-0000-4000-8000-000000000792"),
+        );
+        // The CLI can report the prompt completed before its turn's result.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          lifecycle("completed", "00000000-0000-4000-8000-000000000793"),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000794", result: "Done." }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
@@ -6031,12 +6141,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const userAttempt = RunAttemptId.make("attempt-claude-wake-subagent-2");
         const continuationAttempt = RunAttemptId.make("attempt-claude-wake-subagent-3");
         const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
-        const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attemptId: RunAttemptId) {
-          return claudeSdkFrame({
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
+          claudeSdkFrame({
             ...frame,
-            user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
-        });
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -6048,12 +6157,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        yield* Queue.offer(harness.sdkMessages, yield* stamp(wakeTaskStarted, firstAttempt));
+        yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, 0));
         yield* Queue.offer(
           harness.sdkMessages,
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000770", result: "STARTED" }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -6120,16 +6229,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
           wakeResult,
-          yield* stamp(
+          stamp(
             makeAssistantTextFrame({
               uuid: "00000000-0000-4000-8000-000000000776",
               text: "USER_REPLY",
             }),
-            userAttempt,
+            1,
           ),
-          yield* stamp(
+          stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000777", result: "USER_REPLY" }),
-            userAttempt,
+            1,
           ),
         ];
         for (const frame of wakeFrames) {
