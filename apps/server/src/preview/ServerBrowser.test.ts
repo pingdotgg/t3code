@@ -7,6 +7,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationLoadError,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -164,6 +165,8 @@ const desktopRenders = (tabId: string) => {
   return desktopTabs.has(tabId);
 };
 const releasedDesktopTabs: Array<string> = [];
+/** Load failures the fake desktop reported, by tab. */
+const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
@@ -210,6 +213,8 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    loadFailure: (key) =>
+      Effect.sync(() => Option.fromUndefinedOr(desktopLoadFailures.get(key.tabId))),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
@@ -259,6 +264,7 @@ beforeEach(() => {
   desktopRendersNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
+  desktopLoadFailures.clear();
 });
 
 it.live("readiness none responds immediately but takeover input waits for navigation commit", () =>
@@ -1022,6 +1028,79 @@ it.live("viewers see the agent's pointer move to its target and click there", ()
         expect.objectContaining({ phase: "click", x: 140, y: 50 }),
       ]);
       expect(click).toHaveBeenCalledOnce();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+const certificateError = {
+  url: "https://device.local/",
+  code: -202,
+  description: "ERR_CERT_AUTHORITY_INVALID",
+};
+
+it.live("reports why a page failed to load while the tab shows the error page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const request = {
+        url: () => certificateError.url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_CERT_AUTHORITY_INVALID" }),
+      };
+      page.emit("request", request);
+      page.emit("requestfailed", request);
+      page.url = () => "chrome-error://chromewebdata/";
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loadError).toEqual(certificateError);
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(snapshot.loadError).toEqual(certificateError);
+      // The next navigation that loads leaves no error behind.
+      page.emit("request", { ...request, url: () => "https://device.local/login" });
+      page.url = () => "https://device.local/login";
+      const loaded = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(loaded.loadError).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("reports a desktop tab's load failure from before the server connected", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      // The desktop's first load failed while no server listened to the page.
+      desktopConnections[0]!.context.page.url = () => "chrome-error://chromewebdata/";
+      desktopLoadFailures.set(opened.tabId, certificateError);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+        tabId: PreviewTabId.make(opened.tabId),
+      });
+      expect(status.loadError).toEqual(certificateError);
     }),
   ).pipe(Effect.provide(layer)),
 );

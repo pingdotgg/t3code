@@ -1439,16 +1439,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       isMainFrame: boolean,
     ): void => {
       if (code === -3 || !isMainFrame) return;
+      const url = validatedUrl || wc.getURL();
       runFork(
         update(tabId, {
-          navStatus: {
-            kind: "LoadFailed",
-            url: validatedUrl || wc.getURL(),
-            title: wc.getTitle(),
-            code,
-            description,
-          },
-        }),
+          navStatus: { kind: "LoadFailed", url, title: wc.getTitle(), code, description },
+        }).pipe(
+          Effect.andThen(SynchronizedRef.get(tabsRef)),
+          Effect.tap((tabs) =>
+            Effect.sync(() => {
+              const serverTab = tabs.get(tabId)?.serverTab;
+              if (serverTab) browserHost.loadFailed(serverTab, { url, code, description });
+            }),
+          ),
+        ),
       );
     };
     const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
@@ -2378,6 +2381,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (afterAttach.serverTab) {
         yield* listenForAgentPointers;
         browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
+        // A first load can fail before the attach, while no server is listening.
+        const { navStatus } = afterAttach;
+        if (navStatus.kind === "LoadFailed") {
+          browserHost.loadFailed(afterAttach.serverTab, {
+            url: navStatus.url,
+            code: navStatus.code,
+            description: navStatus.description,
+          });
+        }
       }
       if (afterAttach.colorScheme !== "system") {
         yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>

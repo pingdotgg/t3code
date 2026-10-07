@@ -72,6 +72,11 @@ export class DesktopBrowserHost extends Context.Service<
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     /** Withdraws it: closed, swapped, crashed, or devtools needs the debugger. */
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    /** Tells the server an attached tab's page failed to load; ignored for other tabs. */
+    readonly loadFailed: (
+      key: DesktopBrowserTabKey,
+      failure: { readonly url: string; readonly code: number; readonly description: string },
+    ) => void;
     /** Points a server tab's download at the server; false for any other download. */
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     /** The agent's cursor positions for attached tabs, keyed by their server tab. */
@@ -174,6 +179,10 @@ export const make = Effect.gen(function* () {
     emit({ type: "attached", ...key });
   };
 
+  const loadFailed: DesktopBrowserHost["Service"]["loadFailed"] = (key, failure) => {
+    if (tabs.has(keyOf(key))) emit({ type: "loadFailed", ...key, ...failure });
+  };
+
   const handleCommandLine = (line: string) =>
     Effect.sync(() => {
       const command = decodeCommand(line);
@@ -218,6 +227,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    loadFailed,
     placeDownload,
   });
 });

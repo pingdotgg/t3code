@@ -13,6 +13,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -55,6 +56,10 @@ export class DesktopBrowserChannel extends Context.Service<
     /** Desktop tabs as they detach. */
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    /** The latest page-load failure the desktop reported for an attached tab. */
+    readonly loadFailure: (
+      key: DesktopTabKey,
+    ) => Effect.Effect<Option.Option<PreviewAutomationLoadError>>;
     /**
      * A one-connection CDP endpoint for an attached tab. Closing the scope
      * releases the tab on the desktop and stops the endpoint.
@@ -74,6 +79,7 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  const loadFailures = new Map<string, PreviewAutomationLoadError>();
   /** CDP frames from the desktop, per tab, for the endpoint connected to it. */
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
@@ -84,6 +90,7 @@ const make = Effect.gen(function* () {
       awaitAttached: () => Effect.succeed(false),
       detached: Stream.empty,
       isAttached: () => Effect.succeed(false),
+      loadFailure: () => Effect.succeedNone,
       endpoint: () => Effect.die("No desktop app is attached to this server."),
       pointer: () => Effect.void,
     });
@@ -123,8 +130,18 @@ const make = Effect.gen(function* () {
         case "attached":
           attachedTabs.add(id);
           return PubSub.publish(changes, { key, attached: true });
+        case "loadFailed":
+          loadFailures.set(id, {
+            // Matches the cap on failures the server observes itself.
+            url: event.url.slice(0, 2048),
+            code: event.code,
+            description: event.description,
+          });
+          return Effect.void;
         case "detached": {
           attachedTabs.delete(id);
+          // The desktop reports the failure again when the tab reattaches.
+          loadFailures.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
             Effect.andThen(PubSub.publish(changes, { key, attached: false })),
@@ -217,6 +234,7 @@ const make = Effect.gen(function* () {
       Stream.map((change) => change.key),
     ),
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
+    loadFailure: (key) => Effect.sync(() => Option.fromUndefinedOr(loadFailures.get(keyOf(key)))),
     endpoint,
     pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
   });

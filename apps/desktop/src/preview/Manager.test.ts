@@ -2824,6 +2824,51 @@ describe("PreviewManager", () => {
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
+  effectIt.effect("tells the server why a tab it renders natively failed to load", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped,
+      );
+      const capturePage = vi.fn(async () => ({
+        toPNG: () => Buffer.from("png"),
+        toJPEG: () => Buffer.from("jpeg"),
+        getSize: () => ({ width: 100, height: 80 }),
+      }));
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      fromId.mockReturnValue(
+        Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+          on: (event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          },
+        }),
+      );
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      expect(yield* Queue.take(lines)).toContain('"type":"attached"');
+      listeners.get("did-fail-load")!(
+        {},
+        -202,
+        "ERR_CERT_AUTHORITY_INVALID",
+        "https://device.local/",
+        true,
+      );
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({
+        type: "loadFailed",
+        ...serverTab,
+        url: "https://device.local/",
+        code: -202,
+        description: "ERR_CERT_AUTHORITY_INVALID",
+      });
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
   effectIt.effect("stops capture retries when the tab swaps during the retry delay", () =>
     withManager((manager) =>
       Effect.gen(function* () {

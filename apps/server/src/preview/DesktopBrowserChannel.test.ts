@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
@@ -53,6 +54,19 @@ it.layer(NodeServices.layer)("DesktopBrowserChannel", (it) => {
       // Whether or not the reader has reached these lines yet, the tab is not attached.
       const exit = yield* Effect.exit(Effect.scoped(channel.endpoint(key)));
       expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the load failure the desktop reported for a tab", () =>
+    Effect.gen(function* () {
+      const failure = { url: "https://device.local/", code: -202, description: "ERR_CERT" };
+      const channel = yield* channelOver([
+        { type: "loadFailed", ...key, ...failure },
+        { type: "attached", ...key },
+      ]);
+      // The reader handles lines in order, so the failure is in once the attach is.
+      expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+      expect(yield* channel.loadFailure(key)).toEqual(Option.some(failure));
     }).pipe(Effect.scoped),
   );
 });
