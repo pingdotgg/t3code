@@ -10586,7 +10586,11 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
+    (
+      instanceId: ProviderInstanceId,
+      model: string,
+      options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
+    ) => {
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -10631,13 +10635,21 @@ export default function ChatView(props: ChatViewProps) {
       }
       // Restore this model's own remembered options; without any, start it
       // from its default rather than carrying the previous model's over.
+      // Requested options (an effort picked from the Pareto line) win.
       const rememberedOptions =
         useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
           resolvedModel
-        ];
+        ] ?? [];
+      const requestedOptions = options?.modelOptions ?? [];
+      const mergedOptions = [
+        ...rememberedOptions.filter(
+          ({ id }) => !requestedOptions.some((option) => option.id === id),
+        ),
+        ...requestedOptions,
+      ];
       const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
+        mergedOptions.length > 0
+          ? { instanceId, model: resolvedModel, options: mergedOptions }
           : { instanceId, model: resolvedModel };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
