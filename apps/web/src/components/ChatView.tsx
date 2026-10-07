@@ -5378,15 +5378,29 @@ export default function ChatView(props: ChatViewProps) {
   );
   const lastShownComputerUseItemId = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeThreadRef || !computerUse?.inProgress || shouldUsePlanSidebarSheet) return;
+    if (!activeThreadRef) return;
+    const current =
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
+    if (latestRunSettled) {
+      if (current?.source.kind === "computer") {
+        usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+      }
+      return;
+    }
+    if (!computerUse?.inProgress || shouldUsePlanSidebarSheet) return;
     if (lastShownComputerUseItemId.current === computerUse.itemId) return;
     lastShownComputerUseItemId.current = computerUse.itemId;
     if (!autoShowFloatingPreview) return;
-    const current =
-      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
     if (current && current.source.kind !== "computer") return;
     usePreviewMiniPlayerStore.getState().open(activeThreadRef, COMPUTER_MINI_PLAYER_SOURCE);
-  }, [activeThreadRef, autoShowFloatingPreview, computerUse, shouldUsePlanSidebarSheet]);
+  }, [
+    activeThreadRef,
+    activePreviewMiniPlayer,
+    autoShowFloatingPreview,
+    computerUse,
+    latestRunSettled,
+    shouldUsePlanSidebarSheet,
+  ]);
   // Baseline loaded tabs so reloads never reopen previews the user dismissed.
   const previousServerPreviewTabs = useRef(new Map<string, Map<string, string | undefined>>());
   useEffect(() => {

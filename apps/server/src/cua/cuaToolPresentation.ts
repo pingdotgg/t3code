@@ -83,6 +83,12 @@ export function clearCuaToolContext(threadId: ThreadId): void {
   directories.delete(threadId);
 }
 
+/** End the turn's capture target without forgetting learned app identities. */
+export function clearCuaWindowTarget(threadId: ThreadId): void {
+  const directory = directories.get(threadId);
+  if (directory) directory.lastWindow = undefined;
+}
+
 /** Last window the agent targeted in this thread, if any tool call named one. */
 export function readCuaWindowTarget(threadId: ThreadId): CuaWindowTarget | undefined {
   return directories.get(threadId)?.lastWindow;
@@ -210,6 +216,7 @@ function humanizeBundleId(bundleId: string): string | undefined {
 function resolveApp(
   threadId: ThreadId,
   args: Record<string, unknown> | undefined,
+  trackWindow: boolean,
 ): CuaApp | undefined {
   const directory = directories.get(threadId);
   const pid = asPid(args?.pid);
@@ -217,7 +224,7 @@ function resolveApp(
   const name = asAppName(args?.app_name) ?? asAppName(args?.app);
   const known = pid !== undefined ? directory?.byPid.get(pid) : undefined;
   const windowId = asWindowId(args?.window_id);
-  if (pid !== undefined && windowId !== undefined) {
+  if (trackWindow && pid !== undefined && windowId !== undefined) {
     directoryFor(threadId).lastWindow = { pid, windowId };
   }
   const app: CuaApp = {
@@ -437,7 +444,10 @@ export function cuaToolPresentation(input: {
   const tool = parseCuaToolName(input.rawToolName);
   if (!tool) return undefined;
   const args = asRecord(input.args);
-  const app = TOOLS_WITHOUT_APP.has(tool) ? undefined : resolveApp(input.threadId, args);
+  // Restoring the user's foreground window must not redirect the live preview.
+  const app = TOOLS_WITHOUT_APP.has(tool)
+    ? undefined
+    : resolveApp(input.threadId, args, tool !== "bring_to_front" && input.status !== "failed");
   const appName = app?.name ?? (app?.bundleId ? humanizeBundleId(app.bundleId) : undefined);
   const reference = app ? nativeApp(app) : undefined;
   const icon = reference ? ({ _tag: "native-app", app: reference } as const) : undefined;

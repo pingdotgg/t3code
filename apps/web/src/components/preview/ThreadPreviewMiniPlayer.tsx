@@ -12,7 +12,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -139,9 +138,9 @@ export function ThreadPreviewMiniPlayer({
 
 /**
  * The window an agent drives on the host computer. While a computer use turn
- * runs, the server captures that window every second and a half and streams
- * it here; the capture runs only while this card is mounted. Between turns the
- * card keeps the last frame instead of going blank.
+ * runs, the server captures that window at an adaptive rate and streams
+ * it here; the capture runs only while this card is mounted. Chat dismisses
+ * the card when the turn settles.
  */
 function ComputerMiniPlayer({
   threadRef,
@@ -149,14 +148,35 @@ function ComputerMiniPlayer({
   preview,
 }: Props & { readonly preview: ComputerUsePreview | null }) {
   const live = useCuaWindowPreview(threadRef);
-  const [lastFrame, setLastFrame] = useState<CuaWindowPreviewFrame | null>(null);
+  const [decoded, setDecoded] = useState<{
+    frame: CuaWindowPreviewFrame;
+    src: string;
+  } | null>(null);
   const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
-  if (liveFrame !== null && liveFrame !== lastFrame) setLastFrame(liveFrame);
-  const frame = liveFrame ?? lastFrame;
-  const src = useMemo(
-    () => (frame ? `data:${frame.mimeType};base64,${frame.dataBase64}` : null),
-    [frame],
-  );
+  if (live.status === "live" && !liveFrame && decoded !== null) setDecoded(null);
+  useEffect(() => {
+    if (!liveFrame) return;
+    let cancelled = false;
+    const image = new Image();
+    const src = `data:${liveFrame.mimeType};base64,${liveFrame.dataBase64}`;
+    image.src = src;
+    // Keep the visible frame until the replacement is ready to paint.
+    void image.decode().then(
+      () => {
+        if (!cancelled) setDecoded({ frame: liveFrame, src });
+      },
+      () => {
+        // A malformed frame must not erase the last successfully decoded one.
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [liveFrame]);
+  const visible =
+    live.status === "unavailable" || (live.status === "live" && !liveFrame) ? null : decoded;
+  const frame = visible?.frame ?? null;
+  const src = visible?.src ?? null;
   const sourceSize =
     frame && frame.width > 0 && frame.height > 0
       ? { width: frame.width, height: frame.height }
@@ -186,7 +206,7 @@ function ComputerMiniPlayer({
             <img
               src={src}
               alt={caption}
-              decoding="async"
+              decoding="sync"
               draggable={false}
               className="size-full select-none object-contain"
             />
