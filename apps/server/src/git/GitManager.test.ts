@@ -6,7 +6,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -16,11 +19,13 @@ import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
+  GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   ModelSelection,
 } from "@t3tools/contracts";
@@ -43,6 +48,11 @@ import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
 import {
@@ -778,6 +788,120 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("passive worktree status streams do not start remote refreshes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-passive-vcs-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const worktreeDir = NodePath.join(repoDir, "worktree");
+      yield* runGit(repoDir, ["worktree", "add", "-b", "feature/passive", worktreeDir]);
+      yield* runGit(worktreeDir, ["push", "-u", "origin", "feature/passive"]);
+
+      const { manager } = yield* makeManager();
+      let remoteReads = 0;
+      const workflowContext = yield* Layer.build(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.succeed(GitManager.GitManager, {
+              ...manager,
+              remoteStatus: (input, options) =>
+                manager.remoteStatus(input, options).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      remoteReads += 1;
+                    }),
+                  ),
+                ),
+            }),
+          ),
+          Layer.provide(
+            VcsDriverRegistry.layer.pipe(
+              Layer.provide(VcsProjectConfig.layer),
+              Layer.provide(VcsProcess.layer),
+            ),
+          ),
+        ),
+      );
+      const broadcasterContext = yield* Layer.build(
+        VcsStatusBroadcaster.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              GitWorkflowService.GitWorkflowService,
+              Context.get(workflowContext, GitWorkflowService.GitWorkflowService),
+            ),
+          ),
+          Layer.provide(
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              hasDemand: () => Effect.succeed(true),
+              shouldRunScopeWork: () => Effect.succeed(true),
+            }),
+          ),
+        ),
+      );
+      const broadcaster = Context.get(
+        broadcasterContext,
+        VcsStatusBroadcaster.VcsStatusBroadcaster,
+      );
+      const passiveScope = yield* Scope.make();
+      const snapshots = yield* Deferred.make<void, GitManagerServiceError>();
+      const localUpdated = yield* Deferred.make<void>();
+      const remoteUpdated = yield* Deferred.make<void>();
+      let snapshotCount = 0;
+      for (const cwd of [repoDir, worktreeDir]) {
+        yield* Stream.runForEach(
+          broadcaster.streamStatus(
+            { cwd, includeRemote: false },
+            { automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(1)) },
+          ),
+          (event) => {
+            if (
+              cwd === worktreeDir &&
+              event._tag === "localUpdated" &&
+              event.local.hasWorkingTreeChanges
+            ) {
+              return Deferred.succeed(localUpdated, undefined);
+            }
+            if (cwd === worktreeDir && event._tag === "remoteUpdated") {
+              expect(event.remote?.hasUpstream).toBe(true);
+              return Deferred.succeed(remoteUpdated, undefined);
+            }
+            if (event._tag !== "snapshot") return Effect.void;
+            expect(event.local.isRepo).toBe(true);
+            expect(event.local.refName).toBe(cwd === repoDir ? "main" : "feature/passive");
+            snapshotCount += 1;
+            return snapshotCount === 2 ? Deferred.succeed(snapshots, undefined) : Effect.void;
+          },
+        ).pipe(
+          Effect.catchCause((cause) => Deferred.failCause(snapshots, cause)),
+          Effect.forkIn(passiveScope),
+        );
+      }
+      yield* Deferred.await(snapshots);
+      expect(remoteReads).toBe(0);
+      yield* TestClock.adjust("1 minute");
+      expect(remoteReads).toBe(0);
+
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(worktreeDir, "README.md"), "changed\n");
+      yield* broadcaster.refreshLocalStatus(worktreeDir);
+      yield* Deferred.await(localUpdated);
+      expect(remoteReads).toBe(0);
+
+      const activeScope = yield* Scope.make();
+      yield* Stream.runDrain(broadcaster.streamStatus({ cwd: worktreeDir })).pipe(
+        Effect.forkIn(activeScope),
+      );
+      yield* Deferred.await(remoteUpdated);
+      expect(remoteReads).toBe(1);
+      yield* Scope.close(activeScope, Exit.void);
+      yield* TestClock.adjust("1 minute");
+      expect(remoteReads).toBe(1);
+      yield* Scope.close(passiveScope, Exit.void);
+    }),
+  );
+
   it.effect("status includes draft PR metadata when branch already has a draft PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

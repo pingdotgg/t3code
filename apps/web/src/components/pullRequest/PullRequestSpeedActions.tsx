@@ -11,13 +11,18 @@ import {
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
-export interface PullRequestSpeedActionResult {
-  readonly entry: EnvironmentPullRequestEntry;
+type PullRequestSpeedActionEntry = Pick<
+  EnvironmentPullRequestEntry,
+  "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
+> & { readonly stack?: object | undefined };
+
+export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntry> {
+  readonly entry: Entry;
   readonly action: PullRequestAction;
 }
 
 /** No detail or stack reads until a merge is clicked, even on a long list. */
-export function PullRequestSpeedActions({
+export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   visible,
   onActed,
@@ -25,12 +30,12 @@ export function PullRequestSpeedActions({
   sweeping = false,
   onCloseSweepStart,
 }: {
-  entry: EnvironmentPullRequestEntry;
+  entry: Entry;
   visible: boolean;
-  onActed: (result: PullRequestSpeedActionResult) => void;
+  onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;
   closing?: boolean;
   sweeping?: boolean;
-  onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
+  onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
 }) {
   const resolveProjectDefault = usePullRequestDefaultMergeMethodResolver(
     entry.environmentId,
@@ -45,7 +50,7 @@ export function PullRequestSpeedActions({
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId: entry.environmentId,
     reference,
-    onSuccess: (action) => onActed({ entry, action }),
+    onSuccess: (action) => onActed?.({ entry, action }),
     resolveMergeMethod: (detail) => {
       const allowed = detail.capabilities.mergeMethods.filter(
         (method) => detail.mergeCapabilities[method],
@@ -102,7 +107,7 @@ export function PullRequestSpeedActions({
             <TooltipPopup>
               {action === "merge" && entry.stack
                 ? "Open this pull request to merge its stack"
-                : action === "close"
+                : action === "close" && onCloseSweepStart
                   ? "Close immediately, or drag across rows to close several"
                   : `${label} immediately`}
             </TooltipPopup>
