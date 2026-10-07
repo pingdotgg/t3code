@@ -47,3 +47,21 @@ export function resolveOnboardingTargetEnvironment<TEnvironment extends Onboardi
 
   return mode === "local" ? null : (connectedRelayEnvironments[0] ?? null);
 }
+
+/**
+ * The computers the wizard sets up from the user's selection. Continue waits
+ * only on a first connection attempt, which settles on its own. Selected
+ * computers that are switched off, offline, failing, or unsupported are skipped
+ * so they can never lock the user out of onboarding.
+ */
+export function resolveOnboardingSetup(
+  environments: ReadonlyArray<Pick<OnboardingEnvironment, "environmentId" | "connection">>,
+  selectedIds: ReadonlySet<EnvironmentId>,
+): { readonly ready: boolean; readonly environmentIds: ReadonlyArray<EnvironmentId> } {
+  const selected = environments.filter((environment) => selectedIds.has(environment.environmentId));
+  const environmentIds = selected
+    .filter((environment) => environment.connection.phase === "connected")
+    .map((environment) => environment.environmentId);
+  const settling = selected.some((environment) => environment.connection.phase === "connecting");
+  return { ready: environmentIds.length > 0 && !settling, environmentIds };
+}
