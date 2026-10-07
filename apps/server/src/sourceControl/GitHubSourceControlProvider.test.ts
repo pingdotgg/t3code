@@ -142,6 +142,7 @@ it.effect("lists change request history through the batched head lookup", () =>
             url: "https://enterprise.test/acme/web/pull/7",
             baseRefName: "main",
             headRefName: "feature/merged",
+            headSha: "a".repeat(40),
             state: "merged",
             mergedAt: "2026-01-01T00:00:00Z",
             updatedAt: Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
@@ -171,6 +172,7 @@ it.effect("lists change request history through the batched head lookup", () =>
     });
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
+    assert.strictEqual(changeRequests[0]?.headSha, "a".repeat(40));
     assert.strictEqual(changeRequests[0]?.mergedAt, "2026-01-01T00:00:00Z");
     assert.deepStrictEqual(
       changeRequests[0]?.updatedAt,

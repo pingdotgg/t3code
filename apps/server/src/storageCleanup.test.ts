@@ -7,7 +7,11 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
+import {
+  storageCleanupActivityAt,
+  storageCleanupPullRequestMerged,
+  storageCleanupThreadIdle,
+} from "./storageCleanup.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -103,4 +107,50 @@ describe("V2 storage cleanup eligibility", () => {
   function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {
     return { ...candidate(), status };
   }
+});
+
+describe("merged pull request cleanup", () => {
+  const HEAD_SHA = "a".repeat(40);
+  const integrated = {
+    branch: "feature",
+    defaultBranch: "main",
+    headSha: HEAD_SHA,
+    integrated: true,
+  };
+  const squashed = { ...integrated, integrated: false };
+  const pullRequest = (
+    overrides: Partial<NonNullable<Parameters<typeof storageCleanupPullRequestMerged>[0]>> = {},
+  ) => ({
+    state: "merged" as const,
+    headRef: "feature",
+    baseRef: "main",
+    headSha: HEAD_SHA,
+    ...overrides,
+  });
+
+  it("removes a worktree whose head reached the default branch through a merged pull request", () => {
+    expect(storageCleanupPullRequestMerged(pullRequest({ headSha: null }), integrated)).toBe(true);
+  });
+
+  it("removes a squash-merged worktree when the pull request names its exact head", () => {
+    expect(storageCleanupPullRequestMerged(pullRequest(), squashed)).toBe(true);
+  });
+
+  it.each([
+    ["has a later commit than the merged head", { headSha: "c".repeat(40) }],
+    ["was merged into a release branch", { baseRef: "release" }],
+    ["was merged into its stack parent", { baseRef: "stack-parent" }],
+    ["was merged without a reported head commit", { headSha: null }],
+    ["belongs to a different branch", { headRef: "other" }],
+    ["is still open", { state: "open" }],
+    ["was closed without merging", { state: "closed" }],
+  ] as const)("keeps a squash worktree whose pull request %s", (_name, overrides) => {
+    expect(storageCleanupPullRequestMerged(pullRequest(overrides), squashed)).toBe(false);
+  });
+
+  it("keeps a worktree with no pull request, or one that is not merged", () => {
+    expect(storageCleanupPullRequestMerged(null, squashed)).toBe(false);
+    expect(storageCleanupPullRequestMerged(null, integrated)).toBe(false);
+    expect(storageCleanupPullRequestMerged(pullRequest({ state: "open" }), integrated)).toBe(false);
+  });
 });

@@ -183,6 +183,7 @@ export interface GitHubPullRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state?: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
@@ -337,7 +338,7 @@ type PullRequestListState = "open" | "closed" | "merged" | "all";
 
 /** The pull request fields every read selects, in GraphQL. */
 const PULL_REQUEST_NODE_SELECTION =
-  "number title url baseRefName headRefName state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
+  "number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
 const GRAPHQL_STATES: Record<PullRequestListState, ReadonlyArray<string>> = {
   open: ["OPEN"],
   closed: ["CLOSED"],

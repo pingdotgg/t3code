@@ -260,7 +260,12 @@ describe("GitHubCli.listPullRequestsByHead", () => {
           Effect.sync(() => {
             documents.push(input);
             return encodeJson({
-              data: { repository: { h0: { nodes: [node(7, "feature/a")] }, h1: { nodes: [] } } },
+              data: {
+                repository: {
+                  h0: { nodes: [{ ...node(7, "feature/a"), headRefOid: "a".repeat(40) }] },
+                  h1: { nodes: [] },
+                },
+              },
             });
           }),
       },
@@ -288,8 +293,10 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         first?.map((pr) => pr.number),
         [7],
       );
+      assert.strictEqual(first?.[0]?.headSha, "a".repeat(40));
       assert.deepStrictEqual(second, []);
       assert.strictEqual(documents.length, 1);
+      assert.include(documents[0]!.query, "headRefOid");
       assert.deepStrictEqual(documents[0]!.variables, {
         owner: "acme",
         name: "web",

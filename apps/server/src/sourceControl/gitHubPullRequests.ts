@@ -13,6 +13,8 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  /** The head commit, when the read asked for `headRefOid`. */
+  readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
@@ -29,6 +31,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   url: TrimmedNonEmptyString,
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -90,6 +93,7 @@ function normalizeGitHubPullRequestRecord(
     (headRepositoryOwnerLogin && headRepositoryName
       ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
+  const headSha = trimOptionalString(raw.headRefOid);
 
   return {
     number: raw.number,
@@ -97,6 +101,7 @@ function normalizeGitHubPullRequestRecord(
     url: raw.url,
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
+    ...(headSha ? { headSha } : {}),
     state: normalizeGitHubPullRequestState(raw),
     ...(raw.isDraft === true ? { isDraft: true } : {}),
     closedAt: raw.closedAt ?? null,
