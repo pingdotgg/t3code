@@ -36,6 +36,26 @@ function clampAbove(segments: readonly CurveSegment[], below: readonly CurveSegm
   });
 }
 
+/**
+ * The drawn curve's height at `x`. Each segment's control points are evenly
+ * spaced in x, so x moves linearly with the Bézier parameter.
+ */
+export function curveYAt(segments: readonly CurveSegment[], x: number): number | null {
+  for (const segment of segments) {
+    if (x < segment.from.x || x > segment.to.x) continue;
+    const span = segment.to.x - segment.from.x;
+    const t = span === 0 ? 0 : (x - segment.from.x) / span;
+    const u = 1 - t;
+    return (
+      u * u * u * segment.from.y +
+      3 * u * u * t * segment.c1.y +
+      3 * u * t * t * segment.c2.y +
+      t * t * t * segment.to.y
+    );
+  }
+  return null;
+}
+
 const f2 = (value: number) => value.toFixed(2);
 const forward = (segments: readonly CurveSegment[]) =>
   segments
@@ -140,6 +160,7 @@ export function UsageStackedChart({
       ticks: scale.ticks,
       toY,
       width,
+      curves,
       bands,
       totalLine: topCurve === undefined ? "" : forward(topCurve),
     };
@@ -157,23 +178,25 @@ export function UsageStackedChart({
     [count],
   );
 
-  /** The band under the pointer, read from the stacked values at that interval. */
+  /** The band under the pointer, read from the curves as drawn. */
   const seriesAt = useCallback(
-    (index: number, clientY: number) => {
+    (clientX: number, clientY: number) => {
       const plot = plotRef.current;
-      const column = columns[index];
-      if (plot === null || column === undefined) return null;
+      if (plot === null) return null;
       const bounds = plot.getBoundingClientRect();
+      if (bounds.width === 0 || bounds.height === 0) return null;
+      const x = ((clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
       const y = ((clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
-      let sum = 0;
+      let bottom = VIEW_HEIGHT;
       for (const [k, entry] of series.entries()) {
-        const bottom = geometry.toY(sum);
-        sum += column.values[k] ?? 0;
-        if (y <= bottom && y >= geometry.toY(sum)) return entry.key;
+        const top = curveYAt(geometry.curves[k] ?? [], x);
+        if (top === null) return null;
+        if (y <= bottom && y >= top) return entry.key;
+        bottom = top;
       }
       return null;
     },
-    [columns, geometry, series],
+    [geometry, series],
   );
 
   const positionTooltip = useCallback(() => {
@@ -211,7 +234,7 @@ export function UsageStackedChart({
     const bounds = plot.getBoundingClientRect();
     pointerRef.current = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
     setHoverIndex(index);
-    const key = seriesAt(index, event.clientY);
+    const key = seriesAt(event.clientX, event.clientY);
     if (key !== hoverSeries) {
       setHoverSeries(key);
       onHoverSeries(key);
