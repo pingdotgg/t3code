@@ -103,6 +103,30 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("leaves switched-off environments out of navigation", () => {
+    const { registry, threads, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const environmentsOf = () =>
+      new Set(registry.get(threads.navigationThreadShellsAtom).map((t) => t.environmentId));
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
+
+    const setRemoteEnabled = (enabled: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+    setRemoteEnabled(false);
+    expect(environmentsOf()).toEqual(new Set([environmentId]));
+    setRemoteEnabled(true);
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
+    dispose();
+    registry.dispose();
+  });
+
   it("shares point and list values without retaining an atom for every listed thread", () => {
     const harness = makeHarness();
     const snapshot = {
