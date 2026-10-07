@@ -111,7 +111,11 @@ it.effect("runs a provider failure explanation with tools off in an empty temp d
       modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "default"),
     });
 
-    assert.deepEqual(explained, { summary: "It stopped.", likelyFix: "Retry." });
+    assert.deepEqual(explained, {
+      summary: "It stopped.",
+      likelyFix: "Retry.",
+      matchingIssueNumber: null,
+    });
     const spawn = pi.spawns[0];
     assert.isString(spawn?.cwd);
     assert.notEqual(spawn?.cwd, process.cwd());

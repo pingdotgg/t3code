@@ -30,6 +30,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import * as KnownIssueSearch from "./KnownIssueSearch.ts";
 import * as ProviderFailureExplanationService from "./ProviderFailureExplanationService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -287,7 +288,9 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerProviderFailureExplanationProvided = ProviderFailureExplanationService.layer.pipe(
-  Layer.provide(Layer.mergeAll(layerThreadManagementProvided, TextGeneration.layer)),
+  Layer.provide(
+    Layer.mergeAll(layerThreadManagementProvided, TextGeneration.layer, KnownIssueSearch.layer),
+  ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(

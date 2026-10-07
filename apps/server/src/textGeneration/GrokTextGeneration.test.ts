@@ -141,6 +141,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           expect(explained).toEqual({
             summary: "The session ended.",
             likelyFix: "Start a new turn.",
+            matchingIssueNumber: null,
           });
           const session = readJsonRpcRequests(requestLogPath).find(
             (request) => request.method === "session/new",

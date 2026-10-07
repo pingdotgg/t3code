@@ -3479,6 +3479,19 @@ export const OrchestrationV2ExplainProviderFailureResult = Schema.Struct({
   summary: Schema.String,
   /** What the user can try next. */
   likelyFix: Schema.String,
+  /** An existing upstream issue the model judged to describe this failure. */
+  knownIssue: Schema.NullOr(
+    Schema.Struct({
+      number: Schema.Int,
+      title: Schema.String,
+      url: Schema.String,
+    }),
+  ),
+  /**
+   * A link to the upstream bug form with this failure filled in, for the user
+   * to review and submit. Null only when no link of a usable length exists.
+   */
+  reportUrl: Schema.NullOr(Schema.String),
 });
 export type OrchestrationV2ExplainProviderFailureResult =
   typeof OrchestrationV2ExplainProviderFailureResult.Type;

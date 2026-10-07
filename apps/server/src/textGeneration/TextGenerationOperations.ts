@@ -187,11 +187,23 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
         operation: "explainProviderFailure",
         cwd: null,
         modelSelection: input.modelSelection,
-        ...buildProviderFailureExplanationPrompt({ context: input.context }),
+        ...buildProviderFailureExplanationPrompt({
+          context: input.context,
+          knownIssues: input.knownIssues,
+        }),
       });
+      const named =
+        "matchingIssueNumber" in generated && typeof generated.matchingIssueNumber === "number"
+          ? generated.matchingIssueNumber
+          : null;
       return {
         summary: boundExplanationText(generated.summary, MAX_EXPLANATION_SUMMARY_CHARS),
         likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
+        // A number the model was not shown is invented, so it is no match.
+        matchingIssueNumber:
+          named !== null && (input.knownIssues ?? []).some((issue) => issue.number === named)
+            ? named
+            : null,
       };
     });
 

@@ -334,6 +334,7 @@ function createTextGeneration(
       Effect.succeed({
         summary: "The provider failed.",
         likelyFix: "Try again.",
+        matchingIssueNumber: null,
       }),
     ...overrides,
   };

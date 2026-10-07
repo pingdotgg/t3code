@@ -11,11 +11,13 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as KnownIssueSearch from "./KnownIssueSearch.ts";
 import * as ProviderFailureExplanation from "./ProviderFailureExplanationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -69,11 +71,19 @@ function makeHarness(options: {
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly latestRunId?: RunId | null;
   readonly generate?: TextGeneration.TextGeneration["Service"]["explainProviderFailure"];
+  /** What the issue search finds. A failed search is an empty list. */
+  readonly candidates?: ReadonlyArray<KnownIssueSearch.KnownIssueCandidate>;
 }) {
   const explainProviderFailure = vi.fn(
     options.generate ??
-      (() => Effect.succeed({ summary: "The binary is missing.", likelyFix: "Install it." })),
+      (() =>
+        Effect.succeed({
+          summary: "The binary is missing.",
+          likelyFix: "Install it.",
+          matchingIssueNumber: null,
+        })),
   );
+  const search = vi.fn(() => Effect.succeed(options.candidates ?? []));
   const recordCalls: Array<RecordsCall> = [];
   const latestRunId = options.latestRunId === undefined ? runId : options.latestRunId;
   const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -123,6 +133,7 @@ function makeHarness(options: {
       Layer.mergeAll(
         layerThreads,
         Layer.mock(TextGeneration.TextGeneration)({ explainProviderFailure }),
+        Layer.mock(KnownIssueSearch.KnownIssueSearch)({ search }),
         ServerSettings.layerTest({
           textGenerationModelSelection: { instanceId: "claudeAgent", model: "claude-haiku" },
         }),
@@ -130,7 +141,7 @@ function makeHarness(options: {
     ),
     Layer.orDie,
   );
-  return { layer, explainProviderFailure, recordCalls };
+  return { layer, explainProviderFailure, search, recordCalls };
 }
 
 const explain = (input: { runId?: RunId; revision?: string } = {}) =>
@@ -318,11 +329,10 @@ describe("ProviderFailureExplanationService", () => {
         Effect.provide(harness.layer),
       );
 
-      assert.deepEqual(result, {
-        failureMessage: "root failure",
-        summary: "The binary is missing.",
-        likelyFix: "Install it.",
-      });
+      assert.equal(result.failureMessage, "root failure");
+      assert.equal(result.summary, "The binary is missing.");
+      assert.equal(result.likelyFix, "Install it.");
+      assert.isNull(result.knownIssue);
       const call = harness.explainProviderFailure.mock.calls[0]?.[0];
       assert.include(call?.context, "Message: root failure");
       assert.include(call?.context, "Code: E_BOOM");
@@ -444,4 +454,108 @@ describe("ProviderFailureExplanationService", () => {
       assert.notInclude(JSON.stringify(error), "sk-secret-stderr");
     }),
   );
+
+  describe("known issues", () => {
+    const candidates = [
+      {
+        number: 12,
+        title: "Codex binary not found",
+        state: "open",
+        url: "https://github.com/pingdotgg/t3code/issues/12",
+      },
+      {
+        number: 40,
+        title: "Session hangs",
+        state: "closed",
+        url: "https://github.com/pingdotgg/t3code/issues/40",
+      },
+    ];
+    const naming = (matchingIssueNumber: number | null) => () =>
+      Effect.succeed({
+        summary: "The binary is missing.",
+        likelyFix: "Install it.",
+        matchingIssueNumber,
+      });
+
+    it.effect("searches with the failure and driver, and links the issue the model names", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          lastError: "spawn codex ENOENT",
+          turnItems: [rootError("item:root-error", 1, "spawn codex ENOENT")],
+          candidates,
+          generate: naming(40),
+        });
+        const result = yield* explain().pipe(Effect.provide(harness.layer));
+
+        assert.deepEqual(harness.search.mock.calls[0], [
+          { message: "spawn codex ENOENT", driver: "codex" },
+        ]);
+        assert.deepEqual(harness.explainProviderFailure.mock.calls[0]?.[0].knownIssues, candidates);
+        assert.deepEqual(result.knownIssue, {
+          number: 40,
+          title: "Session hangs",
+          url: "https://github.com/pingdotgg/t3code/issues/40",
+        });
+        // The pre-filled report stays available beside a match.
+        assert.isString(result.reportUrl);
+      }),
+    );
+
+    it.effect("offers a pre-filled report when the model names no issue", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          lastError: "spawn codex ENOENT",
+          turnItems: [rootError("item:root-error", 1, "spawn codex ENOENT")],
+          candidates,
+          generate: naming(null),
+        });
+        const result = yield* explain().pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(HostProcessPlatform, "freebsd"),
+          Effect.provideService(HostProcessArchitecture, "x64"),
+        );
+
+        assert.isNull(result.knownIssue);
+        const url = new URL(result.reportUrl!);
+        assert.equal(url.origin + url.pathname, "https://github.com/pingdotgg/t3code/issues/new");
+        assert.equal(url.searchParams.get("template"), "bug_report.yml");
+        assert.equal(url.searchParams.get("title"), "[Bug]: spawn codex ENOENT");
+        assert.include(url.searchParams.get("actual"), "spawn codex ENOENT");
+        assert.include(url.searchParams.get("actual"), "The binary is missing.");
+        assert.include(
+          url.searchParams.get("environment"),
+          "Provider: codex, Model: gpt-5.1-codex",
+        );
+        assert.include(url.searchParams.get("environment"), "Runtime mode: full-access");
+        assert.include(url.searchParams.get("environment"), "OS: freebsd x64");
+        assert.isTrue(url.searchParams.has("version"));
+      }),
+    );
+
+    it.effect("ignores a number that is not one of the issues it was shown", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          lastError: "boom",
+          candidates,
+          generate: naming(99),
+        });
+        const result = yield* explain().pipe(Effect.provide(harness.layer));
+
+        assert.isNull(result.knownIssue);
+        assert.isString(result.reportUrl);
+      }),
+    );
+
+    it.effect("still explains when the search finds nothing or fails", () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({ lastError: "boom", candidates: [], generate: naming(12) });
+        const result = yield* explain().pipe(Effect.provide(harness.layer));
+
+        assert.deepEqual(harness.explainProviderFailure.mock.calls[0]?.[0].knownIssues, []);
+        assert.equal(result.summary, "The binary is missing.");
+        assert.isNull(result.knownIssue);
+        assert.isString(result.reportUrl);
+      }),
+    );
+  });
 });

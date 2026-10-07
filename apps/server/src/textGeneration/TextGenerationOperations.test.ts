@@ -53,7 +53,68 @@ describe("fromRunner explainProviderFailure", () => {
         modelSelection,
       });
 
-      assert.deepEqual(result, { summary: "The binary is missing.", likelyFix: "Install it." });
+      assert.deepEqual(result, {
+        summary: "The binary is missing.",
+        likelyFix: "Install it.",
+        matchingIssueNumber: null,
+      });
+    }),
+  );
+
+  const knownIssues = [
+    { number: 12, title: "Codex binary not found", state: "open" },
+    { number: 40, title: "Session hangs", state: "closed" },
+  ];
+  const runReturning = (matchingIssueNumber: number | null) =>
+    (() =>
+      Effect.succeed({
+        summary: "The binary is missing.",
+        likelyFix: "Install it.",
+        matchingIssueNumber,
+      })) as unknown as Runner;
+
+  it.effect("lists known issues to the model and returns the one it names", () =>
+    Effect.gen(function* () {
+      const prompts: Array<string> = [];
+      const run = ((request: { prompt: string }) => {
+        prompts.push(request.prompt);
+        return Effect.succeed({
+          summary: "The binary is missing.",
+          likelyFix: "Install it.",
+          matchingIssueNumber: 40,
+        });
+      }) as unknown as Runner;
+
+      const result = yield* fromRunner("test", run).explainProviderFailure({
+        context: "x",
+        knownIssues,
+        modelSelection,
+      });
+
+      assert.equal(result.matchingIssueNumber, 40);
+      assert.include(prompts[0], "#12 [open] Codex binary not found");
+      assert.include(prompts[0], "#40 [closed] Session hangs");
+    }),
+  );
+
+  it.effect("ignores a matching number the model was not shown", () =>
+    Effect.gen(function* () {
+      const result = yield* fromRunner("test", runReturning(99)).explainProviderFailure({
+        context: "x",
+        knownIssues,
+        modelSelection,
+      });
+      assert.isNull(result.matchingIssueNumber);
+    }),
+  );
+
+  it.effect("ignores a matching number when no issues were offered", () =>
+    Effect.gen(function* () {
+      const result = yield* fromRunner("test", runReturning(12)).explainProviderFailure({
+        context: "x",
+        modelSelection,
+      });
+      assert.isNull(result.matchingIssueNumber);
     }),
   );
 });

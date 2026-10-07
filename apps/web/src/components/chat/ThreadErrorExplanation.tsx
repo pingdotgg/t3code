@@ -63,6 +63,14 @@ export function ThreadErrorExplanation({
           </div>
         </dl>
       ) : null}
+      {state.kind === "ready" && state.link !== null ? (
+        <InlineButton
+          className="self-start [--inline-button-text-align:start] [--inline-button-white-space:normal]"
+          render={<a href={state.link.url} target="_blank" rel="noopener noreferrer" />}
+        >
+          {state.link.label}
+        </InlineButton>
+      ) : null}
       {state.kind === "pending" ? <p>Explaining…</p> : null}
       {state.kind === "failed" ? <p>Couldn't explain this error: {state.message}</p> : null}
       {state.kind === "idle" || state.kind === "failed" ? (

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canExplainThreadError,
+  explanationLink,
   explanationStateFromFailure,
   explanationStateFromResult,
   THREAD_ERROR_CHANGED_MESSAGE,
@@ -30,6 +31,8 @@ describe("explanationStateFromResult", () => {
     failureMessage: "spawn codex ENOENT",
     summary: "The binary is missing.",
     likelyFix: "Install it.",
+    knownIssue: null,
+    reportUrl: "https://github.com/pingdotgg/t3code/issues/new?template=bug_report.yml",
   };
 
   it("shows the explanation under the error it answers", () => {
@@ -37,6 +40,11 @@ describe("explanationStateFromResult", () => {
       kind: "ready",
       summary: "The binary is missing.",
       likelyFix: "Install it.",
+      link: {
+        kind: "report",
+        label: "Report this issue",
+        url: "https://github.com/pingdotgg/t3code/issues/new?template=bug_report.yml",
+      },
     });
   });
 
@@ -94,5 +102,49 @@ describe("threadErrorExplanationKey", () => {
     ).not.toBe(key);
     expect(threadErrorExplanationKey(target, "Provider crashed again")).not.toBe(key);
     expect(threadErrorExplanationKey(target, "Provider crashed")).toBe(key);
+  });
+});
+
+describe("explanationLink", () => {
+  const knownIssue = {
+    number: 123,
+    title: "Codex binary not found after update",
+    url: "https://github.com/pingdotgg/t3code/issues/123",
+  };
+  const reportUrl = "https://github.com/pingdotgg/t3code/issues/new?template=bug_report.yml";
+
+  it("links the matching issue instead of offering a report", () => {
+    expect(explanationLink({ knownIssue, reportUrl })).toEqual({
+      kind: "known-issue",
+      label: "Known issue: #123 Codex binary not found after update",
+      url: "https://github.com/pingdotgg/t3code/issues/123",
+    });
+  });
+
+  it("offers the pre-filled report when no issue matches", () => {
+    expect(explanationLink({ knownIssue: null, reportUrl })).toEqual({
+      kind: "report",
+      label: "Report this issue",
+      url: reportUrl,
+    });
+  });
+
+  it("offers nothing when the server could not build a link", () => {
+    expect(explanationLink({ knownIssue: null, reportUrl: null })).toBeNull();
+  });
+
+  it("never opens an address that is not GitHub", () => {
+    expect(
+      explanationLink({
+        knownIssue: { ...knownIssue, url: "https://evil.example/issues/123" },
+        reportUrl: "javascript:alert(1)",
+      }),
+    ).toBeNull();
+    expect(
+      explanationLink({
+        knownIssue: { ...knownIssue, url: "https://evil.example/issues/123" },
+        reportUrl,
+      }),
+    ).toEqual({ kind: "report", label: "Report this issue", url: reportUrl });
   });
 });

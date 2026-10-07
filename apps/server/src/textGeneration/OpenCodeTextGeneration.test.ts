@@ -261,6 +261,7 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         assert.deepEqual(explained, {
           summary: "The session ended.",
           likelyFix: "Start a new turn.",
+          matchingIssueNumber: null,
         });
         const directory = runtimeMock.state.sdkDirectories[0];
         assert.isString(directory);

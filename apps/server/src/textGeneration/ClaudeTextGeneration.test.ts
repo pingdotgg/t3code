@@ -362,6 +362,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           expect(explained).toEqual({
             summary: "The session ended.",
             likelyFix: "Start a new turn.",
+            matchingIssueNumber: null,
           });
         }),
     ),
