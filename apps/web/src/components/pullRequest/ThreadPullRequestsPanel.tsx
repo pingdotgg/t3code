@@ -1,4 +1,5 @@
-import type { ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
@@ -14,9 +15,10 @@ import {
 import { useCallback, useMemo, useState } from "react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { findProjectForChangeRequest, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
-import { useServerConfigs, useThreadShell } from "~/state/entities";
+import { useShortcutModifierState } from "~/shortcutModifierState";
+import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -42,6 +44,7 @@ import {
   pullRequestChecksStatePresentation,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { PullRequestSpeedActions } from "./PullRequestSpeedActions";
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: "Linked by you",
@@ -74,11 +77,15 @@ function ChecksGlyph({
 function LinkRow({
   line,
   threadRef,
+  projectId,
+  speedMode,
   onUnlink,
   onSetWatching,
 }: {
   line: PullRequestListLine;
   threadRef: ScopedThreadRef;
+  projectId: ProjectId | null;
+  speedMode: boolean;
   onUnlink: (link: ThreadPullRequestLink) => void;
   /** Null when the environment cannot watch pull requests. */
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
@@ -97,6 +104,22 @@ function LinkRow({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
+  const actionEntry =
+    projectId !== null &&
+    snapshot !== null &&
+    snapshot.state !== "merged" &&
+    detectSourceControlProviderFromRemoteUrl(link.url)?.kind === "github"
+      ? {
+          environmentId: threadRef.environmentId,
+          projectId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          state: snapshot.state,
+          isDraft: snapshot.isDraft,
+          ...(link.stack === null ? {} : { stack: link.stack }),
+        }
+      : null;
   return (
     <div
       className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60")}
@@ -221,6 +244,9 @@ function LinkRow({
           updatedAt={snapshot?.updatedAt}
         />
       </a>
+      {actionEntry !== null ? (
+        <PullRequestSpeedActions entry={actionEntry} visible={speedMode} />
+      ) : null}
       {/* Out of the row's flow, so no row reserves a column for a button only the hovered one
           shows. It sits over the right end of the second line on the row's own hover color,
           fading in from the left, so it covers the time and leaves the diff counts alone. */}
@@ -233,6 +259,8 @@ function LinkRow({
           "pointer-events-none opacity-0 group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
           "has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100",
           "has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
+          "group-has-[[data-pull-request-action-pending=true]]/pr-row:hidden",
+          speedMode && actionEntry !== null && "hidden",
         )}
       >
         <span aria-hidden className="absolute inset-0 bg-accent/60" />
@@ -301,12 +329,24 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
+  const projects = useProjects();
+  const environmentProjects = useMemo(
+    () =>
+      projects
+        .filter((project) => project.environmentId === threadRef.environmentId)
+        .toSorted((left, right) =>
+          left.id === thread?.projectId ? -1 : right.id === thread?.projectId ? 1 : 0,
+        ),
+    [projects, threadRef.environmentId, thread?.projectId],
+  );
+  const modifiers = useShortcutModifierState(true);
+  const speedMode =
+    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   const openLinkDialog = useCallback(() => openLinkPullRequestDialog(threadRef), [threadRef]);
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: true });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  const supportsWatch =
-    useServerConfigs().get(threadRef.environmentId)?.environment.capabilities
-      .threadPullRequestWatch === true;
+  const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
+  const supportsWatch = capabilities?.threadPullRequestWatch === true;
   const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
   const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
   const handleUnlink = useCallback(
@@ -377,6 +417,14 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
               line={line}
               threadRef={threadRef}
+              projectId={
+                capabilities?.pullRequests === true
+                  ? (findProjectForChangeRequest(environmentProjects, line.link)?.id ??
+                    thread?.projectId ??
+                    null)
+                  : null
+              }
+              speedMode={speedMode}
               onUnlink={handleUnlink}
               onSetWatching={supportsWatch ? handleSetWatching : null}
             />
