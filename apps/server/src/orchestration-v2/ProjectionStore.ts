@@ -76,6 +76,7 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+import { COMMAND_OUTPUT_WIRE_PREFIX_LENGTH } from "./WireProjection.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -5158,10 +5159,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN ${sql.in(threadIds)}
           `;
 
+    // A dev server's output can grow for hours. Readers of pending work never
+    // need more of it than the wire keeps, so stop there instead of decoding it all.
+    const pendingTurnItemPayloadJson = sql`
+      CASE
+        WHEN i.type = 'command_execution'
+          AND length(json_extract(i.payload_json, '$.output')) > ${COMMAND_OUTPUT_WIRE_PREFIX_LENGTH}
+        THEN json_set(
+          i.payload_json,
+          '$.output',
+          substr(json_extract(i.payload_json, '$.output'), 1, ${COMMAND_OUTPUT_WIRE_PREFIX_LENGTH})
+        )
+        ELSE i.payload_json
+      END AS payload_json
+    `;
+
     const selectShellPendingTurnItemRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
         ? sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+            SELECT i.thread_id, ${pendingTurnItemPayloadJson}
             FROM orchestration_v2_projection_turn_items i
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id
@@ -5178,7 +5194,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
           `
         : sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+            SELECT i.thread_id, ${pendingTurnItemPayloadJson}
             FROM orchestration_v2_projection_turn_items i
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id

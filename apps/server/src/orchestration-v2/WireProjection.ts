@@ -12,6 +12,8 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
+/** The wire reads only this much command output; storage reads may stop here too. */
+export const COMMAND_OUTPUT_WIRE_PREFIX_LENGTH = MAX_DETAIL_STRING_BYTES;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
 
@@ -89,7 +91,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         item.outputIndicatesFailure === true ||
         (item.exitCode !== undefined && item.exitCode !== 0) ||
         (output !== undefined &&
-          toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)));
+          toolOutputIndicatesFailure(output.slice(0, COMMAND_OUTPUT_WIRE_PREFIX_LENGTH)));
       return {
         ...projected,
         ...(failed ? { outputIndicatesFailure: true } : {}),

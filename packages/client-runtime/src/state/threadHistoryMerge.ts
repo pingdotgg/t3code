@@ -88,13 +88,11 @@ export function mergeOlderHistoryIntoProjection(
     if (row.visibility === "local" || row.sourceThreadId === projection.thread.id) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
       if (currentItem !== undefined) {
-        // A live event may have hidden this item while the page was in flight.
-        // Do not resurrect the stale page copy. Retained interrupt requests are
-        // the exception: they intentionally exist outside the bounded visible
-        // window and should become visible when their history page arrives.
-        if (currentItem.type !== "run_interrupt_request") {
-          continue;
-        }
+        // The bounded snapshot keeps interrupt requests and still-running
+        // background work outside its visible window; they take their place
+        // when their history page arrives, with their live state. A live event
+        // may instead have hidden the item while the page was in flight; do
+        // not resurrect the stale page copy.
         if (
           !isOrchestrationV2TurnItemVisible({
             item: currentItem,

@@ -39,6 +39,7 @@ import {
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
+import { COMMAND_OUTPUT_WIRE_PREFIX_LENGTH } from "./WireProjection.ts";
 
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -707,6 +708,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ...base,
                 type: "command_execution",
                 input: ordinal === 1 ? "vp run dev" : "command",
+                // Hours of dev server logs.
+                output: ordinal === 1 ? "log line\n".repeat(20_000) : "done",
                 exitCode: status === "running" ? undefined : 0,
               };
         return {
@@ -728,9 +731,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const runningId = "item:old-background-command:1";
 
       const recent = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 77 });
-      assert.include(
-        recent.projection.turnItems.map((item) => String(item.id)),
-        runningId,
+      const carried = recent.projection.turnItems.find((item) => String(item.id) === runningId);
+      assert.strictEqual(
+        carried?.type === "command_execution" ? carried.output?.length : undefined,
+        COMMAND_OUTPUT_WIRE_PREFIX_LENGTH,
       );
       assert.notInclude(
         recent.projection.turnItems.map((item) => String(item.id)),
