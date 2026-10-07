@@ -303,9 +303,18 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
+            const previousCredential = EnvironmentAuth.selectRequestCredential(
+              request,
+              sessions.cookieName,
+              sessions.legacyCookieName,
+            );
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
+              previousCredential?.source === "cookie" ||
+                previousCredential?.source === "legacy-cookie"
+                ? previousCredential.token
+                : undefined,
             );
             const cookieName = result.cookieName ?? sessions.cookieName;
             const selectedCookie = yield* Effect.fromResult(

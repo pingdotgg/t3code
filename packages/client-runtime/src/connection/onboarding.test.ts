@@ -1,6 +1,8 @@
 import {
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   EnvironmentId,
+  type AuthEnvironmentScope,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -10,6 +12,7 @@ import * as Option from "effect/Option";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
@@ -26,7 +29,6 @@ const layerClientPresentation = Layer.succeed(
       deviceType: "desktop",
       os: "Test OS",
     },
-    scopes: AuthStandardClientScopes,
   }),
 );
 
@@ -36,8 +38,11 @@ function layerPairingHttp(
     readonly failDescriptor?: boolean;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
+    readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
   },
 ) {
+  const grantScopes = options?.grantScopes ?? AuthStandardClientScopes;
+  let sessionScopes: ReadonlyArray<string> = [];
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
@@ -67,13 +72,46 @@ function layerPairingHttp(
     }
 
     if (url.endsWith("/oauth/token")) {
+      const body =
+        init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init.body);
+      const requestedScope = new URLSearchParams(body).get("scope");
+      sessionScopes = requestedScope === null ? grantScopes : requestedScope.split(" ");
+      if (!sessionScopes.every((scope) => grantScopes.some((granted) => granted === scope))) {
+        return Promise.resolve(
+          Response.json(
+            {
+              _tag: "EnvironmentRequestInvalidError",
+              code: "invalid_request",
+              reason: "scope_not_granted",
+              traceId: "pairing-scope-test",
+            },
+            { status: 400 },
+          ),
+        );
+      }
       return Promise.resolve(
         Response.json({
           access_token: "bearer-token",
           issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
           token_type: "Bearer",
           expires_in: 3600,
-          scope: AuthStandardClientScopes.join(" "),
+          scope: sessionScopes.join(" "),
+        }),
+      );
+    }
+
+    if (url.endsWith("/api/auth/session")) {
+      return Promise.resolve(
+        Response.json({
+          authenticated: true,
+          auth: {
+            policy: "remote-reachable",
+            bootstrapMethods: ["one-time-token"],
+            sessionMethods: ["bearer-access-token"],
+            sessionCookieName: "t3_session",
+          },
+          scopes: sessionScopes,
+          sessionMethod: "bearer-access-token",
         }),
       );
     }
@@ -123,8 +161,10 @@ describe("connection onboarding", () => {
           : String(tokenRequest?.init.body);
       const tokenParams = new URLSearchParams(tokenBody);
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
-      expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
+      expect(tokenParams.has("scope")).toBe(false);
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
+      expect(tokenParams.get("client_device_type")).toBe("desktop");
+      expect(tokenParams.get("client_os")).toBe("Test OS");
     }),
   );
 
@@ -147,6 +187,27 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);
+    }),
+  );
+  it.effect.each([
+    { label: "read-only", scopes: ["orchestration:read"] },
+    { label: "administrative", scopes: AuthAdministrativeScopes },
+  ] as const)("preserves the $label grant when pairing a remote environment", ({ scopes }) =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const httpLayer = layerPairingHttp(calls, { grantScopes: scopes });
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, httpLayer)));
+
+      const session = yield* fetchRemoteSessionState({
+        httpBaseUrl: registration.profile.httpBaseUrl,
+        bearerToken: registration.credential.token,
+      }).pipe(Effect.provide(httpLayer));
+
+      expect(session.authenticated).toBe(true);
+      expect(session.scopes).toEqual(scopes);
     }),
   );
 
