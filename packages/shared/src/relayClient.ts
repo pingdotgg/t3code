@@ -68,6 +68,14 @@ export interface CloudflaredReleaseAsset {
   readonly archive: "binary" | "tgz";
 }
 
+// Cloudflare publishes no Windows ARM64 build. Windows 11 on ARM runs this x64
+// binary under its built-in emulation, so both Windows arches share one asset.
+const CLOUDFLARED_WINDOWS_AMD64_ASSET: CloudflaredReleaseAsset = {
+  url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-windows-amd64.exe",
+  sha256: "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+  archive: "binary",
+};
+
 const CLOUDFLARED_RELEASE_ASSETS: Readonly<
   Partial<Record<`${NodeJS.Platform}-${string}`, CloudflaredReleaseAsset>>
 > = {
@@ -91,11 +99,8 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
     sha256: "5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886",
     archive: "binary",
   },
-  "win32-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-windows-amd64.exe",
-    sha256: "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
-    archive: "binary",
-  },
+  "win32-x64": CLOUDFLARED_WINDOWS_AMD64_ASSET,
+  "win32-arm64": CLOUDFLARED_WINDOWS_AMD64_ASSET,
 };
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
