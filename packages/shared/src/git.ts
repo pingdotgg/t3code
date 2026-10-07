@@ -204,7 +204,7 @@ export function normalizeGitRemoteUrl(value: string): string {
  * Unquote a git config value: strip an inline `#` or `;` comment outside
  * quotes, then drop surrounding quotes and backslash escapes.
  */
-function parseGitConfigValue(raw: string): string {
+export function parseGitConfigValue(raw: string): string {
   let out = "";
   let quoted = false;
   for (let index = 0; index < raw.length; index += 1) {

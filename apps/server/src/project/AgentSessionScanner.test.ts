@@ -1005,6 +1005,40 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("reads core.bare from hand-edited config forms", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const worktrees: Array<string> = [];
+        for (const [index, config] of [
+          '[core]\n\tbare = "true" ; quoted\n',
+          "[core] bare = true\n",
+          "[core]\n\tbare\n",
+        ].entries()) {
+          const bare = yield* makeTempDir(`t3code-workspace-bare-form-${index}-`);
+          const gitDir = path.join(bare, ".git", "worktrees", "wt");
+          yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(bare, ".git", "config"), config);
+          yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+          const worktree = path.join(bare, "wt");
+          yield* fileSystem.makeDirectory(worktree);
+          yield* fileSystem.writeFileString(path.join(worktree, ".git"), `gitdir: ${gitDir}\n`);
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
+            contents: claudeSessionLine(worktree),
+            mtimeMs: Date.parse(`2026-01-0${index + 1}T00:00:00.000Z`),
+          });
+          worktrees.unshift(worktree);
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual(worktrees);
+      }),
+    );
+
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

@@ -41,6 +41,7 @@ import * as Stream from "effect/Stream";
 
 import {
   normalizeGitRemoteUrl,
+  parseGitConfigValue,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
 } from "@t3tools/shared/git";
@@ -567,17 +568,18 @@ function isBareGitConfig(configText: string): boolean {
   let inCore = false;
   let bare = false;
   for (const rawLine of configText.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (line.startsWith("[")) {
-      inCore = /^\[\s*core\s*\]/i.test(line);
-      continue;
+    let line = rawLine.trim();
+    // Git accepts the first setting on the section header's own line.
+    const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
+    if (header !== null) {
+      inCore = header[1]!.toLowerCase() === "core";
+      line = header[2]!.trim();
     }
     if (!inCore) continue;
-    const match = /^bare\s*(?:=\s*([^#;]*))?(?:[#;].*)?$/i.exec(line);
+    const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
     if (match === null) continue;
-    const value = match[1]?.trim().toLowerCase();
-    bare =
-      value === undefined || value === "true" || value === "yes" || value === "on" || value === "1";
+    const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
+    bare = value === "true" || value === "yes" || value === "on" || value === "1";
   }
   return bare;
 }
