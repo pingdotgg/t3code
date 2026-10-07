@@ -11001,6 +11001,25 @@ export default function ChatView(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
+  // Memoized so mounted panels re-render only when a host field changes.
+  const panelHost = useMemo<PanelHost | null>(
+    () =>
+      activeThreadRef
+        ? {
+            threadRef: activeThreadRef,
+            visible: rightPanelOpen,
+            composerDraftTarget,
+            workspaceMutationId,
+            // PreviewView drops a pick that settles after a thread switch, so the
+            // latest send only ever receives picks for the thread it belongs to.
+            sendAnnotation: (annotation, image) => {
+              void onSendRef.current(undefined, "auto", "foreground", { annotation, image });
+            },
+          }
+        : null,
+    [activeThreadRef, composerDraftTarget, rightPanelOpen, workspaceMutationId],
+  );
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
@@ -11150,19 +11169,6 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : null
   ) : null;
-  const panelHost: PanelHost | null = activeThreadRef
-    ? {
-        threadRef: activeThreadRef,
-        visible: rightPanelOpen,
-        composerDraftTarget,
-        workspaceMutationId,
-        // PreviewView drops a pick that settles after a thread switch, so this
-        // render's closure only ever sends for its own thread.
-        sendAnnotation: (annotation, image) => {
-          void onSend(undefined, "auto", "foreground", { annotation, image });
-        },
-      }
-    : null;
   const rightPanelContent = (
     <PanelHostContext value={panelHost}>{rightPanelSurfaceContent}</PanelHostContext>
   );
