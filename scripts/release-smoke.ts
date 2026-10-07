@@ -17,7 +17,7 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/mobile/package.json",
-  "apps/mobile/modules/t3-markdown-text/package.json",
+  "apps/mobile/modules/t3-source-text/package.json",
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",

@@ -40,7 +40,7 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
-    "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
+    "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit"
@@ -66,8 +66,8 @@
     "@shikijs/themes": "4.2.0",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
-    "@t3tools/mobile-markdown-text": "file:./modules/t3-markdown-text",
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
+    "@t3tools/mobile-source-text": "file:./modules/t3-source-text",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/provider-acp-registry": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
@@ -120,11 +120,10 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0-rc.3",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.2.tgz",
     "react-native-gesture-handler": "~3.2.1",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.6",
-    "react-native-nitro-markdown": "^0.5.0",
-    "react-native-nitro-modules": "0.35.9",
     "react-native-reanimated": "4.7.0",
     "react-native-safe-area-context": "~5.9.1",
     "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.17.tgz",
@@ -146,12 +145,17 @@
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
   },
+  "enriched-markdown": {
+    "enableMath": false,
+    "enableVideo": false
+  },
   "expo": {
     "install": {
       "exclude": [
         "react-native-keyboard-controller",
         "typescript",
-        "react-native-screens"
+        "react-native-screens",
+        "react-native-enriched-markdown"
       ]
     },
     "autolinking": {
