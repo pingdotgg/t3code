@@ -97,7 +97,6 @@ import {
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
-  resolveClaudeCatalogContextWindow,
   resolveClaudeCatalogContextWindowTokens,
 } from "../../provider/ClaudeModelCatalog.ts";
 import {
@@ -138,12 +137,9 @@ export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
 function claudeContextWindow(modelSelection: ModelSelection): number | null {
-  if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
-    return 1_000_000;
-  }
-  return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
-    ? 1_000_000
-    : 200_000;
+  return (
+    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ?? null
+  );
 }
 
 export function claudeProviderTurnTokenUsage(
