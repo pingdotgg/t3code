@@ -3604,16 +3604,31 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   // Reserve the activity row during setup so the handoff keeps the same height.
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const timestamp = row.createdAt ? (
+    <TimelineRowTimestamp
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      className="ms-auto"
+    />
+  ) : null;
   const { groupId } = row;
-  if (groupId === undefined) return activity;
+  if (groupId === undefined) {
+    return (
+      <div className="group/timeline-row flex min-h-6 w-full min-w-0 items-center pe-0.5">
+        {activity}
+        {timestamp}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/timeline-row flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
+      {timestamp}
     </button>
   );
 }
@@ -3733,7 +3748,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/timeline-row flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-label={failed ? `${label}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -3764,6 +3779,12 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
         failed={failed}
         active={row.active}
+      />
+      {/* The running entry's start, so a stalled tool shows when it began. */}
+      <TimelineRowTimestamp
+        createdAt={row.entry.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        className="ms-auto"
       />
     </button>
   );

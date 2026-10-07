@@ -1843,6 +1843,61 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("stamps the thinking row with the latest activity in the turn", () => {
+    const userEntry = {
+      id: "user-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user" as never,
+        role: "user",
+        text: "go",
+        runId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    } as const;
+    const deriveThinkingRow = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        latestRun: {
+          runId: "turn-1" as never,
+          status: "running",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).at(-1);
+
+    expect(deriveThinkingRow([userEntry])).toMatchObject({
+      kind: "thinking",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        {
+          id: "assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant" as never,
+            role: "assistant",
+            text: "Checking the tests next.",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:12Z",
+            streaming: false,
+          },
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:10Z" });
+  });
+
   it("does not fold the active in-progress turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
