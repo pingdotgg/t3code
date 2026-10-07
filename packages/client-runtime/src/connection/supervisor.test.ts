@@ -488,7 +488,7 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("retries when a session never becomes ready", () =>
+  it.effect("retries when a session never becomes ready within the snapshot bound", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         ready: () => Effect.never,
@@ -501,8 +501,14 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "synchronizing",
       );
-      yield* TestClock.adjust("14 seconds");
-      expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
+      // The setup budget has passed, but a synchronizing session keeps going.
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("119 seconds");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connecting",
+        stage: "synchronizing",
+      });
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
 
       yield* TestClock.adjust("1 second");
       const retrying = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
@@ -518,6 +524,74 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "keeps a working connection while the first snapshot takes longer than the setup budget",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          ready: () => Effect.sleep("40 seconds"),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connecting" && state.stage === "synchronizing",
+        );
+        yield* TestClock.adjust("20 seconds");
+        expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connecting");
+
+        yield* TestClock.adjust("20 seconds");
+        const connected = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected",
+        );
+
+        expect(connected.attempt).toBe(1);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "reconnects as soon as a synchronizing session fails instead of waiting out the bound",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          ready: (attempt) =>
+            attempt === 1
+              ? Effect.sleep("20 seconds").pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ConnectionTransientError({
+                        reason: "transport",
+                        detail: "Test environment stopped responding.",
+                      }),
+                    ),
+                  ),
+                )
+              : Effect.void,
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connecting" && state.stage === "synchronizing",
+        );
+        yield* TestClock.adjust("20 seconds");
+        const retrying = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+
+        expect(retrying.lastFailure).toMatchObject({
+          reason: "transport",
+          message: "Test environment stopped responding.",
+        });
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("interrupts and releases a connection attempt when setup times out", () =>

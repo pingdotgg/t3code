@@ -36,6 +36,13 @@ const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
+// Extra time for the first config snapshot once the session is synchronizing.
+// A server that is busy building it must not lose a socket that is working, and
+// a dead socket never gets this far: the open timeout and the ping/pong check
+// fail the session first. This is only the hard bound for a handler that stays
+// silent behind a live connection.
+const FIRST_SNAPSHOT_TIMEOUT = "2 minutes";
+const firstSnapshotTimeout = Duration.fromInputUnsafe(FIRST_SNAPSHOT_TIMEOUT);
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
 // the user is waiting, or the network may be gone.
@@ -274,6 +281,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  // Whether the running attempt has a session and is waiting for its first
+  // config snapshot. Reset by the next route's earlier stages.
+  const synchronizing = yield* Ref.make(false);
   // Set while a probe of the live session is running, and kept when it fails
   // or times out: something asked whether the connection still works and it
   // closed or failed before answering, so the follow-up reconnect skips the
@@ -414,6 +424,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if ("prepared" in progress) {
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
     }
+    yield* Ref.set(synchronizing, progress.stage === "synchronizing");
     yield* setState(
       connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
     );
@@ -694,10 +705,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetry,
         })),
       ),
-      // Each route may use the full setup time before the next is tried.
+      // Each route may use the full setup time before the next is tried. An
+      // attempt that spent it on credentials, the session or the socket fails
+      // then; one already waiting for the first snapshot gets a longer bound.
       Effect.sleep(
         Duration.times(establishmentTimeout, connectionRoutes(yield* Ref.get(currentEntry)).length),
-      ).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
+      ).pipe(
+        Effect.andThen(Ref.get(synchronizing)),
+        Effect.flatMap((waitingForSnapshot) =>
+          waitingForSnapshot ? Effect.sleep(firstSnapshotTimeout) : Effect.void,
+        ),
+        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
+      ),
     ]);
 
     if (establishment._tag === "Interrupted") {
