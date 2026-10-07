@@ -139,10 +139,29 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
       expect((yield* after.state).installedPath).toBe(link);
+      // Installing again points the link at this home's launcher.
       expect((yield* after.install).installedPath).toBe(link);
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "t3"));
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not read a large binary another t3 links to", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      // A big executable that happens to contain the marker text is still not ours.
+      const binary = path.join(home, "native-t3");
+      yield* fs.writeFileString(binary, `${"\0".repeat(64 * 1024)}${DesktopCliShim.MARKER}`);
+      yield* fs.makeDirectory(path.join(home, ".local", "bin"), { recursive: true });
+      yield* fs.symlink(binary, path.join(home, ".local", "bin", "t3"));
+      const command = yield* commandIn({ home });
+      expect((yield* command.state).installedPath).toBeNull();
+      yield* command.uninstall;
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "t3"))).toBe(binary);
     }).pipe(Effect.scoped),
   );
 
