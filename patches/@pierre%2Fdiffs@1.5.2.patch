@@ -1,0 +1,146 @@
+diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+--- a/dist/components/VirtualizedFile.d.ts
++++ b/dist/components/VirtualizedFile.d.ts
+@@ -49,7 +49,7 @@
+   setVisibility(visible: boolean): void;
+   rerender(): void;
+   syncGhostTextRows(): void;
+-  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean): void;
++  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean, startLine?: number): void;
+   render({ fileContainer, file, forceRender, lineAnnotations, ...props }: FileRenderProps<LAnnotation>): boolean;
+   protected finalizeRender(): void;
+   private updatePendingRender;
+diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+--- a/dist/components/VirtualizedFile.js
++++ b/dist/components/VirtualizedFile.js
+@@ -23,6 +23,7 @@
+ 		heights: /* @__PURE__ */ new Map(),
+ 		checkpoints: [],
+ 		fileAnnotationHeight: 0,
++		codeWidth: void 0,
+ 		ghostTextRows: NO_GHOST_TEXT_ROWS
+ 	};
+ 	pendingRender;
+@@ -35,6 +36,8 @@
+ 		super(options, workerManager, isContainerManaged);
+ 		this.virtualizer = virtualizer;
+ 		this.metrics = metrics;
++		const simpleVirtualizer = this.getSimpleVirtualizer();
++		if (simpleVirtualizer != null) this.resizeManager.onResize = () => simpleVirtualizer.requestHeightReconcile(this);
+ 	}
+ 	setMetrics(metrics, force = false) {
+ 		const nextMetrics = computeVirtualFileMetrics(metrics);
+@@ -86,10 +89,12 @@
+ 		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
+ 		super.setThemeType(themeType);
+ 	}
+-	resetLayoutCache(recompute = false, resetRenderRange = true) {
++	resetLayoutCache(recompute = false, resetRenderRange = true, startLine = 0) {
+ 		this.layoutDirty = true;
+-		this.cache.fileAnnotationHeight = 0;
+-		if (this.cache.heights.size > 0) this.cache.heights.clear();
++		if (startLine === 0) this.cache.fileAnnotationHeight = 0;
++		// Dropping unchanged wrapped rows moves the viewport before they can be remeasured.
++		if (startLine === 0) this.cache.heights.clear();
++		else for (const lineIndex of this.cache.heights.keys()) if (lineIndex >= startLine) this.cache.heights.delete(lineIndex);
+ 		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
+ 		this.cache.ghostTextRows = NO_GHOST_TEXT_ROWS;
+ 		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
+@@ -135,6 +140,13 @@
+ 		if (this.code == null) return hasHeightChange;
+ 		const content = this.code.children[1];
+ 		if (!(content instanceof HTMLElement)) return hasHeightChange;
++		const codeWidth = this.code.getBoundingClientRect().width;
++		if (!(codeWidth > 0)) return hasHeightChange;
++		if (this.cache.codeWidth != null && this.cache.codeWidth !== codeWidth) {
++			this.resetLayoutCache(false, false);
++			hasHeightChange = true;
++		}
++		this.cache.codeWidth = codeWidth;
+ 		if (this.renderRange != null && shouldRenderFileAnnotations(this.renderRange)) {
+ 			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
+ 			if (nextFileAnnotationHeight !== this.cache.fileAnnotationHeight) {
+@@ -358,12 +370,12 @@
+ 			codeView.instanceChanged(this, true);
+ 		} else this.getSimpleVirtualizer()?.requestHeightReconcile(this);
+ 	}
+-	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false) {
++	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false, startLine = 0) {
+ 		const { renderRange: previousRenderRange } = this;
+ 		this.getAdvancedVirtualizer()?.capturePendingLayoutAnchor();
+ 		super.applyDocumentChange(textDocument, newLineAnnotations);
+ 		this.getSimpleVirtualizer()?.markDOMDirty();
+-		this.resetLayoutCache(this.isSimpleMode(), false);
++		this.resetLayoutCache(this.isSimpleMode(), false, startLine);
+ 		const file = this.getRenderedFile();
+ 		if (!this.isSimpleMode()) this.computeApproximateSize(true);
+ 		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -1899,7 +1899,11 @@
+ 			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
+ 			documentLineCount: textDocument.lineCount
+ 		});
+-		if (didLineCountChange) applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
++		if (didLineCountChange) {
++			// A wider or narrower line-number gutter can rewrap unchanged rows.
++			const layoutStartLine = String(change.previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
++			applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
++		}
+ 		if (didLineCountChange || this.#isDiff && this.#diffSyle === "unified") this.#resetCache();
+ 		if (newLineAnnotations != null) {
+ 			this.#lineAnnotations = newLineAnnotations;
+diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+--- a/dist/managers/ResizeManager.d.ts
++++ b/dist/managers/ResizeManager.d.ts
+@@ -5,6 +5,8 @@
+   columnVariables?: ResizeManagerColumnVariableMode;
+ }
+ declare class ResizeManager {
++  /** Schedule owner measurement after an observed code or gutter size change. */
++  onResize?: () => void;
+   private static resizeObserver;
+   private static managersByElement;
+   private static getResizeObserver;
+diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+--- a/dist/managers/ResizeManager.js
++++ b/dist/managers/ResizeManager.js
+@@ -19,6 +19,7 @@
+ 		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
+ 	}
+ 	observedNodes = /* @__PURE__ */ new Map();
++	onResize;
+ 	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
+ 		const annotationUpdates = /* @__PURE__ */ new Set();
+ 		const applyColumnVariables = columnVariables === "apply";
+@@ -212,6 +213,7 @@
+ 		this.applyAnnotationUpdates(annotationUpdates);
+ 		annotationUpdates.clear();
+ 		this.applyColumnUpdates(codeUpdates);
++		if (codeUpdates.size > 0) this.onResize?.();
+ 		codeUpdates.clear();
+ 	}
+ 	applyAnnotationUpdates(annotationUpdates) {
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -58,6 +58,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

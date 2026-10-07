@@ -190,7 +190,7 @@ export default defineConfig(() => {
         "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",
-        "@pierre/diffs/editor",
+        "@pierre/diffs/edit",
         "@pierre/diffs/react",
         "@pierre/diffs/worker/worker.js",
         "effect/Array",
