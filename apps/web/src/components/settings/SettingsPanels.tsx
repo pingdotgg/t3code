@@ -3371,7 +3371,7 @@ export function GeneralSettingsPanel() {
               mixed={telemetryMixed}
               disabled={telemetryOverridden}
               onCheckedChange={(checked) => {
-                updateSettings({ telemetryEnabled: Boolean(checked) });
+                updateSettings({ telemetryEnabled: telemetryMixed ? false : Boolean(checked) });
               }}
               aria-label="Anonymous analytics"
             />

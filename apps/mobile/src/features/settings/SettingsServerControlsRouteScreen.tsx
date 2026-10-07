@@ -480,6 +480,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           : telemetryDescription
                       }
                       value={telemetryValue}
+                      mixedValue={false}
                       disabled={telemetryOverridden || disabledFor("telemetryEnabled")}
                       onValueChange={(value) => {
                         write({ telemetryEnabled: value });
