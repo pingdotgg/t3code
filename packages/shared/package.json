@@ -391,6 +391,10 @@
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
     },
+    "./embeddedGrammarContext": {
+      "types": "./src/embeddedGrammarContext.ts",
+      "import": "./src/embeddedGrammarContext.ts"
+    },
     "./providerAuthReturnUrl": {
       "types": "./src/providerAuthReturnUrl.ts",
       "import": "./src/providerAuthReturnUrl.ts"

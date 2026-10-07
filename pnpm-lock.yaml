@@ -103,7 +103,7 @@ patchedDependencies:
   '@opencode/client@2.0.23': f725d6e6d9af0d56dc6ed71b863518fbfc751af1773cff2311209d2c404cf4cd
   '@opencode/protocol@2.0.23': 17a82f6c2c98fd0371e786c211a4fbdaaba403577a25733e5e99a0c25a16a685
   '@opencode/schema@2.0.23': 650f1b8602789407c010861284272dcb6bd6de01ec6a75bf3c0904a0e7596d59
-  '@pierre/diffs@1.5.2': ba1766e9669d5699e31f0dde5a52f5d47f389f49a286de54489a409ba2527289
+  '@pierre/diffs@1.5.2': 5f47fe24c4a517a895266abfebc910a09e77f6088f80a24c8235015e24e0dc2f
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': a4866ecfcd44f318043de839d20110c17e14909004900f002ffe12050376f2ba
   '@react-navigation/native-stack@7.17.6': e667c3cef8c78bb9ff4882ee5bd23a432247b843060a9499eb5f07e9e2295552
@@ -277,7 +277,7 @@ importers:
         version: 1.9.1
       '@pierre/diffs':
         specifier: 'catalog:'
-        version: 1.5.2(patch_hash=ba1766e9669d5699e31f0dde5a52f5d47f389f49a286de54489a409ba2527289)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.5.2(patch_hash=5f47fe24c4a517a895266abfebc910a09e77f6088f80a24c8235015e24e0dc2f)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@react-native-ai/apple':
         specifier: 0.12.0
         version: 0.12.0(patch_hash=2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d)(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))
@@ -666,7 +666,7 @@ importers:
         version: 1.8.0
       '@pierre/diffs':
         specifier: 'catalog:'
-        version: 1.5.2(patch_hash=ba1766e9669d5699e31f0dde5a52f5d47f389f49a286de54489a409ba2527289)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 1.5.2(patch_hash=5f47fe24c4a517a895266abfebc910a09e77f6088f80a24c8235015e24e0dc2f)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@1.1.0)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(shiki@4.2.0)
@@ -14898,7 +14898,7 @@ snapshots:
       tslib: 2.8.1
       webcrypto-core: 1.9.2
 
-  '@pierre/diffs@1.5.2(patch_hash=ba1766e9669d5699e31f0dde5a52f5d47f389f49a286de54489a409ba2527289)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.5.2(patch_hash=5f47fe24c4a517a895266abfebc910a09e77f6088f80a24c8235015e24e0dc2f)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -14913,7 +14913,7 @@ snapshots:
     transitivePeerDependencies:
       - '@shikijs/themes'
 
-  '@pierre/diffs@1.5.2(patch_hash=ba1766e9669d5699e31f0dde5a52f5d47f389f49a286de54489a409ba2527289)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@pierre/diffs@1.5.2(patch_hash=5f47fe24c4a517a895266abfebc910a09e77f6088f80a24c8235015e24e0dc2f)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(shiki@4.2.0)

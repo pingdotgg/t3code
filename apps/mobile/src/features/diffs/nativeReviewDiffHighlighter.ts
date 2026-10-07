@@ -8,9 +8,11 @@ import jsxLanguage from "@shikijs/langs/jsx";
 import tsxLanguage from "@shikijs/langs/tsx";
 import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
+import { inferEmbeddedGrammarContext } from "@t3tools/shared/embeddedGrammarContext";
 import * as Schema from "effect/Schema";
 
-import type { NativeReviewDiffFile, NativeReviewDiffLanguage } from "./nativeReviewDiffTypes";
+import { importReviewLanguage } from "../review/shikiReviewHighlighter";
+import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
 import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewDiffSurface";
 
 export type NativeReviewDiffHighlightScheme = "light" | "dark";
@@ -47,8 +49,9 @@ export interface NativeReviewDiffHighlighterHandle {
   readonly tokenize: (
     code: string,
     options: {
-      readonly lang: NativeReviewDiffLanguage;
+      readonly lang: string;
       readonly theme: string;
+      readonly grammarContextCode?: string;
       readonly signal?: AbortSignal;
     },
   ) => Promise<ReadonlyArray<ReadonlyArray<NativeReviewDiffToken>>>;
@@ -215,9 +218,31 @@ function createHighlighterHandle(
   highlighter: HighlighterCore,
   engine: NativeReviewDiffHighlightEngine,
 ): NativeReviewDiffHighlighterHandle {
+  const languageLoads = new Map<string, Promise<string>>();
+  // Grammars outside the bundled set load on first use. One that fails to load tokenizes as plain
+  // text instead of failing the batch, and is retried on next use.
+  const ensureLanguage = async (lang: string) => {
+    if (lang === "text" || highlighter.getLoadedLanguages().includes(lang)) return lang;
+    let loading = languageLoads.get(lang);
+    if (!loading) {
+      loading = (async () => {
+        const languageModule = await importReviewLanguage(lang);
+        if (languageModule) await highlighter.loadLanguage(languageModule.default);
+        return highlighter.getLoadedLanguages().includes(lang) ? lang : "text";
+      })().catch(() => {
+        languageLoads.delete(lang);
+        return "text";
+      });
+      languageLoads.set(lang, loading);
+    }
+    return loading;
+  };
+
   return {
     engine,
-    async tokenize(code, { lang, theme, signal }) {
+    async tokenize(code, { lang, theme, grammarContextCode, signal }) {
+      const language = await ensureLanguage(lang);
+      if (signal?.aborted) return [];
       const lines = code.split("\n");
       const highlighted: Array<ReadonlyArray<NativeReviewDiffToken>> = [];
       let grammarState: GrammarState | undefined;
@@ -254,9 +279,10 @@ function createHighlighterHandle(
         }
 
         const tokens = highlighter.codeToTokensBase(lines.slice(start, end).join("\n"), {
-          lang,
+          lang: language,
           theme,
           grammarState,
+          grammarContextCode,
         });
         grammarState = highlighter.getLastGrammarState(tokens);
         highlighted.push(...normalizeTokens(tokens));
@@ -370,6 +396,17 @@ function hasOnlyCommentRowsBetween(
   return true;
 }
 
+/** A segment's lines and the rest of its hunk after them, read lazily and capped like a batch. */
+function* linesToHunkEnd(rows: ReadonlyArray<NativeReviewDiffRow>, fromRowIndex: number) {
+  const endRowIndex = Math.min(rows.length, fromRowIndex + NATIVE_REVIEW_DIFF_VISIBLE_MAX_ROWS);
+  for (let rowIndex = fromRowIndex; rowIndex < endRowIndex; rowIndex += 1) {
+    const row = rows[rowIndex]!;
+    if (row.kind === "comment") continue;
+    if (!isHighlightableLineRow(row)) return;
+    yield row.content;
+  }
+}
+
 function canShareGrammarContext(
   previous: IndexedNativeReviewDiffLineRow,
   next: IndexedNativeReviewDiffLineRow,
@@ -479,9 +516,16 @@ export async function highlightNativeReviewDiffVisibleRows(
       charactersSinceYield = 0;
       if (input.signal?.aborted) return;
     }
+    // Segments split inside a hunk, so the line that gives the block away can sit after this one.
+    const { row: firstRow, rowIndex: firstRowIndex } = segmentRows[0]!;
     const tokenLines = await highlighter.tokenize(code, {
       lang: segmentFile.language,
       theme,
+      grammarContextCode: inferEmbeddedGrammarContext(
+        segmentFile.language,
+        firstRow.oldLineNumber ?? firstRow.newLineNumber ?? 0,
+        linesToHunkEnd(input.rows, firstRowIndex),
+      ),
       signal: input.signal,
     });
     charactersSinceYield += code.length;
