@@ -66,3 +66,58 @@ describe("composer list continuation", () => {
     expect(listIndentForTab("- foo", 1, 3)).toBeNull();
   });
 });
+
+describe("composer list renumbering", () => {
+  const enterAt = (value: string, cursor: number) => {
+    const edit = listContinuationForEnter(value, cursor)!;
+    return applyEdit(value, edit);
+  };
+
+  it("renumbers following items when an item is inserted mid-list", () => {
+    const value = "1. one\n2. two\n3. three";
+    // Enter at the start of "two" text pushes it down to a new item 3.
+    expect(enterAt(value, value.indexOf("two"))).toBe("1. one\n2. \n3. two\n4. three");
+    expect(enterAt(value, 6)).toBe("1. one\n2. \n3. two\n4. three");
+  });
+
+  it("puts the caret after the new marker when renumbering", () => {
+    const value = "1. one\n2. two";
+    const edit = listContinuationForEnter(value, 6)!;
+    expect(edit.cursorAfter).toBe(6 + "\n2. ".length);
+  });
+
+  it("leaves items that are already in sequence and other content alone", () => {
+    expect(enterAt("1. a\n\n5. b", 4)).toBe("1. a\n2. \n\n5. b");
+    expect(enterAt("1. a\ntext\n2. b", 4)).toBe("1. a\n2. \ntext\n2. b");
+    expect(enterAt("1. a\n1) b", 4)).toBe("1. a\n2. \n1) b");
+  });
+
+  it("renumbers past nested children but not past shallower lines", () => {
+    expect(enterAt("1. a\n  - x\n2. b", 4)).toBe("1. a\n2. \n  - x\n3. b");
+    expect(enterAt("  1. a\n2. b", 6)).toBe("  1. a\n  2. \n2. b");
+  });
+
+  it("keeps zero padding when renumbering", () => {
+    expect(enterAt("01. a\n02. b", 5)).toBe("01. a\n02. \n03. b");
+  });
+
+  it("does not add zero padding to wider unpadded numbers", () => {
+    expect(enterAt("1. a\n10. b", 4)).toBe("1. a\n2. \n3. b");
+  });
+
+  it("compares indentation by width so tab-indented children are skipped", () => {
+    expect(enterAt("  1. a\n\t- child\n  2. b", 6)).toBe("  1. a\n  2. \n\t- child\n  3. b");
+  });
+
+  it("leaves lines inside a multiline quoted mention alone", () => {
+    const value = '1. @"file\n2. name" \n2. b';
+    expect(enterAt(value, 3)).toBe('1. \n2. @"file\n2. name" \n3. b');
+  });
+
+  it("returns an expanded caret offset when a chip precedes the caret", () => {
+    const value = "1. @README.md go\n2. next";
+    const edit = listContinuationForEnter(value, value.indexOf(" go"))!;
+    expect(applyEdit(value, edit)).toBe("1. @README.md\n2.  go\n3. next");
+    expect(edit.cursorAfter).toBe(value.indexOf(" go") + "\n2. ".length);
+  });
+});
