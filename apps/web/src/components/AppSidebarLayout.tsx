@@ -26,6 +26,7 @@ import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import { useAppSidebarOpen } from "../hooks/useAppSidebarOpen";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -229,6 +230,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  const sidebarOpen = useAppSidebarOpen(isOnSettings);
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -302,7 +304,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       <SidebarProvider
         className="h-dvh! min-h-0!"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-        defaultOpen
+        open={sidebarOpen.open}
+        onOpenChange={sidebarOpen.onOpenChange}
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
