@@ -231,7 +231,11 @@ describe("resolveOnboardingSetup", () => {
         environments,
         new Set(environments.map((environment) => environment.environmentId)),
       ),
-    ).toEqual({ ready: true, environmentIds: [local.environmentId] });
+    ).toEqual({
+      ready: true,
+      environmentIds: [local.environmentId],
+      skippedIds: environments.slice(1).map((environment) => environment.environmentId),
+    });
   });
 
   it("waits for a first connection attempt to settle", () => {
