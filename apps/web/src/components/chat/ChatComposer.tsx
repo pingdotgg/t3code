@@ -3013,7 +3013,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const collapsedComposerPrimaryActionLabel = showResumeAction
     ? "Resume thread"
     : props.resumeCompactionTokens !== null
-      ? "Compact and send"
+      ? "Open composer to compact and send"
       : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
