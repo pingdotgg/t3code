@@ -235,5 +235,13 @@ test.provider(
       expect(yield* findSnippet(zoneId, NAME_RULES_A)).toBeUndefined();
       expect(yield* findSnippet(zoneId, NAME_RULES_B)).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:snippets",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

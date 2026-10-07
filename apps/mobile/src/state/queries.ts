@@ -1,7 +1,11 @@
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "./session";
+import { useEnvironmentPresentation } from "./presentation";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
   ProjectId,
   ThreadId,
   VcsListRefsResult,
@@ -14,8 +18,9 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
@@ -307,25 +312,48 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     [target.cwd, target.environmentId, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
-  const result = useEnvironmentQuery(
+  const fileAccessSession = useEnvironmentQuery(
+    debouncedTarget.environmentId === null
+      ? null
+      : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const searchTarget =
     debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query.length > 0
-      ? projectEnvironment.searchEntries({
+    debouncedTarget.cwd !== null &&
+    debouncedTarget.query.length > 0
+      ? {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
             query: debouncedTarget.query,
             limit: COMPOSER_PATH_SEARCH_LIMIT,
           },
-        })
-      : null,
+        }
+      : null;
+  const result = useEnvironmentQuery(
+    canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
+  const hasTarget = searchTarget !== null;
 
   return {
     entries: result.data?.entries ?? [],
-    error: result.error,
-    isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
+    error:
+      !hasTarget || fileAccess.isPending
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      normalizedTarget.query !== debouncedTarget.query ||
+      (hasTarget && (fileAccess.isPending || result.isPending)),
     refresh: result.refresh,
   };
 }
@@ -350,4 +378,25 @@ export function useCheckpointDiff(target: CheckpointDiffTarget) {
     targets.turn === null ? null : orchestrationEnvironment.turnDiff(targets.turn),
   );
   return targets.fullThread === null ? turn : fullThread;
+}
+
+/** Full input and output for one tool row; pass null to skip fetching. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly row: OrchestrationV2ProjectedTurnItem;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.row.sourceThreadId,
+            itemId: target.row.sourceItemId,
+            revision: turnItemDetailRevision(target.row.item),
+          },
+        }),
+  );
 }

@@ -1,8 +1,8 @@
-import { afterAll, assert, describe, expect, it, layer } from "@effect/vitest"
+import { afterAll, assert, describe, describeWrapped, expect, it, layer } from "@effect/vitest"
 import * as testAssert from "@effect/vitest/utils"
 import { Clock, Context, Duration, Effect, Fiber, Layer, Schema } from "effect"
+import * as Arbitrary from "effect/Arbitrary"
 import { TestClock } from "effect/testing"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 it.effect(
   "effect",
@@ -19,6 +19,14 @@ it("throws fails when the thunk does not throw", () => {
 
 it("throwsAsync fails when the promise resolves", async () => {
   await expect(testAssert.throwsAsync(() => Promise.resolve())).rejects.toThrow()
+})
+
+it("deepStrictEqual fails with the assertion diff when no message is given", () => {
+  expect(() => testAssert.deepStrictEqual({ a: 1 }, { a: 2 })).toThrow("Expected values to be strictly deep-equal")
+})
+
+it("notDeepStrictEqual fails with the assertion message when no message is given", () => {
+  expect(() => testAssert.notDeepStrictEqual({ a: 1 }, { a: 1 })).toThrow("not to be strictly deep-equal")
 })
 
 // each
@@ -185,6 +193,18 @@ describe("layer", () => {
     })
   })
 
+  describe("anonymous layer next to a Vitest fixture", () => {
+    const withValue = it.extend("value", () => 1)
+
+    layer(Foo.layer)((it) => {
+      it.effect("provides its context", () => Effect.map(Foo, (foo) => expect(foo).toEqual("foo")))
+    })
+
+    withValue("runs the fixture test", ({ value }) => {
+      expect(value).toEqual(1)
+    })
+  })
+
   layer(Sleeper.layer)("test services", (it) => {
     it.effect("TestClock", () =>
       Effect.gen(function*() {
@@ -216,6 +236,17 @@ describe("layer", () => {
       Effect.gen(function*() {
         const sleeper = yield* Sleeper
         yield* sleeper.sleep(1)
+      }))
+  })
+})
+
+describeWrapped("describeWrapped", (it) => {
+  it.layer(Foo.layer)("named layer", (it) => {
+    it.effect("registers in its own suite", ({ task }) =>
+      Effect.gen(function*() {
+        assert.strictEqual(task.suite?.name, "named layer")
+        assert.isTrue(task.suite?.tasks.includes(task))
+        assert.strictEqual(yield* Foo, "foo")
       }))
   })
 })

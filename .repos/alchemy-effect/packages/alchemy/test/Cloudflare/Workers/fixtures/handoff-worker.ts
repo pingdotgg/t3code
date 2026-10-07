@@ -2,7 +2,7 @@ import * as Cloudflare from "@/Cloudflare";
 import type { RuntimeContext } from "@/index";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * A DO-hosting Effect Worker whose `DEPLOY_N` env var is read from a mutable

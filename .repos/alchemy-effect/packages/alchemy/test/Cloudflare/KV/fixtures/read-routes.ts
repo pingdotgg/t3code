@@ -1,6 +1,6 @@
 import type { ReadNamespaceClient } from "@/Cloudflare/KV/ReadNamespace.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared read-side routes exercised by both the binding and HTTP fixtures so

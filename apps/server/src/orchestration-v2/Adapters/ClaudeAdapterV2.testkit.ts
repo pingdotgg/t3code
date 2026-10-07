@@ -936,7 +936,7 @@ function replayQueryRunnerService(
   });
 }
 
-function makeClaudeAgentSdkReplayQueryRunnerLayer(
+function layerClaudeAgentSdkReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
@@ -946,7 +946,7 @@ function makeClaudeAgentSdkReplayQueryRunnerLayer(
   );
 }
 
-function makeClaudeAgentSdkReplayLayer(
+function layerClaudeAgentSdkReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
     readonly replayGate?: ProviderReplayGate;
@@ -974,18 +974,18 @@ function makeClaudeAgentSdkReplayLayer(
   );
 }
 
-function makeClaudeProviderAdapterRegistryReplayLayer(
+function layerClaudeProviderAdapterRegistryReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
 ) {
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
     configMap: {
       [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
@@ -995,10 +995,10 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeClaudeAgentSdkReplayLayer(transcript, options),
+        layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
         NodeServices.layer,
-        serverConfigLayer,
+        layerServerConfig,
       ),
     ),
   );
@@ -1580,7 +1580,11 @@ async function recordClaudeStreamingQuery(input: {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
-        uuid: ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`),
+        uuid: await Effect.runPromise(
+          ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+        ),
       });
       input.entries.push({
         type: "expect_outbound",
@@ -2824,7 +2828,7 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
       ),
     ),
   makeProviderAdapterRegistryLayer: (transcript, options) =>
-    makeClaudeProviderAdapterRegistryReplayLayer(transcript, options),
+    layerClaudeProviderAdapterRegistryReplay(transcript, options),
 };
 
 /**
@@ -2837,7 +2841,7 @@ export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayT
     harness: {
       ...ClaudeOrchestratorReplayHarness,
       makeProviderAdapterRegistryLayer: (replayed) =>
-        makeClaudeProviderAdapterRegistryReplayLayer(replayed, { queryRunner }),
+        layerClaudeProviderAdapterRegistryReplay(replayed, { queryRunner }),
     } satisfies typeof ClaudeOrchestratorReplayHarness,
     assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
   };

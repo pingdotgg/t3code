@@ -5,7 +5,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import SecretKeyWorker from "./fixtures/secret-key/worker.ts";
 
 // `dev: true` runs local providers behind the RPC sidecar proxy by default,
@@ -85,5 +85,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "local"],
+    timeout: 120_000,
+  },
 );

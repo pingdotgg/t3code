@@ -270,6 +270,9 @@ const config: ExpoConfig = {
       NSLocalNetworkUsageDescription:
         "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
       NSPhotoLibraryAddUsageDescription: "Allow T3 Code to save images to your photo library.",
+      // "Audio, AirPlay, and Picture in Picture": the browser screen's system
+      // picture in picture needs it to start and to stay up outside the app.
+      UIBackgroundModes: ["audio"],
       ITSAppUsesNonExemptEncryption: false,
       // The App Store screenshot harness rotates the iPad interface from
       // inside the app (CI denies osascript the Accessibility access that
@@ -306,6 +309,8 @@ const config: ExpoConfig = {
     // JS back handling survives it via react-native's Android 16 shim plus
     // withAndroidPredictiveBackCompat on Android 13-15.
     predictiveBackGestureEnabled: true,
+    // expo-sensors declares this for its pedometer, which the app does not use.
+    blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -440,6 +445,9 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    // Only the accelerometer is used (device viewer shake). Compile out the
+    // pedometer so iOS needs no motion purpose string.
+    ["expo-sensors", { motionPermission: false }],
     // Must be listed BEFORE expo-widgets: same-type mods run last-registered-
     // first, so registering earlier makes this plugin's mods run AFTER
     // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which

@@ -1,7 +1,7 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 
 import type { FileBackedComposerAttachment } from "../lib/composerImages";
-import type { MediaActionsSource } from "../lib/mediaActions";
+import type { MediaActionsSource } from "../lib/mediaActionsSource";
 
 export interface ResolvedFilePreviewSource {
   readonly kind: "image" | "pdf" | "document";

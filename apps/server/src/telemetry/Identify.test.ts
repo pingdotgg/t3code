@@ -1,11 +1,13 @@
-import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 
 import * as ServerConfig from "../config.ts";
@@ -16,8 +18,12 @@ interface CapturedLog {
   readonly annotations: Readonly<Record<string, unknown>>;
 }
 
-const sha256 = (value: string) =>
-  NodeCrypto.createHash("sha256").update(value, "utf8").digest("hex");
+const sha256 = Effect.fn("test.sha256")(function* (value: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(
+    yield* crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(Effect.orDie),
+  );
+});
 
 const makeCaptureLogger = (logs: CapturedLog[]) =>
   Logger.make(({ fiber, message }) => {
@@ -47,11 +53,50 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
         path.join(config.baseDir, "home"),
       );
 
-      assert.equal(identifier, sha256(anonymousId));
+      assert.equal(identifier, yield* sha256(anonymousId));
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-telemetry-identify-anonymous-",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("leaves no torn anonymous id behind when its write fails midway", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tornWrites = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (filePath, data, options) =>
+          fileSystem
+            .writeFileString(filePath, data.slice(0, Math.floor(data.length / 2)), options)
+            .pipe(
+              Effect.andThen(
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "WriteZero",
+                    module: "FileSystem",
+                    method: "writeFileString",
+                    pathOrDescriptor: filePath,
+                  }),
+                ),
+              ),
+            ),
+      });
+
+      const identifier = yield* Identify.getTelemetryIdentifierForHome(
+        path.join(config.baseDir, "home"),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, tornWrites));
+
+      assert.isNull(identifier);
+      assert.isFalse(yield* fileSystem.exists(config.anonymousIdPath));
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-telemetry-identify-torn-",
         }),
       ),
     ),
@@ -92,7 +137,7 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
 
       const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
 
-      assert.equal(identifier, sha256(anonymousId));
+      assert.equal(identifier, yield* sha256(anonymousId));
       assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError"));
       assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityReadError"));
       const allLogs = logs
@@ -135,7 +180,7 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
 
       const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
 
-      assert.equal(identifier, sha256(anonymousId));
+      assert.equal(identifier, yield* sha256(anonymousId));
       const decodeLog = findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError");
       assert.isDefined(decodeLog);
       assert.equal(

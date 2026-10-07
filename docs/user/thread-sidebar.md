@@ -117,8 +117,9 @@ open.
 Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
 Thread behavior → Working section** on iOS and Android, to move threads that are working or
 monitoring into a collapsed **Working** section below the active list. A thread returns to the top
-of the active list when it finishes, fails, or needs an approval or answer. Pinned threads stay in
-the pinned section. Each device keeps its own choice.
+of the active list when it finishes, fails, or needs an approval or answer. The Working section
+lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
+device keeps its own choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
@@ -207,6 +208,7 @@ snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
+Stop on a thread also stops the subagents it delegated to.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent

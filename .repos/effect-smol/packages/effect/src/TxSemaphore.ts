@@ -11,6 +11,7 @@
  */
 
 import * as Effect from "./Effect.ts"
+import { dual } from "./Function.ts"
 import type { Inspectable } from "./Inspectable.ts"
 import { NodeInspectSymbol, toJson } from "./Inspectable.ts"
 import type { Pipeable } from "./Pipeable.ts"
@@ -288,7 +289,10 @@ export const acquire = (self: TxSemaphore): Effect.Effect<void> =>
  * @category combinators
  * @since 2.0.0
  */
-export const acquireN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
+export const acquireN: {
+  (n: number): (self: TxSemaphore) => Effect.Effect<void>
+  (self: TxSemaphore, n: number): Effect.Effect<void>
+} = dual(2, (self: TxSemaphore, n: number): Effect.Effect<void> => {
   if (n <= 0) {
     return Effect.die(new Error("Number of permits must be positive"))
   }
@@ -299,7 +303,7 @@ export const acquireN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
     }
     yield* TxRef.set(self.permitsRef, permits - n)
   }).pipe(Effect.tx)
-}
+})
 
 /**
  * Tries to acquire a single permit from the semaphore without blocking,
@@ -378,7 +382,10 @@ export const tryAcquire = (self: TxSemaphore): Effect.Effect<boolean> =>
  * @category combinators
  * @since 4.0.0
  */
-export const tryAcquireN = (self: TxSemaphore, n: number): Effect.Effect<boolean> => {
+export const tryAcquireN: {
+  (n: number): (self: TxSemaphore) => Effect.Effect<boolean>
+  (self: TxSemaphore, n: number): Effect.Effect<boolean>
+} = dual(2, (self: TxSemaphore, n: number): Effect.Effect<boolean> => {
   if (n <= 0) {
     return Effect.die(new Error("Number of permits must be positive"))
   }
@@ -388,7 +395,7 @@ export const tryAcquireN = (self: TxSemaphore, n: number): Effect.Effect<boolean
     }
     return [false, permits]
   })
-}
+})
 
 /**
  * Releases one permit back to the semaphore, making it available for
@@ -475,7 +482,10 @@ export const release = (self: TxSemaphore): Effect.Effect<void> =>
  * @category combinators
  * @since 2.0.0
  */
-export const releaseN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
+export const releaseN: {
+  (n: number): (self: TxSemaphore) => Effect.Effect<void>
+  (self: TxSemaphore, n: number): Effect.Effect<void>
+} = dual(2, (self: TxSemaphore, n: number): Effect.Effect<void> => {
   if (n <= 0) {
     return Effect.die(new Error("Number of permits must be positive"))
   }
@@ -483,7 +493,7 @@ export const releaseN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
     const newPermits = permits + n
     return newPermits > self.capacity ? self.capacity : newPermits
   })
-}
+})
 
 /**
  * Executes an effect with a single permit from the semaphore. The permit is

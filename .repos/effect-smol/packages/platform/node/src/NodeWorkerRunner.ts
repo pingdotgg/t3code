@@ -17,8 +17,8 @@ import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
-import { WorkerError, WorkerReceiveError, WorkerSpawnError } from "effect/unstable/workers/WorkerError"
-import * as WorkerRunner from "effect/unstable/workers/WorkerRunner"
+import { WorkerError, WorkerReceiveError, WorkerSpawnError } from "effect/workers/WorkerError"
+import * as WorkerRunner from "effect/workers/WorkerRunner"
 import * as WorkerThreads from "node:worker_threads"
 
 /**

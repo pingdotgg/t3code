@@ -330,6 +330,9 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
+      - name: Install Chromium for server browser integration tests
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
       - name: Test
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
@@ -1347,6 +1350,24 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
 
+      - name: Read published release notes
+        if: needs.preflight.outputs.is_prerelease == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.release_channel }}
+        run: |
+          if [ "$RELEASE_CHANNEL" = 'nightly' ]; then
+            if ! gh release view "$RELEASE_TAG" --json body --jq '.body // ""' > "$RUNNER_TEMP/discord-release-notes.md"; then
+              : > "$RUNNER_TEMP/discord-release-notes.md"
+              echo '::warning::Could not read published release notes; announcing without a changelog.'
+            fi
+          else
+            : > "$RUNNER_TEMP/discord-release-notes.md"
+          fi
+
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'
         continue-on-error: true
@@ -1359,7 +1380,8 @@ jobs:
             --release-name "${{ needs.preflight.outputs.release_name }}" \
             --release-version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
-            --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}"
+            --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}" \
+            --release-notes-file "$RUNNER_TEMP/discord-release-notes.md"
 
       - name: Announce latest release on Discord
         if: needs.preflight.outputs.make_latest == 'true'

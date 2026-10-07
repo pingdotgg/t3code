@@ -6,8 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import { signalProcessGroup } from "../process/processGroup.ts";
 
@@ -245,8 +246,13 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         stateDir: input.stateDir,
         owner,
       };
-      yield* fs.makeDirectory(directory, { recursive: true });
-      yield* fs.writeFileString(entryPath, yield* encodeEntry(entry));
+      yield* writeFileStringAtomically({
+        filePath: entryPath,
+        contents: yield* encodeEntry(entry),
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
       return fs
         .remove(entryPath, { force: true })
         .pipe(

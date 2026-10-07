@@ -149,32 +149,14 @@ function resolveStaleBackgroundItemProviderInstanceId(
   return projection.providerThreads[0]?.providerInstanceId ?? projection.thread.providerInstanceId;
 }
 
-/**
- * Provider threads with background work reconciliation would cancel and
- * record for their next turn.
- */
-function providerThreadsWithOpenBackgroundWork(
-  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-): ReadonlySet<ProviderThreadId> {
-  const ids = new Set<ProviderThreadId>();
-  for (const item of projection.turnItems ?? []) {
-    if (
-      !isBackgroundCapableTurnItemType(item.type) ||
-      !isNonterminalTurnItemStatus(item.status) ||
-      isAppOwnedDelegationItem(item)
-    )
-      continue;
-    const providerThreadId =
-      item.providerThreadId ??
-      projection.runs.find((run) => run.id === item.runId)?.providerThreadId;
-    if (providerThreadId != null) ids.add(providerThreadId);
-  }
-  for (const thread of projection.providerThreads ?? []) {
-    if (thread.ownerNodeId === null && providerThreadHasPendingBackgroundTasks(thread))
-      ids.add(thread.id);
-  }
-  return ids;
-}
+/** An open item closed by recovery. A secret card also closes its form, so it takes no answer. */
+const cancelledItem = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  now: DateTime.Utc,
+): OrchestrationV2ThreadProjection["turnItems"][number] =>
+  item.type === "secret_request" && item.secretStatus === "pending"
+    ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
+    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
 
 /**
  * A provider thread's latest started run: the last turn that provider saw.
@@ -453,7 +435,7 @@ export const make = Effect.gen(function* () {
             ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+            payload: cancelledItem(item, now),
           });
         }
       }
@@ -483,7 +465,7 @@ export const make = Effect.gen(function* () {
           ...(item.nodeId === null || item.nodeId === undefined ? {} : { nodeId: item.nodeId }),
           providerInstanceId,
           occurredAt: now,
-          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          payload: cancelledItem(item, now),
         });
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(
@@ -668,7 +650,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, new Set(cancelledBackgroundWork.keys()))
+          ? restartContinuationRun(projection)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -804,12 +786,7 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        // Shutdown reconciliation cancels the background work below, so a
-        // settled thread's continuation must be captured while it is still open.
-        const run = restartContinuationRun(
-          projection,
-          providerThreadsWithOpenBackgroundWork(projection),
-        );
+        const run = restartContinuationRun(projection);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({

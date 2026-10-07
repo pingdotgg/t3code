@@ -7,8 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import StripeEventSourceWorker from "./fixtures/event-source-worker.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -76,7 +76,17 @@ test.skipIf(process.env.STRIPE_TEST_REAL_DELIVERY !== "1")(
     );
     expect(id).toEqual(body.id);
   }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:worker",
+      "provider:stripe",
+      "provider:stripe:customer",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test(
@@ -93,5 +103,15 @@ test(
     );
     expect(res.status).toBe(401);
   }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:worker",
+      "provider:stripe",
+      "provider:stripe:customer",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

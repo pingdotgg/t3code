@@ -17,10 +17,11 @@ import {
   ThreadId,
   RunId,
   NonNegativeInt,
+  ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -29,7 +30,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread in the calling project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -91,7 +92,7 @@ const QueueListTool = Tool.make("t3_queue_list", {
   .annotate(Tool.Destructive, false);
 const QueueReadTool = Tool.make("t3_queue_read", {
   ...commandTool,
-  description: "Read up to 16,000 characters of a queued message in the calling project.",
+  description: "Read up to 16,000 characters of a queued message. Omit threadId for this thread.",
   parameters: Schema.Struct(queueTarget),
   success: queueEntry,
 })
@@ -146,7 +147,7 @@ const pendingRequest = Schema.Struct({
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
-    "List pending user questions in a thread in the calling project. Approval requests are not included.",
+    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
 })
@@ -173,7 +174,7 @@ const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
 const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
   ...commandTool,
   description:
-    "Read a thread's provider/model selection and modes in the calling project. orchestrator_capabilities lists available providers and models.",
+    "Read a thread's provider/model selection and modes. Omit threadId for this thread. orchestrator_capabilities lists available providers and models.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -187,16 +188,20 @@ const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
-    "Set this calling thread's provider, model and options with the existing selection command. This does not change permission modes or other threads. Use orchestrator_capabilities to choose a selection.",
-  parameters: Schema.Struct({ modelSelection: ModelSelection }),
+    "Set a thread's provider, model and options with the existing selection command. Omit threadId for this thread. This does not change permission modes. Use orchestrator_capabilities to choose a selection.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    modelSelection: ModelSelection,
+  }),
 }).annotate(Tool.Destructive, true);
 
 const transferResult = Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId });
 const ThreadForkTool = Tool.make("t3_thread_fork", {
   ...commandTool,
   description:
-    "Fork this thread from a stable run or checkpoint using the existing fork command. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
+    "Fork a thread from a stable run or checkpoint using the existing fork command. Omit threadId to fork this thread. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
   parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
   }),
@@ -205,8 +210,9 @@ const ThreadForkTool = Tool.make("t3_thread_fork", {
 const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
   ...commandTool,
   description:
-    "Merge context from this thread back to a related thread in the same project. Existing lineage and transfer rules apply.",
+    "Merge context from a thread back to a related thread in the same project. Omit sourceThreadId to merge from this thread. Existing lineage and transfer rules apply.",
   parameters: Schema.Struct({
+    sourceThreadId: Schema.optional(ThreadId),
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
   }),
@@ -214,7 +220,7 @@ const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
 }).annotate(Tool.Destructive, true);
 const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
   ...commandTool,
-  description: "Read context transfer status for a thread in the calling project.",
+  description: "Read context transfer status for a thread. Omit threadId for this thread.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     transfers: Schema.Array(
@@ -233,8 +239,11 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Returns matches in the calling project from the global top matches; other-project matches are omitted, so this may return fewer than limit. No pagination or exhaustive-result guarantee.",
-  parameters: OrchestrationSearchThreadsInput,
+    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+  parameters: Schema.Struct({
+    ...OrchestrationSearchThreadsInput.fields,
+    projectId: Schema.optional(ProjectId),
+  }),
   success: OrchestrationSearchThreadsResult,
   dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
 })
@@ -244,7 +253,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
-    "Run a scheduled task in the calling project now through the existing scheduler. Requires a full-access/default caller. Each call is a new manual run; completion means dispatch/bookkeeping completed, not that the provider turn finished.",
+    "Run a scheduled task now through the existing scheduler. Requires a full-access/default caller. Each call is a new manual run; completion means dispatch/bookkeeping completed, not that the provider turn finished.",
   parameters: Schema.Struct({ taskId: ScheduledTaskId }),
   success: Schema.Struct({
     taskId: ScheduledTaskId,

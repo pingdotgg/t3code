@@ -7,15 +7,24 @@ import { identity } from "../Function.ts"
 import { pipeArguments } from "../Pipeable.ts"
 import type * as RcRef from "../RcRef.ts"
 import * as Scope from "../Scope.ts"
-import * as Semaphore from "../Semaphore.ts"
 
 const TypeId = "~effect/RcRef"
 
-type State<A> = State.Empty | State.Acquired<A> | State.Closed
+type State<A> = State.Empty | State.Acquiring<A> | State.Acquired<A> | State.Closed
 
 declare namespace State {
   interface Empty {
     readonly _tag: "Empty"
+  }
+
+  interface Acquiring<A> {
+    readonly _tag: "Acquiring"
+    // Assigned as soon as the acquisition is forked.
+    fiber: Fiber.Fiber<Acquired<A>, unknown>
+    awaiters: number
+    // Set once references are allocated to the waiters, which can happen
+    // before the acquisition fiber exits.
+    acquired: Acquired<A> | undefined
   }
 
   interface Acquired<A> {
@@ -48,7 +57,6 @@ class RcRefImpl<A, E> implements RcRef.RcRef<A, E> {
   }
 
   state: State<A> = stateEmpty
-  readonly semaphore = Semaphore.makeUnsafe(1)
   readonly acquire: Effect.Effect<A, E>
   readonly context: Context.Context<never>
   readonly scope: Scope.Scope
@@ -79,105 +87,157 @@ export const make = <A, E, R>(options: {
       options.acquire as Effect.Effect<A, E>,
       context,
       scope,
-      options.idleTimeToLive ? Duration.fromInputUnsafe(options.idleTimeToLive) : undefined
+      options.idleTimeToLive !== undefined
+        ? Duration.fromInputUnsafe(options.idleTimeToLive)
+        : undefined
     )
     return Effect.as(
       Scope.addFinalizerExit(scope, () => {
-        const close = ref.state._tag === "Acquired"
-          ? Scope.close(ref.state.scope, Exit.void)
-          : Effect.void
+        const state = ref.state
         ref.state = stateClosed
-        return close
+        if (state._tag === "Acquired") return Scope.close(state.scope, Exit.void)
+        if (state._tag === "Acquiring") return Fiber.interrupt(state.fiber)
+        return Effect.void
       }),
       ref
     )
   })
 
-const getState = <A, E>(self: RcRefImpl<A, E>) =>
-  Effect.uninterruptibleMask(function loop(restore): Effect.Effect<State.Acquired<A>, E> {
-    switch (self.state._tag) {
-      case "Closed": {
-        return Effect.interrupt
-      }
-      case "Acquired": {
-        self.state.refCount++
-        return self.state.fiber
-          ? Effect.as(Fiber.interrupt(self.state.fiber), self.state)
-          : Effect.succeed(self.state)
-      }
-      case "Empty": {
-        const scope = Scope.makeUnsafe()
-        return self.semaphore.withPermit(
-          Effect.suspend(() => {
-            if (self.state._tag !== "Empty") {
-              return loop(restore)
-            }
-            return restore(Effect.provideContext(
-              self.acquire as Effect.Effect<A, E>,
-              Context.add(self.context, Scope.Scope, scope)
-            )).pipe(
-              Effect.flatMap((value) => {
-                if (self.state._tag === "Closed") {
-                  return Effect.interrupt
-                }
-                const state: State.Acquired<A> = {
-                  _tag: "Acquired",
-                  value,
-                  scope,
-                  fiber: undefined,
-                  refCount: 1,
-                  invalidated: false
-                }
-                self.state = state
-                return Effect.succeed(state)
-              }),
-              Effect.onExit((exit) => Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)
-            )
-          })
-        )
-      }
+const getState = <A, E>(
+  self: RcRefImpl<A, E>,
+  restore: <AX, EX, RX>(effect: Effect.Effect<AX, EX, RX>) => Effect.Effect<AX, EX, RX>
+): Effect.Effect<State.Acquired<A>, E> => {
+  switch (self.state._tag) {
+    case "Closed": {
+      return Effect.interrupt
     }
-  })
+    case "Acquired": {
+      const state = self.state
+      state.refCount++
+      return state.fiber
+        ? Effect.as(Fiber.interrupt(state.fiber), state)
+        : Effect.succeed(state)
+    }
+    case "Acquiring": {
+      const state = self.state
+      state.awaiters++
+      return awaitAcquiring(self, state, restore)
+    }
+    case "Empty": {
+      // The caller that starts the acquisition counts as its first awaiter.
+      const acquiring: State.Acquiring<A> = {
+        _tag: "Acquiring",
+        fiber: undefined as any,
+        awaiters: 1,
+        acquired: undefined
+      }
+      self.state = acquiring
+      const scope = Scope.makeUnsafe()
+      // Acquire on a detached fiber so the acquisition is shared by every
+      // caller and only interrupted once all of them have been interrupted.
+      const acquire = Effect.provideContext(
+        self.acquire as Effect.Effect<A, E>,
+        Context.add(self.context, Scope.Scope, scope)
+      ).pipe(
+        Effect.flatMap((value) => {
+          // The ref was closed, or the acquisition was abandoned.
+          if (self.state !== acquiring) {
+            return Effect.interrupt
+          }
+          const state: State.Acquired<A> = {
+            _tag: "Acquired",
+            value,
+            scope,
+            fiber: undefined,
+            // Every caller still waiting holds a reference.
+            refCount: acquiring.awaiters,
+            invalidated: false
+          }
+          self.state = state
+          acquiring.acquired = state
+          return Effect.succeed(state)
+        }),
+        Effect.onExit((exit) => {
+          if (Exit.isSuccess(exit)) return Effect.void
+          if (self.state === acquiring) self.state = stateEmpty
+          return Scope.close(scope, exit)
+        })
+      )
+      acquiring.fiber = Effect.runForkWith(Fiber.getCurrent()!.context)(acquire)
+      return awaitAcquiring(self, acquiring, restore)
+    }
+  }
+}
+
+const awaitAcquiring = <A, E>(
+  self: RcRefImpl<A, E>,
+  acquiring: State.Acquiring<A>,
+  restore: <AX, EX, RX>(effect: Effect.Effect<AX, EX, RX>) => Effect.Effect<AX, EX, RX>
+): Effect.Effect<State.Acquired<A>, E> =>
+  Effect.onExit(
+    restore(Fiber.join(acquiring.fiber)) as Effect.Effect<State.Acquired<A>, E>,
+    (exit) => {
+      const acquired = acquiring.acquired
+      if (acquired !== undefined) {
+        // The acquisition counted this caller as a reference, possibly before
+        // its fiber exited. Release it if the caller was interrupted before it
+        // could register its finalizer.
+        return Exit.isFailure(exit) ? release(self, acquired) : Effect.void
+      }
+      // Abandon the acquisition once every caller has left, unless it already
+      // failed (a failed acquisition allocated no references).
+      if (--acquiring.awaiters > 0 || self.state !== acquiring) return Effect.void
+      // Detach it first so new callers start a fresh acquisition instead of
+      // joining one that is being interrupted.
+      self.state = stateEmpty
+      return Fiber.interrupt(acquiring.fiber)
+    }
+  )
 
 /** @internal */
-export const get = Effect.fnUntraced(function*<A, E>(
-  self_: RcRef.RcRef<A, E>
-) {
+export const get = <A, E>(self_: RcRef.RcRef<A, E>): Effect.Effect<A, E, Scope.Scope> => {
   const self = self_ as RcRefImpl<A, E>
-  const state = yield* getState(self)
-  const scope = yield* Effect.scope
-  const isFinite = self.idleTimeToLive !== undefined && Duration.isFinite(self.idleTimeToLive)
-  yield* Scope.addFinalizerExit(scope, () => {
-    state.refCount--
-    if (state.refCount > 0) {
-      return Effect.void
-    }
-    if (self.idleTimeToLive === undefined || state.invalidated) {
-      if (self.state === state) {
-        self.state = stateEmpty
-      }
-      return Scope.close(state.scope, Exit.void)
-    } else if (!isFinite) {
-      return Effect.void
-    }
-    state.fiber = Effect.sleep(self.idleTimeToLive).pipe(
-      Effect.flatMap(() => {
-        if (self.state === state && state.refCount === 0) {
-          self.state = stateEmpty
-          return Scope.close(state.scope, Exit.void)
-        }
-        return Effect.void
-      }),
-      Effect.ensuring(Effect.sync(() => {
-        state.fiber = undefined
-      })),
-      Effect.runForkWith(self.context),
-      Fiber.runIn(self.scope)
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.flatMap(
+      Effect.scope,
+      (scope) =>
+        Effect.flatMap(getState(self, restore), (state) =>
+          Effect.as(Scope.addFinalizerExit(scope, () => release(self, state)), state.value))
     )
+  )
+}
+
+const release = <A, E>(self: RcRefImpl<A, E>, state: State.Acquired<A>): Effect.Effect<void> => {
+  state.refCount--
+  if (state.refCount > 0) {
     return Effect.void
-  })
-  return state.value
-})
+  }
+  const idleTimeToLive = self.idleTimeToLive
+  if (idleTimeToLive === undefined || state.invalidated) {
+    if (self.state === state) {
+      self.state = stateEmpty
+    }
+    return Scope.close(state.scope, Exit.void)
+  } else if (!Duration.isFinite(idleTimeToLive)) {
+    return Effect.void
+  }
+  state.fiber = Effect.uninterruptibleMask((restore) =>
+    Effect.flatMap(restore(Effect.sleep(idleTimeToLive)), () => {
+      if (self.state === state && state.refCount === 0) {
+        self.state = stateEmpty
+        return Scope.close(state.scope, Exit.void)
+      }
+      return Effect.void
+    })
+  ).pipe(
+    Effect.ensuring(Effect.sync(() => {
+      state.fiber = undefined
+    })),
+    Effect.runForkWith(self.context),
+    Fiber.runIn(self.scope)
+  )
+  return Effect.void
+}
 
 /** @internal */
 export const invalidate = <A, E>(

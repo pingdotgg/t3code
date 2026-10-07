@@ -29,8 +29,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export type BrowserImportEngine = "chromium" | "firefox" | "safari";
 

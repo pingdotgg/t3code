@@ -7,6 +7,7 @@ import {
   RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -185,6 +186,26 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
+          // Give native terminal ingestion time to finish before the Stop
+          // follow-up repairs a run whose provider no longer reports on it.
+          // The wait is real time: ingestion runs on other fibers and never
+          // advances a test clock, so a test clock would hold Stop forever.
+          yield* Effect.gen(function* () {
+            const deadline = (yield* Clock.currentTimeMillis) + 2_000;
+            while (
+              loaded.providerTurn.status === "running" &&
+              (yield* Clock.currentTimeMillis) < deadline
+            ) {
+              const current = yield* projections.getProviderControlContext(input.threadId, input);
+              if (
+                current.providerTurn?.status !== "running" &&
+                current.attempt?.status !== "running"
+              ) {
+                return;
+              }
+              yield* Effect.sleep("10 millis");
+            }
+          }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)

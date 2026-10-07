@@ -16,12 +16,14 @@ import {
   ProviderInstanceId,
   ProviderReplayTranscript,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./index.ts";
 import {
+  latestProviderTurnForAttempt,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
@@ -34,6 +36,7 @@ import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
@@ -171,6 +174,134 @@ describe("orchestration V2 contracts", () => {
     expect(() =>
       decodeWireItems([
         { ...detached("event-4", 4), event: { ...detached("event-4", 4).event, payload: {} } },
+      ]),
+    ).toThrow();
+  });
+
+  it("skips turn item types from a newer server in snapshots and turn-item events", () => {
+    const decodeWireItems = Schema.decodeUnknownSync(
+      Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
+    );
+    const decodeHistoryPage = Schema.decodeUnknownSync(
+      Schema.toCodecJson(OrchestrationV2ThreadHistoryPage),
+    );
+    const item = (id: string, type: string, extra: Record<string, unknown>) => ({
+      id,
+      type,
+      threadId: "thread-1",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.formatIso(now),
+      ...extra,
+    });
+    const known = item("item-known", "system_notice", { message: "Hello" });
+    // A type no build of this client knows, standing in for a newer server's item.
+    const future = item("item-future", "hologram", { beam: "ref-1" });
+    const projected = (position: number, turnItem: { readonly id: string }) => ({
+      position,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: turnItem.id,
+      item: turnItem,
+    });
+    const projection = {
+      thread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Thread",
+        providerInstanceId: "codex",
+        modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+        forkedFrom: null,
+        createdAt: DateTime.formatIso(now),
+        updatedAt: DateTime.formatIso(now),
+        archivedAt: null,
+        deletedAt: null,
+      },
+      runs: [],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      plans: [],
+      turnItems: [future, known],
+      checkpointScopes: [],
+      checkpoints: [],
+      contextHandoffs: [],
+      contextTransfers: [],
+      visibleTurnItems: [projected(0, future), projected(1, known)],
+      updatedAt: DateTime.formatIso(now),
+    };
+    const turnItemEvent = (sequence: number, payload: unknown) => ({
+      kind: "event",
+      sequence,
+      event: {
+        id: `event-${sequence}`,
+        type: "turn-item.updated",
+        threadId: "thread-1",
+        occurredAt: DateTime.formatIso(now),
+        payload,
+      },
+    });
+
+    const [snapshot, futureEvent, knownEvent] = decodeWireItems([
+      { kind: "snapshot", snapshotSequence: 1, projection },
+      turnItemEvent(2, future),
+      turnItemEvent(3, known),
+    ]);
+
+    expect(snapshot).toMatchObject({ kind: "snapshot" });
+    if (snapshot?.kind !== "snapshot") throw new Error("expected a snapshot");
+    expect(snapshot.projection.turnItems.map((turnItem) => turnItem.id)).toEqual(["item-known"]);
+    expect(snapshot.projection.visibleTurnItems.map((row) => row.item.id)).toEqual(["item-known"]);
+    expect(futureEvent).toEqual({
+      kind: "unknown-event",
+      sequence: 2,
+      eventType: "turn-item.updated",
+    });
+    expect(knownEvent).toMatchObject({
+      kind: "event",
+      event: { type: "turn-item.updated", payload: { id: "item-known", type: "system_notice" } },
+    });
+    expect(
+      decodeHistoryPage({
+        snapshotSequence: 1,
+        items: [projected(0, future), projected(1, known)],
+        nextCursor: null,
+        hasMoreHistory: false,
+      }).items.map((row) => row.item.id),
+    ).toEqual(["item-known"]);
+
+    // A known turn item type with a broken payload is a real defect, not a newer item.
+    const broken = item("item-broken", "system_notice", {});
+    expect(() => decodeWireItems([turnItemEvent(4, broken)])).toThrow();
+    expect(() =>
+      decodeWireItems([
+        {
+          kind: "snapshot",
+          snapshotSequence: 1,
+          projection: { ...projection, turnItems: [broken] },
+        },
       ]),
     ).toThrow();
   });
@@ -1038,6 +1169,35 @@ describe("orchestration V2 contracts", () => {
   });
 });
 
+it("preserves tool cancellation and denial metadata through persisted and wire schemas", () => {
+  for (const kind of ["cancelled", "denied", undefined]) {
+    const item = decodeOrchestrationV2TurnItem({
+      id: "tool-result",
+      threadId: "thread",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "dynamic_tool",
+      toolName: "task_status",
+      input: { taskId: "child" },
+      status: kind === "cancelled" ? "cancelled" : "failed",
+      ...(kind === undefined ? {} : { toolNonExecutionKind: kind }),
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      output: "Tool did not execute",
+    });
+    const wire = encodeOrchestrationV2TurnItemJson(item);
+    expect(wire.toolNonExecutionKind).toBe(kind);
+    expect(decodeOrchestrationV2TurnItemJson(wire)).toEqual(item);
+  }
+});
+
 it("round-trips typed notifications and keeps work outcome separate from item status", () => {
   const now = DateTime.makeUnsafe("2026-09-09T00:00:00Z");
   const base = {
@@ -1246,5 +1406,18 @@ describe("limit recovery choice updates", () => {
     { autoResume: true, snooze: false },
   ])("accepts an explicit independent choice %j", (choice) => {
     expect(decode({ ...identity, ...choice })).toEqual({ ...identity, ...choice });
+  });
+});
+
+describe("latestProviderTurnForAttempt", () => {
+  it("returns the attempt's highest-ordinal turn, as a Codex goal run spans several", () => {
+    const turns = [
+      { id: "first", runAttemptId: RunAttemptId.make("goal-attempt"), ordinal: 3 },
+      { id: "other", runAttemptId: RunAttemptId.make("other-attempt"), ordinal: 9 },
+      { id: "last", runAttemptId: RunAttemptId.make("goal-attempt"), ordinal: 5 },
+      { id: "subagent", runAttemptId: null, ordinal: 7 },
+    ];
+    expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
+    expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
 });
