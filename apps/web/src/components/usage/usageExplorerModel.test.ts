@@ -310,6 +310,22 @@ describe("buildBreakdownRows", () => {
     ]);
   });
 
+  it("shows Not in a thread as its own chart band in the Threads view", () => {
+    const rows = buildBreakdownRows(
+      input({
+        dimension: "thread",
+        facts: data.facts.filter((fact) => fact.project === UNKNOWN_PROJECT),
+        hidden: new Set([NOT_IN_THREAD]),
+      }),
+    );
+    const none = rows.find((row) => row.kind === "leaf" && row.label === "Not in a thread");
+    expect(none?.kind === "leaf" && none.series).toEqual({
+      key: NOT_IN_THREAD,
+      color: "red",
+      hidden: true,
+    });
+  });
+
   it("can collapse the top-level list again", () => {
     const many = buildExplorerData([
       source({

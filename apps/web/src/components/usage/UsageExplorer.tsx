@@ -1602,13 +1602,36 @@ function BreakdownTable({
                 );
               }
               if (row.kind === "leaf") {
+                const band = row.series;
                 return (
                   <tr
                     key={row.path}
-                    className="border-b border-border/40 text-right text-muted-foreground tabular-nums"
+                    className={cn(
+                      "border-b border-border/40 text-right text-muted-foreground tabular-nums",
+                      band !== undefined && highlight === band.key && "bg-muted/50",
+                      band?.hidden && "opacity-50",
+                    )}
+                    {...(band === undefined
+                      ? {}
+                      : {
+                          onMouseEnter: () => onHoverRow(band.key),
+                          onMouseLeave: () => onHoverRow(null),
+                        })}
                   >
                     <td className="py-2 text-left" style={indent}>
-                      <span className="ms-6 italic">{row.label}</span>
+                      {band === undefined ? (
+                        <span className="ms-6 italic">{row.label}</span>
+                      ) : (
+                        <span className="ms-6 flex items-center gap-2">
+                          <Swatch
+                            color={band.color}
+                            hidden={band.hidden}
+                            label={row.label}
+                            onToggle={() => onToggleHidden([band.key])}
+                          />
+                          <span className="italic">{row.label}</span>
+                        </span>
+                      )}
                     </td>
                     <MetricCells
                       columns={columns}

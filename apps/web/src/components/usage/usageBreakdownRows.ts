@@ -13,6 +13,7 @@ import {
   keyFor,
   matchesQuery,
   metricOf,
+  NOT_IN_THREAD,
   OTHER_SERIES,
   rankEntries,
   type RankedEntry,
@@ -68,6 +69,8 @@ export interface LeafRow extends RowBase {
   readonly totals: UsageTotals;
   readonly share: number;
   readonly shareOf: string;
+  /** Set when the leaf is a chart band of its own, as Not in a thread is in Threads. */
+  readonly series?: { readonly key: string; readonly color: string; readonly hidden: boolean };
 }
 
 export interface MoreRow extends RowBase {
@@ -340,6 +343,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
     depth: number,
     parentTotal: number,
     shareOf: string,
+    chartBand = false,
   ) => {
     if (search !== "" && !scope.some(unthreadedMatches)) return;
     const none = foldFacts(scope, (fact) => (fact.thread === null ? "none" : null)).get("none");
@@ -352,6 +356,15 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
       totals: none,
       share: share(none, parentTotal, metric),
       shareOf,
+      ...(chartBand
+        ? {
+            series: {
+              key: NOT_IN_THREAD,
+              color: input.colorOf(NOT_IN_THREAD),
+              hidden: input.hidden.has(NOT_IN_THREAD),
+            },
+          }
+        : {}),
     });
   };
 
@@ -431,7 +444,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
   } else if (topAll && search === "" && listed.length > ROW_CAP) {
     rows.push({ kind: "fewer", path: "\u0000top\u0000fewer", depth: 0, target: "\u0000top" });
   }
-  if (dimension === "thread") pushUnthreaded(facts, "\u0000none", 0, whole, overall);
+  if (dimension === "thread") pushUnthreaded(facts, "\u0000none", 0, whole, overall, true);
   if (grey.length > 1) {
     const totals = grey.reduce((sum, entry) => addTotals(sum, entry.totals), emptyTotals());
     const otherOpen = open.has(OTHER_PATH);
