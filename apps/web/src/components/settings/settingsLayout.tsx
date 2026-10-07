@@ -429,17 +429,19 @@ export function SettingsRow({
         );
       }),
     );
-  const inheritance: { state: SettingInheritanceState; summary: string } = mixed
-    ? { state: "mixed", summary: "Mixed across selected environments" }
-    : source === "project"
-      ? { state: "overridden", summary: "Overridden for this project" }
-      : source === "t3.json"
-        ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
-        : source === "environment" && scopedKeys.length > 0
-          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
-          : customized
-            ? { state: "environment", summary: "Set on the environment" }
-            : { state: "default", summary: "Built-in default" };
+  const inheritance: { state: SettingInheritanceState; summary: string } = managed
+    ? { state: "environment", summary: "Managed by your organization" }
+    : mixed
+      ? { state: "mixed", summary: "Mixed across selected environments" }
+      : source === "project"
+        ? { state: "overridden", summary: "Overridden for this project" }
+        : source === "t3.json"
+          ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
+          : source === "environment" && scopedKeys.length > 0
+            ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+            : customized
+              ? { state: "environment", summary: "Set on the environment" }
+              : { state: "default", summary: "Built-in default" };
   const renderedInheritance =
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance

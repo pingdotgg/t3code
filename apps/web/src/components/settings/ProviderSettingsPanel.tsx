@@ -975,6 +975,8 @@ export function EnvironmentProviderSettings({
 
   const renderProviderInstance = (row: InstanceRow, mode: "list" | "editor") => {
     const driverOption = getDriverOption(row.driver);
+    const cardReadOnly =
+      readOnly || isServerSettingManaged(serverConfig, ["providerInstances", row.instanceId]);
     const liveProvider = serverProviders.find(
       (candidate) => candidate.instanceId === row.instanceId,
     );
@@ -1008,9 +1010,7 @@ export function EnvironmentProviderSettings({
         mode={mode}
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
-        readOnly={
-          readOnly || isServerSettingManaged(serverConfig, ["providerInstances", row.instanceId])
-        }
+        readOnly={cardReadOnly}
         runtime={
           mode === "editor" &&
           row.driver === "codex" &&
@@ -1105,7 +1105,7 @@ export function EnvironmentProviderSettings({
           mode === "editor" && !row.isDefault ? () => deleteProviderInstance(row) : undefined
         }
         headerAction={
-          mode === "editor" && row.isDefault && row.isDirty ? (
+          mode === "editor" && row.isDefault && row.isDirty && !cardReadOnly ? (
             <SettingResetButton
               label={`${resetLabel} provider settings`}
               onClick={() => resetDefaultInstance(row.driver)}
