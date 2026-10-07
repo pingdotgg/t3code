@@ -128,6 +128,7 @@ import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
+import * as PluginNpm from "./plugins/PluginNpm.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1235,6 +1236,7 @@ const layerWsRpc = (
       const pluginSettings = yield* PluginSettings.PluginSettings;
       const pluginActions = yield* PluginActions.PluginActions;
       const pluginViews = yield* PluginViews.PluginViews;
+      const pluginNpm = yield* PluginNpm.PluginNpm;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2081,6 +2083,11 @@ const layerWsRpc = (
         [WS_METHODS.pluginViewsSubscribe]: (_input) => pluginViews.subscribe,
         [WS_METHODS.pluginViewsReadBundle]: (input) => pluginViews.readBundle(input),
         [WS_METHODS.pluginViewsCall]: (input) => pluginViews.call(input),
+        [WS_METHODS.pluginsNpmList]: (_input) => pluginNpm.list,
+        [WS_METHODS.pluginsNpmAdd]: (input) => pluginNpm.add(input),
+        [WS_METHODS.pluginsNpmStageUpdate]: (input) => pluginNpm.stageUpdate(input),
+        [WS_METHODS.pluginsNpmApplyUpdate]: (input) => pluginNpm.applyUpdate(input),
+        [WS_METHODS.pluginsNpmDiscardUpdate]: (input) => pluginNpm.discardUpdate(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),

@@ -621,6 +621,9 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           disable: () => Effect.die("unused"),
           remove: () => Effect.die("unused"),
           resume: () => Effect.die("unused"),
+          replace: () => Effect.die("unused"),
+          settleReplace: () => Effect.die("unused"),
+          changeFiles: () => Effect.die("unused"),
           invoke: () => Effect.die("unused"),
         });
         yield* PluginSettings.make().pipe(

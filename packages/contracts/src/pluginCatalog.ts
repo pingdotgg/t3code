@@ -36,14 +36,14 @@ export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLeng
 export type PluginInstallationId = typeof PluginInstallationId.Type;
 
 /** `sha256:` and the hex digest of every file in the plugin directory. */
-const PluginSourceDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/));
+export const PluginSourceDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/));
 
 /**
  * What the manifest said when the server last read it. Ids and capability
  * names are plain strings here so an older client keeps rows whose values a
  * newer server accepts.
  */
-const PluginInstallationManifest = Schema.Struct({
+export const PluginInstallationManifest = Schema.Struct({
   id: TrimmedNonEmptyString.pipe(Schema.brand("PluginId")),
   name: Schema.String,
   /** Display metadata only; never proof of the installed bytes. */
@@ -61,7 +61,7 @@ const PluginInstallationManifest = Schema.Struct({
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 
 /** The exact bytes the server found at its last inspection. */
-const PluginSource = Schema.Struct({
+export const PluginSource = Schema.Struct({
   digest: PluginSourceDigest,
   files: NonNegativeInt,
   bytes: NonNegativeInt,

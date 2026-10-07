@@ -140,6 +140,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
+  // Installing or updating from npm changes which code the server runs, so it is administrative.
+  [WS_METHODS.pluginsNpmList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsNpmAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmStageUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmApplyUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmDiscardUpdate]: AuthAccessWriteScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

@@ -173,6 +173,9 @@ const inventory = (count: number) => {
     disable: unused,
     remove: unused,
     resume: unused,
+    replace: unused,
+    settleReplace: unused,
+    changeFiles: unused,
     invoke: () => Effect.succeed("pong"),
   });
   return { rows, prepared, counts, catalog };

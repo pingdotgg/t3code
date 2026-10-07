@@ -372,6 +372,14 @@ import {
   PluginViewsSnapshot,
 } from "./pluginViews.ts";
 import {
+  PluginNpmAddInput,
+  PluginNpmApplyUpdateInput,
+  PluginNpmInstallationResult,
+  PluginNpmListResult,
+  PluginNpmPackageResult,
+  PluginNpmStageUpdateInput,
+} from "./pluginNpm.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -566,6 +574,13 @@ export const WS_METHODS = {
   pluginViewsSubscribe: "pluginViews.subscribe",
   pluginViewsReadBundle: "pluginViews.readBundle",
   pluginViewsCall: "pluginViews.call",
+
+  // npm installs (gated on the `pluginNpm` environment capability)
+  pluginsNpmList: "plugins.npm.list",
+  pluginsNpmAdd: "plugins.npm.add",
+  pluginsNpmStageUpdate: "plugins.npm.stageUpdate",
+  pluginsNpmApplyUpdate: "plugins.npm.applyUpdate",
+  pluginsNpmDiscardUpdate: "plugins.npm.discardUpdate",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1899,7 +1914,8 @@ const WsPluginsDisableRpc = Rpc.make(WS_METHODS.pluginsDisable, {
 
 /**
  * Disables and forgets the installation and deletes its saved settings and
- * storage. The directory is left untouched.
+ * storage. A directory added by path is left untouched; the server's copy of
+ * an npm installation is deleted.
  */
 const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
   payload: PluginInstallationInput,
@@ -1968,6 +1984,39 @@ const WsPluginViewsCallRpc = Rpc.make(WS_METHODS.pluginViewsCall, {
   payload: PluginViewCallInput,
   success: PluginViewCallResult,
   error: pluginViewRpcError,
+});
+
+const WsPluginsNpmListRpc = Rpc.make(WS_METHODS.pluginsNpmList, {
+  payload: Schema.Struct({}),
+  success: PluginNpmListResult,
+  error: pluginRpcError,
+});
+
+/** Downloads, verifies, and unpacks one exact version, then adds it like a directory; runs nothing. */
+const WsPluginsNpmAddRpc = Rpc.make(WS_METHODS.pluginsNpmAdd, {
+  payload: PluginNpmAddInput,
+  success: PluginNpmInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Downloads a version next to the installed one; the installed one keeps running. */
+const WsPluginsNpmStageUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmStageUpdate, {
+  payload: PluginNpmStageUpdateInput,
+  success: PluginNpmPackageResult,
+  error: pluginRpcError,
+});
+
+/** Consents to the staged digest and swaps it in, restoring the old version on failure. */
+const WsPluginsNpmApplyUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmApplyUpdate, {
+  payload: PluginNpmApplyUpdateInput,
+  success: PluginNpmInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsNpmDiscardUpdateRpc = Rpc.make(WS_METHODS.pluginsNpmDiscardUpdate, {
+  payload: PluginInstallationInput,
+  success: PluginNpmPackageResult,
+  error: pluginRpcError,
 });
 
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
@@ -2085,6 +2134,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginViewsSubscribeRpc,
   WsPluginViewsReadBundleRpc,
   WsPluginViewsCallRpc,
+  WsPluginsNpmListRpc,
+  WsPluginsNpmAddRpc,
+  WsPluginsNpmStageUpdateRpc,
+  WsPluginsNpmApplyUpdateRpc,
+  WsPluginsNpmDiscardUpdateRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
