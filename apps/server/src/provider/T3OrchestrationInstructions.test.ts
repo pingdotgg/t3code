@@ -26,6 +26,13 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "bindToCurrentThread=false");
   });
 
+  it("says scheduled runs return to this thread by default only in its own project", () => {
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "A task scheduled into another project launches a fresh thread for every run.",
+    );
+  });
+
   it("injects prompt fallback only for an MCP-enabled first run", () => {
     const prompt = "Inspect the repository.";
     const injected = t3OrchestrationPromptForFirstRun({

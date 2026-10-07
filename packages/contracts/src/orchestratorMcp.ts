@@ -528,14 +528,14 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
   ),
   /**
-   * When true (the default), the scheduled task fires into the calling thread
-   * on each run instead of launching a fresh thread. This is the recurring
-   * "wake up in this thread" behaviour reserved for agent-created tasks.
+   * When true, the scheduled task fires into the calling thread on each run
+   * instead of launching a fresh thread. This is the recurring "wake up in this
+   * thread" behaviour reserved for agent-created tasks.
    */
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
+        "In this thread's project, true (the default) posts each run into this thread and false creates a fresh top-level thread per run. In another project, or without a calling thread, each run launches a fresh thread and true is rejected.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
