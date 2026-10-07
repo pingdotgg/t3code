@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
-  type AuthEnvironmentScope,
+  type AuthGrantScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -380,12 +380,11 @@ it.live(
         expect(readOnlyResponse.status).toBe(400);
         expect(readOnlyResponse.message).toContain("cannot grant this access");
 
-        // A read-only code can approve read-only access.
-        const readOnlyCode = yield* auth.issuePairingCredential({ scopes: ["orchestration:read"] });
+        // Rejection must leave the code usable for access it actually grants.
         const readOnlyApproval = yield* decide(handler, params, {
           _tag: "pairing-code",
           access: "read-only",
-          code: readOnlyCode.credential,
+          code: readOnly.credential,
         });
         expect(readOnlyApproval.status).toBe(200);
         const readOnlyToken = yield* handler(
@@ -418,7 +417,7 @@ it.live("one-click approves only access the browser session holds the scopes for
       const clientId = yield* registeredClientId(handler);
       const params = authorizeParams(clientId);
       // Signs a browser in through the real route and returns its session cookie.
-      const browserCookie = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      const browserCookie = (scopes: ReadonlyArray<AuthGrantScope>) =>
         Effect.gen(function* () {
           const pairing = yield* auth.issuePairingCredential({ scopes });
           const response = yield* handler(

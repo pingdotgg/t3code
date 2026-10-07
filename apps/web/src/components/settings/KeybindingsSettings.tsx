@@ -1523,35 +1523,39 @@ export function KeybindingsSettingsPanel() {
         </div>
       </SettingsSection>
 
-      {!canWriteSettings ? <p className="text-xs text-muted-foreground">This connection can view keybindings but cannot change them.</p> : null}
-      <div inert={!canWriteSettings}>
-      {isAddingBinding ? (
-        <SettingsGroup>
-          <NewKeybindingSettingsRow
-            commandOptions={commandOptions}
-            allRows={rows}
-            variables={whenVariables}
-            isSaving={savingCommand !== null}
-            onSave={saveKeybinding}
-            onCancel={cancelAdd}
-          />
-        </SettingsGroup>
+      {!canWriteSettings ? (
+        <p className="text-xs text-muted-foreground">
+          This connection can view keybindings but cannot change them.
+        </p>
       ) : null}
+      <div inert={!canWriteSettings}>
+        {isAddingBinding ? (
+          <SettingsGroup>
+            <NewKeybindingSettingsRow
+              commandOptions={commandOptions}
+              allRows={rows}
+              variables={whenVariables}
+              isSaving={savingCommand !== null}
+              onSave={saveKeybinding}
+              onCancel={cancelAdd}
+            />
+          </SettingsGroup>
+        ) : null}
 
-      {groups.length > 0 ? (
-        <KeybindingsGroups
-          groups={groups}
-          anchorIds={anchorIds}
-          savingCommand={savingCommand}
-          {...rowActions}
-        />
-      ) : (
-        <SettingsGroup>
-          <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-            No keybindings match your search.
-          </div>
-        </SettingsGroup>
-      )}
+        {groups.length > 0 ? (
+          <KeybindingsGroups
+            groups={groups}
+            anchorIds={anchorIds}
+            savingCommand={savingCommand}
+            {...rowActions}
+          />
+        ) : (
+          <SettingsGroup>
+            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+              No keybindings match your search.
+            </div>
+          </SettingsGroup>
+        )}
       </div>
     </SettingsPageContainer>
   );
