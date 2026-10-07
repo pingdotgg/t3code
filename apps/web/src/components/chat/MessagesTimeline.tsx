@@ -82,6 +82,7 @@ import {
 } from "react";
 import {
   LegendList,
+  type LegendListMetrics,
   type LegendListRef,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
@@ -825,6 +826,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     },
     [listRef, onManualNavigation],
   );
+  // Row positions start below the list header, but scroll counts from the
+  // very top; scrollToIndex adds the header back when it lands.
+  const listHeaderSizeRef = useRef(0);
+  const handleListMetricsChange = useCallback((metrics: LegendListMetrics) => {
+    listHeaderSizeRef.current = metrics.headerSize;
+  }, []);
   useImperativeHandle(
     turnNavigationRef,
     () => ({
@@ -835,7 +842,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         if (direction === "next" && resolveTimelineIsAtEnd(state) === true) return false;
         const index = resolveTimelineTurnJumpIndex({
           direction,
-          scrollTop: state.scroll ?? 0,
+          scrollTop: (state.scroll ?? 0) - listHeaderSizeRef.current,
           itemTops: minimapItems.map((item) => resolveTimelineRowTop(state, item.rowIndex)),
         });
         const item = index === null ? undefined : minimapItems[index];
@@ -1417,6 +1424,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
+            onMetricsChange={handleListMetricsChange}
             className={cn(
               "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
