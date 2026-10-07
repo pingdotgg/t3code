@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -38,6 +38,8 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
   },
 ) {}
 
+const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
+
 /**
  * Pure interrupt races with hard process teardown or a dead session produce
  * "not active" protocol errors. Retrying those only delays recovery.
@@ -61,6 +63,26 @@ export function isNonRetryableProviderTurnControlFailure(
     /treating as already stopped/i.test(errorText)
   );
 }
+
+/**
+ * Effects that move a run out of `starting`. Giving up on one would leave its
+ * run `starting` until the user stops it or the server restarts, so the worker
+ * keeps retrying it past the attempt budget until the run starts, fails, or is
+ * interrupted.
+ */
+const ownsStartingRun = (effectType: EffectOutbox.OrchestrationEffectV2["request"]["type"]) =>
+  effectType === "provider-turn.start" || effectType === "provider-turn.restart";
+
+/** Whether a start effect failed because its run has no state left to settle. */
+const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) =>
+        ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error) ||
+        (isOrchestrationEffectExecutionError(error) &&
+          ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error.cause)),
+    ),
+  );
 
 export interface OrchestrationEffectExecutorV2Shape {
   /**
@@ -104,6 +126,55 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    // The last attempt of a start effect fails the run instead of leaving it
+    // `starting`. If the run cannot be failed either, the start failure goes
+    // back to the worker, which keeps retrying, unless the run has no state
+    // left to settle.
+    const failRunOnLastAttempt =
+      (effect: EffectOutbox.OrchestrationEffectV2, runId: RunId, willRetry: boolean) =>
+      <E, R>(
+        start: Effect.Effect<void, E, R>,
+      ): Effect.Effect<
+        void,
+        E | ProviderTurnStartService.ProviderTurnStartRunStateMissingError,
+        R
+      > =>
+        willRetry
+          ? start
+          : start.pipe(
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning(
+                    "Last run start attempt failed",
+                    { effectId: effect.id, effectType: effect.request.type, runId },
+                    cause,
+                  ).pipe(
+                    Effect.andThen(
+                      providerTurnStart.failStartingRun({ threadId: effect.threadId, runId }),
+                    ),
+                    Effect.catchCause((failRunCause) => {
+                      // A run with no state left to settle fails the effect for good.
+                      const missing = Cause.findErrorOption(failRunCause).pipe(
+                        Option.filter(
+                          ProviderTurnStartService.isProviderTurnStartRunStateMissingError,
+                        ),
+                      );
+                      const giveUp: Effect.Effect<
+                        never,
+                        E | ProviderTurnStartService.ProviderTurnStartRunStateMissingError
+                      > = Option.isSome(missing)
+                        ? Effect.fail(missing.value)
+                        : Effect.failCause(cause);
+                      return Effect.logWarning(
+                        "Could not fail run after its last start attempt",
+                        { effectId: effect.id, runId },
+                        failRunCause,
+                      ).pipe(Effect.andThen(giveUp));
+                    }),
+                  ),
+              ),
+            );
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -153,6 +224,7 @@ export const layerExecutor: Layer.Layer<
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
               .pipe(
+                failRunOnLastAttempt(effect, effect.request.runId, willRetry),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -335,6 +407,7 @@ export const layerExecutor: Layer.Layer<
                     willRetry,
                   }),
                 ),
+                failRunOnLastAttempt(effect, effect.request.runId, willRetry),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -717,7 +790,8 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts &&
+                (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause))
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
