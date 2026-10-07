@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  CheckpointId,
   NodeId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -1545,6 +1546,211 @@ describe("PiAdapterV2", () => {
         other.type === "runtime_request.updated" &&
           other.runtimeRequest.nativeRequestRef?.nativeId === "ui-other",
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    "new thread",
+    "switch",
+    "rollback",
+    "empty rollback",
+    "fork",
+    "prompt metadata",
+    "pending switch",
+    "pending rollback",
+  ] as const)("does not reuse session approvals after %s", (boundary) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        forkFake,
+      );
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const prompt = {
+        type: "extension_ui_request",
+        method: "confirm",
+        title: "Run project extensions?",
+        message: "This project has .pi/extensions.",
+        extensionPath: "/workspace/extension-a.ts",
+      };
+      yield* fake.emit({ ...prompt, id: "grant-in-a" });
+      const granted = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.equal(granted.type, "runtime_request.updated");
+      if (granted.type !== "runtime_request.updated") return;
+      const pendingApproval = boundary === "pending switch" || boundary === "pending rollback";
+      if (!pendingApproval) {
+        yield* runtime.respondToRuntimeRequest({
+          requestId: granted.runtimeRequest.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* fake.takeRequest("extension_ui_response"))["confirmed"], true);
+      }
+      const targetThreadId = ThreadId.make("thread-pi-b");
+      if (boundary === "new thread") {
+        yield* runtime.ensureThread({
+          threadId: targetThreadId,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+      } else if (boundary === "switch" || boundary === "pending switch") {
+        fake.queueState({ sessionFile: "/fake/b.jsonl" });
+        yield* runtime.resumeThread({
+          providerThread: {
+            ...source,
+            id: ProviderThreadId.make("provider-thread-pi-b"),
+            appThreadId: targetThreadId,
+            nativeThreadRef: { driver: PI_PROVIDER, nativeId: "/fake/b.jsonl", strength: "strong" },
+          },
+        });
+      } else if (
+        boundary === "rollback" ||
+        boundary === "empty rollback" ||
+        boundary === "pending rollback"
+      ) {
+        fake.queueState({ sessionFile: "/fake/rolled-back.jsonl" });
+        yield* runtime.rollbackThread({
+          providerThread: source,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns:
+            boundary === "empty rollback"
+              ? []
+              : [
+                  {
+                    id: ProviderTurnId.make("pi-turn-to-discard"),
+                    providerThreadId: source.id,
+                    nodeId: NodeId.make("pi-discard-node"),
+                    runAttemptId: null,
+                    nativeTurnRef: {
+                      driver: PI_PROVIDER,
+                      nativeId: "user-entry",
+                      strength: "strong",
+                    },
+                    ordinal: 1,
+                    status: "completed",
+                    startedAt: null,
+                    completedAt: null,
+                  },
+                ],
+        });
+      } else if (boundary === "fork") {
+        forkFake.queueState({ sessionFile: "/fake/fork.jsonl" });
+        fake.queueState({ sessionFile: "/fake/fork.jsonl" });
+        yield* runtime.forkThread({ sourceProviderThread: source, targetThreadId });
+      }
+      if (pendingApproval) {
+        const cancelled = yield* takeEvent(
+          (event) =>
+            event.type === "runtime_request.updated" &&
+            event.runtimeRequest.id === granted.runtimeRequest.id &&
+            event.runtimeRequest.status === "cancelled",
+        );
+        assert.equal(cancelled.type, "runtime_request.updated");
+        assert.equal((yield* fake.takeRequest("extension_ui_response"))["cancelled"], true);
+        const lateResponse = yield* Effect.result(
+          runtime.respondToRuntimeRequest({
+            requestId: granted.runtimeRequest.id,
+            decision: "acceptForSession",
+          }),
+        );
+        assert.equal(lateResponse._tag, "Failure");
+      }
+      yield* fake.emit({
+        ...prompt,
+        id: "ask-again",
+        ...(boundary === "prompt metadata" ? { extensionPath: "/workspace/extension-b.ts" } : {}),
+      });
+      const asked = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.equal(asked.type, "runtime_request.updated");
+      if (asked.type !== "runtime_request.updated") return;
+      assert.equal(asked.runtimeRequest.nativeRequestRef?.nativeId, "ask-again");
+      assert.isFalse(fake.allRequests().some((request) => request["id"] === "ask-again"));
+      if (
+        boundary === "new thread" ||
+        boundary === "switch" ||
+        boundary === "pending switch" ||
+        boundary === "fork"
+      ) {
+        assert.equal(asked.threadId, targetThreadId);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("drops session approvals when pi moved to another session mid-turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const prompt = {
+        type: "extension_ui_request",
+        method: "confirm",
+        title: "Run project extensions?",
+        message: "This project has .pi/extensions.",
+      };
+      yield* fake.emit({ ...prompt, id: "grant-in-turn" });
+      const granted = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.equal(granted.type, "runtime_request.updated");
+      if (granted.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: granted.runtimeRequest.id,
+        decision: "acceptForSession",
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["confirmed"], true);
+
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* startTurn(runtime, providerThread, "default", [], "Hello pi", undefined, ordinal);
+          yield* fake.takeRequest("prompt");
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_settled" });
+          yield* takeEvent((event) => event.type === "turn.terminal");
+        });
+
+      // Same session: the cached approval still applies on the next turn.
+      yield* runTurn(1);
+      yield* fake.emit({ ...prompt, id: "same-session" });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["id"], "same-session");
+
+      // A slash command in pi switched sessions with no adapter command.
+      // The settle probe reads the bound session, the finalize read the other.
+      fake.queueState({});
+      fake.queueState({ sessionFile: "/fake/some-other-session.jsonl" });
+      yield* runTurn(2);
+      yield* fake.emit({ ...prompt, id: "other-session" });
+      // A cached approval answers pi directly and never raises a request, so
+      // racing the two outcomes names the regression instead of timing out.
+      const askedAgain = yield* Effect.race(
+        takeEvent(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ).pipe(Effect.as(true)),
+        fake.takeRequest("extension_ui_response").pipe(Effect.as(false)),
+      );
+      assert.isTrue(askedAgain);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

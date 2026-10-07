@@ -2966,74 +2966,89 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("clears a staged revert whose commit failed, before the next prompt too", () =>
-    Effect.gen(function* () {
-      const kept = "msg_t3_turn_run-attempt:kept:1";
-      const dropped = "msg_t3_turn_run-attempt:dropped:1";
-      const { runtime, thread } = yield* resumed([
-        out("message.list", "<any>"),
-        reply("message.list", {
-          data: [
-            { id: dropped, time: { created: 2 }, text: "second", type: "user" },
-            { id: kept, time: { created: 1 }, text: "first", type: "user" },
-          ],
-          cursor: {},
-        }),
-        out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
-        replyData("session.revert.stage", { messageID: dropped, files: [] }),
-        out("session.revert.commit", { sessionID: SESSION }),
-        reply("session.revert.commit", {
-          status: 500,
-          body: { _tag: "UnknownError", message: "disk I/O error" },
-        }),
-        // Uncleared, OpenCode would commit the stage on the next prompt.
-        out("session.revert.clear", { sessionID: SESSION }),
-        reply("session.revert.clear", {
-          status: 500,
-          body: { _tag: "UnknownError", message: "busy" },
-        }),
-        // The next turn clears it first, then waits out the empty execution `clear` runs.
-        out("session.revert.clear", { sessionID: SESSION }),
-        reply("session.revert.clear", null),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        out("session.prompt", { sessionID: SESSION, id: "<any>", text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      const now = yield* DateTime.now;
-      const turn = (attempt: string, ordinal: number) => ({
-        id: ProviderTurnId.make(`provider-turn:${attempt}`),
-        providerThreadId: thread.id,
-        nodeId: NodeId.make(`node:${attempt}`),
-        runAttemptId: RunAttemptId.make(`run-attempt:${attempt}:1`),
-        nativeTurnRef: {
-          driver: OPENCODE_PROVIDER,
-          nativeId: `msg_t3_turn_run-attempt:${attempt}:1`,
-          strength: "weak" as const,
-        },
-        ordinal,
-        status: "completed" as const,
-        startedAt: now,
-        completedAt: now,
-      });
-      const rollback = yield* runtime
-        .rollbackThread({
-          providerThread: thread,
-          target: {
-            type: "provider_turn",
-            checkpointId: CheckpointId.make("checkpoint:kept"),
-            appRunOrdinal: 1,
-            providerTurn: turn("kept", 1),
+  it.effect.each([false, true])(
+    "clears a failed staged revert before the next prompt, unload=%s",
+    (unload) =>
+      Effect.gen(function* () {
+        const kept = "msg_t3_turn_run-attempt:kept:1";
+        const dropped = "msg_t3_turn_run-attempt:dropped:1";
+        const { runtime, thread } = yield* resumed([
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: dropped, time: { created: 2 }, text: "second", type: "user" },
+              { id: kept, time: { created: 1 }, text: "first", type: "user" },
+            ],
+            cursor: {},
+          }),
+          out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
+          replyData("session.revert.stage", { messageID: dropped, files: [] }),
+          out("session.revert.commit", { sessionID: SESSION }),
+          reply("session.revert.commit", {
+            status: 500,
+            body: { _tag: "UnknownError", message: "disk I/O error" },
+          }),
+          // Uncleared, OpenCode would commit the stage on the next prompt.
+          out("session.revert.clear", { sessionID: SESSION }),
+          reply("session.revert.clear", {
+            status: 500,
+            body: { _tag: "UnknownError", message: "busy" },
+          }),
+          // The next turn clears it first, then waits out the empty execution `clear` runs.
+          out("session.revert.clear", { sessionID: SESSION }),
+          reply("session.revert.clear", null),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(unload
+            ? [
+                out("session.get", { sessionID: SESSION }),
+                replyData("session.get", sessionInfo()),
+                ...noOpenRequests,
+              ]
+            : []),
+          out("session.prompt", { sessionID: SESSION, id: "<any>", text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const now = yield* DateTime.now;
+        const turn = (attempt: string, ordinal: number) => ({
+          id: ProviderTurnId.make(`provider-turn:${attempt}`),
+          providerThreadId: thread.id,
+          nodeId: NodeId.make(`node:${attempt}`),
+          runAttemptId: RunAttemptId.make(`run-attempt:${attempt}:1`),
+          nativeTurnRef: {
+            driver: OPENCODE_PROVIDER,
+            nativeId: `msg_t3_turn_run-attempt:${attempt}:1`,
+            strength: "weak" as const,
           },
-          providerThreadTurns: [turn("kept", 1), turn("dropped", 2)],
-        })
-        .pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(rollback));
-      yield* runtime.startTurn(turnInput(thread));
-      assert.equal((yield* terminalOf(runtime))?.status, "completed");
-    }).pipe(Effect.scoped),
+          ordinal,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        });
+        const rollback = yield* runtime
+          .rollbackThread({
+            providerThread: thread,
+            target: {
+              type: "provider_turn",
+              checkpointId: CheckpointId.make("checkpoint:kept"),
+              appRunOrdinal: 1,
+              providerTurn: turn("kept", 1),
+            },
+            providerThreadTurns: [turn("kept", 1), turn("dropped", 2)],
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(rollback));
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        if (unload) {
+          yield* runtime.unloadThread!({ providerThread: thread });
+          assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+          yield* runtime.resumeThread({ providerThread: thread });
+        }
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* terminalOf(runtime))?.status, "completed");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("offers no follow-up for the execution a cleared revert starts", () =>
@@ -3276,10 +3291,119 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("takes back a stranded steer again when its first cancel failed", () =>
+  it.effect.each([false, true])(
+    "retries a stranded steer after cancellation fails, unload=%s",
+    (unload) =>
+      Effect.gen(function* () {
+        const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
+        const cancelOut = out("session.inbox.cancel", { sessionID: SESSION, inboxID: steerId });
+        const nextPrompt = [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ];
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          out("session.prompt", {
+            sessionID: SESSION,
+            id: steerId,
+            text: "<any>",
+            delivery: "steer",
+          }),
+          replyData("session.prompt", {
+            id: steerId,
+            sessionID: SESSION,
+            time: { created: 1790656601500 },
+            type: "user",
+            payload: { text: "Also say STEERED." },
+            delivery: "steer",
+          }),
+          // Stopped before the steer was read: it stays in OpenCode's inbox.
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          // Cancellation fails on the first unload or next turn, then is retried.
+          cancelOut,
+          reply("session.inbox.cancel", {
+            status: 500,
+            body: { _tag: "UnknownError", message: "busy" },
+          }),
+          ...(unload
+            ? [
+                cancelOut,
+                reply("session.inbox.cancel", null),
+                out("session.get", { sessionID: SESSION }),
+                replyData("session.get", sessionInfo()),
+                ...noOpenRequests,
+              ]
+            : []),
+          ...(unload ? withInstructions(nextPrompt) : nextPrompt),
+          ...(unload ? [] : [cancelOut, reply("session.inbox.cancel", null)]),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const seen: Array<string> = [];
+        const ended = yield* Deferred.make<void>();
+        const nextEnded = yield* Deferred.make<void>();
+        const thirdEnded = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              if (event.type !== "turn.terminal") return;
+              seen.push(event.status);
+              if (seen.length === 1) yield* Deferred.succeed(ended, undefined);
+              if (seen.length === 2) yield* Deferred.succeed(nextEnded, undefined);
+              if (seen.length === 3) yield* Deferred.succeed(thirdEnded, undefined);
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        yield* runtime.steerTurn({
+          threadId,
+          runId: RunId.make("run:opencode2-adapter"),
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          message: {
+            ...turnInput(thread).message,
+            messageId: MessageId.make("message:opencode2-adapter:steer"),
+            text: "Also say STEERED.",
+          },
+        });
+        yield* runtime.interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+        });
+        yield* Deferred.await(ended);
+        if (unload) {
+          yield* runtime.unloadThread!({ providerThread: thread });
+          // The first unload retained the failed cancellation; the retry must release it.
+          yield* runtime.unloadThread!({ providerThread: thread });
+          assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+          yield* runtime.resumeThread({ providerThread: thread });
+        }
+        yield* runtime.startTurn(secondTurn(thread));
+        yield* Deferred.await(nextEnded);
+        yield* runtime.startTurn({
+          ...secondTurn(thread),
+          runId: RunId.make("run:opencode2-adapter:3"),
+          runOrdinal: 3,
+          providerTurnOrdinal: 3,
+          attemptId: RunAttemptId.make("attempt:opencode2-adapter:3"),
+        });
+        yield* Deferred.await(thirdEnded);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("takes back a stranded steer before unloading and reattaching its session", () =>
     Effect.gen(function* () {
       const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
-      const cancelOut = out("session.inbox.cancel", { sessionID: SESSION, inboxID: steerId });
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
@@ -3298,40 +3422,32 @@ describe("OpenCode2 adapter", () => {
           payload: { text: "Also say STEERED." },
           delivery: "steer",
         }),
-        // Stopped before the steer was read: it stays in OpenCode's inbox.
         out("session.interrupt", { sessionID: SESSION }),
         reply("session.interrupt", { interrupted: true }),
         event("session.execution.interrupted", { sessionID: SESSION }),
-        // The next turn's cancel fails, so the turn after it tries again.
-        cancelOut,
-        reply("session.inbox.cancel", {
-          status: 500,
-          body: { _tag: "UnknownError", message: "busy" },
-        }),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        cancelOut,
+        // Unload must cancel this inbox entry before discarding its id.
+        out("session.inbox.cancel", { sessionID: SESSION, inboxID: steerId }),
         reply("session.inbox.cancel", null),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo()),
+        ...noOpenRequests,
+        ...withInstructions([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]),
       ]);
-      const seen: Array<string> = [];
       const ended = yield* Deferred.make<void>();
-      const nextEnded = yield* Deferred.make<void>();
-      // One consumer reads every terminal; a second reader would race it for the queue.
-      const thirdEnded = yield* Deferred.make<void>();
+      const seen: Array<string> = [];
+      const nextEnded = yield* Deferred.make<string>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
             if (event.type !== "turn.terminal") return;
             seen.push(event.status);
             if (seen.length === 1) yield* Deferred.succeed(ended, undefined);
-            if (seen.length === 2) yield* Deferred.succeed(nextEnded, undefined);
-            if (seen.length === 3) yield* Deferred.succeed(thirdEnded, undefined);
+            if (seen.length === 2) yield* Deferred.succeed(nextEnded, event.status);
           }),
         ),
         Stream.runDrain,
@@ -3354,16 +3470,12 @@ describe("OpenCode2 adapter", () => {
         providerTurnId: yield* providerTurnId,
       });
       yield* Deferred.await(ended);
+      yield* runtime.unloadThread!({ providerThread: thread });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* runtime.resumeThread({ providerThread: thread });
       yield* runtime.startTurn(secondTurn(thread));
-      yield* Deferred.await(nextEnded);
-      yield* runtime.startTurn({
-        ...secondTurn(thread),
-        runId: RunId.make("run:opencode2-adapter:3"),
-        runOrdinal: 3,
-        providerTurnOrdinal: 3,
-        attemptId: RunAttemptId.make("attempt:opencode2-adapter:3"),
-      });
-      yield* Deferred.await(thirdEnded);
+      // The replay rejects any stale steer or extra cancellation on the reattached turn.
+      assert.equal(yield* Deferred.await(nextEnded), "completed");
     }).pipe(Effect.scoped),
   );
 

@@ -44,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -2085,6 +2086,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly freshMessageQueue?: boolean;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2092,7 +2094,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
-      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      let sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
         const processed = yield* Deferred.make<void>();
@@ -2126,7 +2128,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
           open: (input) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (options?.freshMessageQueue) sdkMessages = yield* Queue.unbounded<SDKMessage>();
               openedOptions = input.options;
               return {
                 messages: Stream.fromQueue(sdkMessages).pipe(
@@ -2204,7 +2207,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtime,
         providerThread,
         threadId,
-        sdkMessages,
+        get sdkMessages() {
+          return sdkMessages;
+        },
         offerAndWait,
         offeredMessages,
         permissionModeChanges,
@@ -4994,6 +4999,116 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.terminalEvents()[1]?.status, "failed");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
+  );
+
+  it.effect("discards held plans when an interrupt finalizes the turn before its echo", () =>
+    Effect.gen(function* () {
+      const interrupted = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshMessageQueue: true,
+        interrupt: Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+      });
+      const now = yield* DateTime.now;
+      const firstAttempt = RunAttemptId.make("held-plan-first");
+      const secondAttempt = RunAttemptId.make("held-plan-second");
+      const thirdAttempt = RunAttemptId.make("held-plan-third");
+      const stamp = Effect.fnUntraced(function* (frame: SDKMessage, attempt: RunAttemptId) {
+        return claudeSdkFrame({
+          ...frame,
+          user_message_uuid: yield* ClaudeAdapterV2.claudePromptUuid(attempt),
+        });
+      });
+      const start = (attemptId: RunAttemptId, providerTurnOrdinal: number) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            providerTurnOrdinal,
+            text: "Plan the task.",
+            attachments: [],
+          }),
+        );
+      yield* start(firstAttempt, 1);
+      yield* harness.offerAndWait(
+        yield* stamp(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000801", text: "One." }),
+          firstAttempt,
+        ),
+      );
+      yield* harness.offerAndWait(
+        yield* stamp(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000802", result: "One." }),
+          firstAttempt,
+        ),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* start(secondAttempt, 2);
+      const toolUseId = "held-exit-plan";
+      const planFrame = claudeSdkFrame({
+        type: "assistant",
+        message: {
+          model: "claude-sonnet-4-6",
+          id: "msg_held_plan",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "tool_use", id: toolUseId, name: "ExitPlanMode", input: {} }],
+        },
+        parent_tool_use_id: null,
+        uuid: "00000000-0000-4000-8000-000000000803",
+        session_id: WAKE_NATIVE_SESSION,
+      });
+      yield* harness.offerAndWait(planFrame);
+      const canUseTool = harness.getOpenedOptions()?.canUseTool;
+      assert.isFunction(canUseTool);
+      const signal = yield* Effect.abortSignal;
+      yield* Effect.promise(() =>
+        canUseTool!(
+          "ExitPlanMode",
+          { plan: "OLD PLAN" },
+          {
+            signal,
+            toolUseID: toolUseId,
+            requestId: "held-plan-request",
+          },
+        ),
+      );
+      const active = harness.events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      assert.equal(active?.type, "provider_turn.updated");
+      if (active?.type !== "provider_turn.updated") return;
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: active.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(interrupted);
+      // This process never closes; exercise the adapter's forced-finalization path.
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(stopping);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      yield* start(thirdAttempt, 3);
+      yield* harness.offerAndWait(yield* stamp(planFrame, thirdAttempt));
+      yield* harness.offerAndWait(
+        yield* stamp(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000804", result: "Three." }),
+          thirdAttempt,
+        ),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "proposed_plan" &&
+            event.turnItem.markdown === "OLD PLAN",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("buffers wake output and requests a single continuation run", () =>

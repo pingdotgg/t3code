@@ -905,6 +905,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Starting a turn and cutting the history take turns on a session: each
     // checks that the other is not running before its own requests yield.
     const sessionGates = yield* KeyedLock.make<string>();
+    // `KeyedLock` is not reentrant: taking a key while already holding it on
+    // the same session deadlocks. Nothing called from inside an `exclusive`
+    // block may re-enter `exclusive` for that same session. The blocks below
+    // (startTurn, unloadThread, rollback, fork) only call helpers that issue
+    // their own requests directly; keep it that way.
     const exclusive =
       (providerThread: OrchestrationV2ProviderThread) =>
       <A, E, R>(effect: Effect.Effect<A, E, R>) => {
@@ -3568,7 +3573,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       events: Stream.fromQueue(events),
       // A background subagent keeps its session busy after its parent's turn,
       // and a held wake still needs its turn: idle release must wait for both.
-      hasPendingBackgroundWork: Effect.sync(() => [...threads.values()].some(owesWork)),
+      hasPendingBackgroundWork: Effect.sync(() =>
+        [...threads.values()].some(
+          (state) =>
+            owesWork(state) ||
+            state.strandedSteers.size > 0 ||
+            stagedReverts.has(state.sessionId) ||
+            clearing.has(state.sessionId),
+        ),
+      ),
       hasPendingBackgroundWorkForThread: (providerThread) =>
         Effect.sync(() => {
           const nativeId = providerThread.nativeThreadRef?.nativeId;
@@ -3989,25 +4002,53 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
         ),
       unloadThread: ({ providerThread }) =>
-        Effect.gen(function* () {
-          const nativeId = providerThread.nativeThreadRef?.nativeId;
-          const state = nativeId == null ? undefined : threads.get(nativeId);
-          if (
-            nativeId == null ||
-            state === undefined ||
-            state.active !== undefined ||
-            hasBackground(state)
-          ) {
-            return;
-          }
-          threads.delete(nativeId);
-          for (const [child, owner] of childOwners) {
-            if (owner !== state) continue;
-            childOwners.delete(child);
-            threads.delete(child);
-          }
-          if (state.mcp !== undefined) yield* removeMcp(state.mcp);
-        }),
+        exclusive(providerThread)(
+          Effect.gen(function* () {
+            const nativeId = providerThread.nativeThreadRef?.nativeId;
+            const state = nativeId == null ? undefined : threads.get(nativeId);
+            if (
+              nativeId == null ||
+              state === undefined ||
+              state.active !== undefined ||
+              hasBackground(state)
+            ) {
+              return;
+            }
+            const owned = new Set(sessionsOf(state).map((child) => child.sessionId));
+            for (const [child, owner] of childOwners) {
+              if (owned.has(owner.sessionId)) owned.add(child);
+            }
+            for (const id of owned) {
+              const child = threads.get(id);
+              if (child !== undefined) {
+                yield* cancelStrandedSteers(child);
+                // A failed cancellation still owns an inbox entry. Retain it for retry.
+                if (child.strandedSteers.size > 0) return;
+              }
+              if (stagedReverts.has(id)) yield* clearRevert(id);
+            }
+            for (const id of owned) {
+              const child = threads.get(id);
+              threads.delete(id);
+              childOwners.delete(id);
+              announced.delete(id);
+              busy.delete(id);
+              stagedReverts.delete(id);
+              clearing.delete(id);
+              if (child?.mcp !== undefined) yield* removeMcp(child.mcp);
+            }
+          }),
+        ).pipe(
+          Effect.mapError((cause) =>
+            isProviderAdapterError(cause)
+              ? cause
+              : new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: "Could not release OpenCode thread state.",
+                  cause,
+                }),
+          ),
+        ),
       respondToRuntimeRequest: (requestInput) =>
         Effect.gen(function* () {
           const entry = pending.get(requestInput.requestId);

@@ -388,7 +388,6 @@ interface OpenCodeThreadState {
   appThread: OrchestrationV2AppThread | null;
   activeTurn: ActiveOpenCodeTurn | null;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
-  readonly messages: Map<string, OrchestrationV2ConversationMessage>;
   readonly runtimeRequests: Map<string, OrchestrationV2RuntimeRequest>;
   readonly messageRoles: Map<string, "user" | "assistant">;
   readonly userMessageIds: Array<string>;
@@ -1260,7 +1259,6 @@ export function makeOpenCodeAdapterV2(
               createdAt: startedAt,
               updatedAt: emittedAt,
             };
-            state.messages.set(String(message.id), message);
             yield* emitProviderEvent({
               type: "message.updated",
               driver: OPENCODE_PROVIDER,
@@ -1431,7 +1429,6 @@ export function makeOpenCodeAdapterV2(
               appThread: childThread,
               activeTurn: null,
               providerTurns: new Map(),
-              messages: new Map(),
               runtimeRequests: new Map(),
               messageRoles: new Map(),
               userMessageIds: [],
@@ -2339,7 +2336,6 @@ export function makeOpenCodeAdapterV2(
             createdAt: turn.startedAt,
             updatedAt: now,
           };
-          state.messages.set(String(messageId), projected);
           yield* emitProviderEvent({
             type: "message.updated",
             driver: OPENCODE_PROVIDER,
@@ -2553,6 +2549,55 @@ export function makeOpenCodeAdapterV2(
           }
         });
 
+        const sessionsOwnedBy = (sessionId: string) => {
+          const owned = new Set([sessionId]);
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (const [id, state] of threads) {
+              const parentId = state.parentSubagent?.parentState.nativeSessionId;
+              if (!owned.has(id) && parentId !== undefined && owned.has(parentId)) {
+                owned.add(id);
+                changed = true;
+              }
+            }
+            for (const [id, owner] of relatedSessionOwners) {
+              if (!owned.has(id) && owned.has(owner.nativeSessionId)) {
+                owned.add(id);
+                changed = true;
+              }
+            }
+          }
+          return owned;
+        };
+
+        // Thread-owned state is released together, after its native work has stopped.
+        const releaseSessions = Effect.fnUntraced(function* (sessionIds: ReadonlySet<string>) {
+          for (const request of Array.from(pendingRequests.values())) {
+            if (sessionIds.has(request.nativeSessionId)) {
+              rememberSettledRequest(request.nativeRequestId);
+              yield* resolveRuntimeRequest(request.nativeRequestId, "cancelled");
+            }
+          }
+          for (const [id, subagent] of subagentsByNativeItemId) {
+            if (
+              sessionIds.has(subagent.parentState.nativeSessionId) ||
+              (subagent.childSessionId !== null && sessionIds.has(subagent.childSessionId))
+            ) {
+              subagentsByNativeItemId.delete(id);
+              if (subagent.childSessionId !== null)
+                subagentsByChildSessionId.delete(subagent.childSessionId);
+            }
+          }
+          for (const id of sessionIds) {
+            for (const controller of commandControllers.get(id) ?? []) controller.abort();
+            commandControllers.delete(id);
+            threads.delete(id);
+            relatedSessionOwners.delete(id);
+            busySessionIds.delete(id);
+          }
+        });
+
         const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
           yield* logProtocolEvent({
             direction: "incoming",
@@ -2625,10 +2670,17 @@ export function makeOpenCodeAdapterV2(
               }
               return;
             }
-            case "session.deleted":
-              relatedSessionOwners.delete(event.properties.info.id);
-              busySessionIds.delete(event.properties.info.id);
+            case "session.deleted": {
+              const owned = sessionsOwnedBy(event.properties.info.id);
+              for (const id of owned) {
+                const state = threads.get(id);
+                if (state?.activeTurn != null) {
+                  yield* finalizeTurn(state, state.activeTurn, "cancelled");
+                }
+              }
+              yield* releaseSessions(owned);
               return;
+            }
             case "session.status": {
               const sessionId = event.properties.sessionID;
               switch (event.properties.status.type) {
@@ -2837,7 +2889,6 @@ export function makeOpenCodeAdapterV2(
             appThread,
             activeTurn: null,
             providerTurns: new Map(),
-            messages: new Map(),
             runtimeRequests: new Map(),
             messageRoles: new Map(),
             userMessageIds: [],
@@ -3494,6 +3545,17 @@ export function makeOpenCodeAdapterV2(
                   }),
               ),
             ),
+          unloadThread: ({ providerThread }) =>
+            Effect.gen(function* () {
+              const owned = sessionsOwnedBy(nativeThreadId(providerThread));
+              if (
+                Array.from(owned).some(
+                  (id) => threads.get(id)?.activeTurn != null || busySessionIds.has(id),
+                )
+              )
+                return;
+              yield* releaseSessions(owned);
+            }),
           respondToRuntimeRequest: (requestInput) =>
             Effect.gen(function* () {
               const pending = pendingRequests.get(String(requestInput.requestId));

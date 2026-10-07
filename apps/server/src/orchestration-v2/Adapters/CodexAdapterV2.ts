@@ -1085,6 +1085,7 @@ function codexErrorInfoCode(value: unknown): string | null {
 }
 
 interface ActiveCodexTurnContext {
+  readonly planDeltas: Map<string, string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -1169,6 +1170,7 @@ interface CodexSubagentThreadContext {
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
   task: OrchestrationV2Subagent;
+  modelLookupActive: boolean;
 }
 
 /**
@@ -1788,8 +1790,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const providerRetries = yield* Ref.make(
           new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
         );
-        // Streamed plan text per plan item, dropped when the item completes.
-        const planDeltas = new Map<string, string>();
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -1938,6 +1938,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent: null,
               startedAt: input.startedAt,
               itemPositions: new Map(),
+              planDeltas: new Map(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -2498,6 +2499,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              planDeltas: new Map(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -2718,6 +2720,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }),
               turnItemOrdinal,
               task,
+              modelLookupActive: true,
             } satisfies CodexSubagentThreadContext;
 
             yield* Ref.update(subagentThreads, (current) => {
@@ -2848,6 +2851,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
                     response.thread.id === input.nativeThreadId &&
+                    subagent.modelLookupActive &&
                     !subagentModels.has(input.nativeThreadId)
                       ? updateSubagentModel(input.nativeThreadId, response.model)
                       : Effect.void,
@@ -3924,8 +3928,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
             yield* completeProviderRetry(context, yield* DateTime.now);
-            const markdown = `${planDeltas.get(payload.itemId) ?? ""}${payload.delta}`;
-            planDeltas.set(payload.itemId, markdown);
+            const markdown = `${context.planDeltas.get(payload.itemId) ?? ""}${payload.delta}`;
+            context.planDeltas.set(payload.itemId, markdown);
             const artifacts = yield* buildProposedPlanArtifacts({
               context,
               nativeItemId: payload.itemId,
@@ -4021,11 +4025,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
-            accumulateCodexTurnTokenUsage(
-              usageStateForThread(payload.threadId),
-              payload.turnId,
-              payload.tokenUsage,
-            );
+            const usageState = turnTokenUsageByThread.get(payload.threadId);
+            if (usageState !== undefined) {
+              accumulateCodexTurnTokenUsage(usageState, payload.turnId, payload.tokenUsage);
+            }
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -4065,6 +4068,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         );
         yield* client.handleServerNotification("model/rerouted", (payload) =>
           updateSubagentModel(payload.threadId, payload.toModel),
+        );
+
+        const releaseThreadState = Effect.fnUntraced(function* (nativeThreadId: string) {
+          turnTokenUsageByThread.delete(nativeThreadId);
+          subagentModels.delete(nativeThreadId);
+          const subagent = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
+          if (subagent !== undefined) subagent.modelLookupActive = false;
+        });
+        yield* client.handleServerNotification("thread/closed", (payload) =>
+          releaseThreadState(payload.threadId),
         );
 
         yield* client.handleServerNotification("turn/started", (payload) =>
@@ -4589,8 +4602,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const markdown =
                 payload.item.text.length > 0
                   ? payload.item.text
-                  : (planDeltas.get(payload.item.id) ?? "");
-              planDeltas.delete(payload.item.id);
+                  : (context.planDeltas.get(payload.item.id) ?? "");
+              context.planDeltas.delete(payload.item.id);
               // A finished proposal stays active until Implement consumes it.
               const artifacts = yield* buildProposedPlanArtifacts({
                 context,
@@ -5410,6 +5423,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (current !== input.context) {
                 return false;
               }
+              input.context.planDeltas.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
                 const retry = current.get(input.context.providerTurnId);
                 if (retry === undefined) {
@@ -5712,6 +5726,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             subagent: null,
             startedAt: now,
             itemPositions: new Map(),
+            planDeltas: new Map(),
           };
           const providerTurn = {
             id: context.providerTurnId,
@@ -6295,6 +6310,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              yield* releaseThreadState(nativeThreadId);
+              for (const [childId, child] of yield* Ref.get(subagentThreads)) {
+                for (
+                  let owner: ActiveCodexTurnContext | undefined = child.parentContext;
+                  owner !== undefined;
+                  owner = owner.subagent?.parentContext
+                ) {
+                  if (owner.providerThread.id === unloadInput.providerThread.id) {
+                    yield* releaseThreadState(childId);
+                    break;
+                  }
+                }
+              }
             }).pipe(
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"

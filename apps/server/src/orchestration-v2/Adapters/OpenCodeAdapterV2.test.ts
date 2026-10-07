@@ -240,6 +240,117 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each(["unload", "deleted"] as const)(
+    "releases idle thread state on %s and reloads it on resume",
+    (release) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const nativeSession = { id: "root", time: { created: 1, updated: 1 } };
+        const harness = yield* makeOpenCodeRuntimeHarness(`release-${release}`, "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: nativeSession }),
+            get: async () => ({ data: nativeSession }),
+            promptAsync: async () => ({ data: true }),
+          },
+        });
+        if (release === "unload") {
+          assert.isDefined(harness.runtime.unloadThread);
+          yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        } else {
+          yield* Effect.promise(() =>
+            nativeEvents.push({ type: "session.deleted", properties: { info: nativeSession } }),
+          );
+        }
+        const failure = yield* harness.startTurn().pipe(Effect.flip);
+        assert.equal(failure._tag, "ProviderAdapterTurnStartError");
+        yield* harness.runtime.resumeThread({ providerThread: harness.providerThread });
+        yield* harness.startTurn();
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("keeps an idle root loaded while a related session is busy", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("release-busy-child", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.created",
+          properties: {
+            info: { id: "child", parentID: "root", time: { created: 1, updated: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: {
+            sessionID: "child",
+            status: { type: "busy" },
+          },
+        }),
+      );
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      yield* harness.startTurn();
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      // Active turns survive a detach request too.
+      const activeError = yield* harness.startTurn().pipe(Effect.flip);
+      assert.equal(activeError._tag, "ProviderAdapterTurnStartError");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("cancels a deleted session's active turn and clears descendant busy state", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSession = { id: "root", time: { created: 1, updated: 1 } };
+      const harness = yield* makeOpenCodeRuntimeHarness("delete-active", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: nativeSession }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.created",
+          properties: {
+            info: { id: "child", parentID: "root", time: { created: 1, updated: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "child", status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.deleted", properties: { info: nativeSession } }),
+      );
+      const ended = Option.getOrThrow(yield* Fiber.join(terminal));
+      assert.equal(ended.type, "turn.terminal");
+      if (ended.type === "turn.terminal") assert.equal(ended.status, "cancelled");
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      assert.equal(
+        (yield* harness.startTurn().pipe(Effect.flip))._tag,
+        "ProviderAdapterTurnStartError",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>

@@ -3655,16 +3655,29 @@ export function makeClaudeAdapterV2(
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
+        const clearHeldPlansForFrames = (frames: ReadonlyArray<SDKMessage>) => {
+          for (const frame of frames) {
+            for (const toolUse of claudeToolUseBlocksFromAssistantMessage(frame)) {
+              heldProposedPlansByToolUseId.delete(toolUse.id);
+            }
+          }
+        };
         // Drop idle wake traffic for a dead native process so it cannot pin
         // session-wide pending work after sibling query replacement.
         const clearWakeStateForNativeThread = (nativeThreadId: string) =>
           Effect.gen(function* () {
             yield* clearWakeReports(nativeThreadId);
+            yield* Ref.update(wakeReportsByNativeThread, (current) => {
+              const userTurns = new Map(current.userTurns);
+              userTurns.delete(nativeThreadId);
+              return { userTurns, reports: current.reports };
+            });
             yield* Ref.update(wakeBuffers, (current) => {
               if (!current.has(nativeThreadId)) {
                 return current;
               }
               const updated = new Map(current);
+              clearHeldPlansForFrames(current.get(nativeThreadId)?.messages ?? []);
               updated.delete(nativeThreadId);
               return updated;
             });
@@ -4902,6 +4915,8 @@ export function makeClaudeAdapterV2(
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          clearHeldPlansForFrames(input.context.heldRootFrames);
+          input.context.heldRootFrames.length = 0;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({

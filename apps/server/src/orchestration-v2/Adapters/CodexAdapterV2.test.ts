@@ -2498,6 +2498,135 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         : [],
     );
 
+  it.effect.each([false, true])(
+    "scopes plan deltas to turns and resets usage on native close=%s",
+    (closed) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "state-scope-thread";
+        const first = "state-scope-first";
+        const second = "state-scope-second";
+        const secondStart = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: second,
+          prompt: "second",
+        })
+          .slice(5)
+          .map((entry) =>
+            "frame" in entry
+              ? {
+                  ...entry,
+                  frame:
+                    typeof entry.frame === "object" && entry.frame !== null && "id" in entry.frame
+                      ? { ...entry.frame, id: 4 }
+                      : entry.frame,
+                }
+              : entry,
+          );
+        const notification = (
+          method: string,
+          params: unknown,
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: method,
+          frame: { method, params },
+        });
+        const usage = (inputTokens: number) => ({
+          totalTokens: inputTokens,
+          inputTokens,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `state-scope-${closed}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: first, prompt: "first" }),
+            notification("item/plan/delta", {
+              threadId: nativeThreadId,
+              turnId: first,
+              itemId: "reused-plan",
+              delta: "OLD",
+            }),
+            notification("thread/tokenUsage/updated", {
+              threadId: nativeThreadId,
+              turnId: first,
+              tokenUsage: { total: usage(100), last: usage(10), modelContextWindow: 200_000 },
+            }),
+            notification("turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: first, status: "interrupted" }),
+            }),
+            ...(closed ? [notification("thread/closed", { threadId: nativeThreadId })] : []),
+            ...secondStart,
+            notification("item/plan/delta", {
+              threadId: nativeThreadId,
+              turnId: second,
+              itemId: "reused-plan",
+              delta: "NEW",
+            }),
+            notification("item/completed", {
+              threadId: nativeThreadId,
+              turnId: second,
+              item: { type: "plan", id: "reused-plan", text: "" },
+            }),
+            notification("thread/tokenUsage/updated", {
+              threadId: nativeThreadId,
+              turnId: second,
+              tokenUsage: { total: usage(120), last: usage(5), modelContextWindow: 200_000 },
+            }),
+            notification("turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: second, status: "completed" }),
+            }),
+          ],
+        });
+        const secondTerminal = yield* Deferred.make<void>();
+        let terminals = 0;
+        const harness = yield* makeCodexReplayHarness(transcript, (event) => {
+          if (event.type !== "turn.terminal") return Effect.void;
+          terminals += 1;
+          return terminals === 2 ? Deferred.succeed(secondTerminal, undefined) : Effect.void;
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("state-first"),
+            text: "first",
+          }),
+        );
+        yield* harness.firstTerminal;
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("state-second"),
+            text: "second",
+          }),
+          providerTurnOrdinal: 2,
+          runOrdinal: 2,
+        });
+        yield* Deferred.await(secondTerminal);
+        const plans = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+            ? [event.turnItem.markdown]
+            : [],
+        );
+        assert.deepEqual(plans, ["OLD", "NEW", "NEW"]);
+        const completed = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type === "provider_turn.updated") {
+          assert.equal(completed.providerTurn.turnTokenUsage?.inputTokens, closed ? 5 : 20);
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -6717,6 +6846,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     { name: "missing", model: null },
     { name: "invalid", model: null },
     { name: "wrong child", model: null },
+    { name: "closed", model: null },
   ])("reads $name child metadata without using the parent model", ({ name, model }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -6724,7 +6854,39 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const modelReported = yield* Deferred.make<void>();
         let metadataRequests = 0;
         const harness = yield* makeCodexReplayHarness(
-          resumeSubagentTranscript,
+          name === "closed"
+            ? {
+                ...resumeSubagentTranscript,
+                entries: resumeSubagentTranscript.entries.flatMap((entry) =>
+                  entry.type === "emit_inbound" &&
+                  entry.label === "item/completed/subAgentActivity-started"
+                    ? [
+                        {
+                          type: "emit_inbound" as const,
+                          frame: {
+                            method: "model/rerouted",
+                            params: {
+                              threadId: RESUME_CHILD_THREAD,
+                              turnId: RESUME_CHILD_TURN_1,
+                              fromModel: "gpt-5.6-sol",
+                              toModel: "gpt-6-astra",
+                              reason: "highRiskCyberActivity",
+                            },
+                          },
+                        },
+                        {
+                          type: "emit_inbound" as const,
+                          frame: {
+                            method: "thread/closed",
+                            params: { threadId: RESUME_CHILD_THREAD },
+                          },
+                        },
+                        entry,
+                      ]
+                    : [entry],
+                ),
+              }
+            : resumeSubagentTranscript,
           (event) =>
             event.type === "subagent.updated" && event.subagent.model === model
               ? Deferred.succeed(modelReported, undefined)
@@ -6828,39 +6990,41 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect.each(["thread/settings/updated", "model/rerouted"] as const)(
+  it.effect.each(["thread/settings/updated", "model/rerouted", "thread/closed"] as const)(
     "keeps %s child metadata when an older lookup finishes later",
     (method) =>
       Effect.scoped(
         Effect.gen(function* () {
           const releaseMetadata = yield* Deferred.make<void>();
           const observed = yield* Deferred.make<void>();
-          const model = "gpt-5.6-sol";
+          const model = method === "thread/closed" ? null : "gpt-5.6-sol";
           const notification: CodexReplay.CodexAppServerReplayEntry = {
             type: "emit_inbound",
             frame: {
               method,
               params:
-                method === "model/rerouted"
-                  ? {
-                      threadId: RESUME_CHILD_THREAD,
-                      turnId: RESUME_CHILD_TURN_1,
-                      fromModel: "gpt-6-astra",
-                      toModel: model,
-                      reason: "highRiskCyberActivity",
-                    }
-                  : {
-                      threadId: RESUME_CHILD_THREAD,
-                      threadSettings: {
-                        model,
-                        modelProvider: "openai",
-                        cwd: "/workspace",
-                        approvalPolicy: "never",
-                        approvalsReviewer: "auto_review",
-                        collaborationMode: { mode: "default", settings: { model } },
-                        sandboxPolicy: { type: "dangerFullAccess" },
+                method === "thread/closed"
+                  ? { threadId: RESUME_CHILD_THREAD }
+                  : method === "model/rerouted"
+                    ? {
+                        threadId: RESUME_CHILD_THREAD,
+                        turnId: RESUME_CHILD_TURN_1,
+                        fromModel: "gpt-6-astra",
+                        toModel: model,
+                        reason: "highRiskCyberActivity",
+                      }
+                    : {
+                        threadId: RESUME_CHILD_THREAD,
+                        threadSettings: {
+                          model,
+                          modelProvider: "openai",
+                          cwd: "/workspace",
+                          approvalPolicy: "never",
+                          approvalsReviewer: "auto_review",
+                          collaborationMode: { mode: "default", settings: { model } },
+                          sandboxPolicy: { type: "dangerFullAccess" },
+                        },
                       },
-                    },
             },
           };
           const harness = yield* makeCodexReplayHarness(
@@ -6868,7 +7032,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ...resumeSubagentTranscript,
               entries: resumeSubagentTranscript.entries.flatMap((entry) =>
                 entry.type === "emit_inbound" && entry.label === "turn/completed/root"
-                  ? [entry, notification]
+                  ? method === "thread/closed"
+                    ? [notification, entry]
+                    : [entry, notification]
                   : [entry],
               ),
             },
@@ -6892,7 +7058,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           );
           yield* TestClock.adjust("100 millis");
-          yield* Deferred.await(observed);
+          if (method === "thread/closed") yield* harness.firstTerminal;
+          else yield* Deferred.await(observed);
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "completed");
           yield* Deferred.succeed(releaseMetadata, undefined);
           yield* TestClock.adjust("30 seconds");
