@@ -509,31 +509,35 @@ export const layerWithOptions = (
                   reserveMcpCredential(threadId, existing.providerSessionId);
                   const rawToken = existing.authorizationHeader.replace(/^Bearer\s+/, "");
                   // The caller only learns of the reservation once this returns,
-                  // so a stop while resolving must drop it here.
-                  const resolved = yield* mcpSessionRegistry
-                    .resolve(rawToken)
-                    .pipe(
-                      Effect.onInterrupt(() =>
-                        Effect.sync(() =>
-                          dropMcpCredentialReservation(threadId, existing.providerSessionId),
-                        ),
-                      ),
-                    );
-                  if (
-                    resolved !== undefined &&
-                    resolved.thread.threadId === threadId &&
-                    resolved.thread.providerInstanceId === providerInstanceId &&
-                    // A flipped browser-access setting must not survive through
-                    // credential reuse: rotate so the new scope reflects it.
-                    resolved.capabilities.has("preview") === browserToolsAvailable &&
-                    resolved.capabilities.has("device") === deviceToolsAvailable
-                  ) {
+                  // so a stop while resolving or updating grants must drop it here.
+                  const reused = yield* Effect.gen(function* () {
+                    const resolved = yield* mcpSessionRegistry.resolve(rawToken);
+                    if (
+                      resolved === undefined ||
+                      resolved.thread.threadId !== threadId ||
+                      resolved.thread.providerInstanceId !== providerInstanceId ||
+                      // A flipped browser-access setting must not survive through
+                      // credential reuse: rotate so the new scope reflects it.
+                      resolved.capabilities.has("preview") !== browserToolsAvailable ||
+                      resolved.capabilities.has("device") !== deviceToolsAvailable
+                    ) {
+                      return false;
+                    }
                     // The provider keeps this credential, and the plugin tools are fixed meta-tools,
                     // so new grants apply to it without rotating the token.
                     yield* mcpSessionRegistry.setPluginToolGrants(
                       existing.providerSessionId,
                       pluginToolGrants,
                     );
+                    return true;
+                  }).pipe(
+                    Effect.onInterrupt(() =>
+                      Effect.sync(() =>
+                        dropMcpCredentialReservation(threadId, existing.providerSessionId),
+                      ),
+                    ),
+                  );
+                  if (reused) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);

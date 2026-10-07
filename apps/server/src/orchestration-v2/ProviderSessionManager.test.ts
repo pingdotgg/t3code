@@ -460,11 +460,8 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
-  /** Once armed, holds the next credential lookup until it is interrupted. */
-  readonly pauseResolve?: {
-    readonly armed: Ref.Ref<boolean>;
-    readonly paused: Deferred.Deferred<void>;
-  };
+  /** Once armed, holds the next call of that registry step until it is interrupted. */
+  readonly pauseMcpRegistry?: PauseMcpRegistry;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
@@ -508,9 +505,9 @@ function layerTest(input: {
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
-    input.pauseResolve === undefined
+    input.pauseMcpRegistry === undefined
       ? layerTestMcpRegistry
-      : layerPausingMcpRegistry(input.pauseResolve);
+      : layerPausingMcpRegistry(input.pauseMcpRegistry);
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -567,23 +564,34 @@ const layerTestMcpRegistry = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-const layerPausingMcpRegistry = (pause: {
+interface PauseMcpRegistry {
+  readonly step: "resolve" | "setPluginToolGrants";
   readonly armed: Ref.Ref<boolean>;
   readonly paused: Deferred.Deferred<void>;
-}) =>
+}
+
+const layerPausingMcpRegistry = (pause: PauseMcpRegistry) =>
   Layer.effect(
     McpSessionRegistry.McpSessionRegistry,
     Effect.gen(function* () {
       const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+      const holdIfArmed = <A>(step: PauseMcpRegistry["step"], run: Effect.Effect<A>) =>
+        step !== pause.step
+          ? run
+          : Ref.getAndSet(pause.armed, false).pipe(
+              Effect.flatMap((armed) =>
+                armed
+                  ? Deferred.succeed(pause.paused, undefined).pipe(Effect.andThen(Effect.never))
+                  : run,
+              ),
+            );
       return McpSessionRegistry.McpSessionRegistry.of({
         ...delegate,
-        resolve: (rawToken) =>
-          Ref.getAndSet(pause.armed, false).pipe(
-            Effect.flatMap((armed) =>
-              armed
-                ? Deferred.succeed(pause.paused, undefined).pipe(Effect.andThen(Effect.never))
-                : delegate.resolve(rawToken),
-            ),
+        resolve: (rawToken) => holdIfArmed("resolve", delegate.resolve(rawToken)),
+        setPluginToolGrants: (providerSessionId, grants) =>
+          holdIfArmed(
+            "setPluginToolGrants",
+            delegate.setPluginToolGrants(providerSessionId, grants),
           ),
       });
     }),
@@ -2219,9 +2227,12 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 revokes a reused credential after a resume stopped while checking it",
-  () =>
+it.effect.each([
+  ["checking it", "resolve"],
+  ["updating its plugin tool grants", "setPluginToolGrants"],
+] as const)(
+  "ProviderSessionManagerV2 revokes a reused credential after a resume stopped while %s",
+  ([, step]) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const armed = yield* Ref.make(false);
@@ -2233,8 +2244,8 @@ it.effect(
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
-        const owner = ThreadId.make("thread-provider-session-manager-resolve-stop-owner");
-        const threadId = ThreadId.make("thread-provider-session-manager-resolve-stop");
+        const owner = ThreadId.make(`thread-provider-session-manager-${step}-stop-owner`);
+        const threadId = ThreadId.make(`thread-provider-session-manager-${step}-stop`);
         const providerSessionId = idAllocator.derive.providerSession({
           providerInstanceId: modelSelection.instanceId,
         });
@@ -2257,7 +2268,7 @@ it.effect(
             threadId,
             providerSessionId,
             now,
-            nativeThreadId: "native-resolve-stop",
+            nativeThreadId: `native-${step}-stop`,
           }),
         });
         // The thread gets a credential, then detaches and keeps it for a re-attach.
@@ -2267,7 +2278,7 @@ it.effect(
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
 
-        // A re-attach is stopped while it checks whether that credential is reusable.
+        // A re-attach is stopped while it reuses that credential.
         yield* Ref.set(armed, true);
         const stopped = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
@@ -2278,7 +2289,7 @@ it.effect(
         assert.isUndefined(yield* registry.resolve(token));
       }).pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 60_000, pauseResolve: { armed, paused } }),
+          layerTest({ state, idleTimeoutMs: 60_000, pauseMcpRegistry: { step, armed, paused } }),
         ),
       );
     }),
