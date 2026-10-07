@@ -3,6 +3,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -81,6 +82,47 @@ describe("V2 storage cleanup eligibility", () => {
     "retains a worktree while its thread is %s",
     (status) => {
       expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
+    },
+  );
+
+  it.each(["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"] as const)(
+    "allows cleanup once its thread is %s",
+    (status) => {
+      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(true);
+    },
+  );
+
+  it.each(["completed", "interrupted", "cancelled", "rolled_back"] as const)(
+    "retains %s while background work is pending",
+    (status) => {
+      expect(
+        storageCleanupThreadIdle(
+          {
+            ...candidateWithStatus(status),
+            pendingBackgroundTasks: [{ taskId: "task-1", kind: "command" }],
+          },
+          NOW_MS,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["completed", "interrupted", "cancelled", "rolled_back"] as const)(
+    "retains %s while a runtime request is pending",
+    (status) => {
+      expect(
+        storageCleanupThreadIdle(
+          {
+            ...candidateWithStatus(status),
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request-1"),
+              kind: "command",
+              createdAt: at(0),
+            },
+          },
+          NOW_MS,
+        ),
+      ).toBe(false);
     },
   );
 
