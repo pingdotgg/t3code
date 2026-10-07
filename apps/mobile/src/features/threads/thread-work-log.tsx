@@ -982,7 +982,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const fetchedOutput = !expanded
     ? null
     : isAgentMessage
-      ? agentMessageBody !== undefined
+      ? agentMessage !== undefined
         ? null
         : fetchedDetail.error
           ? `Couldn't load message: ${fetchedDetail.error}`
@@ -1002,6 +1002,16 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 ? "Output is no longer available."
                 : "Loading output…"
               : null;
+  // A refused message also shows why its delivery failed.
+  const agentMessageError =
+    expanded && isAgentMessage && row.status === "failure"
+      ? (turnItemOutputText(shownItem) ??
+        (fetchedDetail.error
+          ? `Couldn't load output: ${fetchedDetail.error}`
+          : row.fetchesDetail && !fetchedDetail.data
+            ? "Loading output…"
+            : null))
+      : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -1242,6 +1252,18 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               </Text>
             ) : null}
           </ScrollView>
+        </Animated.View>
+      ) : null}
+      {agentMessageError ? (
+        <Animated.View
+          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
+          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
+          layout={WORK_LOG_LAYOUT_TRANSITION}
+          className="ml-7 pb-1 pt-1.5"
+        >
+          <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+            {agentMessageError}
+          </Text>
         </Animated.View>
       ) : null}
     </Animated.View>

@@ -5541,6 +5541,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         : agentMessage || summarizedAgentMessage
           ? null
           : undefined;
+  // A refused message also shows why its delivery failed.
+  const agentMessageError =
+    (agentMessage !== undefined || summarizedAgentMessage) && showFailedIndicator;
   const trailingPreview = answerPreview ?? agentMessage?.preview ?? null;
   const viewedImage =
     viewedImagePath && threadRef
@@ -5585,6 +5588,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           plainOutput ||
           agentMessage?.message ||
           summarizedAgentMessage ||
+          agentMessageError ||
           viewedImage ||
           workEntry.questionAnswer ||
           plainOutputFetches,
@@ -5782,7 +5786,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
-      {expanded && (agentMessage?.message || summarizedAgentMessage) ? (
+      {expanded && (agentMessage?.message || summarizedAgentMessage || agentMessageError) ? (
         // The message bubble the recipient sees, so it doesn't read as the agent's own reply.
         <WorkLogDetails kind="media">
           {agentMessage?.message ? (
@@ -5791,6 +5795,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <SummarizedAgentMessage
               projectedItem={workEntry.projectedItem}
               workspaceRoot={workspaceRoot}
+              onImageExpand={onImageExpand}
+            />
+          ) : null}
+          {agentMessageError && workEntry.projectedItem ? (
+            <FetchedToolOutput
+              projectedItem={workEntry.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
               onImageExpand={onImageExpand}
             />
           ) : null}

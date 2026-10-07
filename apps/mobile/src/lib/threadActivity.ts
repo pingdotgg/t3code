@@ -829,6 +829,10 @@ function toFeedActivity(
     agentMessage === undefined &&
     item.type === "dynamic_tool" &&
     isClaudeAgentMessageItem(item.toolName, item.input);
+  // A refused message also shows its delivery error.
+  const agentMessageFailed =
+    (agentMessage !== undefined || summarizedAgentMessage) &&
+    workEntryDisplayIndicatesToolFailure(workEntry);
   // An agent message expands to its body.
   const getFullDetail = memoizeValue(() =>
     readPaths
@@ -859,13 +863,14 @@ function toFeedActivity(
       (readPaths
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
         : agentMessage
-          ? agentMessage.message !== undefined
+          ? agentMessage.message !== undefined || agentMessageFailed
           : summarizedAgentMessage ||
             turnItemHasDetail(item) ||
             workEntry.questionAnswer !== undefined),
     // Read rows show their paths, then the fetched file contents. A message
-    // already carries its body unless it was summarized for transport.
-    fetchesDetail: agentMessage ? false : turnItemNeedsDetailFetch(item),
+    // already carries its body unless it was summarized for transport, but a
+    // refused one may still need its omitted delivery error.
+    fetchesDetail: agentMessage && !agentMessageFailed ? false : turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),

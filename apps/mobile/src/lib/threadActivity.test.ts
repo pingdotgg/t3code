@@ -318,6 +318,30 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("lets a refused agent message expand to its delivery error", () => {
+    const sendMessage = (id: string, ordinal: number, input: Record<string, unknown>) =>
+      ({
+        ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+        type: "dynamic_tool",
+        status: "failed",
+        toolName: "SendMessage",
+        input,
+        outputOmitted: true,
+      }) as OrchestrationV2TurnItem;
+    const activities = buildThreadFeed(
+      [
+        sendMessage("refused", 2, { to: "docs-writer", message: "Check the dry run" }),
+        sendMessage("refused-empty", 3, { to: "docs-writer", message: "" }),
+      ].map((item, index) => projected(item, index)),
+    ).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+    expect(
+      activities.map(({ canExpand, fetchesDetail }) => ({ canExpand, fetchesDetail })),
+    ).toEqual([
+      { canExpand: true, fetchesDetail: true },
+      { canExpand: true, fetchesDetail: true },
+    ]);
+  });
+
   it("recognizes automation attribution after projecting a user message", () => {
     const feed = buildThreadFeed([
       projected(
