@@ -127,7 +127,7 @@ export function DeviceDuoViewport(props: {
             (screenRef.current?.screenId === 1 ? 0 : 180),
           contains: (x, y) => !!screenRef.current && viewer.beginHinge(x, y),
           change: (angle) => {
-            viewer.setHingePreview(angle ?? previewRef.current);
+            viewer.setHingePreview(angle ?? previewRef.current, true);
             if (angle !== null) client.current?.controlDuo({ control: "angle", value: angle });
           },
         });
