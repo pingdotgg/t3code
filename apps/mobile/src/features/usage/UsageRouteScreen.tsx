@@ -876,11 +876,11 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
           : "clientBehind",
     });
   }
-  if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
   // The reason matters: a denied grant and a failed scan need different fixes.
   if (environment.error)
     return environment.summary ? `${environment.error} Showing saved totals.` : environment.error;
+  if (!environment.isConnected)
+    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
   if (isUsageLoading(environment))
     return environment.summary ? "Updating usage…" : "Loading usage…";
   return "Usage up to date";
