@@ -4,7 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { buildCommitFileTree, flattenCommitFileTree, toggleCommitFiles } from "@t3tools/client-runtime/commit-file-tree";
 import { ThemedSwitch } from "../../../components/ThemedSwitch";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
@@ -193,13 +193,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                           }
                         >
                           <SymbolView
-                            name={
-                              checked === "mixed"
-                                ? "minus.square"
-                                : checked
-                                  ? "checkmark.square"
-                                  : "square"
-                            }
+                            name={checked === "mixed" ? "minus" : checked ? "checkmark" : "circle"}
                             size={20}
                             tintColorClassName="accent-foreground"
                           />

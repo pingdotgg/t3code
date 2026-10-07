@@ -1854,7 +1854,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           reason: "branch_checked_out_in_worktree",
         });
         assert.include(error.message, "(branch_checked_out_in_worktree)");
-        assert.notInclude(error.message, firstWorktree);
+        assert.include(error.message, firstWorktree);
       }),
     );
 
@@ -2923,6 +2923,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
         }
         yield* git(cwd, ["add", "."]);
+        yield* (yield* FileSystem.FileSystem).chmod(cwd + "/mode-only.sh", 0o755);
         yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
         const preview = yield* driver.getReviewDiffPreview({

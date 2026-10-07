@@ -146,100 +146,102 @@ export function RewriteCommitMessagesDialog({
             files, the index, and working-tree changes are never modified.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-3">
-          {isLoading ? (
-            <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
-              Loading local commits...
-            </div>
-          ) : failure && result === null ? (
-            <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              <p>{failure}</p>
-              <Button variant="outline" size="sm" onClick={load}>
-                Retry
-              </Button>
-            </div>
-          ) : commits.length === 0 ? (
-            <div className="rounded-md border border-input bg-muted/40 p-4 text-sm text-muted-foreground">
-              No local branch commits are available to rewrite. Create a commit ahead of the branch
-              base or upstream first.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-md border border-input bg-background">
-              <div className="flex items-center justify-between border-b border-input bg-muted/40 px-3 py-2 text-xs">
-                <label className="flex items-center gap-2 font-medium">
-                  <Checkbox
-                    aria-label="Select all commit messages"
-                    checked={allSelected}
-                    indeterminate={someSelected}
-                    onCheckedChange={() =>
-                      setSelectedShas(
-                        allSelected ? new Set() : new Set(commits.map((commit) => commit.sha)),
-                      )
-                    }
-                  />
-                  Commit messages
-                </label>
-                <span className="text-muted-foreground">
-                  {selectedCount} of {commits.length} selected
-                </span>
+        <DialogPanel>
+          <div className="space-y-3">
+            {isLoading ? (
+              <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
+                Loading local commits...
               </div>
-              <ScrollArea className="h-72">
-                <div className="divide-y divide-input">
-                  {commits.map((commit) => {
-                    const selected = selectedShas.has(commit.sha);
-                    return (
-                      <label
-                        key={commit.sha}
-                        className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-accent/50"
-                      >
-                        <Checkbox
-                          aria-label={`Regenerate message for ${commit.subject}`}
-                          checked={selected}
-                          onCheckedChange={() => {
-                            const next = new Set(selectedShas);
-                            if (selected) {
-                              next.delete(commit.sha);
-                            } else {
-                              next.add(commit.sha);
-                            }
-                            setSelectedShas(next);
-                          }}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-baseline justify-between gap-3">
-                            <span className="truncate text-sm font-medium">{commit.subject}</span>
-                            <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                              {commit.shortSha}
+            ) : failure && result === null ? (
+              <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                <p>{failure}</p>
+                <Button variant="outline" size="sm" onClick={load}>
+                  Retry
+                </Button>
+              </div>
+            ) : commits.length === 0 ? (
+              <div className="rounded-md border border-input bg-muted/40 p-4 text-sm text-muted-foreground">
+                No local branch commits are available to rewrite. Create a commit ahead of the
+                branch base or upstream first.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-md border border-input bg-background">
+                <div className="flex items-center justify-between border-b border-input bg-muted/40 px-3 py-2 text-xs">
+                  <label className="flex items-center gap-2 font-medium">
+                    <Checkbox
+                      aria-label="Select all commit messages"
+                      checked={allSelected}
+                      indeterminate={someSelected}
+                      onCheckedChange={() =>
+                        setSelectedShas(
+                          allSelected ? new Set() : new Set(commits.map((commit) => commit.sha)),
+                        )
+                      }
+                    />
+                    Commit messages
+                  </label>
+                  <span className="text-muted-foreground">
+                    {selectedCount} of {commits.length} selected
+                  </span>
+                </div>
+                <ScrollArea className="h-72">
+                  <div className="divide-y divide-input">
+                    {commits.map((commit) => {
+                      const selected = selectedShas.has(commit.sha);
+                      return (
+                        <label
+                          key={commit.sha}
+                          className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-accent/50"
+                        >
+                          <Checkbox
+                            aria-label={`Regenerate message for ${commit.subject}`}
+                            checked={selected}
+                            onCheckedChange={() => {
+                              const next = new Set(selectedShas);
+                              if (selected) {
+                                next.delete(commit.sha);
+                              } else {
+                                next.add(commit.sha);
+                              }
+                              setSelectedShas(next);
+                            }}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-baseline justify-between gap-3">
+                              <span className="truncate text-sm font-medium">{commit.subject}</span>
+                              <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                                {commit.shortSha}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {commitDetails(commit)}
                             </span>
                           </span>
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {commitDetails(commit)}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-            </div>
-          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
 
-          {selectionTooLarge ? (
-            <p role="alert" className="text-xs text-destructive">
-              Select at most {MAX_SELECTED_COMMITS} commit messages at once.
-            </p>
-          ) : null}
-          {failure && result !== null ? (
-            <p role="alert" className="text-xs text-destructive">
-              {failure}
-            </p>
-          ) : null}
-          {commits.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Rewriting changes commit IDs and may require a force push. Signed commits are blocked
-              because recreating them would invalidate their signatures.
-            </p>
-          ) : null}
+            {selectionTooLarge ? (
+              <p role="alert" className="text-xs text-destructive">
+                Select at most {MAX_SELECTED_COMMITS} commit messages at once.
+              </p>
+            ) : null}
+            {failure && result !== null ? (
+              <p role="alert" className="text-xs text-destructive">
+                {failure}
+              </p>
+            ) : null}
+            {commits.length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Rewriting changes commit IDs and may require a force push. Signed commits are
+                blocked because recreating them would invalidate their signatures.
+              </p>
+            ) : null}
+          </div>
         </DialogPanel>
         <DialogFooter>
           <Button
