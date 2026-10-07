@@ -8,17 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { useState } from "react";
-import {
-  Alert,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -31,8 +21,7 @@ import { FilePreviewModal } from "./FilePreviewModal";
 import { VideoPreviewModal } from "./VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./AppText";
-import { SymbolView } from "./AppSymbol";
-import { ContextSheetSize } from "./ContextSheetSize";
+import { AppSheet } from "./AppSheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
 
@@ -97,12 +86,8 @@ export function ComposerContextSheet(props: {
 }) {
   const reviewColors = useReviewCommentColors();
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
   const { themeId, themeAppearance } = useAppearancePreferences();
   const terminalTheme = getMobileTerminalTheme(themeId, themeAppearance);
-  const [headerHeight, setHeaderHeight] = useState(0);
-  const [bodyHeight, setBodyHeight] = useState(0);
-  const measuredHeight = headerHeight + bodyHeight;
   const record = props.record;
   const localAttachment =
     record && "attachmentId" in record
@@ -183,273 +168,212 @@ export function ComposerContextSheet(props: {
       : undefined;
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
-    <Modal
-      animationType="slide"
-      presentationStyle={Platform.OS === "android" ? "overFullScreen" : "pageSheet"}
-      transparent={Platform.OS === "android"}
-      onRequestClose={props.onClose}
-    >
-      <View
-        className={
-          Platform.OS === "android" ? "flex-1 justify-end bg-backdrop" : "flex-1 justify-end"
-        }
+    <AppSheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
+      <ScrollView
+        className="flex-1"
+        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingTop: 12,
+          gap: 16,
+          paddingBottom: Math.max(20, insets.bottom),
+        }}
       >
-        {Platform.OS === "android" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss context"
-            onPress={props.onClose}
-            style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
-          />
+        {terminal ? (
+          <Text className="text-sm text-foreground-muted">
+            Lines {terminal.lineStart}–{terminal.lineEnd}
+          </Text>
         ) : null}
-        <View
-          className="overflow-hidden rounded-t-3xl bg-sheet-solid"
-          style={
-            Platform.OS === "android"
-              ? {
-                  height: Math.min(
-                    measuredHeight || windowHeight * 0.5,
-                    windowHeight - insets.top - 24,
-                  ),
-                }
-              : { flex: 1 }
-          }
-        >
-          <ContextSheetSize height={measuredHeight} />
-          <View
-            onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
-            className="flex-row items-center justify-between gap-3 border-b border-border px-4 pb-2 pt-4"
-          >
-            {terminal ? (
-              <SymbolView name="terminal" size={20} tintColor={terminalTheme.palette[2]} />
-            ) : null}
-            <View className="min-w-0 flex-1">
-              <Text className="text-base font-t3-semibold text-foreground" numberOfLines={2}>
-                {terminal?.terminalLabel ?? props.label}
-              </Text>
-              {terminal ? (
-                <Text className="text-xs text-foreground-muted">
-                  Lines {terminal.lineStart}–{terminal.lineEnd}
-                </Text>
-              ) : null}
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close context"
-              onPress={props.onClose}
-              className="p-3"
-            >
-              <Text className="text-foreground">Done</Text>
-            </Pressable>
-          </View>
-          <ScrollView
-            style={{ flexShrink: 1 }}
-            onContentSizeChange={(_width, height) => setBodyHeight(height)}
-            contentContainerStyle={{
-              padding: 16,
-              gap: 16,
-              paddingBottom: Math.max(20, insets.bottom),
-            }}
-          >
-            {!record ? (
-              <Text className="text-foreground">
-                Context unavailable. The reference was copied without its payload. Copy it again
-                from the original message or remove it.
-              </Text>
-            ) : "payload" in record ? (
-              <Text className="text-foreground">
-                This context type is not supported by this version of the app. Its payload will be
-                preserved when sent.
-              </Text>
-            ) : (
-              <>
-                {record.kind === "terminal" ? (
-                  <View
-                    className="overflow-hidden rounded-xl border border-border"
-                    style={{ backgroundColor: terminalTheme.background }}
+        {!record ? (
+          <Text className="text-foreground">
+            Context unavailable. The reference was copied without its payload. Copy it again from
+            the original message or remove it.
+          </Text>
+        ) : "payload" in record ? (
+          <Text className="text-foreground">
+            This context type is not supported by this version of the app. Its payload will be
+            preserved when sent.
+          </Text>
+        ) : (
+          <>
+            {record.kind === "terminal" ? (
+              <View
+                className="overflow-hidden rounded-xl"
+                style={{ backgroundColor: terminalTheme.background }}
+              >
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator
+                  contentContainerStyle={{ padding: 12 }}
+                >
+                  <Text
+                    selectable
+                    className="text-sm text-foreground"
+                    style={{
+                      fontFamily: REVIEW_MONO_FONT_FAMILY,
+                      fontSize: 13,
+                      lineHeight: 20,
+                      color: terminalTheme.foreground,
+                    }}
                   >
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator
-                      contentContainerStyle={{ padding: 12 }}
-                    >
-                      <Text
-                        selectable
-                        className="text-sm text-foreground"
-                        style={{
-                          fontFamily: REVIEW_MONO_FONT_FAMILY,
-                          fontSize: 13,
-                          lineHeight: 20,
-                        }}
-                      >
-                        {record.text}
-                      </Text>
-                    </ScrollView>
-                  </View>
-                ) : null}
-                {record.kind === "review-comment" ? (
-                  <>
-                    {record.pullRequest ? (
-                      <ContextField
-                        label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
-                        value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
-                      />
-                    ) : null}
-                    {!record.sectionId.startsWith("pull-request:") ? (
-                      <>
-                        <ReviewCommentCard
-                          comment={{ ...record, id: record.contextId }}
-                          colors={reviewColors}
-                        />
-                      </>
-                    ) : null}
-                  </>
-                ) : null}
-                {record.kind === "preview-annotation" ? (
-                  <>
-                    <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />
-                    <ContextField label="URL" value={record.pageUrl} />
-                    <ContextField label="Comment" value={record.comment} />
-                    <ContextField label="Selection" value={record.targetSummary} />
-                    <ContextField
-                      label="Requested changes"
-                      value={record.styleChanges.join("\n")}
-                    />
-                    {record.elements?.map((element, index) => (
-                      <View
-                        key={`${element.selector ?? element.tagName}:${index}`}
-                        className="gap-3"
-                      >
-                        <ContextField
-                          label="Element"
-                          value={element.componentName ?? element.tagName}
-                        />
-                        <ContextField label="Selector" value={element.selector} code />
-                        <ContextSource source={element.source} />
-                        <ContextField label="HTML" value={element.htmlPreview} code />
-                        <ContextField label="Styles" value={element.styles} code />
-                      </View>
-                    ))}
-                  </>
-                ) : null}
-                {record.kind === "element" ? (
-                  <>
-                    <ContextField label="Page" value={record.pageUrl} />
-                    <ContextField label="Element" value={record.componentName ?? record.tagName} />
-                    <ContextField label="Selector" value={record.selector} code />
-                    <ContextSource source={record.source} />
-                    <ContextField label="HTML" value={record.htmlPreview} code />
-                    <ContextField label="Styles" value={record.styles} code />
-                  </>
-                ) : null}
-                {record.kind === "image" ? (
+                    {record.text}
+                  </Text>
+                </ScrollView>
+              </View>
+            ) : null}
+            {record.kind === "review-comment" ? (
+              <>
+                {record.pullRequest ? (
                   <ContextField
-                    label="File"
-                    value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
+                    label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
+                    value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
                   />
                 ) : null}
-                {record.kind === "mention" ? (
-                  <ContextField label="Path" value={record.path} code />
-                ) : null}
-                {record.kind === "thread" ? (
-                  <View className="gap-3">
-                    <ContextField label="Thread" value={record.title} />
-                    {props.onOpenThread ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() =>
-                          props.onOpenThread?.({
-                            environmentId: record.environmentId,
-                            threadId: record.threadId,
-                          })
-                        }
-                        className="rounded-xl bg-subtle p-4"
-                      >
-                        <Text className="text-foreground">Open thread</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-                {record.kind === "skill" ? (
-                  <View className="gap-3">
-                    <ContextField label="Skill" value={record.name} />
-                    <ContextField
-                      label="Description"
-                      value={
-                        props.skillDescription ?? "No description is available for this skill."
-                      }
+                {!record.sectionId.startsWith("pull-request:") ? (
+                  <>
+                    <ReviewCommentCard
+                      comment={{ ...record, id: record.contextId }}
+                      colors={reviewColors}
                     />
-                    {props.onOpenSkill ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={props.onOpenSkill}
-                        className="rounded-xl bg-subtle p-4"
-                      >
-                        <Text className="text-foreground">View instructions</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
+                  </>
                 ) : null}
               </>
-            )}
-            {attachmentRecord && "attachmentId" in attachmentRecord ? (
-              <ComposerContextAttachment
-                key={JSON.stringify([
-                  props.environmentId,
-                  attachmentRecord.attachmentId,
-                  props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)
-                    ?.fileUri,
-                ])}
-                record={attachmentRecord}
-                environmentId={props.environmentId}
-                attachment={props.attachments?.find(
-                  (entry) => entry.id === attachmentRecord.attachmentId,
-                )}
+            ) : null}
+            {record.kind === "preview-annotation" ? (
+              <>
+                <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />
+                <ContextField label="URL" value={record.pageUrl} />
+                <ContextField label="Comment" value={record.comment} />
+                <ContextField label="Selection" value={record.targetSummary} />
+                <ContextField label="Requested changes" value={record.styleChanges.join("\n")} />
+                {record.elements?.map((element, index) => (
+                  <View key={`${element.selector ?? element.tagName}:${index}`} className="gap-3">
+                    <ContextField
+                      label="Element"
+                      value={element.componentName ?? element.tagName}
+                    />
+                    <ContextField label="Selector" value={element.selector} code />
+                    <ContextSource source={element.source} />
+                    <ContextField label="HTML" value={element.htmlPreview} code />
+                    <ContextField label="Styles" value={element.styles} code />
+                  </View>
+                ))}
+              </>
+            ) : null}
+            {record.kind === "element" ? (
+              <>
+                <ContextField label="Page" value={record.pageUrl} />
+                <ContextField label="Element" value={record.componentName ?? record.tagName} />
+                <ContextField label="Selector" value={record.selector} code />
+                <ContextSource source={record.source} />
+                <ContextField label="HTML" value={record.htmlPreview} code />
+                <ContextField label="Styles" value={record.styles} code />
+              </>
+            ) : null}
+            {record.kind === "image" ? (
+              <ContextField
+                label="File"
+                value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
               />
             ) : null}
-            {pullRequestUrl && /^https?:\/\//i.test(pullRequestUrl) ? (
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => {
-                  void Linking.openURL(pullRequestUrl).catch(() =>
-                    Alert.alert("Could not open pull request", "Try again when connected."),
-                  );
-                }}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Open pull request</Text>
-              </Pressable>
+            {record.kind === "mention" ? (
+              <ContextField label="Path" value={record.path} code />
             ) : null}
-            {props.onOpenAttachment ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={props.onOpenAttachment}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Open attachment</Text>
-              </Pressable>
+            {record.kind === "thread" ? (
+              <View className="gap-3">
+                <ContextField label="Thread" value={record.title} />
+                {props.onOpenThread ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() =>
+                      props.onOpenThread?.({
+                        environmentId: record.environmentId,
+                        threadId: record.threadId,
+                      })
+                    }
+                    className="rounded-xl bg-subtle p-4"
+                  >
+                    <Text className="text-foreground">Open thread</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
-            {props.onOpenPullRequest ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={props.onOpenPullRequest}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Open pull request</Text>
-              </Pressable>
+            {record.kind === "skill" ? (
+              <View className="gap-3">
+                <ContextField label="Skill" value={record.name} />
+                <ContextField
+                  label="Description"
+                  value={props.skillDescription ?? "No description is available for this skill."}
+                />
+                {props.onOpenSkill ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={props.onOpenSkill}
+                    className="rounded-xl bg-subtle p-4"
+                  >
+                    <Text className="text-foreground">View instructions</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
-            {props.onRemove ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={props.onRemove}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Remove from draft</Text>
-              </Pressable>
-            ) : null}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
+          </>
+        )}
+        {attachmentRecord && "attachmentId" in attachmentRecord ? (
+          <ComposerContextAttachment
+            key={JSON.stringify([
+              props.environmentId,
+              attachmentRecord.attachmentId,
+              props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)
+                ?.fileUri,
+            ])}
+            record={attachmentRecord}
+            environmentId={props.environmentId}
+            attachment={props.attachments?.find(
+              (entry) => entry.id === attachmentRecord.attachmentId,
+            )}
+          />
+        ) : null}
+        {pullRequestUrl && /^https?:\/\//i.test(pullRequestUrl) ? (
+          <Pressable
+            accessibilityRole="link"
+            onPress={() => {
+              void Linking.openURL(pullRequestUrl).catch(() =>
+                Alert.alert("Could not open pull request", "Try again when connected."),
+              );
+            }}
+            className="rounded-xl bg-subtle p-4"
+          >
+            <Text className="text-foreground">Open pull request</Text>
+          </Pressable>
+        ) : null}
+        {props.onOpenAttachment ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={props.onOpenAttachment}
+            className="rounded-xl bg-subtle p-4"
+          >
+            <Text className="text-foreground">Open attachment</Text>
+          </Pressable>
+        ) : null}
+        {props.onOpenPullRequest ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={props.onOpenPullRequest}
+            className="rounded-xl bg-subtle p-4"
+          >
+            <Text className="text-foreground">Open pull request</Text>
+          </Pressable>
+        ) : null}
+        {props.onRemove ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={props.onRemove}
+            className="rounded-xl bg-subtle p-4"
+          >
+            <Text className="text-foreground">Remove from draft</Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
+    </AppSheet>
   );
 }
