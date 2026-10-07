@@ -21,10 +21,16 @@ vi.mock("~/state/entities", () => {
   const project = { workspaceRoot: "/repo" };
   return { useThreadShell: () => thread, useProject: () => project };
 });
-vi.mock("~/state/terminalSessions", () => {
-  const sessions: never[] = [];
-  return { useKnownTerminalSessions: () => sessions };
-});
+const terminalSessions = vi.hoisted(
+  () =>
+    [] as Array<{
+      target: { terminalId: string };
+      state: { summary: { cwd: string; worktreePath: string | null } };
+    }>,
+);
+vi.mock("~/state/terminalSessions", () => ({
+  useKnownTerminalSessions: () => terminalSessions,
+}));
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
@@ -54,7 +60,7 @@ const terminalProps = {
   onCloseTerminal: () => undefined,
 };
 
-// ChatView builds a fresh host object on every render, as here.
+// A host rebuilt with the same inputs, as here, must not re-render the drawer.
 const hostFor = (visible: boolean): PanelHost => ({
   threadRef,
   visible,
@@ -107,6 +113,21 @@ describe("terminal side panel", () => {
       create(panelIn(hostFor(true)));
     });
     expect(drawerWorktreePaths).toEqual(["/repo/.worktrees/feature"]);
+    thread.worktreePath = null;
+  });
+
+  it("keeps a terminal the server opened on the checkout off the thread's later worktree", () => {
+    thread.worktreePath = "/repo/.worktrees/feature";
+    terminalSessions.push({
+      target: { terminalId: "term-1" },
+      state: { summary: { cwd: "/repo", worktreePath: null } },
+    });
+    drawerWorktreePaths.length = 0;
+    act(() => {
+      create(panelIn(hostFor(true)));
+    });
+    expect(drawerWorktreePaths).toEqual([null]);
+    terminalSessions.length = 0;
     thread.worktreePath = null;
   });
 });

@@ -23,6 +23,20 @@ export interface TerminalLaunchContext {
 
 export type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
+/**
+ * A launch context's or summary's null worktree means the local checkout, not
+ * "unknown", so only fall back to the thread's worktree when neither exists.
+ */
+function terminalWorktreePath(
+  launchContext: PersistentTerminalLaunchContext | null,
+  summary: { readonly worktreePath: string | null } | null,
+  threadWorktreePath: string | null,
+): string | null {
+  if (launchContext !== null) return launchContext.worktreePath;
+  if (summary !== null) return summary.worktreePath;
+  return threadWorktreePath;
+}
+
 interface PersistentThreadTerminalPanelProps {
   visible: boolean;
   threadRef: ScopedThreadRef;
@@ -76,11 +90,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
-  // A launch context's null worktree means the local checkout, not "unknown".
-  const worktreePath =
-    launchContext !== null
-      ? launchContext.worktreePath
-      : (activeSummary?.worktreePath ?? threadWorktreePath);
+  const worktreePath = terminalWorktreePath(launchContext, activeSummary, threadWorktreePath);
   const cwd = useMemo(
     () =>
       launchContext?.cwd ??
@@ -126,26 +136,27 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       const summary =
         knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
           .summary ?? null;
-      const terminalWorktreePath =
-        launchContext !== null
-          ? launchContext.worktreePath
-          : (summary?.worktreePath ?? threadWorktreePath);
+      const worktreePathForTerminal = terminalWorktreePath(
+        launchContext,
+        summary,
+        threadWorktreePath,
+      );
       const terminalCwd =
         launchContext?.cwd ??
         summary?.cwd ??
         (project
           ? projectScriptCwd({
               project: { cwd: project.workspaceRoot },
-              worktreePath: terminalWorktreePath,
+              worktreePath: worktreePathForTerminal,
             })
           : null);
       if (!terminalCwd || !project) continue;
       locations.set(terminalId, {
         cwd: terminalCwd,
-        worktreePath: terminalWorktreePath,
+        worktreePath: worktreePathForTerminal,
         runtimeEnv: projectScriptRuntimeEnv({
           project: { cwd: project.workspaceRoot },
-          worktreePath: terminalWorktreePath,
+          worktreePath: worktreePathForTerminal,
         }),
       });
     }
