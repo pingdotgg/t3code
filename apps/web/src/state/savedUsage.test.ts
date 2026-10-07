@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pickSavedUsage, type SavedUsage, withoutLiveSources } from "./savedUsage";
+import { pickSavedUsage, type SavedUsage, trimSavedUsage } from "./savedUsage";
 
 const bucket = (day: string, hourStart?: string): UsageBucket => ({
   day: UsageDay.make(day),
@@ -95,13 +95,6 @@ describe("pickSavedUsage", () => {
     expect(picked?.buckets.map((entry) => entry.day)).toEqual(["2026-09-24", "2026-09-30"]);
     // The read time stays, so the page can say when the usage is from.
     expect(picked?.readAt).toBe("2026-09-30T10:00:00Z");
-    expect(picked?.sources[0]?.status).toBe("ok");
-  });
-
-  it("marks a read that covers only part of the range as partial", () => {
-    const picked = pickSavedUsage([month], days("2026-09-20", "2026-10-05"));
-    expect(picked?.buckets.map((entry) => entry.day)).toEqual(["2026-09-24", "2026-09-30"]);
-    expect(picked?.sources[0]?.status).toBe("partial");
   });
 
   it("answers hours only with hours on the same hour grid", () => {
@@ -121,24 +114,61 @@ describe("pickSavedUsage", () => {
   });
 });
 
-describe("withoutLiveSources", () => {
-  it("drops the history folders a live environment also reads", () => {
-    const saved = {
-      ...summary(
-        [
-          { ...bucket("2026-09-24"), sourcePath: "/home/a/.claude" },
-          { ...bucket("2026-09-24"), sourcePath: "/home/b/.claude" },
-        ],
-        "2026-09-30T10:00:00Z",
-      ),
-      sources: [source("/home/a/.claude"), source("/home/b/.claude")],
+describe("trimSavedUsage", () => {
+  const pathed = (path: string, costUsd = 1) => ({
+    ...bucket("2026-09-24"),
+    sourcePath: path,
+    costUsd,
+  });
+  const read = (
+    readAt: string,
+    paths: readonly string[],
+    buckets: readonly UsageBucket[],
+  ): UsageSummary => ({ ...summary(buckets, readAt), sources: paths.map(source) });
+  const paths = (entry: UsageSummary | undefined) =>
+    entry?.sources.map((item) => item.fingerprint.resolvedHomePath);
+
+  it("leaves a folder a live read answered for to that read", () => {
+    const saved = read("2026-09-30T10:00:00Z", ["/a", "/b"], [pathed("/a"), pathed("/b")]);
+    const trimmed = trimSavedUsage(
+      [read("2026-10-01T10:00:00Z", ["/a"], [])],
+      new Map([["x", saved]]),
+    );
+    expect(paths(trimmed.get("x"))).toEqual(["/b"]);
+    expect(trimmed.get("x")?.buckets.map((entry) => entry.sourcePath)).toEqual(["/b"]);
+  });
+
+  it("drops a provider's buckets without a path when any of its folders goes", () => {
+    const saved = read("2026-09-30T10:00:00Z", ["/a", "/b"], [bucket("2026-09-24")]);
+    const trimmed = trimSavedUsage(
+      [read("2026-10-01T10:00:00Z", ["/a"], [])],
+      new Map([["x", saved]]),
+    );
+    expect(paths(trimmed.get("x"))).toEqual([]);
+    expect(trimmed.get("x")?.buckets).toEqual([]);
+  });
+
+  it("keeps a folder two saved reads share in the newer one only", () => {
+    const older = read("2026-09-30T10:00:00Z", ["/a"], [pathed("/a", 10)]);
+    const newer = read("2026-09-30T11:00:00Z", ["/a"], [{ ...pathed("/a", 10), model: "alias" }]);
+    const trimmed = trimSavedUsage(
+      [],
+      new Map([
+        ["old", older],
+        ["new", newer],
+      ]),
+    );
+    expect(paths(trimmed.get("new"))).toEqual(["/a"]);
+    expect(trimmed.get("old")?.buckets).toEqual([]);
+  });
+
+  it("does not let a failed live read take a folder", () => {
+    const failed = { ...read("2026-10-01T10:00:00Z", ["/a"], []) };
+    const live = {
+      ...failed,
+      sources: failed.sources.map((item) => ({ ...item, status: "failed" as const })),
     };
-    const live = { ...summary([], "2026-10-01T10:00:00Z"), sources: [source("/home/a/.claude")] };
-    const kept = withoutLiveSources(saved, [live]);
-    expect(kept.sources.map((entry) => entry.fingerprint.resolvedHomePath)).toEqual([
-      "/home/b/.claude",
-    ]);
-    expect(kept.buckets.map((entry) => entry.sourcePath)).toEqual(["/home/b/.claude"]);
-    expect(withoutLiveSources(saved, [])).toBe(saved);
+    const saved = read("2026-09-30T10:00:00Z", ["/a"], [pathed("/a")]);
+    expect(paths(trimSavedUsage([live], new Map([["x", saved]])).get("x"))).toEqual(["/a"]);
   });
 });

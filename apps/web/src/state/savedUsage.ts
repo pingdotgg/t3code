@@ -145,8 +145,8 @@ export async function clearSavedUsage(environmentId: string): Promise<void> {
 
 const dayNumber = (day: string) => Date.parse(`${day}T00:00:00Z`) / DAY_MS;
 
-/** The part of a window two reads share, in hours or days, and whether it is all of it. */
-function overlapOf(saved: UsageSummaryInput, input: UsageSummaryInput) {
+/** How much of a window a saved read shares with it, in milliseconds or days; null if it cannot. */
+function overlapOf(saved: UsageSummaryInput, input: UsageSummaryInput): number | null {
   if (input.resolution === "hour") {
     const since = Date.parse(input.sinceTime ?? "");
     const until = Date.parse(input.untilTime ?? "");
@@ -155,36 +155,31 @@ function overlapOf(saved: UsageSummaryInput, input: UsageSummaryInput) {
     // Hourly buckets start on the window's own hour grid; another grid cannot be split.
     if ([since, until, savedSince, savedUntil].some(Number.isNaN)) return null;
     if ((since - savedSince) % HOUR_MS !== 0) return null;
-    const shared = Math.min(until, savedUntil) - Math.max(since, savedSince);
-    return { amount: shared, complete: savedSince <= since && savedUntil >= until };
+    return Math.min(until, savedUntil) - Math.max(since, savedSince);
   }
-  const shared =
+  return (
     Math.min(dayNumber(saved.untilDay), dayNumber(input.untilDay)) -
     Math.max(dayNumber(saved.sinceDay), dayNumber(input.sinceDay)) +
-    1;
-  return {
-    amount: shared,
-    complete: saved.sinceDay <= input.sinceDay && saved.untilDay >= input.untilDay,
-  };
+    1
+  );
 }
 
 /**
  * The saved read that best covers a window, cut to it. Only a read at the
  * window's own resolution answers it, and an hourly read only on the same
- * hour grid. A read that covers part of the window marks its sources partial,
- * so a complete read of the same history wins over it.
+ * hour grid.
  */
 export function pickSavedUsage(
   saved: readonly SavedUsage[],
   input: UsageSummaryInput,
 ): UsageSummary | null {
-  let best: { entry: SavedUsage; amount: number; complete: boolean } | null = null;
+  let best: { entry: SavedUsage; amount: number } | null = null;
   for (const entry of saved) {
     if (entry.input.timeZone !== input.timeZone) continue;
     if ((entry.input.resolution ?? "day") !== (input.resolution ?? "day")) continue;
     const overlap = overlapOf(entry.input, input);
-    if (overlap === null || !(overlap.amount > 0)) continue;
-    if (best === null || overlap.amount > best.amount) best = { entry, ...overlap };
+    if (overlap === null || !(overlap > 0)) continue;
+    if (best === null || overlap > best.amount) best = { entry, amount: overlap };
   }
   if (best === null) return null;
   const { summary } = best.entry;
@@ -192,11 +187,6 @@ export function pickSavedUsage(
   const until = input.untilTime === undefined ? null : Date.parse(input.untilTime);
   return {
     ...summary,
-    sources: best.complete
-      ? summary.sources
-      : summary.sources.map((source) =>
-          source.status === "ok" ? { ...source, status: "partial" as const } : source,
-        ),
     buckets: summary.buckets.filter((bucket) => {
       if (bucket.day < input.sinceDay || bucket.day > input.untilDay) return false;
       if (bucket.hourStart === undefined || since === null || until === null) return true;
@@ -214,40 +204,63 @@ const fingerprintKey = (fingerprint: UsageSourceFingerprint) =>
     fingerprint.volumeId,
   ].join(" ");
 
-/**
- * A saved summary without the history folders a live environment reads too.
- * The live read of a folder is the current one, and a saved copy on another
- * hour grid or with other aliases would not reconcile with it.
- */
-export function withoutLiveSources(
-  saved: UsageSummary,
-  live: readonly UsageSummary[],
-): UsageSummary {
-  const liveKeys = new Set(
-    live.flatMap((summary) => summary.sources.map((source) => fingerprintKey(source.fingerprint))),
-  );
-  const dropped = saved.sources.filter((source) =>
-    liveKeys.has(fingerprintKey(source.fingerprint)),
-  );
+/** A saved summary without the history folders in `taken`, and their buckets. */
+function withoutSources(saved: UsageSummary, taken: ReadonlySet<string>): UsageSummary {
+  const dropped = saved.sources.filter((source) => taken.has(fingerprintKey(source.fingerprint)));
   if (dropped.length === 0) return saved;
-  const droppedPaths = new Set(
-    dropped.map(
-      (source) => `${source.fingerprint.provider}\u0000${source.fingerprint.resolvedHomePath}`,
-    ),
+  // A bucket without a path cannot be told apart between its provider's
+  // folders, so dropping any of them drops all of that provider's.
+  const unpathed = new Set(
+    saved.buckets.flatMap((bucket) => (bucket.sourcePath === undefined ? [bucket.provider] : [])),
   );
-  const keptProviders = new Set(
+  const droppedProviders = new Set(dropped.map((source) => source.fingerprint.provider));
+  const drops = (source: UsageSummary["sources"][number]) =>
+    taken.has(fingerprintKey(source.fingerprint)) ||
+    (unpathed.has(source.fingerprint.provider) &&
+      droppedProviders.has(source.fingerprint.provider));
+  const droppedPaths = new Set(
     saved.sources
-      .filter((source) => !dropped.includes(source))
-      .map((source) => source.fingerprint.provider),
+      .filter(drops)
+      .map(
+        (source) => `${source.fingerprint.provider}\u0000${source.fingerprint.resolvedHomePath}`,
+      ),
   );
   return {
     ...saved,
-    sources: saved.sources.filter((source) => !dropped.includes(source)),
+    sources: saved.sources.filter((source) => !drops(source)),
     buckets: saved.buckets.filter((bucket) =>
       bucket.sourcePath === undefined
-        ? keptProviders.has(bucket.provider) ||
-          !dropped.some((source) => source.fingerprint.provider === bucket.provider)
+        ? !droppedProviders.has(bucket.provider)
         : !droppedPaths.has(`${bucket.provider}\u0000${bucket.sourcePath}`),
     ),
   };
+}
+
+/**
+ * Saved summaries trimmed so each history folder is counted from one place.
+ * A folder a live read answered for stays with that read; among saved reads,
+ * the newest keeps it. Saved reads then never compete with each other or with
+ * live ones, so aliases, hour grids and coverage cannot double count.
+ */
+export function trimSavedUsage(
+  live: readonly UsageSummary[],
+  saved: ReadonlyMap<string, UsageSummary>,
+): ReadonlyMap<string, UsageSummary> {
+  const taken = new Set(
+    live.flatMap((summary) =>
+      summary.sources
+        .filter((source) => source.status === "ok" || source.status === "partial")
+        .map((source) => fingerprintKey(source.fingerprint)),
+    ),
+  );
+  const trimmed = new Map<string, UsageSummary>();
+  const newestFirst = [...saved].sort(
+    ([, a], [, b]) => (Date.parse(b.readAt) || 0) - (Date.parse(a.readAt) || 0),
+  );
+  for (const [environmentId, summary] of newestFirst) {
+    const kept = withoutSources(summary, taken);
+    for (const source of kept.sources) taken.add(fingerprintKey(source.fingerprint));
+    trimmed.set(environmentId, kept);
+  }
+  return trimmed;
 }

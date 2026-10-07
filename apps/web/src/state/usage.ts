@@ -24,7 +24,12 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo } from "react";
 
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  isCompatibleUsageContractVersion,
+  mergeUsage,
+  type EnvironmentUsage,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import {
@@ -32,7 +37,7 @@ import {
   onSavedUsageChange,
   pickSavedUsage,
   saveUsage,
-  withoutLiveSources,
+  trimSavedUsage,
 } from "./savedUsage";
 import { serverEnvironment } from "./server";
 
@@ -207,8 +212,8 @@ export interface UsageView {
 
 /**
  * Merges every environment that has answered, or that is offline and has
- * saved usage. A saved read drops the history folders a live environment
- * reads too. `keepBucket` narrows the merge,
+ * saved usage. Saved reads are trimmed so each history folder is counted from
+ * one place, a usable live read first. `keepBucket` narrows the merge,
  * for example to one model; source ownership still applies, so the result
  * matches that slice of the full merge. Session counts are per directory and
  * are not narrowed.
@@ -217,8 +222,19 @@ export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
-  const live = environments.flatMap((environment) =>
-    environment.summary !== null && environment.savedAt === null ? [environment.summary] : [],
+  // Only reads the merge will use claim their history folders.
+  const usable = (summary: UsageSummary | null): summary is UsageSummary =>
+    summary !== null &&
+    isCompatibleUsageContractVersion(summary.contractVersion, USAGE_CONTRACT_VERSION);
+  const saved = trimSavedUsage(
+    environments.flatMap(({ summary, savedAt }) =>
+      savedAt === null && usable(summary) ? [summary] : [],
+    ),
+    new Map(
+      environments.flatMap(({ environmentId, summary, savedAt }) =>
+        savedAt !== null && usable(summary) ? [[environmentId, summary] as const] : [],
+      ),
+    ),
   );
   const answered: EnvironmentUsage[] = environments.flatMap(
     ({ environmentId, label, summary, savedAt }) =>
@@ -228,8 +244,7 @@ export function mergeAnsweredUsage(
             {
               environmentId,
               label,
-              // A live read of the same history folder supersedes a saved one.
-              summary: savedAt === null ? summary : withoutLiveSources(summary, live),
+              summary: savedAt === null ? summary : (saved.get(environmentId) ?? summary),
             },
           ],
   );
