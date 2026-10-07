@@ -1468,9 +1468,10 @@ interface SnapshotMessageState {
 }
 
 /**
- * Streamed tool updates resend the whole call so far. Persist the subset
- * #7279 chose for V1; the agent's own completed/failed always persists, even
- * when a flavor normalizes it to a non-terminal status.
+ * Some agents stream a tool's arguments (a file write's diff, `rawInput`) and
+ * resend the whole call each time. Persist those with #7279's V1 rule. Output
+ * the user watches live (command stdout, monitor ticks) and the agent's own
+ * completed/failed always persist, even when a flavor normalizes the status.
  */
 function shouldPersistToolUpdate(
   context: ActiveAcpTurn,
@@ -1480,19 +1481,21 @@ function shouldPersistToolUpdate(
   reportedStatus: AcpToolCallState["status"],
 ): boolean {
   const emission = context.toolEmissions.get(key);
+  const progressLength = toolCallProgressLength(next);
   const decision =
-    reportedStatus === "completed" || reportedStatus === "failed"
+    reportedStatus === "completed" ||
+    reportedStatus === "failed" ||
+    emission === undefined ||
+    progressLength !== emission.lastEmittedDetailLength
       ? { emit: true, skippedSinceEmit: 0 }
       : decideToolCallUpdateEmission({
           previous,
           next,
-          lastEmittedDetailLength: emission?.lastEmittedDetailLength,
-          skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
+          lastEmittedDetailLength: emission.lastEmittedDetailLength,
+          skippedSinceEmit: emission.skippedSinceEmit,
         });
   context.toolEmissions.set(key, {
-    lastEmittedDetailLength: decision.emit
-      ? toolCallProgressLength(next)
-      : emission?.lastEmittedDetailLength,
+    lastEmittedDetailLength: decision.emit ? progressLength : emission?.lastEmittedDetailLength,
     skippedSinceEmit: decision.skippedSinceEmit,
   });
   return decision.emit;

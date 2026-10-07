@@ -1013,12 +1013,15 @@ describe("AcpAdapterV2", () => {
       const chunks = 200;
       const streamedWrite = (
         toolCallId: string,
-        meta: Record<string, unknown>,
+        parentAgentId?: string,
       ): Array<EffectAcpSchema.SessionUpdate> => {
-        const write = (text: string) => ({
+        const meta =
+          parentAgentId === undefined ? {} : { "cognition.ai/subagent_context": { parentAgentId } };
+        const write = (text: string, status?: "completed") => ({
           sessionUpdate: "tool_call_update" as const,
           toolCallId,
           title: "Writing ./audit.py",
+          ...(status === undefined ? {} : { status }),
           content: [
             { type: "diff" as const, path: "/repo/audit.py", oldText: null, newText: text },
           ],
@@ -1037,7 +1040,7 @@ describe("AcpAdapterV2", () => {
           ...Array.from({ length: chunks }, (_, index) =>
             write(file.slice(0, Math.ceil((file.length * (index + 1)) / chunks))),
           ),
-          { ...write(file), status: "completed" },
+          write(file, "completed"),
         ];
       };
       const instanceId = ProviderInstanceId.make("devin-streamed-write");
@@ -1065,9 +1068,6 @@ describe("AcpAdapterV2", () => {
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
               prompt: () =>
                 Effect.gen(function* () {
-                  const childContext = {
-                    "cognition.ai/subagent_context": { parentAgentId: "child-a" },
-                  };
                   const updates = [
                     {
                       sessionUpdate: "tool_call_update",
@@ -1081,8 +1081,8 @@ describe("AcpAdapterV2", () => {
                         },
                       },
                     },
-                    ...streamedWrite("root-write", {}),
-                    ...streamedWrite("child-write", childContext),
+                    ...streamedWrite("root-write"),
+                    ...streamedWrite("child-write", "child-a"),
                     {
                       sessionUpdate: "tool_call_update",
                       toolCallId: "child-a",
@@ -1138,7 +1138,7 @@ describe("AcpAdapterV2", () => {
         ),
       ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
       for (const toolCallId of ["root-write", "child-write"]) {
-        const writes = items.filter((item) => item.nativeItemRef?.nativeId.endsWith(toolCallId));
+        const writes = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith(toolCallId));
         assert.isAtLeast(writes.length, 2, toolCallId);
         assert.isAtMost(writes.length, chunks / 5, toolCallId);
         assert.equal(writes.at(-1)?.status, "completed", toolCallId);
