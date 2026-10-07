@@ -3010,7 +3010,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction ? "Resume thread" : "Send message";
+  const collapsedComposerPrimaryActionLabel = showResumeAction
+    ? "Resume thread"
+    : props.resumeCompactionTokens !== null
+      ? "Compact and send"
+      : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -6881,6 +6885,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onClick={(event) => {
                     event.stopPropagation();
                     if (showResumeAction) onResume();
+                    // Compacting first is only sent from the labeled button, so expand to show it.
+                    else if (props.resumeCompactionTokens !== null) expandMobileComposer();
                     else submitComposer();
                   }}
                 >
