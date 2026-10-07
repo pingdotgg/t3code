@@ -7,7 +7,6 @@ import type { PullRequestReaction } from "@t3tools/contracts";
 
 import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitHubRepositoryApi from "../sourceControl/GitHubRepositoryApi.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import type { GitHubPullRequestCore } from "./gitHubPullRequestJson.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
@@ -726,7 +725,7 @@ describe("getViewerPermissions", () => {
     Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
       revalidateChecks: (_input, read) => read,
       getPullRequestDetail: () =>
-        GitHubRepositoryApi.AllowGitHubReserve.pipe(
+        GitHubApi.AllowGitHubReserve.pipe(
           Effect.tap((allowReserve) => Effect.sync(() => onDetail(allowReserve))),
           Effect.flatMap(() => detail),
         ),
