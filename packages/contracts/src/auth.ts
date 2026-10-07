@@ -191,6 +191,17 @@ export function sessionGrantsScope(
   return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
+/** Old-only grants lost the child permissions formerly implied by their broad scopes. */
+export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {
+  const permissions = session.permissions;
+  return (
+    session.authenticated &&
+    permissions !== undefined &&
+    permissions.every((scope) => legacyScopes.has(scope)) &&
+    Object.values(legacyParents).some((parent) => permissions.includes(parent))
+  );
+}
+
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
