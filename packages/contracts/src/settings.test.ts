@@ -21,6 +21,27 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("client interface language", () => {
+  it("keeps existing settings in English", () => {
+    expect(decodeClientSettings({ timestampFormat: "24-hour" }).interfaceLanguage).toBe("en");
+  });
+  it.each(["en", "zh-CN"])("round-trips %s without affecting other preferences", (language) => {
+    const settings = decodeClientSettings({ interfaceLanguage: language, wordWrap: false });
+    expect(decodeClientSettings(encodeClientSettings(settings))).toEqual(settings);
+    expect(settings.interfaceLanguage).toBe(language);
+    expect(settings.wordWrap).toBe(false);
+    expect(decodeClientSettingsPatch({ interfaceLanguage: language })).toEqual({
+      interfaceLanguage: language,
+    });
+  });
+  it("rejects unsupported languages and keeps language out of server patches", () => {
+    expect(() => decodeClientSettings({ interfaceLanguage: "fr" })).toThrow();
+    expect(decodeServerSettingsPatch({ interfaceLanguage: "zh-CN" })).not.toHaveProperty(
+      "interfaceLanguage",
+    );
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

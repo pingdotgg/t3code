@@ -61,6 +61,14 @@ beforeEach(() => {
 });
 
 describe("restoring V2 settings", () => {
+  it("restores English when interface language is the only changed setting", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, interfaceLanguage: "zh-CN" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+    expect(restore.changedSettingLabels).toEqual(["Interface language"]);
+    await restore.restoreDefaults();
+    expect(state.update.mock.calls[0]?.[0].interfaceLanguage).toBe("en");
+  });
   it.each([
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],

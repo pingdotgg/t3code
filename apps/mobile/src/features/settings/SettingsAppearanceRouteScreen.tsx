@@ -6,12 +6,15 @@ import { CodeAppearanceSection } from "./appearance/sections/CodeAppearanceSecti
 import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppearanceSection";
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
+import { LanguageSettingsSection } from "./components/LanguageSettingsSection";
+import { useTranslation } from "../../i18n";
 
 export function SettingsAppearanceRouteScreen() {
+  const t = useTranslation();
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="Appearance">
+    <SettingsScreen title={t("Appearance")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -21,6 +24,7 @@ export function SettingsAppearanceRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        <LanguageSettingsSection />
         <ThemeAppearanceSection />
         <TextAppearanceSection />
         <TerminalAppearanceSection />

@@ -5,6 +5,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
+import { createTranslator } from "@t3tools/client-runtime/i18n";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -134,6 +135,12 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/general",
+    searchTerms: ["language locale English Chinese 简体中文 中文 汉化 语言"],
+  },
   {
     id: "storage-worktrees",
     title: "Worktree cleanup",
@@ -1033,12 +1040,15 @@ export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean 
  * spread (or pick from) this instead of restating the strings, so the catalog
  * and the rendered settings cannot drift apart.
  */
-export function searchableSetting(id: SettingsSearchItemId): {
+export function searchableSetting(
+  id: SettingsSearchItemId,
+  translate: (message: string) => string = (message) => message,
+): {
   readonly id: string;
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  return { id: anchorId, title: translate(title) };
 }
 
 export function filterAvailableSettingsSearchItems(
@@ -1066,6 +1076,7 @@ export function searchSettings(
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
   const queryTokens = normalizedQuery.split(" ");
+  const chinese = createTranslator("zh-CN");
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
 
   return items
@@ -1077,6 +1088,8 @@ export function searchSettings(
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
+        normalizeSearchText(chinese(item.title)),
+        normalizeSearchText(chinese(SETTINGS_SECTION_LABELS[item.to])),
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];

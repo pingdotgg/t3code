@@ -13,6 +13,21 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 
+describe("Chinese settings search", () => {
+  it("finds the language control by Chinese and English aliases", () => {
+    expect(searchSettings("汉化")[0]?.id).toBe("interface-language");
+    expect(searchSettings("语言")[0]?.id).toBe("interface-language");
+    expect(searchSettings("Interface language")[0]?.id).toBe("interface-language");
+  });
+  it("keeps stable destinations when searching a translated setting", () => {
+    expect(searchSettings("时间格式")[0]).toMatchObject({
+      id: "time-format",
+      to: "/settings/general",
+    });
+    expect(searchSettings("项目排序")[0]?.id).toBe("project-order");
+  });
+});
+
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "word-wrap",

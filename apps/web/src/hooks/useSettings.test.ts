@@ -37,6 +37,25 @@ afterEach(() => {
 });
 
 describe("client settings hydration", () => {
+  it("restores language after reload and persists a switch back to English", async () => {
+    let durable: ClientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      interfaceLanguage: "zh-CN",
+      wordWrap: false,
+    };
+    persistenceMocks.getClientSettings.mockImplementation(async () => durable);
+    persistenceMocks.setClientSettings.mockImplementation(async (settings) => {
+      durable = settings;
+    });
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().interfaceLanguage).toBe("zh-CN");
+    await persistClientSettingsPatch({ interfaceLanguage: "en" });
+    __resetClientSettingsPersistenceForTests();
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().interfaceLanguage).toBe("en");
+    expect(getClientSettings().wordWrap).toBe(false);
+  });
+
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
     timestampFormat: "12-hour" as const,

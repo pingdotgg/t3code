@@ -1,5 +1,18 @@
 # Appearance and themes
 
+## Interface language
+
+Choose **English** or **简体中文** in **Settings → General → Interface language** on web
+and desktop, or **Settings → Appearance → Interface language** on mobile. The choice is
+saved on this device; it does not change connected environments or the language of agent
+messages. Select English to switch back.
+
+English remains the default. Simplified Chinese currently covers General settings and
+settings navigation on web and desktop, and the settings index on mobile. Other screens
+and untranslated messages remain in English.
+
+## Themes
+
 On web and desktop, open **Settings → Appearance** to choose a theme and follow the system
 appearance or stay in light or dark mode. To use different themes for light and dark mode, select
 the corresponding preview within each theme. Appearance preferences are saved separately on each

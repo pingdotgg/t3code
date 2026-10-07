@@ -292,7 +292,14 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+export const InterfaceLanguage = Schema.Literals(["en", "zh-CN"]);
+export type InterfaceLanguage = typeof InterfaceLanguage.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
+  // Opt-in and device-local: upgrading must not change the current interface language.
+  interfaceLanguage: InterfaceLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed("en" as const)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1791,6 +1798,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  interfaceLanguage: Schema.optionalKey(InterfaceLanguage),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
