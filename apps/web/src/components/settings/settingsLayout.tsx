@@ -1,6 +1,8 @@
 import { SettingsGroup } from "./SettingsGroup";
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, isServerSettingManaged } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { primaryServerConfigAtom } from "../../state/server";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
@@ -307,6 +309,18 @@ export function SettingsRow({
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
+  const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
+  // The server already enforces managed values; locking the row keeps the
+  // control from offering an edit that would snap back.
+  const managed =
+    serverScoped &&
+    settingKeys.some((key) =>
+      context
+        ? context.connectedEnvironments.some((environment) =>
+            isServerSettingManaged(environment.serverConfig, [key]),
+          )
+        : isServerSettingManaged(primaryServerConfig, [key]),
+    );
   const unavailable =
     serverScoped &&
     (!canWriteSettings ||
@@ -352,17 +366,18 @@ export function SettingsRow({
       ];
     });
   }, [context, isProjectScope, scopedKeys]);
-  const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
-    source === "project" || source === "mixed" ? (
-      <SettingResetButton
-        label={typeof title === "string" ? title : "override"}
-        tooltip="Reset to inherited value"
-        onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
-      />
-    ) : null
-  ) : (
-    resetAction
-  );
+  const renderedReset =
+    unavailable || managed ? null : isProjectScope && scopedKeys.length > 0 ? (
+      source === "project" || source === "mixed" ? (
+        <SettingResetButton
+          label={typeof title === "string" ? title : "override"}
+          tooltip="Reset to inherited value"
+          onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
+        />
+      ) : null
+    ) : (
+      resetAction
+    );
   const inertControl = (message: string) => (
     <Tooltip>
       <TooltipTrigger
@@ -388,17 +403,19 @@ export function SettingsRow({
   // (the multi-selection inspector convention): the popover shows who has
   // what, and picking a value applies it to every target.
   const renderedControl =
-    unavailable && control
-      ? inertControl(
-          !canWriteSettings
-            ? "This connection does not have permission to change environment settings."
-            : context
-              ? "Reconnect the selected environment to change this setting."
-              : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
-        )
-      : environmentWide && control
-        ? inertControl("Environment-wide setting. Select an environment to change it.")
-        : control;
+    managed && control
+      ? inertControl("Managed by your organization.")
+      : unavailable && control
+        ? inertControl(
+            !canWriteSettings
+              ? "This connection does not have permission to change environment settings."
+              : context
+                ? "Reconnect the selected environment to change this setting."
+                : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+          )
+        : environmentWide && control
+          ? inertControl("Environment-wide setting. Select an environment to change it.")
+          : control;
   // Server rows get an indicator beside the title that opens the resolution
   // chain per target at every scope; client rows keep a plain status only.
   const customized =

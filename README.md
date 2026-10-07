@@ -99,6 +99,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
 - [Run T3 Code as a background service](./docs/user/background-service.md)
+- [Managed settings for organizations](./docs/user/managed-settings.md)
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 

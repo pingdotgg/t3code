@@ -78,7 +78,9 @@ vi.mock("@effect/atom-react", () => ({
 
 vi.mock("../../state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
+  primaryServerConfigAtom: null,
   serverEnvironment: {
+    configValueAtom: () => null,
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,

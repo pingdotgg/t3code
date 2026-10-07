@@ -652,6 +652,12 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
+  /**
+   * Settings key paths an organization policy enforces. `settings` already
+   * holds the enforced values; clients lock these keys instead of offering
+   * edits the server would override. Absent when no policy applies.
+   */
+  managedSettingPaths: Schema.optionalKey(Schema.Array(Schema.Array(Schema.String))),
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
@@ -696,6 +702,22 @@ export const ServerConfig = Schema.Struct({
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
 });
 export type ServerConfig = typeof ServerConfig.Type;
+
+/**
+ * Whether organization policy enforces `path`, a key above it, or a key
+ * beneath it. A row that edits a whole object is locked when any part of that
+ * object is managed.
+ */
+export function isServerSettingManaged(
+  config: Pick<ServerConfig, "managedSettingPaths"> | null | undefined,
+  path: ReadonlyArray<string>,
+): boolean {
+  return (
+    config?.managedSettingPaths?.some((managed) =>
+      managed.slice(0, path.length).every((segment, index) => segment === path[index]),
+    ) ?? false
+  );
+}
 
 /**
  * The machine an environment should be drawn as: the user's pick, else what
