@@ -1212,7 +1212,7 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const refuseStarts = yield* Ref.make(0);
         const generation = yield* Ref.make(0);
-        const registry = ProviderAdapterRegistry.makeLayer([
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CLAUDE_MODEL_SELECTION.instanceId,
             driver: CLAUDE_DRIVER,
@@ -1283,7 +1283,7 @@ describe("orchestration v2 provider switching", () => {
           assert.include(turns[1]?.text, "Request 3");
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "refused-start-keeps-native",
                 runtimePolicyOverride: {
