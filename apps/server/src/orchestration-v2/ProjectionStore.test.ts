@@ -639,6 +639,112 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("carries running background commands older than the snapshot window", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:old-background-command");
+      yield* projectionStore.apply({
+        id: EventId.make("event:old-background-command:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:old-background-command"),
+          title: "Old background command",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const rows = Array.from({ length: 120 }, (_, index) => {
+        const ordinal = index + 1;
+        const status = ordinal === 1 ? "running" : "completed";
+        const item = {
+          id: `item:old-background-command:${ordinal}`,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status,
+          title: null,
+          startedAt: nowIso,
+          completedAt: status === "running" ? null : nowIso,
+          updatedAt: nowIso,
+          type: "command_execution",
+          input: ordinal === 1 ? "vp run dev" : "command",
+          exitCode: status === "running" ? undefined : 0,
+        };
+        return {
+          turn_item_id: item.id,
+          thread_id: threadId,
+          run_id: null,
+          node_id: null,
+          provider_thread_id: null,
+          provider_turn_id: null,
+          parent_item_id: null,
+          ordinal,
+          type: item.type,
+          status,
+          updated_at: nowIso,
+          payload_json: encodeUnknownJsonString(item),
+        };
+      });
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
+      const runningId = "item:old-background-command:1";
+
+      const recent = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 77 });
+      assert.include(
+        recent.projection.turnItems.map((item) => String(item.id)),
+        runningId,
+      );
+      // The command stays in its own place in history, not atop the recent window.
+      assert.notInclude(
+        recent.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        runningId,
+      );
+      const bounded = buildBoundedThreadProjection({
+        projection: recent.projection,
+        snapshotSequence: 0,
+      });
+      assert.include(
+        bounded.projection.turnItems.map((item) => String(item.id)),
+        runningId,
+      );
+
+      const older = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 77,
+        anchorItemId: TurnItemId.make("item:old-background-command:40"),
+      });
+      assert.lengthOf(
+        older.projection.turnItems.filter((item) => String(item.id) === runningId),
+        1,
+      );
+    }),
+  );
+
   it.effect(
     "bounds completed nodes within one long run while preserving ancestry and live work",
     () =>

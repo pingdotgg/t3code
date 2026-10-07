@@ -4881,6 +4881,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
+            // Background work outlives its turn: a dev server started many turns
+            // ago still runs, and Stop finds it in turnItems. Carry the thread's
+            // unfinished background items into the recent window without making
+            // them visible rows; older history pages show them in place.
+            const pendingBackgroundItems =
+              historyAnchor === undefined
+                ? yield* selectShellPendingTurnItemRows([threadId]).pipe(
+                    Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)),
+                  )
+                : [];
+            const loadedItemIds = new Set(projection.turnItems.map((item) => item.id));
+            const missingBackgroundItems = pendingBackgroundItems.filter(
+              (item) => !loadedItemIds.has(item.id),
+            );
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
@@ -4891,7 +4905,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
-              projection,
+              projection:
+                missingBackgroundItems.length === 0
+                  ? projection
+                  : {
+                      ...projection,
+                      turnItems: [...missingBackgroundItems, ...projection.turnItems].toSorted(
+                        (left, right) => left.ordinal - right.ordinal,
+                      ),
+                    },
             };
           }),
         )
