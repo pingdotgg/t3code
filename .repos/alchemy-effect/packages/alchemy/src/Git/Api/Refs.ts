@@ -4,10 +4,10 @@
  * Ref names contain `/`, so the single-ref endpoints address the ref via
  * the `name` query parameter, not a path segment.
  */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as Schema from "effect/Schema";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import {
   ObjectNotFound,
   Oid,

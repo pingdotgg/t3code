@@ -1,0 +1,83 @@
+---
+title: React Router
+description: Package React Router framework-mode SSR and browser assets for Neon Functions.
+sidebar:
+  order: 6
+---
+
+`Neon.Website.ReactRouter` builds a framework-mode React Router app and wraps its
+server handler in a Node 24 Fetch entry. Server and browser output ship together
+in a Neon Function ZIP, not a container or an S3 hosting stack. For a client-only
+React Router SPA, use [Vite](/neon/frontend/vite).
+
+## Prepare the app
+
+Use a framework-mode app or the
+[runnable React Router example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-react-router).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep the `reactRouter()` plugin from `@react-router/dev/vite` in `vite.config.*`
+and your route configuration in the application. No separate listening server
+or deployment adapter is needed in the app.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonReactRouter",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.ReactRouter("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+The framework handler receives SSR, loader, action, and resource-route requests;
+static files are served from the Function artifact. Server loaders/actions can
+read `process.env`; Vite's `VITE_*` values are embedded in the browser build.
+Do not return private tokens from loaders or place them in public-prefixed values.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run separately, destroying when finished. Dev uses React Router's native Vite
+server and HMR, with a local URL and no implicit Neon resources. Append
+`.pipe(Alchemy.remote())` to the Website Effect to opt into live deployment during dev.
+
+Omitting scope creates an Ohio Project on deploy. Pass either `project` or
+`branch` for a shared backend, and choose Ohio when combining with storage. Read
+[scope and credentials](/neon/frontend/vite#scope-and-credentials) before wiring
+backend access.
+
+:::caution[Deployment limits]
+Complete live framework acceptance remains unverified. Neon probes have served
+old code/env after new deployment metadata became active. This constructor does
+not add a CDN or persistent application cache; custom-domain registration is not
+TLS validation. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [ReactRouter API](/providers/neon/website/reactrouter)
+- [Runnable React Router example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-react-router)

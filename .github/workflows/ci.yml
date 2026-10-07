@@ -255,6 +255,9 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
+      - name: Install Chromium for server browser integration tests
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
       - name: Test
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
@@ -296,7 +299,11 @@ jobs:
   transfer-report:
     name: Transfer report artifact
     needs: test_server
-    runs-on: ubuntu-24.04
+    # On Blacksmith like every other job here: the GitHub-hosted queue is shared
+    # with the PR bots and can leave this job waiting until it is abandoned,
+    # which fails `Check` on an otherwise green run.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     steps:
       - name: Require transfer measurements
         uses: actions/download-artifact@v8
@@ -487,6 +494,7 @@ jobs:
         test,
         test_web,
         test_server,
+        transfer-report,
         rust,
         mobile_native_changes,
         mobile_native_static_analysis,

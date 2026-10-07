@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -55,13 +55,24 @@ const ManagedEndpointProvisioningStage = Schema.Literals([
   "mark-allocation-ready",
   "load-allocation",
   "verify-endpoint",
+  "verify-tunnel",
   "sync-origin",
+]);
+
+// Why a stage failed without an underlying error. `claim-lost` means another
+// provision, release, or deprovision changed the allocation's generation or
+// tunnel after this one loaded it.
+const ManagedEndpointProvisioningFailureReason = Schema.Literals([
+  "claim-lost",
+  "endpoint-mismatch",
+  "invalid-tunnel-response",
 ]);
 
 export class ManagedEndpointProvisioningFailed extends Schema.TaggedError<ManagedEndpointProvisioningFailed>()(
   "ManagedEndpointProvisioningFailed",
   {
     stage: ManagedEndpointProvisioningStage,
+    reason: Schema.optionalKey(ManagedEndpointProvisioningFailureReason),
     userId: Schema.String,
     environmentId: Schema.String,
     hostname: Schema.optionalKey(Schema.String),
@@ -183,6 +194,11 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
       readonly expectedStatus?: "inactive" | "down";
+      /**
+       * Record that cleanup removed a legacy host's tunnel, so status tells the
+       * user to update. Other releases leave hosts that recover on their own.
+       */
+      readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider") {}
@@ -193,6 +209,7 @@ export interface ManagedEndpointTunnel {
   readonly status?: string | null;
   readonly createdAt?: string | null;
   readonly connsInactiveAt?: string | null;
+  readonly deletedAt?: string | null;
 }
 
 export interface ManagedEndpointTunnelListRequest {
@@ -385,6 +402,25 @@ export function isManagedEndpointNotFound(cause: unknown): boolean {
   return "cause" in cause && isManagedEndpointNotFound(cause.cause);
 }
 
+/**
+ * Cloudflare refuses to delete a tunnel while a connector is still attached,
+ * either one that has not finished draining or another runtime still serving
+ * the tunnel.
+ */
+export function isManagedEndpointTunnelInUse(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) {
+    return false;
+  }
+  if (
+    "message" in cause &&
+    typeof cause.message === "string" &&
+    cause.message.includes("has active connections")
+  ) {
+    return true;
+  }
+  return "cause" in cause && isManagedEndpointTunnelInUse(cause.cause);
+}
+
 type ManagedEndpointClientError = ManagedEndpointTunnelClientError | ManagedEndpointDnsClientError;
 
 const ignoreNotFound = <A>(
@@ -543,8 +579,33 @@ export const make = Effect.gen(function* () {
         return yield* new ManagedEndpointProvisioningFailed({
           ...input,
           stage: "verify-endpoint",
+          reason: "endpoint-mismatch",
           hostname: allocation.hostname,
         });
+      }
+      // A release keeps the recorded tunnel id, so the record alone cannot
+      // tell a live tunnel from one deleted by a shutdown whose host was
+      // killed before it dropped its config. Ask Cloudflare, or the host
+      // starts a connector that can never connect.
+      const recorded = yield* tunnels.get(input.tunnelId).pipe(
+        Effect.asSome,
+        Effect.catchTags({
+          ManagedEndpointTunnelClientError: (cause) =>
+            isManagedEndpointNotFound(cause.cause)
+              ? Effect.succeedNone
+              : Effect.fail(
+                  new ManagedEndpointProvisioningFailed({
+                    userId: input.userId,
+                    environmentId: input.environmentId,
+                    stage: "verify-tunnel",
+                    tunnelId: input.tunnelId,
+                    cause,
+                  }),
+                ),
+        }),
+      );
+      if (Option.isNone(recorded) || recorded.value.deletedAt) {
+        return "recovery_required";
       }
       if (
         allocation.origin?.localHttpHost === input.origin.localHttpHost &&
@@ -609,6 +670,7 @@ export const make = Effect.gen(function* () {
         return yield* new ManagedEndpointProvisioningFailed({
           ...input,
           stage: "sync-origin",
+          reason: "claim-lost",
         });
       }
       return updated.value === "configured" ? "ready" : "recovery_required";
@@ -777,6 +839,19 @@ export const make = Effect.gen(function* () {
       if (claimedGeneration === null) {
         return false;
       }
+      // After a failed delete: succeed if the tunnel is gone, since the delete
+      // then took effect and only its response was lost; otherwise keep the
+      // delete's error.
+      const confirmTunnelGone = (
+        failure: ManagedEndpointDeprovisioningFailed,
+      ): Effect.Effect<void, ManagedEndpointDeprovisioningFailed> =>
+        tunnels.get(tunnelId).pipe(
+          Effect.andThen(Effect.fail(failure)),
+          Effect.catchTags({
+            ManagedEndpointTunnelClientError: (lookupFailure) =>
+              isManagedEndpointNotFound(lookupFailure.cause) ? Effect.void : Effect.fail(failure),
+          }),
+        );
       const deleteTunnel = ignoreNotFound(tunnels.delete(tunnelId)).pipe(
         Effect.mapError(
           (cause) =>
@@ -846,6 +921,7 @@ export const make = Effect.gen(function* () {
                 environmentId: input.environmentId,
                 tunnelId,
                 generation: claimedGeneration,
+                ...(input.markReleased === true ? { markReleased: true } : {}),
               })
               .pipe(
                 Effect.mapError(
@@ -861,8 +937,25 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            yield* deleteTunnel;
-            return true;
+            // A connector still attached means the tunnel is not released. That
+            // is the same answer as losing the claim: the caller keeps its config,
+            // and the reaper deletes the tunnel once it has been down long enough.
+            // A delete whose response is lost (a timeout) may still have
+            // removed the tunnel. Ask Cloudflare before rolling back: if the
+            // tunnel is gone, the delete happened and the claim, including any
+            // released marker, must commit, since no later sweep can find
+            // this tunnel again to retry.
+            return yield* deleteTunnel.pipe(
+              Effect.as(true),
+              Effect.catchIf(
+                (error) => isManagedEndpointTunnelInUse(error.cause),
+                () => Effect.succeed(false),
+              ),
+              Effect.catchTags({
+                ManagedEndpointDeprovisioningFailed: (failure) =>
+                  confirmTunnelGone(failure).pipe(Effect.as(true)),
+              }),
+            );
           }),
         )
         .pipe(
@@ -910,7 +1003,7 @@ export const make = Effect.gen(function* () {
           ),
         )
         .pipe(
-          Effect.map(Encoding.encodeHex),
+          Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointProvisioningFailed({
@@ -995,6 +1088,7 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "validate-tunnel-response",
+          reason: "invalid-tunnel-response",
           hostname,
           tunnelName,
           ...(tunnelResponse.id ? { returnedTunnelId: tunnelResponse.id } : {}),
@@ -1030,6 +1124,7 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "record-tunnel",
+          reason: "claim-lost",
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
@@ -1090,6 +1185,7 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "configure-tunnel",
+          reason: "claim-lost",
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
@@ -1162,6 +1258,7 @@ export const make = Effect.gen(function* () {
                 userId: input.userId,
                 environmentId: input.environmentId,
                 stage: "record-dns",
+                reason: "claim-lost",
                 hostname,
                 tunnelName,
                 tunnelId: tunnel.id,
@@ -1192,6 +1289,7 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "record-dns",
+          reason: "claim-lost",
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
@@ -1242,6 +1340,7 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "mark-allocation-ready",
+          reason: "claim-lost",
           hostname,
           tunnelName,
           tunnelId: tunnel.id,

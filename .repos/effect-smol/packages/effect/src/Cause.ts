@@ -692,7 +692,7 @@ export const map: {
 export const combine: {
   <E2>(that: Cause<E2>): <E>(self: Cause<E>) => Cause<E | E2>
   <E, E2>(self: Cause<E>, that: Cause<E2>): Cause<E | E2>
-} = effect.causeCombine
+} = core.causeCombine
 
 /**
  * Collapses a `Cause` into a single `unknown` value, picking the "most

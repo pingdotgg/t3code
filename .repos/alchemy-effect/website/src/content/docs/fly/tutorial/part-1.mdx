@@ -1,6 +1,6 @@
 ---
-title: "Part 1: Your First App"
-description: Install Alchemy, create a Stack with a Fly App, and deploy it.
+title: "Part 1: Your First Service"
+description: Install Alchemy, create a Stack, and deploy an Effect HTTP Service to Fly on its own fly.dev hostname.
 sidebar:
   order: 1
 ---
@@ -11,20 +11,25 @@ import { effectVersion } from "../../../../versions";
 
 export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
 
-Install Alchemy and Effect, create a Stack with a Fly App, and
-deploy it. An App is the parent for Machines, Services, Secrets,
-and disks.
+Install Alchemy and Effect, create a Stack, and deploy a
+`Fly.Service`: an Effect program running in a Fly Machine. The
+Service creates its own Fly App, so it gets its own public
+`https://{name}.fly.dev` URL. Alchemy bundles it, builds a Docker
+image, and pushes it to `registry.fly.io`. No Dockerfile. No
+`fly.toml`.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 22+
 - A Fly organization and an API token — see [Setup](/fly/setup) if
   you haven't created those yet
+- Docker running locally. Alchemy builds `linux/amd64` images and
+  pushes them with an App deploy token.
 
 :::note[Costs]
-A Fly App is free. Compute (Machines / Services) is billed by the
-second starting in [Part 2](/fly/tutorial/part-2). `alchemy destroy`
-tears everything down when you're done.
+The Service's App and addresses are free. Its Machine (shared-cpu,
+256 MB) is billed by the second. `alchemy destroy` tears everything
+down when you're done.
 :::
 
 ## Create a project
@@ -125,19 +130,79 @@ team and CI can share, swap in `Cloudflare.state()` or `AWS.state()`
 — see [State Store](/state-store).
 :::
 
-## Add an App
+## Create the Service file
 
-Resources represent cloud infrastructure. Each resource is
-`yield*`-ed inside the Stack's Effect generator.
+A Service in Alchemy is a class — it has both an infrastructure
+definition and a runtime implementation expressed as an Effect.
+Create `src/api.ts` with the smallest possible declaration:
 
-Let's declare a Fly App and observe the type error:
+```typescript
+// src/api.ts
+import * as Fly from "alchemy/Fly";
+import * as Effect from "effect/Effect";
+
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The `<Api>` type argument plus the empty `()` is a one-time bit of
+ceremony — it lets TypeScript reason about `Api` as a typed handle.
+`main: import.meta.url` tells Alchemy this same file is the bundle
+entrypoint. The Service creates and manages its own Fly App; you
+don't declare one.
+
+## Serve HTTP with `fetch`
+
+Add a `fetch` field — Alchemy treats anything returned from the
+`Effect.gen` block as the runtime API, and `fetch` specifically is
+wired to an HTTP server listening on the Service's port:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Fly from "alchemy/Fly";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("Hello from Fly!")),
++    };
+  }),
+) {}
+```
+
+`HttpServerResponse` is the same `effect/http` API used on
+every other Alchemy runtime — the handler you write here would run
+unchanged on Cloudflare Workers or AWS Lambda.
+
+:::note
+Notice the "Effect returning an Effect" pattern. The outer generator
+is the **Construction phase** — it runs at deploy time and at process
+startup. The inner `fetch` generator is the **Runtime phase** — it
+runs per request.
+:::
+
+## Add the Service to the Stack
+
+The `Api` class is just a typed identifier — yielding it inside the
+Stack's Effect is what registers the resource. Yield it and observe
+the type error:
 
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-+import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
++import Api from "./src/api.ts";
 
 export default Alchemy.Stack(
   "MyApp",
@@ -148,17 +213,14 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-+    const site = yield* Fly.App("Site");
+-    // we'll add resources here next
++    const api = yield* Api;
   }),
 );
 ```
 
-Omit `name` and Alchemy generates a globally unique, DNS-safe App
-name (max 30 characters, leading letter). The org defaults to
-whatever org your token belongs to.
-
 TypeScript is telling us that `Layer.empty` doesn't provide
-`Fly.Providers` — the layer required by `App`.
+`Fly.Providers` — the layer required by `Service`.
 
 ## Fix the Providers
 
@@ -168,9 +230,10 @@ error:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
++import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 -import * as Layer from "effect/Layer";
+import Api from "./src/api.ts";
 
 export default Alchemy.Stack(
   "MyApp",
@@ -179,7 +242,7 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const site = yield* Fly.App("Site");
+    const api = yield* Api;
   }),
 );
 ```
@@ -190,26 +253,28 @@ forget to wire it up.
 
 ## Return Stack outputs
 
-Stack outputs let you see important values after a deploy. Return an
-object from the generator to expose the App's name and public URL:
+Stack outputs let you see important values after a deploy. Return the
+Service's App name and public URL:
 
-```typescript
-  Effect.gen(function* () {
-    const site = yield* Fly.App("Site");
-
-    return {
-      appName: site.appName,
-      url: site.url,
-    };
-  }),
+```diff lang="typescript"
+Effect.gen(function* () {
+  const api = yield* Api;
++
++  return {
++    appName: api.appName,
++    url: api.url,
++  };
+}),
 ```
 
-`url` is `https://{appName}.fly.dev`. Nothing is listening there yet
-— that's [Part 2](/fly/tutorial/part-2).
+Omit `name` and Alchemy generates a globally unique, DNS-safe App
+name from the stack, stage, and logical ID. A Service is public by
+default: Alchemy allocates a free shared IPv4 and IPv6 on its App,
+and `url` is `https://{appName}.fly.dev`.
 
 ## Deploy
 
-Run `alchemy deploy` to create the App:
+Run `alchemy deploy`:
 
 <Tabs syncKey="pkgManager">
   <TabItem label="bun" icon="bun">
@@ -233,30 +298,40 @@ is verified and saved to your **`default`**
 
 <Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
 
-[g]+[/g] [b]Site[/b] [d](Fly.App)[/d]
+[g]+[/g] [b]Api[/b] [d](Fly.Service)[/d]
 
 Proceed?
 ◉ Yes ○ No
-[g]✓[/g] [b]Site[/b] [d](Fly.App)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](Fly.Service)[/d] [g]created[/g]
 {
-[s2]appName: "myapp-site-dev-a1b2c3d4",
-[s2]url: "https://myapp-site-dev-a1b2c3d4.fly.dev",
+[s2]appName: "myapp-api-dev-a1b2c3d4",
+[s2]url: "https://myapp-api-dev-a1b2c3d4.fly.dev",
 }`} />
 
-Alchemy shows a plan, asks for confirmation, creates the App, and
-prints the stack outputs.
+Alchemy created the Service's App and its addresses, bundled
+`src/api.ts` with Rolldown, built a `linux/amd64` image, and pushed
+it to `registry.fly.io/{app}:{id}-{hash}`. It then created a Machine
+in `iad`, waited until it was `started`, and pointed the Fly proxy
+at the Service's port.
+
+## Try it out
+
+```sh
+curl https://myapp-api-dev-a1b2c3d4.fly.dev
+# → Hello from Fly!
+```
 
 ## Verify it worked
 
 The App is listed in your org in the
 [Fly dashboard](https://fly.io/dashboard). Run `alchemy deploy`
-again. Because nothing changed, the App shows as a no-op:
+again. Because nothing changed, the Service shows as a no-op:
 
 <Terminal content={`[u]Plan[/u]: [d]no changes[/d]
 
 {
-[s2]appName: "myapp-site-dev-a1b2c3d4",
-[s2]url: "https://myapp-site-dev-a1b2c3d4.fly.dev",
+[s2]appName: "myapp-api-dev-a1b2c3d4",
+[s2]url: "https://myapp-api-dev-a1b2c3d4.fly.dev",
 }`} />
 
 This is the core loop — declare resources in code, deploy, and
@@ -266,9 +341,9 @@ Alchemy figures out what changed.
 
 You now have:
 
-- An `alchemy.run.ts` with a Stack and a Fly App
-- A live App in your org with a generated globally unique name
-- Stack outputs showing `appName` and `https://{appName}.fly.dev`
+- An `alchemy.run.ts` with a Stack and a `Fly.Service`
+- A live Service in its own App with a generated globally unique name
+- A public `https://{appName}.fly.dev` URL answering HTTP
 
-In [Part 2](/fly/tutorial/part-2), you'll deploy code to this App —
-a `Fly.Service` that bundles an Effect HTTP handler into a Machine.
+In [Part 2](/fly/tutorial/part-2), you'll pin the Service's region
+and port, add a health route, and ship a code change.

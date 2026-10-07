@@ -443,6 +443,7 @@ export type TerminalConfiguration = Resource<
  * ```
  *
  * @resource
+ * @product Terminal
  */
 export const TerminalConfiguration = Resource<TerminalConfiguration>(
   "Stripe.TerminalConfiguration",

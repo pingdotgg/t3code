@@ -26,7 +26,7 @@ test.provider(
         );
       expect(result).toBe("not-found");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:bedrock", "live"], timeout: 60_000 },
 );
 
 test.provider(
@@ -46,7 +46,7 @@ test.provider(
         );
       expect(result).toBe("not-found");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:bedrock", "live"], timeout: 60_000 },
 );
 
 test.provider(
@@ -61,7 +61,7 @@ test.provider(
       );
       expect(result).toBe("not-found");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:bedrock", "live"], timeout: 60_000 },
 );
 
 test.provider(
@@ -83,7 +83,7 @@ test.provider(
         );
       expect(result).toBe("not-found");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:bedrock", "live"], timeout: 60_000 },
 );
 
 test.provider(
@@ -105,5 +105,5 @@ test.provider(
         );
       expect(result).toBe("not-found");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:bedrock", "live"], timeout: 60_000 },
 );

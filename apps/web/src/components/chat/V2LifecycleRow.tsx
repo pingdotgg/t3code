@@ -15,7 +15,9 @@ import { Fragment } from "react";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  type OrchestrationV2Notification,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Subagent,
   type ProviderInstanceId,
   type ServerProvider,
   type ThreadId,
@@ -211,11 +213,14 @@ export function V2LifecycleRow(props: {
       <SubagentTimelineLink
         parentRef={scopeThreadRef(props.environmentId, item.threadId)}
         subagentId={item.subagentId}
+        providerInstanceId={item.providerInstanceId}
+        origin={item.origin}
         status={item.status}
         driver={item.driver}
         provider={props.providerStatuses.find(
           (provider) => provider.instanceId === item.providerInstanceId,
         )}
+        providers={props.providerStatuses}
         title={formatSubagentDisplayTitle(item.title ?? "Subagent")}
         result={item.result}
         progress={item.progress}
@@ -326,11 +331,80 @@ export function SubagentAvatar({
   );
 }
 
+/** The status a notification reported, frozen at the time it arrived. */
+const NOTIFICATION_OUTCOME_STATUS: Record<
+  OrchestrationV2Notification["outcome"],
+  OrchestrationV2TurnItem["status"] | null
+> = {
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  updated: null,
+  unknown: null,
+};
+
+const NOTIFICATION_OUTCOME_LABEL: Record<OrchestrationV2Notification["outcome"], string> = {
+  completed: "Finished",
+  failed: "Failed",
+  cancelled: "Stopped",
+  updated: "Updated",
+  unknown: "Finished",
+};
+
+/** A notification about one subagent, drawn as that subagent's card. Renders `fallback` when the parent has no record of it. */
+export function SubagentNotificationLink(props: {
+  readonly parentRef: ScopedThreadRef;
+  readonly childThreadId: ThreadId;
+  readonly outcome: OrchestrationV2Notification["outcome"];
+  readonly createdAt: string;
+  readonly timestampFormat: TimestampFormat;
+  readonly providerStatuses: ReadonlyArray<ServerProvider>;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly fallback: ReactNode;
+}) {
+  const agent = useAtomValue(
+    environmentThreadDetails.threadAtom(props.parentRef),
+    (thread) =>
+      thread?.projection.subagents.find((agent) => agent.childThreadId === props.childThreadId) ??
+      null,
+  );
+  if (agent === null) return props.fallback;
+  return (
+    <SubagentTimelineLink
+      parentRef={props.parentRef}
+      subagentId={agent.id}
+      providerInstanceId={agent.providerInstanceId}
+      origin={agent.origin}
+      status={agent.status}
+      driver={agent.driver}
+      provider={props.providerStatuses.find(
+        (provider) => provider.instanceId === agent.providerInstanceId,
+      )}
+      providers={props.providerStatuses}
+      title={formatSubagentDisplayTitle(agent.title ?? "Subagent")}
+      result={agent.result}
+      progress={agent.progress}
+      startedAt={agent.startedAt}
+      completedAt={agent.completedAt}
+      threadId={props.childThreadId}
+      onOpenThread={props.onOpenThread}
+      event={{
+        status: NOTIFICATION_OUTCOME_STATUS[props.outcome],
+        label: NOTIFICATION_OUTCOME_LABEL[props.outcome],
+        timestamp: formatShortTimestamp(props.createdAt, props.timestampFormat),
+      }}
+    />
+  );
+}
+
 function SubagentTimelineLink(props: {
   readonly parentRef: ScopedThreadRef;
   readonly subagentId: NodeId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly origin: OrchestrationV2Subagent["origin"];
   readonly driver: ProviderDriverKind;
   readonly provider: ServerProvider | undefined;
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly title: string;
   readonly result: string | null;
   readonly progress: string | undefined;
@@ -339,35 +413,46 @@ function SubagentTimelineLink(props: {
   readonly completedAt: DateTime.Utc | null;
   readonly threadId: ThreadId | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Draws a past event about the subagent: its status then, and when it happened instead of elapsed time. */
+  readonly event?: {
+    readonly status: OrchestrationV2TurnItem["status"] | null;
+    readonly label: string;
+    readonly timestamp: string;
+  };
 }) {
   const agent = useAtomValue(
     environmentThreadDetails.threadAtom(props.parentRef),
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
   );
   const threadId = props.threadId;
-  const status = agent?.status ?? props.status;
-  const statusLabel = subagentStatusVisual(status).label;
+  const liveStatus = agent?.status ?? props.status;
+  const status = props.event ? props.event.status : liveStatus;
+  const statusLabel = props.event?.label ?? subagentStatusVisual(liveStatus).label;
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
-  const settled = SETTLED_SUBAGENT_STATUSES.has(status);
+  const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
   const rawDetail = settled ? result || progress : progress || result;
   const detail =
     rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
   const failed = status === "failed";
   const timing = {
-    status,
+    status: liveStatus,
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
   const content = (
     <>
-      <SubagentAvatar driver={props.driver} provider={props.provider} status={status} />
+      <SubagentAvatar
+        driver={props.driver}
+        provider={props.provider}
+        status={status ?? undefined}
+      />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 truncate text-xs font-medium text-foreground">
             {props.title}
           </span>
-          {detail !== null && status !== "completed" ? (
+          {detail !== null && (props.event !== undefined || status !== "completed") ? (
             <span
               className={cn(
                 "shrink-0 text-3xs",
@@ -393,8 +478,8 @@ function SubagentTimelineLink(props: {
           )}
         </span>
       </span>
-      <span className="shrink-0 font-mono text-3xs text-muted-foreground/80">
-        <SubagentElapsed agent={timing} />
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
       {threadId !== null ? (
         <ChevronRightIcon
@@ -437,7 +522,7 @@ function SubagentTimelineLink(props: {
           {...props}
           elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
           model={agent?.model ?? null}
-          status={status}
+          status={liveStatus}
           result={agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
         />
@@ -462,7 +547,10 @@ function SubagentTimelineTooltip(
     <SubagentTooltipContent
       title={formatSubagentDisplayTitle(child?.title ?? props.title)}
       model={props.model}
+      providerInstanceId={props.providerInstanceId}
+      origin={props.origin}
       provider={props.provider}
+      providers={props.providers}
       driver={props.driver}
       elapsed={props.elapsed}
       status={props.status}

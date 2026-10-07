@@ -16,6 +16,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
+  threadHtmlRenderAttachmentIds,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
@@ -217,5 +218,49 @@ describe("attachmentStore", () => {
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("threadHtmlRenderAttachmentIds", () => {
+  it("returns pages this thread published and skips other threads' and failed calls", () => {
+    const own = createAttachmentId("thread-a", "html")!;
+    const other = createAttachmentId("thread-b", "html")!;
+    const render = (attachmentId: string, extra = {}) => ({
+      toolName: "mcp__t3-code__html_render",
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({ htmlRender: { attachmentId, title: "x", height: 300 }, ...extra }),
+        },
+      ],
+    });
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        render(own),
+        render(other),
+        render(createAttachmentId("thread-a", "html")!, { isError: true }),
+        { toolName: "mcp__t3-code__html_preview", output: render(own).output },
+      ]),
+    ).toEqual([own]);
+  });
+
+  it("includes captured MCP App documents from any tool", () => {
+    const app = createAttachmentId("thread-a", "html")!;
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        {
+          toolName: "weather.get_weather",
+          output: {
+            t3McpApp: {
+              attachmentId: app,
+              server: "weather",
+              tool: "get_weather",
+              resourceUri: "ui://weather/dashboard",
+            },
+            result: { content: [] },
+          },
+        },
+      ]),
+    ).toEqual([app]);
   });
 });

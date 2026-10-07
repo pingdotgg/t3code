@@ -1,3 +1,4 @@
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -19,6 +20,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -105,10 +107,15 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
+/**
+ * A merged or closed pull request settles the thread unless the user wrote to
+ * it afterwards. Runs that background work, a PR watch, or another agent
+ * started do not count, so they cannot hold a merged thread open.
+ */
 function pullRequestSettles(
   thread: Pick<
-    OrchestrationV2ThreadShell,
-    "createdAt" | "latestUserMessageAt" | "latestRunRequestedAt"
+    ProjectionStore.ProjectionSettlementCandidate,
+    "createdAt" | "latestUserAuthoredMessageAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -120,8 +127,7 @@ function pullRequestSettles(
   if (terminalAt == null) return false;
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
-    toMillis(thread.latestUserMessageAt),
-    toMillis(thread.latestRunRequestedAt),
+    toMillis(thread.latestUserAuthoredMessageAt),
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
@@ -131,16 +137,17 @@ function pullRequestSettles(
 
 /** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(
-  thread: ProjectionStore.ProjectionSettlementCandidate,
+  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
-  // A live run — or post-settlement background work — is not staleness.
+  // A live run, or background work that will wake the agent, is not
+  // staleness. A dev server left running is: the agent is done.
   if (thread.activityRunStatus != null) return false;
-  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) return false;
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
@@ -154,6 +161,39 @@ export function isAutoSettlementCandidate(
   const wokeOnCompletion =
     snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
   return wokeOnError || wokeOnCompletion;
+}
+
+/**
+ * Whether a thread is parked on its snooze: its wake time is in the future and
+ * it has not raised its hand with a pending request, a fresh failure, or work
+ * that completed after the snooze. Server twin of the client's
+ * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
+ * difference: a failure counts as fresh when its run completed after the
+ * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
+ * update time, so a rename can wake a failed thread there but not here.
+ */
+export function isSnoozed(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt" | "status" | "pendingRuntimeRequest"
+  >,
+  nowMs: number,
+): boolean {
+  const snoozedUntilMs = toMillis(thread.snoozedUntil);
+  if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
+  if (thread.pendingRuntimeRequest !== null) return false;
+  const snoozedAtMs = toMillis(thread.snoozedAt);
+  const completedAtMs = toMillis(thread.latestRunCompletedAt);
+  const wokeOnError =
+    thread.status === "failed" &&
+    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
+  // Like the client, only a run that completed wakes it; an interrupt or cancel does not.
+  const wokeOnCompletion =
+    thread.status === "completed" &&
+    snoozedAtMs !== null &&
+    completedAtMs !== null &&
+    completedAtMs > snoozedAtMs;
+  return !wokeOnError && !wokeOnCompletion;
 }
 
 export function resolveAutoSettlementAt(input: {
@@ -259,6 +299,10 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const terminals = yield* TerminalManager.TerminalManager;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  // Settling a settled thread re-emits thread.settled with the same settledAt,
+  // so this keeps the settle action to one run per settlement.
+  const settleActionRunAt = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -508,20 +552,43 @@ export const make = Effect.gen(function* () {
 
   // Settling closes the thread's shells that sit at an idle prompt, so they stop
   // holding the worktree. A terminal running a command (a dev server, an
-  // editor) stays for the user to close.
-  const closeIdleTerminals = Effect.fn("ThreadSettlementServiceV2.closeIdleTerminals")(
+  // editor) stays for the user to close. Then the project's settle script runs
+  // in the thread's own worktree; a thread in the shared checkout skips it,
+  // because other threads may still be working there.
+  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       // A thread re-engaged before this event ran keeps its shells.
+      const settled = yield* projections.getThread(threadId);
+      if (settled.settledOverride !== "settled") return;
+      yield* terminals.closeIdle({ threadId });
+      const worktreePath = settled.worktreePath;
+      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      // Closing and the worktree check wait on I/O. A thread re-engaged
+      // meanwhile is working again, so its worktree is no place for cleanup.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
-      yield* terminals.closeIdle({ threadId });
+      const settledAtMs = toMillis(thread.settledAt);
+      if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      const run = yield* projectScripts.runForThread({
+        threadId,
+        projectId: thread.projectId,
+        worktreePath,
+        trigger: "settle",
+        // A clean exit closes the script's shell so it does not hold the worktree.
+        observeCompletion: {},
+      });
+      // Recorded after a successful start, so a failed start retries on the next event.
+      settleActionRunAt.set(threadId, settledAtMs);
+      if (run.status === "started" && run.completion) {
+        yield* run.completion.pipe(Effect.forkDetach);
+      }
     },
     (effect, threadId) =>
       effect.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
-            : Effect.logWarning("closing idle terminals after settlement failed", {
+            : Effect.logWarning("cleaning up a settled thread failed", {
                 threadId,
                 cause: Cause.pretty(cause),
               }),
@@ -532,7 +599,7 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return closeIdleTerminals(event.threadId);
+        return cleanUpSettledThread(event.threadId);
       case "thread.pull-request-synced":
       case "provider-session.detached":
         return worker.enqueue(event.threadId);

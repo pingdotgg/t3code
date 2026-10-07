@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "alchemy.run.ts",
+    "src/**/*.ts",
+    "src/prisma/generated/contract.json",
+    "test/**/*.ts"
+  ],
+  "exclude": [
+    // Prisma migration packages are self-emitting Node scripts whose
+    // snapshot imports only resolve under Prisma's own toolchain.
+    "migrations",
+    // Loaded by the prisma CLI, which resolves its own toolchain types.
+    // Their inferred types name types this project cannot reference
+    // portably (TS2883); the app only consumes the emitted contract.d.ts.
+    "prisma.config.ts",
+    "src/prisma/contract.ts"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext"
+  },
+  "references": [
+    {
+      "path": "../../packages/alchemy/tsconfig.json"
+    }
+  ]
+}

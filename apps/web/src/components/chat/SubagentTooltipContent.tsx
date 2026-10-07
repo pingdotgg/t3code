@@ -1,12 +1,18 @@
 import type {
   OrchestrationV2ThreadShell,
+  OrchestrationV2TurnItemStatus,
   OrchestrationProjectShell,
   ServerProvider,
   ProviderDriverKind,
+  ProviderInstanceId,
+  OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import { fileBasename } from "@t3tools/client-runtime/markdown-links";
-import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { getTriggerDisplayModelName } from "./providerIconUtils";
+import {
+  resolveSubagentMetadata,
+  subagentDetailPreview,
+} from "@t3tools/client-runtime/state/subagent-display";
+import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
+import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
 import {
   BotIcon,
@@ -21,61 +27,88 @@ import { ThreadHoverCard } from "../ThreadHoverCard";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
+import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
 /** Geometry and preview limits stay identical in lineage and timeline tooltips. */
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
+  providerInstanceId: ProviderInstanceId;
+  origin: OrchestrationV2Subagent["origin"];
   provider?: ServerProvider | undefined;
+  /** The environment's instances; with several accounts on one provider, the card names this one. */
+  providers?: ReadonlyArray<ServerProvider> | undefined;
   driver?: ProviderDriverKind | undefined;
   elapsed?: ReactNode;
   parentThread?: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath"> | undefined;
-  childThread?: Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath"> | undefined;
+  childThread?:
+    | Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath" | "modelSelection">
+    | undefined;
   parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | undefined;
   childProject?: Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot"> | undefined;
-  status: string;
+  status: OrchestrationV2TurnItemStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
+  const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
+  const preview = subagentDetailPreview(props);
   const model = props.model?.trim();
   const modelSlug = props.provider
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
     : model;
   const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
-  const modelLabel = providerModel
-    ? getTriggerDisplayModelName(providerModel)
-    : model
-      ? formatModelSlugName(model)
-      : "Not reported";
-  const currentWorkspace = props.parentThread?.worktreePath ?? props.parentProject?.workspaceRoot;
-  const childWorkspace = props.childThread?.worktreePath ?? props.childProject?.workspaceRoot;
-  const metadata = [
-    ...(props.parentThread &&
-    props.childProject &&
-    props.childProject.id !== props.parentThread.projectId
-      ? [{ label: "Project", value: props.childProject.title }]
-      : []),
-    ...(currentWorkspace && childWorkspace && currentWorkspace !== childWorkspace
-      ? [
-          {
-            label: props.childThread?.branch
-              ? "Branch"
-              : props.childThread?.worktreePath
-                ? "Worktree"
-                : "Workspace",
-            value: props.childThread?.branch ?? fileBasename(childWorkspace),
-          },
-        ]
-      : []),
-  ];
-  const settled = ["completed", "failed", "cancelled", "interrupted"].includes(props.status);
-  const result = props.result?.trim();
-  const progress = props.progress?.trim();
-  const detail = (settled ? result || progress : progress || result) || "";
-  const compactDetail = detail.trim().replace(/\s+/g, " ");
-  const preview =
-    compactDetail.length > 280 ? `${compactDetail.slice(0, 280).trimEnd()}…` : compactDetail;
+  const childSelection = props.childThread?.modelSelection;
+  const childModel = props.provider
+    ? (resolveSelectableModel(
+        props.provider.driver,
+        childSelection?.model,
+        props.provider.models,
+      ) ?? childSelection?.model.trim())
+    : childSelection?.model.trim();
+  const provider = props.provider;
+  const matchingSelection =
+    props.origin === "app_owned" &&
+    childModel === (modelSlug ?? model) &&
+    childSelection?.instanceId === props.providerInstanceId
+      ? childSelection
+      : undefined;
+  const effort = ["reasoningEffort", "effort", "reasoning", "variant"]
+    .map((id) => getModelSelectionStringOptionValue(matchingSelection, id))
+    .find(Boolean);
+  const speed = provider
+    ? providerModel?.capabilities?.optionDescriptors
+        ?.map((descriptor) => {
+          const saved = matchingSelection?.options?.find((option) => option.id === descriptor.id);
+          if (
+            descriptor.id === "fastMode" &&
+            descriptor.type === "boolean" &&
+            typeof saved?.value === "boolean"
+          ) {
+            return getTraitsSpeedDisplay(provider.driver, {
+              ...descriptor,
+              currentValue: saved.value,
+            });
+          }
+          if (
+            provider.driver === "codex" &&
+            descriptor.id === "serviceTier" &&
+            descriptor.type === "select" &&
+            typeof saved?.value === "string" &&
+            descriptor.options.some((option) => option.id === saved.value)
+          ) {
+            return getTraitsSpeedDisplay(provider.driver, {
+              ...descriptor,
+              currentValue: saved.value,
+            });
+          }
+          return null;
+        })
+        .find(Boolean)
+    : undefined;
   const driver = props.provider?.driver ?? props.driver;
+  const entries = deriveProviderInstanceEntries(props.providers ?? []);
+  const entry = entries.find((candidate) => candidate.instanceId === props.provider?.instanceId);
+  const showInstanceBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
   const working = ["running", "in_progress", "pending", "waiting"].includes(props.status);
   const failed = ["failed", "error"].includes(props.status);
   const StatusIcon = working
@@ -91,14 +124,32 @@ export function SubagentTooltipContent(props: {
         {driver ? (
           <ProviderInstanceIcon
             driverKind={driver}
-            displayName={props.provider?.displayName ?? driver}
+            displayName={entry?.displayName ?? props.provider?.displayName ?? driver}
+            accentColor={entry?.accentColor}
             acpRegistryIconUrl={props.provider?.iconUrl}
+            // Same treatment as the sidebar card: accent dot, account in the label.
+            showBadge={showInstanceBadge && entry?.accentColor !== undefined}
+            badgeContent="none"
+            badgeClassName="h-2 min-w-2 px-0"
             iconClassName="size-3 shrink-0 grayscale opacity-60"
           />
         ) : (
           <BotIcon className="size-3 shrink-0" />
         )}
-        <span className="min-w-0 truncate text-foreground/75">{modelLabel}</span>
+        <span className="inline-flex min-w-0 items-center gap-1 text-foreground/75">
+          <span className="min-w-0 truncate">
+            {showInstanceBadge ? `${modelLabel} · ${entry.displayName}` : modelLabel}
+          </span>
+          {effort || speed?.speedIcon ? (
+            <span className="inline-flex shrink-0 items-center gap-1">
+              {effort ? " · " : null}
+              {speed?.speedIcon && provider ? (
+                <TraitsSpeedIcon provider={provider.driver} speedIcon={speed.speedIcon} size="xs" />
+              ) : null}
+              {effort}
+            </span>
+          ) : null}
+        </span>
       </div>
       <div className="flex min-w-0 items-center justify-between gap-4">
         <span

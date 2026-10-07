@@ -1,6 +1,7 @@
 import { RailwayAuth } from "@/Railway/AuthProvider.ts";
 import { fromAuthProvider } from "@/Railway/Credentials.ts";
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { GraphQLLive, Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Alchemy from "@/index.ts";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
@@ -13,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import MySQLApi, { Db, Site } from "./fixtures/mysql-api.ts";
 
 const { test } = Test.make({
@@ -27,7 +28,12 @@ const logLevel = Effect.provideService(
 
 const distilled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(fromAuthProvider().pipe(Layer.provide(RailwayAuth))),
+    Effect.provide(
+      Layer.merge(
+        GraphQLLive,
+        fromAuthProvider().pipe(Layer.provide(RailwayAuth)),
+      ),
+    ),
   );
 
 const firstOk = (rows: unknown): unknown => {
@@ -60,6 +66,64 @@ const selectOne = (url: string) =>
     // and six seconds of backoff; cleanup never waits on a stuck server.
   }).pipe(Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 3 }));
 
+const readVariables = Query.fn(
+  (projectId: string, environmentId: string, serviceId: string) =>
+    RailwayApi.variables({
+      projectId,
+      environmentId,
+      serviceId,
+      unrendered: true,
+    }),
+);
+
+const readServiceDeletedAt = Query.fn((id: string) => ({
+  deletedAt: RailwayApi.service({ id }).deletedAt,
+}));
+
+const readService = Query.fn((id: string) => {
+  const service = RailwayApi.service({ id });
+  return {
+    id: service.id,
+    name: service.name,
+    projectId: service.projectId,
+    deletedAt: service.deletedAt,
+  };
+});
+
+const readServiceInstance = Query.fn(
+  (environmentId: string, serviceId: string) => {
+    const instance = RailwayApi.serviceInstance({ environmentId, serviceId });
+    return {
+      serviceId: instance.serviceId,
+      image: instance.source.image,
+      startCommand: instance.startCommand,
+    };
+  },
+);
+
+const readVolumeInstance = Query.fn((id: string) => {
+  const volume = RailwayApi.volumeInstance({ id });
+  return {
+    id: volume.id,
+    volumeId: volume.volumeId,
+    mountPath: volume.mountPath,
+    serviceId: volume.serviceId,
+  };
+});
+
+const readTcpProxies = Query.fn((environmentId: string, serviceId: string) =>
+  RailwayApi.tcpProxies({ environmentId, serviceId }).pipe(
+    Query.map((proxy) => ({
+      id: proxy.id,
+      domain: proxy.domain,
+      proxyPort: proxy.proxyPort,
+      applicationPort: proxy.applicationPort,
+      deletedAt: proxy.deletedAt,
+      syncStatus: proxy.syncStatus,
+    })),
+  ),
+);
+
 const asVariableMap = (value: unknown): Record<string, string> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -78,28 +142,19 @@ const readServiceVariables = (
   environmentId: string,
   serviceId: string,
 ) =>
-  railway
-    .variables({
-      projectId,
-      environmentId,
-      serviceId,
-      unrendered: true,
-    })
-    .pipe(
-      Effect.map(asVariableMap),
-      railway.catchTags(["RailwayNotFound"], () =>
-        Effect.succeed({} as Record<string, string>),
-      ),
-    );
+  readVariables(projectId, environmentId, serviceId).pipe(
+    Effect.map(asVariableMap),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed({} as Record<string, string>),
+    ),
+  );
 
 const waitUntilServiceGone = (serviceId: string) =>
-  railway.service({ id: serviceId }, { deletedAt: true }).pipe(
+  readServiceDeletedAt(serviceId).pipe(
     Effect.map((service) =>
       service.deletedAt != null ? ("gone" as const) : ("found" as const),
     ),
-    railway.catchTags(["RailwayNotFound"], () =>
-      Effect.succeed("gone" as const),
-    ),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
       schedule: Schedule.spaced("1 second"),
       until: (status) => status === "gone",
@@ -181,52 +236,31 @@ test.provider(
         created.db.publicConnectionUri.includes(created.db.tcpProxyDomain!),
       ).toEqual(true);
 
-      const fetched = yield* railway.service(
-        { id: created.db.serviceId },
-        { id: true, name: true, projectId: true, deletedAt: true },
-      );
+      const fetched = yield* readService(created.db.serviceId);
       expect(fetched.id).toEqual(created.db.serviceId);
       expect(fetched.name).toEqual(created.db.name);
       expect(fetched.projectId).toEqual(created.db.projectId);
       expect(fetched.deletedAt).toBeNull();
 
-      const instance = yield* railway.serviceInstance(
-        {
-          environmentId: created.db.environmentId,
-          serviceId: created.db.serviceId,
-        },
-        { serviceId: true, source: { image: true }, startCommand: true },
+      const instance = yield* readServiceInstance(
+        created.db.environmentId,
+        created.db.serviceId,
       );
       expect(instance.serviceId).toEqual(created.db.serviceId);
-      expect(instance.source?.image).toEqual(expect.stringContaining("mysql"));
+      expect(instance.image).toEqual(expect.stringContaining("mysql"));
       expect(instance.startCommand).toEqual(
         Railway.DEFAULT_MYSQL_START_COMMAND,
       );
 
-      const volume = yield* railway.volumeInstance(
-        {
-          id: created.db.volumeInstanceId,
-        },
-        { id: true, volumeId: true, mountPath: true, serviceId: true },
-      );
+      const volume = yield* readVolumeInstance(created.db.volumeInstanceId);
       expect(volume.id).toEqual(created.db.volumeInstanceId);
       expect(volume.volumeId).toEqual(created.db.volumeId);
       expect(volume.mountPath).toEqual("/var/lib/mysql");
       expect(volume.serviceId).toEqual(created.db.serviceId);
 
-      const proxies = yield* railway.tcpProxies(
-        {
-          environmentId: created.db.environmentId,
-          serviceId: created.db.serviceId,
-        },
-        {
-          id: true,
-          domain: true,
-          proxyPort: true,
-          applicationPort: true,
-          deletedAt: true,
-          syncStatus: true,
-        },
+      const proxies = yield* readTcpProxies(
+        created.db.environmentId,
+        created.db.serviceId,
       );
       const liveProxy = proxies.find(
         (proxy) => proxy.deletedAt == null && proxy.syncStatus !== "DELETED",
@@ -292,12 +326,7 @@ test.provider(
         updated.db.connectionUri.includes(`${nextName}.railway.internal`),
       ).toEqual(true);
 
-      const fetchedUpdate = yield* railway.service(
-        {
-          id: updated.db.serviceId,
-        },
-        { id: true, name: true },
-      );
+      const fetchedUpdate = yield* readService(updated.db.serviceId);
       expect(fetchedUpdate.id).toEqual(updated.db.serviceId);
       expect(fetchedUpdate.name).toEqual(nextName);
 
@@ -310,52 +339,102 @@ test.provider(
       );
       expect(volumeGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:mysql",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:variable",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Runtime fixture failures must not prevent the independent resource lifecycle test.
-describe("ConnectMySQL runtime integrations", () => {
-  const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
-    providers: Railway.providers(),
-  });
+describe(
+  "ConnectMySQL runtime integrations",
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:mysql",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:variable",
+      "live",
+    ],
+  },
+  () => {
+    const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+      providers: Railway.providers(),
+    });
 
-  const fixture = beforeAll(deploy(FixtureStack), {
-    timeout: 120_000,
-  });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(FixtureStack), {
-    timeout: 120_000,
-  });
+    const fixture = beforeAll(deploy(FixtureStack), {
+      timeout: 120_000,
+    });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(FixtureStack), {
+      timeout: 120_000,
+    });
 
-  test(
-    "a Service connects and SELECTs through ConnectMySQL",
-    Effect.gen(function* () {
-      const out = yield* fixture;
-      expect(out.serviceId).toEqual(expect.any(String));
-      expect(out.serviceId.length).toBeGreaterThan(0);
-      expect(out.url).toEqual(expect.any(String));
-      expect(out.url).toContain("up.railway.app");
+    test(
+      "a Service connects and SELECTs through ConnectMySQL",
+      Effect.gen(function* () {
+        const out = yield* fixture;
+        expect(out.serviceId).toEqual(expect.any(String));
+        expect(out.serviceId.length).toBeGreaterThan(0);
+        expect(out.url).toEqual(expect.any(String));
+        expect(out.url).toContain("up.railway.app");
 
-      const fetched = yield* distilled(
-        railway.service({ id: out.serviceId }, { id: true, deletedAt: true }),
-      );
-      expect(fetched.id).toEqual(out.serviceId);
-      expect(fetched.deletedAt).toBeNull();
+        const fetched = yield* distilled(readService(out.serviceId));
+        expect(fetched.id).toEqual(out.serviceId);
+        expect(fetched.deletedAt).toBeNull();
 
-      const vars = yield* distilled(
-        readServiceVariables(out.projectId, out.environmentId, out.serviceId),
-      );
-      expect((vars[Railway.MYSQL_URL_SECRET] ?? "").length).toBeGreaterThan(0);
+        const vars = yield* distilled(
+          readServiceVariables(out.projectId, out.environmentId, out.serviceId),
+        );
+        expect((vars[Railway.MYSQL_URL_SECRET] ?? "").length).toBeGreaterThan(
+          0,
+        );
 
-      const client = yield* HttpClient.HttpClient;
-      const get = (path: string) =>
-        client.get(`${out.url}${path}`).pipe(
+        const client = yield* HttpClient.HttpClient;
+        const get = (path: string) =>
+          client.get(`${out.url}${path}`).pipe(
+            Effect.timeoutOrElse({
+              duration: "8 seconds",
+              orElse: () => Effect.fail(new NotReady({ status: 0 })),
+            }),
+            Effect.flatMap((res) =>
+              res.status === 200
+                ? res.json.pipe(
+                    Effect.mapError(() => new NotReady({ status: res.status })),
+                  )
+                : Effect.fail(new NotReady({ status: res.status })),
+            ),
+            Effect.retry({
+              while: (e) =>
+                e._tag === "NotReady" &&
+                (e.status === 0 ||
+                  e.status === 404 ||
+                  e.status === 502 ||
+                  e.status === 503),
+              schedule: Schedule.exponential("500 millis").pipe(
+                Schedule.upTo({ duration: "45 seconds" }),
+              ),
+              times: 10,
+            }),
+          );
+
+        const getText = client.get(out.url!).pipe(
           Effect.timeoutOrElse({
             duration: "8 seconds",
             orElse: () => Effect.fail(new NotReady({ status: 0 })),
           }),
           Effect.flatMap((res) =>
             res.status === 200
-              ? res.json.pipe(
+              ? res.text.pipe(
                   Effect.mapError(() => new NotReady({ status: res.status })),
                 )
               : Effect.fail(new NotReady({ status: res.status })),
@@ -374,47 +453,22 @@ describe("ConnectMySQL runtime integrations", () => {
           }),
         );
 
-      const getText = client.get(out.url!).pipe(
-        Effect.timeoutOrElse({
-          duration: "8 seconds",
-          orElse: () => Effect.fail(new NotReady({ status: 0 })),
-        }),
-        Effect.flatMap((res) =>
-          res.status === 200
-            ? res.text.pipe(
-                Effect.mapError(() => new NotReady({ status: res.status })),
-              )
-            : Effect.fail(new NotReady({ status: res.status })),
-        ),
-        Effect.retry({
-          while: (e) =>
-            e._tag === "NotReady" &&
-            (e.status === 0 ||
-              e.status === 404 ||
-              e.status === 502 ||
-              e.status === 503),
-          schedule: Schedule.exponential("500 millis").pipe(
-            Schedule.upTo({ duration: "45 seconds" }),
-          ),
-          times: 10,
-        }),
-      );
+        if (out.mode === "effect") {
+          const ping = (yield* get("/ping")) as { ok?: boolean };
+          expect(ping.ok).toEqual(true);
 
-      if (out.mode === "effect") {
-        const ping = (yield* get("/ping")) as { ok?: boolean };
-        expect(ping.ok).toEqual(true);
+          const health = (yield* get("/health")) as { rows?: unknown };
+          expect(firstOk(health.rows)).toEqual(1);
+        } else {
+          const body = yield* getText;
+          expect(typeof body).toEqual("string");
+          expect(body.length).toBeGreaterThan(0);
+        }
 
-        const health = (yield* get("/health")) as { rows?: unknown };
-        expect(firstOk(health.rows)).toEqual(1);
-      } else {
-        const body = yield* getText;
-        expect(typeof body).toEqual("string");
-        expect(body.length).toBeGreaterThan(0);
-      }
-
-      const rows = yield* selectOne(out.publicConnectionUri);
-      expect(firstOk(rows)).toEqual(1);
-    }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
-});
+        const rows = yield* selectOne(out.publicConnectionUri);
+        expect(firstOk(rows)).toEqual(1);
+      }).pipe(logLevel),
+      { timeout: 120_000 },
+    );
+  },
+);

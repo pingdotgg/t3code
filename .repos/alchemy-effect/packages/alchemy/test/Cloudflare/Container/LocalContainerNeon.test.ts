@@ -29,23 +29,36 @@ const TEST_TIMEOUT = 240_000;
  * #1334 "container reaches a SQL database" path as Prisma, minus a local
  * emulator.
  */
-describe("local container reaches Neon Postgres", () => {
-  const stack = beforeAll(deploy(NeonHostStack), { timeout: HOOK_TIMEOUT });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(NeonHostStack), {
-    timeout: HOOK_TIMEOUT,
-  });
+describe(
+  "local container reaches Neon Postgres",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:container",
+      "provider:cloudflare:worker",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+  },
+  () => {
+    const stack = beforeAll(deploy(NeonHostStack), { timeout: HOOK_TIMEOUT });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(NeonHostStack), {
+      timeout: HOOK_TIMEOUT,
+    });
 
-  test(
-    "container DATABASE_URL keeps the Neon host and reaches it",
-    Effect.gen(function* () {
-      const { url } = yield* stack;
-      yield* expectDatabaseReachable(url, (hostname) => {
-        expect(hostname).not.toBe("localhost");
-        expect(hostname).not.toBe("127.0.0.1");
-        expect(hostname).not.toContain("host.docker.localhost");
-        expect(hostname).toMatch(/neon\.tech$/);
-      });
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
-});
+    test(
+      "container DATABASE_URL keeps the Neon host and reaches it",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        yield* expectDatabaseReachable(url, (hostname) => {
+          expect(hostname).not.toBe("localhost");
+          expect(hostname).not.toBe("127.0.0.1");
+          expect(hostname).not.toContain("host.docker.localhost");
+          expect(hostname).toMatch(/neon\.tech$/);
+        });
+      }).pipe(logLevel),
+      { timeout: TEST_TIMEOUT },
+    );
+  },
+);

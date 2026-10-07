@@ -3,7 +3,7 @@ import type { QueueConsumer } from "./bindings/queue/QueueOptions.shared.ts";
 import type { ContainerImage } from "./Docker.ts";
 import type { BindingHook } from "./PluginContext.ts";
 import type * as WorkerdConfig from "./workerd/Config.ts";
-import type { OutputSink } from "./workerd/Workerd.ts";
+import type { OutputSink, WorkerdExit } from "./workerd/Workerd.ts";
 
 export interface RuntimeWorker<B extends BindingHooks = BindingHooks> {
   readonly name: string;
@@ -86,6 +86,16 @@ export interface RuntimeWorker<B extends BindingHooks = BindingHooks> {
    * process output instead of inheriting the parent process's stdio.
    */
   readonly logging?: WorkerdLogging;
+  /**
+   * Called after the `workerd` process exited on its own (for example when
+   * V8 ran out of heap) and a replacement process is serving on the same
+   * ports again. The URL returned by `start` stays valid. Connections into
+   * the old process are gone, so a caller that keeps any (such as the Vite
+   * module runner sockets) reconnects here.
+   * Automatic recovery is limited to three restarts within a rolling minute,
+   * with backoff between attempts. A failed replacement stops recovery.
+   */
+  readonly onRestart?: (exit: WorkerdExit) => void;
   readonly unsafe?: Partial<WorkerdConfig.Worker>;
 }
 
@@ -114,13 +124,7 @@ export type { QueueConsumer } from "./bindings/queue/QueueOptions.shared.ts";
 export type Module =
   | {
       name: string;
-      type:
-        | "ESModule"
-        | "CommonJsModule"
-        | "Text"
-        | "Json"
-        | "PythonModule"
-        | "PythonRequirement";
+      type: "ESModule" | "CommonJsModule" | "Text" | "Json" | "PythonModule";
       content: string;
     }
   | {

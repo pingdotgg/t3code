@@ -56,9 +56,10 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import {
   structuralProtocolMethod,
   summarizeNativeProtocolPayload,
@@ -278,6 +279,8 @@ interface ActiveOpenCodeTurn {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  /** The provider thread the turn started on, which its terminal names. */
+  readonly providerThreadId: OrchestrationV2ProviderTurn["providerThreadId"];
   readonly providerTurnOrdinal: number;
   readonly runOrdinal: number;
   readonly runAttemptId: OrchestrationV2ProviderTurn["runAttemptId"];
@@ -286,6 +289,7 @@ interface ActiveOpenCodeTurn {
   readonly parts: Map<string, Exclude<OpenCodePart, ToolPart>>;
   readonly partIdsByMessage: Map<string, Set<string>>;
   readonly toolNamesByCallId: Map<string, string>;
+  mcpServerNames?: ReadonlyArray<string>;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
@@ -1593,12 +1597,48 @@ export function makeOpenCodeAdapterV2(
             | "completedAt"
             | "updatedAt"
           >;
-          const turnItem = openCodeToolTurnItem(base, {
-            name: part.tool,
-            input: toolInput(part),
-            output: toolOutput(part),
-            completedMetadata: part.state.status === "completed" ? part.state.metadata : undefined,
-          });
+          const input = toolInput(part);
+          const output = toolOutput(part);
+          const isNativeTool = part.tool === "code_search" || part.tool === "apply_patch";
+          if (!isNativeTool && part.tool.includes("_") && turn.mcpServerNames === undefined) {
+            const serverNames = yield* OpenCodeRuntime.runOpenCodeSdk("mcp.status", (signal) =>
+              client.mcp.status(undefined, { signal, throwOnError: true }),
+            ).pipe(
+              Effect.timeout("1 second"),
+              Effect.map((response) => Object.keys(response.data ?? {})),
+              Effect.catch(() => Effect.succeed(undefined)),
+            );
+            if (serverNames !== undefined) turn.mcpServerNames = serverNames;
+          }
+          const matchingServers = turn.mcpServerNames?.filter(
+            (name) =>
+              !isNativeTool && part.tool.startsWith(`${name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`),
+          );
+          const serverName = matchingServers?.length === 1 ? matchingServers[0] : undefined;
+          const presentation =
+            serverName === undefined
+              ? {}
+              : mcpToolPresentation({
+                  serverName,
+                  toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
+                  title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
+                });
+          const turnItem: OrchestrationV2TurnItem = matchingServers?.length
+            ? {
+                ...base,
+                type: "dynamic_tool",
+                ...presentation,
+                toolName: part.tool,
+                input,
+                ...(output === undefined ? {} : { output }),
+              }
+            : openCodeToolTurnItem(base, {
+                name: part.tool,
+                input,
+                output,
+                completedMetadata:
+                  part.state.status === "completed" ? part.state.metadata : undefined,
+              });
           yield* emitProviderEvent({
             type: "node.updated",
             driver: OPENCODE_PROVIDER,
@@ -2080,7 +2120,7 @@ export function makeOpenCodeAdapterV2(
               ? {
                   type: "turn.terminal",
                   driver: OPENCODE_PROVIDER,
-                  providerThreadId: state.providerThread.id,
+                  providerThreadId: turn.providerThreadId,
                   providerTurnId: turn.providerTurnId,
                   runOrdinal: turn.runOrdinal,
                   failureItemOrdinal: itemOrdinal(turn, `terminal-failure:${turn.providerTurnId}`),
@@ -2096,7 +2136,7 @@ export function makeOpenCodeAdapterV2(
               : {
                   type: "turn.terminal",
                   driver: OPENCODE_PROVIDER,
-                  providerThreadId: state.providerThread.id,
+                  providerThreadId: turn.providerThreadId,
                   providerTurnId: turn.providerTurnId,
                   runOrdinal: turn.runOrdinal,
                   status,
@@ -2218,6 +2258,7 @@ export function makeOpenCodeAdapterV2(
             modelSelection: state.appThread.modelSelection,
             runtimePolicy: state.parentSubagent.parentTurn.runtimePolicy,
             providerTurnId,
+            providerThreadId: providerTurn.providerThreadId,
             providerTurnOrdinal: providerTurn.ordinal,
             runOrdinal: state.parentSubagent.parentTurn.runOrdinal,
             runAttemptId: null,
@@ -2973,16 +3014,18 @@ export function makeOpenCodeAdapterV2(
           );
           yield* Effect.raceFirst(Fiber.join(request), Deferred.await(receipt)).pipe(
             Effect.timeout("10 seconds"),
-            Effect.catchTag("TimeoutError", (cause) => {
-              const error = new OpenCodeRuntime.OpenCodeRuntimeError({
-                operation: "session.command",
-                detail: "OpenCode command admission did not complete within 10 seconds.",
-                cause,
-              });
-              abortController.abort();
-              return finalizeTurn(state, turn, "failed", {
-                failure: makeProviderFailure({ cause: error, class: "provider_error" }),
-              }).pipe(Effect.andThen(Effect.fail(error)));
+            Effect.catchTags({
+              TimeoutError: (cause) => {
+                const error = new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "session.command",
+                  detail: "OpenCode command admission did not complete within 10 seconds.",
+                  cause,
+                });
+                abortController.abort();
+                return finalizeTurn(state, turn, "failed", {
+                  failure: makeProviderFailure({ cause: error, class: "provider_error" }),
+                }).pipe(Effect.andThen(Effect.fail(error)));
+              },
             }),
           );
         });
@@ -3152,6 +3195,7 @@ export function makeOpenCodeAdapterV2(
                 modelSelection: turnInput.modelSelection,
                 runtimePolicy: turnInput.runtimePolicy,
                 providerTurnId,
+                providerThreadId: turnInput.providerThread.id,
                 providerTurnOrdinal: turnInput.providerTurnOrdinal,
                 runOrdinal: turnInput.runOrdinal,
                 runAttemptId: turnInput.attemptId,

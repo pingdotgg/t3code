@@ -27,54 +27,58 @@ const gated =
   !process.env.AWS_TEST_FLINK_JAR_BUCKET_ARN ||
   !process.env.AWS_TEST_FLINK_JAR_KEY;
 
-describe.skipIf(gated)("AWS.KinesisAnalyticsV2.ApplicationSnapshot", () => {
-  test.provider(
-    "start application, snapshot it, destroy",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.skipIf(gated)(
+  "AWS.KinesisAnalyticsV2.ApplicationSnapshot",
+  { tags: ["provider:aws", "provider:aws:kinesisanalyticsv2", "live"] },
+  () => {
+    test.provider(
+      "start application, snapshot it, destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const app = yield* Application("SnapshottedFlinkApp", {
-              runtimeEnvironment: "FLINK-1_20",
-              code: {
-                bucketArn: process.env.AWS_TEST_FLINK_JAR_BUCKET_ARN!,
-                fileKey: process.env.AWS_TEST_FLINK_JAR_KEY!,
-              },
-              snapshotsEnabled: true,
-              start: true,
-            });
-            const snapshot = yield* ApplicationSnapshot("Checkpoint", {
-              applicationName: app.applicationName,
-            });
-            return { app, snapshot };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const app = yield* Application("SnapshottedFlinkApp", {
+                runtimeEnvironment: "FLINK-1_20",
+                code: {
+                  bucketArn: process.env.AWS_TEST_FLINK_JAR_BUCKET_ARN!,
+                  fileKey: process.env.AWS_TEST_FLINK_JAR_KEY!,
+                },
+                snapshotsEnabled: true,
+                start: true,
+              });
+              const snapshot = yield* ApplicationSnapshot("Checkpoint", {
+                applicationName: app.applicationName,
+              });
+              return { app, snapshot };
+            }),
+          );
 
-        expect(deployed.app.applicationStatus).toEqual("RUNNING");
-        expect(deployed.snapshot.snapshotStatus).toEqual("READY");
-        expect(deployed.snapshot.applicationName).toEqual(
-          deployed.app.applicationName,
-        );
+          expect(deployed.app.applicationStatus).toEqual("RUNNING");
+          expect(deployed.snapshot.snapshotStatus).toEqual("READY");
+          expect(deployed.snapshot.applicationName).toEqual(
+            deployed.app.applicationName,
+          );
 
-        // Out-of-band verification via distilled.
-        const described = yield* analytics.describeApplicationSnapshot({
-          ApplicationName: deployed.app.applicationName,
-          SnapshotName: deployed.snapshot.snapshotName,
-        });
-        expect(described.SnapshotDetails.SnapshotStatus).toEqual("READY");
-
-        yield* stack.destroy();
-
-        // The snapshot is deleted with the stack (before the application).
-        const gone = yield* analytics
-          .describeApplication({
+          // Out-of-band verification via distilled.
+          const described = yield* analytics.describeApplicationSnapshot({
             ApplicationName: deployed.app.applicationName,
-          })
-          .pipe(Effect.flip);
-        expect(gone._tag).toEqual("ResourceNotFoundException");
-      }),
-    { timeout: 1_140_000 },
-  );
-});
+            SnapshotName: deployed.snapshot.snapshotName,
+          });
+          expect(described.SnapshotDetails.SnapshotStatus).toEqual("READY");
+
+          yield* stack.destroy();
+
+          // The snapshot is deleted with the stack (before the application).
+          const gone = yield* analytics
+            .describeApplication({
+              ApplicationName: deployed.app.applicationName,
+            })
+            .pipe(Effect.flip);
+          expect(gone._tag).toEqual("ResourceNotFoundException");
+        }),
+      { timeout: 1_140_000 },
+    );
+  },
+);

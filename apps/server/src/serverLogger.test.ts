@@ -6,14 +6,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Tracer from "effect/Tracer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerConfig from "./config.ts";
-import { ServerLoggerLive } from "./serverLogger.ts";
+import * as ServerLogger from "./serverLogger.ts";
 
 interface ExportedRequest {
   readonly url: string;
@@ -22,7 +22,7 @@ interface ExportedRequest {
 }
 
 /** Answers every export with a 200 and keeps what was posted for assertions. */
-const collectorLayer = (requests: Array<ExportedRequest>) =>
+const layerCollector = (requests: Array<ExportedRequest>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -38,7 +38,7 @@ const collectorLayer = (requests: Array<ExportedRequest>) =>
     ),
   );
 
-const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+const layerConfig = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
@@ -93,9 +93,9 @@ const logThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
     const requests: Array<ExportedRequest> = [];
     yield* Effect.log("server logger under test").pipe(
       Effect.provide(
-        ServerLoggerLive.pipe(
-          Layer.provide(configLayer(overrides)),
-          Layer.provide(collectorLayer(requests)),
+        ServerLogger.layer.pipe(
+          Layer.provide(layerConfig(overrides)),
+          Layer.provide(layerCollector(requests)),
         ),
       ),
     );
@@ -110,7 +110,7 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
   Effect.gen(function* () {
     const requests: Array<ExportedRequest> = [];
     const spans: Array<Tracer.NativeSpan> = [];
-    const tracerLayer = Layer.succeed(
+    const layerTracer = Layer.succeed(
       Tracer.Tracer,
       Tracer.make({
         span: (spanOptions) => {
@@ -124,11 +124,11 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
       Effect.withSpan("server-logger-test"),
       Effect.provide(
         Layer.mergeAll(
-          ServerLoggerLive.pipe(
-            Layer.provide(configLayer(overrides)),
-            Layer.provide(collectorLayer(requests)),
+          ServerLogger.layer.pipe(
+            Layer.provide(layerConfig(overrides)),
+            Layer.provide(layerCollector(requests)),
           ),
-          tracerLayer,
+          layerTracer,
         ),
       ),
     );
