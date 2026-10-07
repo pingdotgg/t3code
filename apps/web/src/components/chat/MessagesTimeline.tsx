@@ -831,7 +831,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     cancelAnimationFrame(jump.frame);
     jump.cleanup();
   }, []);
-  useEffect(() => cancelTurnJump, [cancelTurnJump]);
+  // The list stays mounted across thread switches. Stop a jump before the next
+  // thread restores its position, or it keeps scrolling the reused node.
+  useLayoutEffect(() => cancelTurnJump, [cancelTurnJump, listIdentityKey]);
   const resolveTurnJumpScrollTop = useCallback(
     (rowIndex: number) => {
       const state = listRef.current?.getState?.();

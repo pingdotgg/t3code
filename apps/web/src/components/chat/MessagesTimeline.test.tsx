@@ -25,6 +25,8 @@ import { useComposerFocusState } from "./useComposerFocusState";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
+const legendListTestState = vi.hoisted(() => ({ data: undefined as unknown }));
+
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
   expandedRuns: false,
@@ -124,6 +126,7 @@ vi.mock("@legendapp/list/react", async () => {
     contentInsetEndAdjustment?: number;
     ref?: Ref<LegendListRef>;
   }) => {
+    legendListTestState.data = props.data;
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
@@ -2715,6 +2718,106 @@ describe("MessagesTimeline", () => {
       ).toHaveLength(0);
     } finally {
       await act(() => renderer?.unmount());
+    }
+  });
+});
+
+describe("turn navigation", () => {
+  it("stops a turn jump when the timeline switches threads", async () => {
+    vi.unstubAllGlobals();
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const flushFrame = (now: number) =>
+      act(() => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(now));
+      });
+    const node = document.createElement("div");
+    const scrollWrites: number[] = [];
+    let scrollTop = 1000;
+    Object.defineProperties(node, {
+      scrollHeight: { value: 5000 },
+      clientHeight: { value: 500 },
+      scrollTop: {
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollWrites.push(value);
+          scrollTop = value;
+        },
+      },
+    });
+    const props = buildProps();
+    props.listRef.current = {
+      getState: () => ({
+        data: legendListTestState.data,
+        isAtEnd: false,
+        scroll: scrollTop,
+        positionAtIndex: (index: number) => index * 400,
+        sizeAtIndex: () => 400,
+        indexByKey: () => undefined,
+        elementAtIndex: () => undefined,
+      }),
+      getScrollableNode: () => node,
+      scrollToEnd: async () => {},
+      scrollToIndex: async () => {},
+      scrollToOffset: async () => {},
+    } as unknown as LegendListRef;
+    const turnNavigationRef =
+      createRef<import("./MessagesTimeline").MessagesTimelineTurnNavigationHandle>();
+    const entry = (index: number, role: "user" | "assistant") => {
+      const base = buildUserTimelineEntry(`Message ${index}`);
+      return {
+        ...base,
+        id: `entry-${index}`,
+        message: { ...base.message, id: MessageId.make(`message-${index}`), role },
+      };
+    };
+    const timelineEntries = [
+      entry(1, "user"),
+      entry(2, "assistant"),
+      entry(3, "user"),
+      entry(4, "assistant"),
+    ];
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (routeThreadKey: string) =>
+      root.render(
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={routeThreadKey}
+          turnNavigationRef={turnNavigationRef}
+          timelineEntries={timelineEntries}
+        />,
+      );
+    try {
+      await act(async () => render("environment-local:thread-1"));
+      expect(turnNavigationRef.current?.jumpToTurn("previous")).toBe(true);
+      await flushFrame(performance.now() + 16);
+      expect(scrollWrites.length).toBeGreaterThan(0);
+
+      await act(async () => render("environment-local:thread-2"));
+      scrollWrites.length = 0;
+      await flushFrame(performance.now() + 1000);
+      expect(scrollWrites).toEqual([]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
     }
   });
 });
