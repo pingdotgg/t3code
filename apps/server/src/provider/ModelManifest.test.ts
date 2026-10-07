@@ -5,12 +5,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 
 /**
  * Test policy: this file covers manifest machinery, not manifest contents.
@@ -75,6 +77,27 @@ describe("classifyModels", () => {
         ["my-own-model", false],
       ],
     );
+  });
+});
+
+// Releases fetch the manifest from `main`, so older servers decode the new
+// file with their own schema. This is the top-level shape before benchmarks.
+const decodePreBenchmarksManifest = Schema.decodeUnknownSync(
+  Schema.Struct({
+    version: Schema.Literal(1),
+    updatedAt: Schema.optional(Schema.String),
+    compatibility: Schema.optional(Schema.Array(Schema.Unknown)),
+    currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
+    providers: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
+
+describe("benchmarks", () => {
+  it("still decodes with a schema that predates the benchmarks section", () => {
+    assert.isDefined(ModelManifest.BUNDLED_MODEL_MANIFEST.benchmarks);
+    const decoded = decodePreBenchmarksManifest(bundledManifestJson);
+    assert.strictEqual(decoded.version, 1);
+    assert.notProperty(decoded, "benchmarks");
   });
 });
 
@@ -511,6 +534,37 @@ describe("ModelManifest service", () => {
         layerService({
           prefix: "model-manifest-last-good-test",
           response: () => Response.json(responses[responseIndex]),
+        }),
+      ),
+    );
+  });
+
+  it.live("drops a malformed benchmarks block and keeps the rest of the manifest", () => {
+    // A future or broken scores block on `main` must not hold back catalog and
+    // compatibility updates, from the network or from the disk cache.
+    const malformed = { ...REMOTE_MANIFEST, benchmarks: { source: "Future", variants: [{}] } };
+    const expectRestApplied = (manifest: ModelManifest.ModelManifestData) => {
+      assert.deepStrictEqual(manifest.currentModels, REMOTE_MANIFEST.currentModels);
+      assert.strictEqual(manifest.updatedAt, REMOTE_UPDATED_AT);
+      assert.isUndefined(manifest.benchmarks);
+    };
+    return Effect.gen(function* () {
+      expectRestApplied(yield* (yield* ModelManifest.make).refresh);
+
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fs.writeFileString(
+        path.join(config.stateDir, "model-manifest.json"),
+        JSON.stringify({ fetchedAtMs: 0, manifest: malformed }),
+      );
+      expectRestApplied(yield* (yield* ModelManifest.make).current);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-malformed-benchmarks-test",
+          response: () => Response.json(malformed),
         }),
       ),
     );
