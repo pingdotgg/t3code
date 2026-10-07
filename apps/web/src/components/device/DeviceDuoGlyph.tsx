@@ -21,7 +21,7 @@ export function DeviceDuoGlyph({ pose, rotated = false }: { pose: DuoPose; rotat
       viewBox={stance ? "0 0 22 16" : "0 0 24 24"}
       fill="none"
       stroke="currentColor"
-      strokeWidth={stance ? 1.25 : 1.8}
+      strokeWidth={stance ? 1.25 : 1.35}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={cn("size-7 shrink-0", rotated && "rotate-90")}
@@ -36,7 +36,7 @@ export function DeviceDuoGlyph({ pose, rotated = false }: { pose: DuoPose; rotat
         </>
       ) : null}
       {pose === "book" ? (
-        <path d="M5.2 5.6Q12 7.6 18.8 5.6Q20.5 5.1 20.5 6.9V17.1Q20.5 18.9 18.8 18.4Q12 16.4 5.2 18.4Q3.5 18.9 3.5 17.1V6.9Q3.5 5.1 5.2 5.6Z" />
+        <path d="M4.6 18.1V5.9Q4.6 4.9 5.9 4.9L12 7.5L18.1 4.9Q19.4 4.9 19.4 5.9V18.1Q19.4 19.1 18.1 19.1L12 16.5L5.9 19.1Q4.6 19.1 4.6 18.1Z" />
       ) : null}
       {pose === "open" ? (
         <>
