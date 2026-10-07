@@ -157,10 +157,50 @@ index 1d35cd5..06035e6 100644
          OverlayMsg::Cmd(KeyedOverlayCommand {
              key: key.to_owned(),
 diff --git a/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs b/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
-index ca0dec4..464c322 100644
+index ca0dec4..b0d4dc7 100644
 --- a/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
 +++ b/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
-@@ -1337,7 +1337,12 @@ impl Tool for GetWindowStateTool {
+@@ -1090,6 +1090,7 @@ impl Tool for GetWindowStateTool {
+                 "pid":{"type":"integer","description":"Process ID that owns the window."},
+                 "window_id":{"type":"integer","description":"Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window."},
+                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
++                "display_only":{"type":"boolean","description":"Default false. With include_accessibility_tree:false, returns pixels for display without registering an action capture or replacing the agent snapshot. The image cannot ground input actions."},
+                 "include_accessibility_tree":{"type":"boolean",
+                     "description":"Default true — walk the AT-SPI tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
+                 "include_screenshot":{"type":"boolean",
+@@ -1108,6 +1109,15 @@ impl Tool for GetWindowStateTool {
+     }
+
+     async fn invoke(&self, args: Value) -> ToolResult {
++        let display_only = args.get("display_only").and_then(Value::as_bool) == Some(true);
++        if display_only
++            && args
++                .get("include_accessibility_tree")
++                .and_then(Value::as_bool)
++                != Some(false)
++        {
++            return ToolResult::error("display_only requires include_accessibility_tree:false");
++        }
+         use cua_driver_core::tool_args::ArgsExt;
+         let pid = match args.require_u32("pid") {
+             Ok(v) => v,
+@@ -1288,10 +1298,11 @@ impl Tool for GetWindowStateTool {
+                  screenshot_out_file to force a capture.",
+             );
+         }
+-        let observation_only = args
+-            .get("_observation_only")
+-            .and_then(|value| value.as_bool())
+-            == Some(true);
++        let observation_only = display_only
++            || args
++                .get("_observation_only")
++                .and_then(|value| value.as_bool())
++                == Some(true);
+         let state = self.state.clone();
+         let state_for_capture = state.clone();
+         let query_for_walk = query.clone();
+@@ -1337,7 +1348,12 @@ impl Tool for GetWindowStateTool {
                  window_overlays(pid, xid)
              };
              let screenshot = if should_capture {
@@ -174,7 +214,7 @@ index ca0dec4..464c322 100644
                      overlays
                          .window_rect
                          .ok_or_else(|| anyhow::anyhow!("window geometry unavailable"))
-@@ -1345,12 +1350,16 @@ impl Tool for GetWindowStateTool {
+@@ -1345,12 +1361,16 @@ impl Tool for GetWindowStateTool {
                              crate::capture::screenshot_root_region_png(x, y, w, h)
                          })
                          .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
@@ -194,6 +234,43 @@ index ca0dec4..464c322 100644
                          let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                          let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                          // An explicit per-call max_image_dimension (0 = native)
+@@ -1734,6 +1754,10 @@ impl Tool for GetWindowStateTool {
+                      window_bounds is where it sits on the screen. Pass scope:\"desktop\" only \
+                      for get_desktop_state pixels."
+                 );
++                if display_only {
++                    structured["display_only"] = json!(true);
++                    structured["frame_note"] = json!("Display-only preview; not registered for input actions. Obtain a normal get_window_state screenshot before acting.");
++                }
+
+                 // The capture-only path (include_accessibility_tree:false) leaves
+                 // `content` empty when the screenshot was also unavailable — most
+@@ -14542,3 +14566,25 @@ mod cursor_hook_emission_tests {
+         assert!(seen[1].pressed);
+     }
+ }
++
++#[cfg(test)]
++#[tokio::test]
++async fn display_only_refuses_accessibility_snapshot_requests() {
++    let tool = GetWindowStateTool {
++        state: ToolState::new(),
++    };
++    for tree in [None, Some(true)] {
++        let mut args = json!({"pid": 42, "window_id": 7, "display_only": true});
++        if let Some(tree) = tree {
++            args["include_accessibility_tree"] = json!(tree);
++        }
++        let result = tool.invoke(args).await;
++        assert_eq!(
++            serde_json::to_value(result).unwrap(),
++            serde_json::to_value(ToolResult::error(
++                "display_only requires include_accessibility_tree:false"
++            ))
++            .unwrap()
++        );
++    }
++}
 diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
 index a2691a0..4ab3a74 100644
 --- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs

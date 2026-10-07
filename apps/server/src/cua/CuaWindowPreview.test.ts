@@ -34,13 +34,44 @@ const turnEvent = (type: "turn.started" | "turn.completed") =>
 const makeHarness = Effect.fn(function* (
   windowFailure?: "missing" | "throw" | "transient",
   onWindowCapture?: () => void | Promise<void>,
+  options: { displayOnly?: boolean; image?: () => string } = {},
 ) {
   const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const captures: string[] = [];
   const windows: Array<{ pid: number; windowId: bigint }> = [];
   let clients = 0;
   let destroyed = 0;
+  const rawCalls: unknown[] = [];
   const fakeClient = {
+    listToolsJson: async () =>
+      JSON.stringify({
+        tools: [
+          {
+            name: "get_window_state",
+            input_schema: {
+              properties: options.displayOnly ? { display_only: { type: "boolean" } } : {},
+            },
+          },
+        ],
+      }),
+    callTool: async (name: string, args: string) => {
+      const input = JSON.parse(args) as { pid: number; window_id: number };
+      rawCalls.push({ name, ...input });
+      const window = await fakeClient.getWindowState({
+        pid: input.pid,
+        windowId: BigInt(input.window_id),
+      });
+      return {
+        images: window.images,
+        isError: false,
+        structuredJson: JSON.stringify({
+          app_name: window.appName,
+          window_title: window.windowTitle,
+          screenshot_width: window.screenshotWidth,
+          screenshot_height: window.screenshotHeight,
+        }),
+      };
+    },
     getWindowState: async (input: { pid: number; windowId: bigint }) => {
       windows.push(input);
       await onWindowCapture?.();
@@ -53,7 +84,10 @@ const makeHarness = Effect.fn(function* (
         windowTitle: "December 2026",
         screenshotWidth: 640,
         screenshotHeight: 400,
-        images: windowFailure === "missing" ? [] : [{ mimeType: "image/png", dataBase64: png }],
+        images:
+          windowFailure === "missing"
+            ? []
+            : [{ mimeType: "image/png", dataBase64: options.image?.() ?? png }],
       });
     },
     getDesktopState: () => {
@@ -94,6 +128,7 @@ const makeHarness = Effect.fn(function* (
     emit: (event: OrchestrationV2DomainEvent) => PubSub.publish(events, event),
     captures,
     windows,
+    rawCalls,
     counts: () => ({ clients, destroyed }),
   };
 });
@@ -111,6 +146,78 @@ const setCuaSession = Effect.flatMap(McpProviderSessions.McpProviderSessions, (s
 );
 
 describe("CuaWindowPreview", () => {
+  it.effect.each([false, true])(
+    "deduplicates static frames, backs off, and resumes on changes (display-only: %s)",
+    (displayOnly) =>
+      Effect.gen(function* () {
+        clearCuaToolContext(threadId);
+        McpProviderSession.setMcpProviderSession({
+          threadId,
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer x",
+          capabilities: new Set(),
+          cuaDriver: { command: "/driver", args: [], environment: [], socketPath: "/tmp/cua.sock" },
+        } as unknown as McpProviderSession.McpProviderSessionConfig);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            McpProviderSession.clearMcpProviderSession(threadId);
+            clearCuaToolContext(threadId);
+          }),
+        );
+        const select = (windowId: number) =>
+          cuaToolPresentation({
+            threadId,
+            rawToolName: "cua-driver/get_window_state",
+            args: { pid: 42, window_id: windowId },
+            status: "completed",
+          });
+        select(7);
+        let pixels = png;
+        const harness = yield* makeHarness(undefined, undefined, {
+          displayOnly,
+          image: () => pixels,
+        });
+        const firstPublished = yield* Deferred.make<void>();
+        const frames: string[] = [];
+        yield* harness.service.stream(threadId).pipe(
+          Stream.runForEach((state) => {
+            if (!state.frame) return Effect.void;
+            frames.push(state.frame.dataBase64);
+            return Deferred.succeed(firstPublished, undefined);
+          }),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        yield* harness.emit(turnEvent("turn.started"));
+        yield* Deferred.await(firstPublished);
+        for (let i = 0; i < 3; i++) yield* TestClock.adjust(20);
+        expect(harness.windows).toHaveLength(4);
+        expect(frames).toEqual([png]);
+        yield* TestClock.adjust(79);
+        expect(harness.windows).toHaveLength(4);
+        pixels = "changed";
+        yield* TestClock.adjust(1);
+        expect(harness.windows).toHaveLength(5);
+        expect(frames).toEqual([png, "changed"]);
+        yield* TestClock.adjust(20);
+        expect(harness.windows).toHaveLength(6);
+        // Identical pixels in a different window still publish the new target.
+        select(8);
+        yield* TestClock.adjust(20);
+        expect(frames).toEqual([png, "changed", "changed"]);
+        expect(harness.windows.at(-1)?.windowId).toBe(8n);
+        expect(harness.rawCalls).toHaveLength(displayOnly ? 7 : 0);
+        if (displayOnly)
+          expect(harness.rawCalls[0]).toMatchObject({
+            name: "get_window_state",
+            display_only: true,
+            include_accessibility_tree: false,
+            include_screenshot: true,
+            max_dimension: 800,
+          });
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("never overlaps captures and backs off after a slow frame", () =>
     Effect.gen(function* () {
       clearCuaToolContext(threadId);
@@ -355,9 +462,14 @@ describe("CuaWindowPreview", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live.each(["missing", "throw"] as const)(
-    "does not substitute desktop pixels when window capture is %s",
-    (failure) =>
+  it.live.each([
+    ["missing", false],
+    ["throw", false],
+    ["missing", true],
+    ["throw", true],
+  ] as const)(
+    "does not substitute desktop pixels when window capture is %s (display-only: %s)",
+    ([failure, displayOnly]) =>
       Effect.gen(function* () {
         yield* setCuaSession;
         cuaToolPresentation({
@@ -366,7 +478,7 @@ describe("CuaWindowPreview", () => {
           args: { pid: 42, window_id: "7", x: 1, y: 1 },
           status: "completed",
         });
-        const harness = yield* makeHarness(failure);
+        const harness = yield* makeHarness(failure, undefined, { displayOnly });
         const unavailable = yield* harness.service.stream(threadId).pipe(
           Stream.filter((state) => state.status !== "idle"),
           Stream.runHead,
