@@ -55,13 +55,24 @@ function parseListMarker(line: string): { marker: ListMarker; markerEnd: number 
   return null;
 }
 
+/**
+ * The ordered marker that follows `3.` or `09)`: one higher, same delimiter,
+ * zero padding kept, and a number too large to count left as typed. Shared
+ * with the rich editor's native split so both modes count the same way.
+ */
+export function nextOrderedMarkerText(marker: string): string {
+  const numberText = marker.slice(0, -1);
+  const delimiter = marker.slice(-1);
+  const number = Number.parseInt(numberText, 10);
+  const next = Number.isSafeInteger(number)
+    ? String(number + 1).padStart(numberText.length, "0")
+    : numberText;
+  return `${next}${delimiter}`;
+}
+
 function nextMarkerText(marker: ListMarker): string {
   if (marker.kind === "ordered") {
-    const number = Number.parseInt(marker.numberText, 10);
-    const next = Number.isSafeInteger(number)
-      ? String(number + 1).padStart(marker.numberText.length, "0")
-      : marker.numberText;
-    return `${marker.indent}${next}${marker.delimiter} `;
+    return `${marker.indent}${nextOrderedMarkerText(`${marker.numberText}${marker.delimiter}`)} `;
   }
   if (marker.kind === "task") {
     return `${marker.indent}- [ ] `;
