@@ -1114,20 +1114,14 @@ export const layerWithOptions = (
           );
         });
 
-      // A process launched with since-renewed credentials keeps failing auth
-      // until it restarts. Release it only when idle release could: a running
-      // turn or pending background work keeps the current process.
+      // A process launched with since-renewed credentials fails auth on every
+      // turn until it restarts. A running turn keeps it; pending background
+      // work does not, since the next turn on that process would fail anyway.
       const releaseIfStaleCredentials = (entry: LiveSessionEntry) =>
         Effect.gen(function* () {
           const runtime = entry.runtime;
           if (entry.busyTurns.size > 0 || runtime.hasStaleCredentials === undefined) return;
           if (!(yield* runtime.hasStaleCredentials)) return;
-          if (
-            runtime.hasPendingBackgroundWork !== undefined &&
-            (yield* runtime.hasPendingBackgroundWork)
-          ) {
-            return;
-          }
           yield* releaseEntry({
             providerSessionId: runtime.providerSessionId,
             reason: "manual_shutdown",

@@ -2732,7 +2732,7 @@ it.effect("ProviderSessionManagerV2 defers idle release while background work is
   }),
 );
 
-it.effect("ProviderSessionManagerV2 replaces an idle session whose credentials were renewed", () =>
+it.effect("ProviderSessionManagerV2 replaces a session whose credentials were renewed", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const credentialRevision = yield* Ref.make(1);
@@ -2784,6 +2784,7 @@ it.effect("ProviderSessionManagerV2 replaces an idle session whose credentials w
       assert.strictEqual(yield* open, first);
       assert.equal((yield* Ref.get(state)).closeCount, 0);
 
+      // Pending background work does not keep a process that can no longer authenticate.
       yield* Fiber.interrupt(running);
       const replacement = yield* open;
       assert.notStrictEqual(replacement, first);
@@ -2799,6 +2800,7 @@ it.effect("ProviderSessionManagerV2 replaces an idle session whose credentials w
           state,
           idleTimeoutMs: 60_000,
           credentialRevision,
+          hasPendingBackgroundWork: Effect.succeed(true),
           startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
             Effect.andThen(Effect.never),
           ),
