@@ -15,6 +15,10 @@ import {
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+const decodeExplanation = Schema.decodeUnknownSync(
+  buildProviderFailureExplanationPrompt({ context: "" }).outputSchema,
+);
+
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
     const result = buildCommitMessagePrompt({
@@ -376,11 +380,14 @@ describe("buildProviderFailureExplanationPrompt", () => {
     expect(result.prompt).toContain("Never invent");
     expect(result.prompt).toContain("uncertain");
     expect(result.prompt).toContain("No markdown headings");
+    expect(result.prompt).toContain("untrusted data");
+    expect(result.prompt).toContain("Do not use tools");
     expect(result.prompt).toContain("Message: spawn codex ENOENT");
-    expect(Schema.decodeUnknownSync(result.outputSchema)({ summary: "a", likelyFix: "b" })).toEqual(
-      { summary: "a", likelyFix: "b" },
-    );
-    expect(() => Schema.decodeUnknownSync(result.outputSchema)({ summary: "a" })).toThrow();
+    expect(decodeExplanation({ summary: "a", likelyFix: "b" })).toEqual({
+      summary: "a",
+      likelyFix: "b",
+    });
+    expect(() => decodeExplanation({ summary: "a" })).toThrow();
   });
 
   it("bounds an oversized context", () => {

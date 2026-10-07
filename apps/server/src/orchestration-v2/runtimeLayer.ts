@@ -287,9 +287,7 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerProviderFailureExplanationProvided = ProviderFailureExplanationService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
-  ),
+  Layer.provide(Layer.mergeAll(layerThreadManagementProvided, TextGeneration.layer)),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(

@@ -1,48 +1,47 @@
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
+  NodeId,
   type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
   RunId,
-  ThreadId,
   TextGenerationError,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderFailureExplanation from "./ProviderFailureExplanationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const threadId = ThreadId.make("thread:explain");
 const projectId = ProjectId.make("project:explain");
 const runId = RunId.make("run:explain");
-const otherRunId = RunId.make("run:other");
+const rootNodeId = NodeId.make("node:root");
 const instanceId = ProviderInstanceId.make("codex");
+const modelSelection = { instanceId, model: "gpt-5.1-codex" } as const;
 
-const failure = (message: string): OrchestrationV2ProviderFailure => ({
+const failure = (
+  message: string,
+  code: string | null = "E_BOOM",
+): OrchestrationV2ProviderFailure => ({
   class: "provider_error",
   message,
-  code: "E_BOOM",
+  code,
   retryable: false,
 });
 
-const item = (
-  id: string,
-  ordinal: number,
-  fields: Record<string, unknown>,
-  itemRunId: RunId | null = runId,
-) =>
+const item = (id: string, ordinal: number, fields: Record<string, unknown>) =>
   ({
     id: TurnItemId.make(id),
     threadId,
-    runId: itemRunId,
-    nodeId: null,
+    runId,
+    nodeId: rootNodeId,
     providerThreadId: null,
     providerTurnId: null,
     nativeItemRef: null,
@@ -52,55 +51,77 @@ const item = (
     title: null,
     startedAt: null,
     completedAt: null,
-    updatedAt: "2026-10-07T00:00:00.000Z",
+    updatedAt: `2026-10-07T00:00:0${ordinal}.000Z`,
     ...fields,
   }) as unknown as OrchestrationV2TurnItem;
 
-const modelSelection = { instanceId, model: "gpt-5.1-codex" } as const;
+const rootError = (id: string, ordinal: number, message: string, fields = {}) =>
+  item(id, ordinal, { type: "error", status: "failed", failure: failure(message), ...fields });
+
+interface RecordsCall {
+  readonly fields: ReadonlyArray<string>;
+  readonly filter: Record<string, unknown> | undefined;
+}
 
 function makeHarness(options: {
-  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
-  readonly worktreePath?: string | null;
+  readonly turnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly lastError: string | null;
+  readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
+  readonly latestRunId?: RunId | null;
   readonly generate?: TextGeneration.TextGeneration["Service"]["explainProviderFailure"];
 }) {
   const explainProviderFailure = vi.fn(
     options.generate ??
       (() => Effect.succeed({ summary: "The binary is missing.", likelyFix: "Install it." })),
   );
-  const thread = {
-    id: threadId,
-    projectId,
-    providerInstanceId: instanceId,
-    modelSelection,
-    runtimeMode: "full-access",
-    worktreePath: options.worktreePath ?? null,
-  };
+  const recordCalls: Array<RecordsCall> = [];
+  const latestRunId = options.latestRunId === undefined ? runId : options.latestRunId;
   const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+    getThreadShell: () =>
+      Effect.succeed({
+        id: threadId,
+        projectId,
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        latestRunId,
+        lastError: options.lastError,
+        lastErrorClass: options.lastErrorClass ?? null,
+      } as never),
     getThreadRecords: ((
       _threadId: ThreadId,
-      _fields: unknown,
-      filter?: { turnItemTypes?: ReadonlyArray<string>; turnItemRunId?: RunId },
-    ) =>
-      Effect.succeed({
-        thread,
-        turnItems: options.turnItems.filter(
+      fields: ReadonlyArray<string>,
+      filter?: {
+        turnItemTypes?: ReadonlyArray<string>;
+        turnItemRunId?: RunId;
+        runIds?: ReadonlyArray<RunId>;
+      },
+    ) => {
+      recordCalls.push({ fields, filter });
+      return Effect.succeed({
+        turnItems: (options.turnItems ?? []).filter(
           (candidate) =>
             (filter?.turnItemTypes === undefined ||
               filter.turnItemTypes.includes(candidate.type)) &&
             (filter?.turnItemRunId === undefined || candidate.runId === filter.turnItemRunId),
         ),
-        runs: [{ id: runId, providerInstanceId: instanceId, modelSelection }],
+        runs: [
+          {
+            id: runId,
+            status: "failed",
+            rootNodeId,
+            providerInstanceId: instanceId,
+            modelSelection,
+          },
+        ].filter((run) => filter?.runIds === undefined || filter.runIds.includes(run.id)),
         providerSessions: [{ providerInstanceId: instanceId, driver: "codex" }],
-      })) as never,
-  });
-  const layerProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
-    get: () => Effect.succeed(Option.some({ projectId, workspaceRoot: "/repo" } as never)),
+      });
+    }) as never,
   });
   const layer = ProviderFailureExplanation.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerThreads,
-        layerProjects,
         Layer.mock(TextGeneration.TextGeneration)({ explainProviderFailure }),
         ServerSettings.layerTest({
           textGenerationModelSelection: { instanceId: "claudeAgent", model: "claude-haiku" },
@@ -109,13 +130,14 @@ function makeHarness(options: {
     ),
     Layer.orDie,
   );
-  return { layer, explainProviderFailure };
+  return { layer, explainProviderFailure, recordCalls };
 }
 
-const explain = Effect.gen(function* () {
-  const service = yield* ProviderFailureExplanation.ProviderFailureExplanationService;
-  return yield* service.explain({ threadId });
-});
+const explain = (input: { runId?: RunId; revision?: string } = {}) =>
+  Effect.gen(function* () {
+    const service = yield* ProviderFailureExplanation.ProviderFailureExplanationService;
+    return yield* service.explain({ threadId, ...input });
+  });
 
 describe("formatProviderFailureContext", () => {
   const base = {
@@ -124,7 +146,7 @@ describe("formatProviderFailureContext", () => {
     model: "gpt-5.1-codex",
     runtimeMode: "full-access",
     failure: failure("spawn codex ENOENT"),
-    userMessage: "Fix the flaky test",
+    userMessage: { text: "Fix the flaky test", imageCount: 0 },
     items: [],
   } as const;
 
@@ -139,6 +161,35 @@ describe("formatProviderFailureContext", () => {
     assert.include(context, "Message: spawn codex ENOENT");
     assert.include(context, "Last user message of this run:\nFix the flaky test");
     assert.notInclude(context, "Recent activity");
+    assert.notInclude(context, "attachment");
+  });
+
+  it("counts image attachments without naming them", () => {
+    const one = ProviderFailureExplanation.formatProviderFailureContext({
+      ...base,
+      userMessage: { text: "See this", imageCount: 1 },
+    });
+    assert.include(one, "User message had 1 image attachment");
+    assert.notInclude(one, "attachments");
+    const two = ProviderFailureExplanation.formatProviderFailureContext({
+      ...base,
+      userMessage: { text: "", imageCount: 2 },
+    });
+    assert.include(two, "User message had 2 image attachments");
+    assert.notInclude(two, "Last user message");
+  });
+
+  it("explains a session-only failure from the message alone", () => {
+    const context = ProviderFailureExplanation.formatProviderFailureContext({
+      ...base,
+      failure: { class: "unknown", message: "Session died", code: null, retryable: null },
+      userMessage: null,
+    });
+    assert.include(context, "Class: unknown");
+    assert.include(context, "Code: none");
+    assert.include(context, "Provider marked retryable: unknown");
+    assert.include(context, "Message: Session died");
+    assert.notInclude(context, "Last user message");
   });
 
   it("reports provider retries", () => {
@@ -149,11 +200,16 @@ describe("formatProviderFailureContext", () => {
     assert.include(context, "Retried by the provider: attempt 2 of 3");
   });
 
-  it("keeps the last ten non-message items as labels, never outputs or arguments", () => {
-    const commands = Array.from({ length: 12 }, (_, index) =>
-      item(`item:${index}`, index, {
+  it("describes commands by status and exit code only, never their text or output", () => {
+    const secrets = [
+      'API_KEY="hunter2 and more" npm test',
+      "curl -H 'Authorization: Bearer abc123' https://example.test",
+      "psql postgres://user:pw0rd@db/app",
+    ];
+    const commands = secrets.map((input, index) =>
+      item(`item:cmd-${index}`, index, {
         type: "command_execution",
-        input: `API_KEY=hunter2 npm test --token=abc${index}`,
+        input,
         output: "SECRET OUTPUT",
         exitCode: 1,
       }),
@@ -161,12 +217,12 @@ describe("formatProviderFailureContext", () => {
     const context = ProviderFailureExplanation.formatProviderFailureContext({
       ...base,
       items: [
-        item("item:msg", 0, {
+        item("item:msg", 10, {
           type: "assistant_message",
           text: "ASSISTANT TEXT",
           streaming: false,
         }),
-        item("item:think", 1, { type: "reasoning", text: "REASONING TEXT", streaming: false }),
+        item("item:think", 11, { type: "reasoning", text: "REASONING TEXT", streaming: false }),
         ...commands,
         item("item:tool", 99, {
           type: "dynamic_tool",
@@ -176,33 +232,69 @@ describe("formatProviderFailureContext", () => {
       ],
     });
     const lines = context.split("Recent activity in this run, oldest first:\n")[1]!.split("\n");
-    assert.equal(lines.length, 10);
-    assert.equal(lines[0], "- command_execution completed npm exit 1");
-    assert.equal(lines.at(-1), "- dynamic_tool completed web.fetch");
-    for (const leaked of ["hunter2", "abc", "SECRET OUTPUT", "ASSISTANT TEXT", "REASONING TEXT"]) {
+    assert.deepEqual(lines, [
+      "- command_execution completed exit 1",
+      "- command_execution completed exit 1",
+      "- command_execution completed exit 1",
+      "- dynamic_tool completed web.fetch",
+    ]);
+    for (const leaked of [
+      "API_KEY",
+      "hunter2",
+      "more",
+      "npm",
+      "Bearer",
+      "abc123",
+      "pw0rd",
+      "psql",
+      "SECRET OUTPUT",
+      "ASSISTANT TEXT",
+      "REASONING TEXT",
+    ]) {
       assert.notInclude(context, leaked);
     }
+  });
+
+  it("keeps the last ten items", () => {
+    const items = Array.from({ length: 12 }, (_, index) =>
+      item(`item:${index}`, index, { type: "command_execution", input: "x", exitCode: index }),
+    );
+    const context = ProviderFailureExplanation.formatProviderFailureContext({ ...base, items });
+    const lines = context.split("Recent activity in this run, oldest first:\n")[1]!.split("\n");
+    assert.equal(lines.length, 10);
+    assert.equal(lines[0], "- command_execution completed exit 2");
+    assert.equal(lines.at(-1), "- command_execution completed exit 11");
   });
 
   it("truncates the user message and bounds the whole context", () => {
     const context = ProviderFailureExplanation.formatProviderFailureContext({
       ...base,
-      userMessage: "u".repeat(10_000),
+      userMessage: { text: "u".repeat(10_000), imageCount: 0 },
       failure: failure("m".repeat(4_096)),
     });
     assert.isBelow(context.length, 12_001);
     assert.include(context, "[truncated]");
     assert.isBelow(context.indexOf("u".repeat(2_001)), 0);
   });
+
+  it("truncates an oversized session error", () => {
+    const context = ProviderFailureExplanation.formatProviderFailureContext({
+      ...base,
+      failure: { class: "unknown", message: "s".repeat(50_000), code: null, retryable: null },
+    });
+    assert.isBelow(context.length, 12_001);
+    assert.isBelow(context.indexOf("s".repeat(4_097)), 0);
+  });
 });
 
 describe("ProviderFailureExplanationService", () => {
-  it.effect("fails with a typed error when the thread has no provider failure", () =>
+  it.effect("refuses when the thread reports no error", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        turnItems: [item("item:1", 1, { type: "assistant_message", text: "hi", streaming: false })],
+        lastError: null,
+        turnItems: [rootError("item:error", 1, "stale failure")],
       });
-      const error = yield* explain.pipe(Effect.provide(harness.layer), Effect.flip);
+      const error = yield* explain().pipe(Effect.provide(harness.layer), Effect.flip);
       assert.equal(error._tag, "ProviderFailureExplanationError");
       assert.equal(error.reason, "no_failure");
       assert.equal(error.message, "This thread has no provider failure to explain.");
@@ -210,53 +302,141 @@ describe("ProviderFailureExplanationService", () => {
     }),
   );
 
-  it.effect("explains the latest error with the text generation model of the project", () =>
+  it.effect("explains the failure the shell reports, not just the last error item", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        worktreePath: "/repo/.wt/feature",
+        lastError: "root failure",
         turnItems: [
-          item("item:old-error", 1, { type: "error", failure: failure("old failure") }, otherRunId),
-          item("item:user", 2, { type: "user_message", text: "Run the build" }),
-          item("item:cmd", 3, { type: "command_execution", input: "pnpm build", exitCode: 2 }),
-          item("item:new-error", 4, { type: "error", failure: failure("new failure") }),
+          item("item:user", 1, { type: "user_message", text: "Run the build", attachments: [] }),
+          item("item:cmd", 2, { type: "command_execution", input: "pnpm build", exitCode: 2 }),
+          rootError("item:root-error", 3, "root failure"),
+          // A subagent's error sits later in the run but does not own the thread's failure.
+          rootError("item:child-error", 4, "child failure", { nodeId: NodeId.make("node:child") }),
         ],
       });
-      const result = yield* explain.pipe(Effect.provide(harness.layer));
+      const result = yield* explain({ runId, revision: "root failure" }).pipe(
+        Effect.provide(harness.layer),
+      );
 
       assert.deepEqual(result, {
-        failureMessage: "new failure",
+        failureMessage: "root failure",
         summary: "The binary is missing.",
         likelyFix: "Install it.",
       });
       const call = harness.explainProviderFailure.mock.calls[0]?.[0];
-      assert.equal(call?.cwd, "/repo/.wt/feature");
+      assert.include(call?.context, "Message: root failure");
+      assert.include(call?.context, "Code: E_BOOM");
+      assert.notInclude(call?.context, "child failure");
+      assert.include(call?.context, "Last user message of this run:\nRun the build");
+      assert.include(call?.context, "- command_execution completed exit 2");
+      assert.include(call?.context, "(driver codex)");
       assert.equal(call?.modelSelection.instanceId, "claudeAgent");
       assert.equal(call?.modelSelection.model, "claude-haiku");
-      assert.include(call?.context, "Message: new failure");
-      assert.notInclude(call?.context, "old failure");
-      assert.include(call?.context, "Last user message of this run:\nRun the build");
-      assert.include(call?.context, "- command_execution completed pnpm exit 2");
-      assert.include(call?.context, "(driver codex)");
+      // The model runs with no project directory.
+      assert.notProperty(call, "cwd");
     }),
   );
 
-  it.effect("falls back to the workspace root and reports model failures", () =>
+  it.effect("explains a session error that supersedes the run's failure", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        turnItems: [item("item:error", 1, { type: "error", failure: failure("boom") })],
+        lastError: "Provider session crashed",
+        lastErrorClass: null,
+        turnItems: [rootError("item:root-error", 1, "turn failed")],
+      });
+      const result = yield* explain({ revision: "Provider session crashed" }).pipe(
+        Effect.provide(harness.layer),
+      );
+
+      assert.equal(result.failureMessage, "Provider session crashed");
+      const context = harness.explainProviderFailure.mock.calls[0]?.[0].context;
+      assert.include(context, "Class: unknown");
+      assert.include(context, "Message: Provider session crashed");
+      assert.notInclude(context, "turn failed");
+      assert.notInclude(context, "E_BOOM");
+    }),
+  );
+
+  it.effect("explains a session error on a thread with no run", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ lastError: "Could not start", latestRunId: null });
+      yield* explain().pipe(Effect.provide(harness.layer));
+
+      assert.deepEqual(harness.recordCalls, [{ fields: ["providerSessions"], filter: undefined }]);
+      assert.include(
+        harness.explainProviderFailure.mock.calls[0]?.[0].context,
+        "Message: Could not start",
+      );
+    }),
+  );
+
+  it.effect("reads only the failing run and only the item types it describes", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        lastError: "root failure",
+        turnItems: [
+          rootError("item:root-error", 1, "root failure"),
+          item("item:file", 2, {
+            type: "file_change",
+            fileName: "a.ts",
+            diffStr: "x".repeat(1_000),
+          }),
+        ],
+      });
+      yield* explain().pipe(Effect.provide(harness.layer));
+
+      const call = harness.recordCalls[0];
+      assert.deepEqual(call?.fields, ["runs", "turnItems", "providerSessions"]);
+      assert.equal(call?.filter?.["turnItemRunId"], runId);
+      assert.deepEqual(call?.filter?.["runIds"], [runId]);
+      assert.sameMembers(call?.filter?.["turnItemTypes"] as Array<string>, [
+        "user_message",
+        "error",
+        "command_execution",
+        "dynamic_tool",
+      ]);
+      assert.notInclude(harness.explainProviderFailure.mock.calls[0]?.[0].context, "file_change");
+    }),
+  );
+
+  it.effect("refuses when the thread moved to another run or error", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ lastError: "new failure" });
+      const otherRun = yield* explain({ runId: RunId.make("run:older") }).pipe(
+        Effect.provide(harness.layer),
+        Effect.flip,
+      );
+      assert.equal(otherRun.reason, "changed");
+      assert.equal(otherRun.message, "The error changed before it could be explained.");
+      const otherError = yield* explain({ revision: "old failure" }).pipe(
+        Effect.provide(harness.layer),
+        Effect.flip,
+      );
+      assert.equal(otherError.reason, "changed");
+      assert.equal(harness.explainProviderFailure.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("hides model failure details from the public message", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        lastError: "boom",
         generate: () =>
           Effect.fail(
             new TextGenerationError({
               operation: "explainProviderFailure",
-              detail: "Codex returned invalid structured output.",
+              detail: "Codex CLI command failed: token=sk-secret-stderr",
             }),
           ),
       });
-      const error = yield* explain.pipe(Effect.provide(harness.layer), Effect.flip);
+      const error = yield* explain().pipe(Effect.provide(harness.layer), Effect.flip);
 
-      assert.equal(harness.explainProviderFailure.mock.calls[0]?.[0].cwd, "/repo");
       assert.equal(error.reason, "generation_failed");
-      assert.include(error.message, "Codex returned invalid structured output.");
+      assert.equal(
+        error.message,
+        "The text generation model could not explain this error. Check the server logs for details.",
+      );
+      assert.notInclude(JSON.stringify(error), "sk-secret-stderr");
     }),
   );
 });

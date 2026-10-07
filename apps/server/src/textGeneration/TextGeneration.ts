@@ -82,8 +82,12 @@ export interface ThreadTitleGenerationResult {
 }
 
 export interface ProviderFailureExplanationInput {
-  cwd: string;
-  /** Plain-text description of the failure and the run around it. */
+  /**
+   * Plain-text description of the failure and the run around it. It comes
+   * from provider output, so providers run this operation with no project
+   * access: an empty temporary working directory and no tools where they can
+   * be turned off.
+   */
   context: string;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;

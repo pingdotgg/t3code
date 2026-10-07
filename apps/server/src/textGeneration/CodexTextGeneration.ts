@@ -162,6 +162,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      const workingDirectory = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, {
+        operation,
+        cwd,
+      });
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
             Effect.mapError(
@@ -214,7 +218,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
             : {}),
         },
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),

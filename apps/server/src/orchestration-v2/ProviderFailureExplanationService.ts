@@ -1,50 +1,65 @@
+import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import type {
   OrchestrationV2ExplainProviderFailureResult,
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderRetry,
   OrchestrationV2TurnItem,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { limitSection } from "../textGeneration/TextGenerationUtils.ts";
-import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 /** Everything the model sees, however long the thread or the failure text. */
 const MAX_CONTEXT_CHARS = 12_000;
+const MAX_FAILURE_MESSAGE_CHARS = 4_096;
 const MAX_USER_MESSAGE_CHARS = 2_000;
-const MAX_ITEM_LABEL_CHARS = 80;
 const MAX_RECENT_ITEMS = 10;
 
-/** `detail` is safe to show the user: it says why no explanation was produced. */
+/**
+ * The run's items worth describing. Reading is limited to these so a long run
+ * of file changes (whose bodies are large) is never loaded for ten labels.
+ */
+const DESCRIBED_ITEM_TYPES = [
+  "user_message",
+  "error",
+  "command_execution",
+  "dynamic_tool",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+const GENERATION_FAILED_MESSAGE =
+  "The text generation model could not explain this error. Check the server logs for details.";
+
+/** `message` is fixed T3 text, safe to show the user. The underlying cause is only logged. */
 export class ProviderFailureExplanationError extends Schema.TaggedError<ProviderFailureExplanationError>()(
   "ProviderFailureExplanationError",
   {
     threadId: Schema.String,
-    reason: Schema.Literals(["no_failure", "thread_unavailable", "generation_failed"]),
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    reason: Schema.Literals(["no_failure", "thread_unavailable", "changed", "generation_failed"]),
+    message: Schema.String,
   },
-) {
-  override get message(): string {
-    return this.detail;
-  }
-}
+) {}
 
 export class ProviderFailureExplanationService extends Context.Service<
   ProviderFailureExplanationService,
   {
-    /** Asks the text generation model what probably caused the thread's latest provider failure. */
+    /**
+     * Asks the text generation model what probably caused the error the thread
+     * reports as its `lastError`. `runId` and `revision`, when given, are what
+     * the caller is showing; a thread that has moved on is refused.
+     */
     readonly explain: (input: {
       readonly threadId: ThreadId;
+      readonly runId?: RunId | undefined;
+      readonly revision?: string | undefined;
     }) => Effect.Effect<
       OrchestrationV2ExplainProviderFailureResult,
       ProviderFailureExplanationError
@@ -59,20 +74,15 @@ export interface ProviderFailureContextInput {
   readonly runtimeMode: string;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly retry?: OrchestrationV2ProviderRetry | undefined;
-  /** Text of the user message that started the failing run. */
-  readonly userMessage: string | null;
+  /** The user message that started the failing run, when the failure belongs to a run. */
+  readonly userMessage: { readonly text: string; readonly imageCount: number } | null;
   /** The failing run's items in timeline order. The failure's own item and message items are skipped. */
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
 }
 
-const oneLine = (value: string, maxChars: number) => {
-  const flat = value.replace(/\s+/g, " ").trim();
-  return flat.length <= maxChars ? flat : `${flat.slice(0, maxChars - 3).trimEnd()}...`;
-};
-
 /**
- * A short label per item. Commands reduce to the executable name because the
- * arguments and environment can carry credentials; outputs are never included.
+ * A label per item. Commands contribute only their status and exit code: their
+ * text, arguments, and output can carry credentials in forms no parser catches.
  */
 function describeItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
@@ -81,24 +91,16 @@ function describeItem(item: OrchestrationV2TurnItem): string | null {
     case "reasoning":
     case "error":
       return null;
-    case "command_execution": {
-      const executable = item.input
-        .trim()
-        .split(/\s+/)
-        .find((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token));
+    case "command_execution":
       return [
-        executable === undefined ? null : oneLine(executable, MAX_ITEM_LABEL_CHARS),
-        item.exitCode === undefined ? null : `exit ${item.exitCode}`,
-      ]
-        .filter((part) => part !== null)
-        .join(" ");
-    }
+        item.type,
+        item.status,
+        ...(item.exitCode === undefined ? [] : [`exit ${item.exitCode}`]),
+      ].join(" ");
     case "dynamic_tool":
-      return item.toolName === null ? "" : oneLine(item.toolName, MAX_ITEM_LABEL_CHARS);
-    case "file_change":
-      return oneLine(item.fileName, MAX_ITEM_LABEL_CHARS);
+      return [item.type, item.status, item.toolName ?? ""].filter(Boolean).join(" ");
     default:
-      return item.title === null ? "" : oneLine(item.title, MAX_ITEM_LABEL_CHARS);
+      return [item.type, item.status].join(" ");
   }
 }
 
@@ -112,11 +114,10 @@ export function formatProviderFailureContext(input: ProviderFailureContextInput)
   const recent = input.items
     .flatMap((item) => {
       const label = describeItem(item);
-      return label === null
-        ? []
-        : [`- ${[item.type, item.status, label].filter(Boolean).join(" ")}`];
+      return label === null ? [] : [`- ${label}`];
     })
     .slice(-MAX_RECENT_ITEMS);
+  const userMessage = input.userMessage;
 
   const sections = [
     [
@@ -129,103 +130,156 @@ export function formatProviderFailureContext(input: ProviderFailureContextInput)
       `Class: ${failure.class}`,
       `Code: ${failure.code ?? "none"}`,
       retryLine,
-      `Message: ${failure.message}`,
+      `Message: ${limitSection(failure.message, MAX_FAILURE_MESSAGE_CHARS)}`,
     ].join("\n"),
-    input.userMessage === null || input.userMessage.trim().length === 0
+    userMessage === null
       ? null
-      : `Last user message of this run:\n${limitSection(input.userMessage.trim(), MAX_USER_MESSAGE_CHARS)}`,
+      : [
+          userMessage.text.trim().length === 0
+            ? null
+            : `Last user message of this run:\n${limitSection(userMessage.text.trim(), MAX_USER_MESSAGE_CHARS)}`,
+          userMessage.imageCount === 0
+            ? null
+            : `User message had ${userMessage.imageCount} image attachment${userMessage.imageCount === 1 ? "" : "s"}`,
+        ]
+          .filter((part) => part !== null)
+          .join("\n"),
     recent.length === 0 ? null : `Recent activity in this run, oldest first:\n${recent.join("\n")}`,
   ];
   return limitSection(
-    sections.filter((section) => section !== null).join("\n\n"),
+    sections.filter((section) => section !== null && section.length > 0).join("\n\n"),
     MAX_CONTEXT_CHARS,
   );
 }
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
 
   const explain: ProviderFailureExplanationService["Service"]["explain"] = Effect.fn(
     "ProviderFailureExplanationService.explain",
   )(function* (input) {
+    const refuse = (
+      reason: ProviderFailureExplanationError["reason"],
+      message: string,
+      cause?: unknown,
+    ) =>
+      (cause === undefined
+        ? Effect.void
+        : Effect.logWarning("Provider failure explanation failed", reason, cause)
+      ).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProviderFailureExplanationError({ threadId: input.threadId, reason, message }),
+          ),
+        ),
+        Effect.annotateLogs({ threadId: input.threadId }),
+      );
     const unavailable = (cause: unknown) =>
-      new ProviderFailureExplanationError({
-        threadId: input.threadId,
-        reason: "thread_unavailable",
-        detail: "This thread could not be read, so the error cannot be explained.",
+      refuse(
+        "thread_unavailable",
+        "This thread could not be read, so the error cannot be explained.",
         cause,
-      });
+      );
 
-    const errors = yield* threads
-      .getThreadRecords(input.threadId, ["turnItems"], { turnItemTypes: ["error"] })
-      .pipe(Effect.mapError(unavailable));
-    // Items arrive in timeline order, so the last error is the latest.
-    const failureItem = errors.turnItems.findLast((item) => item.type === "error");
-    if (failureItem === undefined || failureItem.type !== "error") {
-      return yield* new ProviderFailureExplanationError({
-        threadId: input.threadId,
-        reason: "no_failure",
-        detail: "This thread has no provider failure to explain.",
-      });
+    // The thread shell decides what the banner shows as `lastError`, including
+    // a session-level error that supersedes the run's own failure.
+    const shell = yield* threads.getThreadShell(input.threadId).pipe(
+      Effect.catch(unavailable),
+      Effect.flatMap((found) => (found === null ? unavailable(undefined) : Effect.succeed(found))),
+    );
+    const lastError = shell.lastError ?? null;
+    if (lastError === null) {
+      return yield* refuse("no_failure", "This thread has no provider failure to explain.");
+    }
+    if (
+      (input.runId !== undefined && input.runId !== shell.latestRunId) ||
+      (input.revision !== undefined && input.revision !== lastError)
+    ) {
+      return yield* refuse("changed", "The error changed before it could be explained.");
     }
 
-    const run = yield* failureItem.runId === null
-      ? Effect.succeed(null)
-      : threads
-          .getThreadRecords(input.threadId, ["runs", "turnItems", "providerSessions"], {
-            runIds: [failureItem.runId],
-            turnItemRunId: failureItem.runId,
-          })
-          .pipe(Effect.mapError(unavailable));
-    const thread = (run ?? errors).thread;
-    const runRecord = run?.runs[0];
-    const runItems = (run?.turnItems ?? []).filter((item) => item.id !== failureItem.id);
-    const providerInstanceId = runRecord?.providerInstanceId ?? thread.providerInstanceId;
-    const modelSelection = runRecord?.modelSelection ?? thread.modelSelection;
+    const runId = shell.latestRunId;
+    const records =
+      runId === null
+        ? {
+            run: null,
+            runItems: [] as ReadonlyArray<OrchestrationV2TurnItem>,
+            providerSessions: (yield* threads
+              .getThreadRecords(input.threadId, ["providerSessions"])
+              .pipe(Effect.catch(unavailable))).providerSessions,
+          }
+        : yield* threads
+            .getThreadRecords(input.threadId, ["runs", "turnItems", "providerSessions"], {
+              runIds: [runId],
+              turnItemRunId: runId,
+              turnItemTypes: DESCRIBED_ITEM_TYPES,
+            })
+            .pipe(
+              Effect.catch(unavailable),
+              Effect.map((found) => ({
+                run: found.runs.find((candidate) => candidate.id === runId) ?? null,
+                runItems: found.turnItems,
+                providerSessions: found.providerSessions,
+              })),
+            );
+    const { run, runItems } = records;
 
-    const project = yield* projects.get(thread.projectId).pipe(Effect.mapError(unavailable));
-    if (Option.isNone(project)) return yield* unavailable(undefined);
-    const settings = resolveProjectSettings(
-      yield* serverSettings.getSettings.pipe(Effect.mapError(unavailable)),
-      thread.projectId,
-    ).settings;
+    // The run's own failure when it is the one reported; otherwise the failure is
+    // the session's, and only its message and class are known.
+    const runFailure = latestRootProviderFailure(run, runItems);
+    const failure: OrchestrationV2ProviderFailure =
+      runFailure !== null && runFailure.message === lastError
+        ? runFailure
+        : {
+            class: shell.lastErrorClass ?? "unknown",
+            message: lastError,
+            code: null,
+            retryable: null,
+          };
+    const failureItem = runItems.find(
+      (item) => item.type === "error" && item.failure === runFailure,
+    );
+    const userMessageItem = runItems.findLast((item) => item.type === "user_message");
 
-    const userMessage = runItems.findLast((item) => item.type === "user_message");
+    const providerInstanceId = run?.providerInstanceId ?? shell.providerInstanceId;
     const context = formatProviderFailureContext({
       providerInstanceId,
       driver:
-        run?.providerSessions.find((session) => session.providerInstanceId === providerInstanceId)
-          ?.driver ?? null,
-      model: modelSelection.model,
-      runtimeMode: thread.runtimeMode,
-      failure: failureItem.failure,
-      retry: failureItem.retry,
-      userMessage: userMessage?.type === "user_message" ? userMessage.text : null,
-      items: runItems,
+        records.providerSessions.find(
+          (session) => session.providerInstanceId === providerInstanceId,
+        )?.driver ?? null,
+      model: (run?.modelSelection ?? shell.modelSelection).model,
+      runtimeMode: shell.runtimeMode,
+      failure,
+      retry: failureItem?.type === "error" ? failureItem.retry : undefined,
+      userMessage:
+        userMessageItem?.type === "user_message"
+          ? {
+              text: userMessageItem.text,
+              imageCount: userMessageItem.attachments.filter(
+                (attachment) => attachment.type === "image",
+              ).length,
+            }
+          : null,
+      items: runItems.filter((item) => item !== failureItem),
     });
 
+    const settings = resolveProjectSettings(
+      yield* serverSettings.getSettings.pipe(
+        Effect.catch((cause) => refuse("generation_failed", GENERATION_FAILED_MESSAGE, cause)),
+      ),
+      shell.projectId,
+    ).settings;
     const explanation = yield* textGeneration
       .explainProviderFailure({
-        cwd: thread.worktreePath ?? project.value.workspaceRoot,
         context,
         modelSelection: settings.textGenerationModelSelection,
       })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderFailureExplanationError({
-              threadId: input.threadId,
-              reason: "generation_failed",
-              detail: `The text generation model could not explain this error: ${cause.detail}`,
-              cause,
-            }),
-        ),
-      );
+      .pipe(Effect.catch((cause) => refuse("generation_failed", GENERATION_FAILED_MESSAGE, cause)));
     return {
-      failureMessage: failureItem.failure.message,
+      failureMessage: lastError,
       summary: explanation.summary,
       likelyFix: explanation.likelyFix,
     };

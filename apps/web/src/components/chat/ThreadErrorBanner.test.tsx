@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -91,6 +91,7 @@ describe("ThreadErrorBanner", () => {
     const explainTarget = {
       environmentId: EnvironmentId.make("env-1"),
       threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
     };
 
     const failureKinds = { provider: "provider_error", usage: "usage_limit" } as const; // oxlint-disable-line shadcn/no-unknown-classes -- failure classes, not CSS

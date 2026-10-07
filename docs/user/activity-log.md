@@ -26,8 +26,9 @@ messages, what probably went wrong. The answer appears in the banner as **What h
 
 Explain runs only when you choose it, and each use spends credits on the provider behind your text
 generation model. The model sees the error text, the provider and model names, the runtime mode, your
-last message of that run, and the names of the last few actions in the run. It does not see file
-contents, command arguments, or tool output. Explaining the same error again reuses the earlier
-answer for a while. If the explanation fails, the banner says why and **Try again** is available.
+last message of that run, how many images it had, and whether each recent action succeeded. It does
+not see file contents, command text, tool output, or image names, and it runs without access to your
+project. If the explanation fails, the banner says so and **Try again** is available. Explain is not
+repeated on its own when you reconnect or reopen the thread.
 
 Usage limit errors have no Explain action, because the banner already names the cause.

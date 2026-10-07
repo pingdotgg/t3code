@@ -11,6 +11,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -43,9 +44,11 @@ const runOnServer = (
   connection: OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
   attachmentsDir: string,
+  fileSystem: FileSystem.FileSystem,
 ) =>
   Effect.gen(function* () {
     const { client } = connection;
+    const cwd = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, input);
     const parsed = parseOpenCodeModelSlug(input.modelSelection.model);
     if (parsed === null) {
       return yield* new TextGenerationError({
@@ -130,7 +133,7 @@ const runOnServer = (
     );
     const session = yield* client.session.create({
       title: `T3 Code ${input.operation}`,
-      location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
+      location: Location.PublicRef.make({ directory: AbsolutePath.make(cwd) }),
       model: Model.Ref.make({
         providerID: Provider.ID.make(parsed.providerID),
         id: Model.ID.make(parsed.modelID),
@@ -187,9 +190,10 @@ const runOnServer = (
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const run: TextGenerationOperations.Runner = (input) =>
     server
-      .withConnection((connection) => runOnServer(connection, input, attachmentsDir))
+      .withConnection((connection) => runOnServer(connection, input, attachmentsDir, fileSystem))
       .pipe(
         Effect.mapError((cause) =>
           isTextGenerationError(cause)

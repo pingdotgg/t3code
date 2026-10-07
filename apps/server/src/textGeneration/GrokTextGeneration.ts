@@ -1,5 +1,6 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -28,18 +29,29 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const runGrokJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
+    const { operation, prompt, modelSelection } = request;
     return Effect.gen(function* () {
+      const cwd = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, request);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
         environment,
         childProcessSpawner: commandSpawner,
         cwd,
+        // A project-less request must not inherit an always-approve setting from the user's Grok config.
+        ...(request.cwd === null ? { runtimeMode: "approval-required" as const } : {}),
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+
+      if (request.cwd === null) {
+        // No user is present to approve a tool call, so every request is cancelled.
+        yield* runtime.handleRequestPermission(() =>
+          Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
+        );
+      }
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

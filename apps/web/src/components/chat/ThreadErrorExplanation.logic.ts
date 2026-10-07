@@ -11,7 +11,7 @@ export function canExplainThreadError(input: {
   return input.hasTarget && input.errorClass !== "usage_limit";
 }
 
-export type ThreadErrorExplanationView =
+export type ThreadErrorExplanationState =
   | { readonly kind: "idle" }
   | { readonly kind: "pending" }
   | { readonly kind: "failed"; readonly message: string }
@@ -21,18 +21,27 @@ export type ThreadErrorExplanationView =
       readonly likelyFix: string;
     };
 
-/** What the banner shows for one explanation request. Nothing is asked until `requested`. */
-export function deriveThreadErrorExplanationView(input: {
-  readonly requested: boolean;
-  readonly isPending: boolean;
-  readonly data: OrchestrationV2ExplainProviderFailureResult | null;
-  readonly error: string | null;
-}): ThreadErrorExplanationView {
-  if (!input.requested) return { kind: "idle" };
-  if (input.isPending) return { kind: "pending" };
-  if (input.data !== null) {
-    return { kind: "ready", summary: input.data.summary, likelyFix: input.data.likelyFix };
-  }
-  if (input.error !== null) return { kind: "failed", message: input.error };
-  return { kind: "pending" };
+export const THREAD_ERROR_CHANGED_MESSAGE = "The error changed before it could be explained.";
+
+/**
+ * An answer is only shown under the error it was asked about. The server
+ * explains the error its thread reports, which can move on while the request
+ * is in flight.
+ */
+export function explanationStateFromResult(
+  displayedError: string,
+  result: OrchestrationV2ExplainProviderFailureResult,
+): ThreadErrorExplanationState {
+  return result.failureMessage === displayedError
+    ? { kind: "ready", summary: result.summary, likelyFix: result.likelyFix }
+    : { kind: "failed", message: THREAD_ERROR_CHANGED_MESSAGE };
+}
+
+/** The message of a failed request, which for server refusals is T3-authored. */
+export function explanationStateFromFailure(failure: unknown): ThreadErrorExplanationState {
+  const message =
+    failure instanceof Error && failure.message.trim().length > 0
+      ? failure.message
+      : "The environment request failed.";
+  return { kind: "failed", message };
 }

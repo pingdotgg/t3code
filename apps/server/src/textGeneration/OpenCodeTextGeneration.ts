@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TextGenerationError, type OpenCodeSettings } from "@t3tools/contracts";
@@ -156,10 +157,13 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const runOpenCodeJson = Effect.fn("runOpenCodeJson")(function* <S extends Schema.Top>(
-    input: TextGenerationOperations.Request<S>,
+    request: TextGenerationOperations.Request<S>,
   ) {
+    const cwd = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, request);
+    const input = { ...request, cwd };
     const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
     if (!parsedModel) {
       return yield* new TextGenerationError({
@@ -320,7 +324,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     );
 
     return yield* TextGenerationOperations.decodeJsonReply(input, "OpenCode", rawOutput);
-  });
+  }, Effect.scoped);
 
   return TextGenerationOperations.fromRunner("OpenCodeTextGeneration", runOpenCodeJson);
 });

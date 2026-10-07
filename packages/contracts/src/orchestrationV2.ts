@@ -3395,13 +3395,12 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   },
 ) {}
 
-/** The message is safe to show the user: it says why no explanation was produced. */
+/** The message is fixed T3 text, safe to show the user. The cause stays in the server log. */
 export class OrchestrationV2ExplainProviderFailureError extends Schema.TaggedError<OrchestrationV2ExplainProviderFailureError>()(
   "OrchestrationV2ExplainProviderFailureError",
   {
     threadId: ThreadId,
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
@@ -3464,7 +3463,9 @@ export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItem
 
 export const OrchestrationV2ExplainProviderFailureInput = Schema.Struct({
   threadId: ThreadId,
-  /** The failure text the client is showing. Only keys the client cache, so a new failure is explained anew. */
+  /** The thread's latest run as the client shows it. A server that has moved to another run refuses. */
+  runId: Schema.optional(RunId),
+  /** The error text the client is showing. A server whose error differs refuses. */
   revision: Schema.optional(Schema.String),
 });
 export type OrchestrationV2ExplainProviderFailureInput =
@@ -3472,7 +3473,7 @@ export type OrchestrationV2ExplainProviderFailureInput =
 
 /** A model's reading of a thread's latest provider failure. */
 export const OrchestrationV2ExplainProviderFailureResult = Schema.Struct({
-  /** The failure that was explained, as the server redacted and stored it. */
+  /** The error that was explained: the thread's `lastError`, which the client checks against the one it shows. */
   failureMessage: Schema.String,
   /** What probably happened, in one or two sentences. */
   summary: Schema.String,

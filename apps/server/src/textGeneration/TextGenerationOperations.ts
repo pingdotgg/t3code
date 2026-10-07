@@ -7,7 +7,9 @@
  * @module textGeneration/TextGenerationOperations
  */
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 
 import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -32,7 +34,11 @@ export type Operation = keyof TextGeneration.TextGeneration["Service"];
 /** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
-  readonly cwd: string;
+  /**
+   * The project to run in. Null means the prompt needs no project access, so
+   * the provider runs in an empty temporary directory (see `resolveWorkingDirectory`).
+   */
+  readonly cwd: string | null;
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
@@ -44,6 +50,27 @@ export interface Request<S extends Schema.Top> {
 export type Runner = <S extends Schema.Top>(
   request: Request<S>,
 ) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+
+/**
+ * The directory a provider process runs in: the request's project, or a fresh
+ * empty temporary directory removed with the scope when the request has none.
+ */
+export const resolveWorkingDirectory = (
+  fileSystem: FileSystem.FileSystem,
+  request: Pick<Request<Schema.Top>, "operation" | "cwd">,
+): Effect.Effect<string, TextGenerationError, Scope.Scope> =>
+  request.cwd !== null
+    ? Effect.succeed(request.cwd)
+    : fileSystem.makeTempDirectoryScoped({ prefix: "t3code-text-generation-" }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: request.operation,
+              detail: "Failed to create an isolated working directory.",
+              cause,
+            }),
+        ),
+      );
 
 /** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
@@ -158,7 +185,7 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
     Effect.fn(`${name}.explainProviderFailure`)(function* (input) {
       const generated = yield* run({
         operation: "explainProviderFailure",
-        cwd: input.cwd,
+        cwd: null,
         modelSelection: input.modelSelection,
         ...buildProviderFailureExplanationPrompt({ context: input.context }),
       });

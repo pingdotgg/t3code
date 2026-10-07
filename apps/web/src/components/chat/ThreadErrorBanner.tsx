@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   OrchestrationV2ProviderFailureClass,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { memo } from "react";
@@ -54,7 +55,12 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
   /** The server thread the error belongs to. Omit for errors the server did not report. */
-  explainTarget?: { environmentId: EnvironmentId; threadId: ThreadId } | null;
+  explainTarget?: {
+    environmentId: EnvironmentId;
+    threadId: ThreadId;
+    /** The run the error belongs to, when the client knows it. */
+    runId: RunId | null;
+  } | null;
 }) {
   if (!error) return null;
   const variant = errorClass === "usage_limit" ? "warning" : "error";
@@ -87,6 +93,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               key={error}
               environmentId={explainTarget.environmentId}
               threadId={explainTarget.threadId}
+              runId={explainTarget.runId}
               error={error}
             />
           ) : null}

@@ -11058,7 +11058,11 @@ export default function ChatView(props: ChatViewProps) {
                 errorClass={bannerShowsServerError ? (serverRuntime?.lastErrorClass ?? null) : null}
                 explainTarget={
                   bannerShowsServerError && isServerThread && activeThreadRef !== null
-                    ? activeThreadRef
+                    ? {
+                        environmentId: activeThreadRef.environmentId,
+                        threadId: activeThreadRef.threadId,
+                        runId: serverLatestRun?.runId ?? null,
+                      }
                     : null
                 }
                 onDismiss={() => {

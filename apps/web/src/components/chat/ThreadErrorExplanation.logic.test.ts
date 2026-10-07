@@ -2,10 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canExplainThreadError,
-  deriveThreadErrorExplanationView,
+  explanationStateFromFailure,
+  explanationStateFromResult,
+  THREAD_ERROR_CHANGED_MESSAGE,
 } from "./ThreadErrorExplanation.logic";
-
-const settled = { isPending: false, data: null, error: null } as const;
 
 describe("canExplainThreadError", () => {
   it("offers the action for server provider failures", () => {
@@ -23,38 +23,45 @@ describe("canExplainThreadError", () => {
   });
 });
 
-describe("deriveThreadErrorExplanationView", () => {
-  it("asks nothing until the user requests an explanation", () => {
-    expect(deriveThreadErrorExplanationView({ requested: false, ...settled })).toEqual({
-      kind: "idle",
+describe("explanationStateFromResult", () => {
+  const result = {
+    failureMessage: "spawn codex ENOENT",
+    summary: "The binary is missing.",
+    likelyFix: "Install it.",
+  };
+
+  it("shows the explanation under the error it answers", () => {
+    expect(explanationStateFromResult("spawn codex ENOENT", result)).toEqual({
+      kind: "ready",
+      summary: "The binary is missing.",
+      likelyFix: "Install it.",
     });
   });
 
-  it("reports pending while the request is in flight, even after an earlier failure", () => {
-    expect(
-      deriveThreadErrorExplanationView({
-        requested: true,
-        isPending: true,
-        data: null,
-        error: "Couldn't reach the model",
-      }),
-    ).toEqual({ kind: "pending" });
+  it("fails when the explained error is not the one displayed", () => {
+    expect(explanationStateFromResult("Provider crashed", result)).toEqual({
+      kind: "failed",
+      message: THREAD_ERROR_CHANGED_MESSAGE,
+    });
+  });
+});
+
+describe("explanationStateFromFailure", () => {
+  it("reports the error message so the user can retry", () => {
+    expect(explanationStateFromFailure(new Error("No model"))).toEqual({
+      kind: "failed",
+      message: "No model",
+    });
   });
 
-  it("shows the explanation once it arrives", () => {
-    expect(
-      deriveThreadErrorExplanationView({
-        requested: true,
-        isPending: false,
-        data: { failureMessage: "boom", summary: "The session died.", likelyFix: "Restart it." },
-        error: null,
-      }),
-    ).toEqual({ kind: "ready", summary: "The session died.", likelyFix: "Restart it." });
-  });
-
-  it("surfaces the failure so the user can retry", () => {
-    expect(
-      deriveThreadErrorExplanationView({ requested: true, ...settled, error: "No model" }),
-    ).toEqual({ kind: "failed", message: "No model" });
+  it("falls back for failures without a message", () => {
+    expect(explanationStateFromFailure("boom")).toEqual({
+      kind: "failed",
+      message: "The environment request failed.",
+    });
+    expect(explanationStateFromFailure(new Error(" "))).toEqual({
+      kind: "failed",
+      message: "The environment request failed.",
+    });
   });
 });

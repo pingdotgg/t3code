@@ -26,14 +26,18 @@ const layerGrokTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
+function makeAcpGrokWrapper(
+  dir: string,
+  env: Record<string, string>,
+  expectedArgs: ReadonlyArray<string>,
+): string {
   return writeFakeCli({
     directory: NodePath.join(dir, "bin"),
     name: "grok",
     env,
     source: execScriptSource({
       scriptPath: mockAgentPath,
-      expectedArgs: ["agent", "stdio"],
+      expectedArgs,
     }),
   });
 }
@@ -41,6 +45,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  expectedArgs: ReadonlyArray<string> = ["agent", "stdio"],
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -49,7 +54,7 @@ function withFakeAcpGrok<A, E, R>(
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
-    const binaryPath = makeAcpGrokWrapper(tempDir, env);
+    const binaryPath = makeAcpGrokWrapper(tempDir, env, expectedArgs);
     const config = decodeGrokSettings({ binaryPath });
     const textGeneration = yield* makeGrokTextGeneration(config);
     return yield* effectFn(textGeneration);
@@ -109,6 +114,43 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
             ),
           ).toBe(true);
         }),
+    );
+  });
+
+  it.effect("explains provider failures in an empty directory outside the project", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+
+    return withFakeAcpGrok(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          summary: "The session ended.",
+          likelyFix: "Start a new turn.",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const explained = yield* textGeneration.explainProviderFailure({
+            context: "Message: boom",
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+          });
+
+          expect(explained).toEqual({
+            summary: "The session ended.",
+            likelyFix: "Start a new turn.",
+          });
+          const session = readJsonRpcRequests(requestLogPath).find(
+            (request) => request.method === "session/new",
+          );
+          expect(typeof session?.params?.cwd).toBe("string");
+          expect(session?.params?.cwd).not.toBe(process.cwd());
+          expect(session?.params?.cwd).toContain("t3code-text-generation-");
+        }),
+      // Project-less requests never inherit an always-approve setting from the user's Grok config.
+      ["--permission-mode", "default", "agent", "stdio"],
     );
   });
 

@@ -1871,13 +1871,12 @@ const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.explainProviderFailure]: (input) =>
-          providerFailureExplanation.explain({ threadId: input.threadId }).pipe(
+          providerFailureExplanation.explain(input).pipe(
             Effect.mapError(
               (error) =>
                 new OrchestrationV2ExplainProviderFailureError({
                   threadId: input.threadId,
-                  message: error.detail,
-                  ...(error.cause === undefined ? {} : { cause: error.cause }),
+                  message: error.message,
                 }),
             ),
           ),

@@ -5,6 +5,7 @@
  * auth, custom providers) still applies.
  */
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -28,10 +29,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const runPiJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
+    const { operation, prompt, modelSelection } = request;
     return Effect.gen(function* () {
+      const cwd = yield* TextGenerationOperations.resolveWorkingDirectory(fileSystem, request);
       const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
         return yield* new TextGenerationError({
