@@ -4,9 +4,14 @@ import {
   type EnvironmentId,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type PluginAction,
+  type PluginActionTarget,
+  type ProjectId,
+  type ThreadId,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -36,6 +41,41 @@ export function buildLinkedThreadActionItems(
     searchTerms: [input.query, thread.title],
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
+  }));
+}
+
+/**
+ * The environment's palette plugin actions. Running one needs
+ * `orchestration:operate`, so a connection without it is offered none.
+ */
+export function buildPluginActionItems(input: {
+  readonly environmentId: EnvironmentId;
+  readonly actions: ReadonlyArray<PluginAction>;
+  readonly canOperate: boolean;
+  readonly threadId: ThreadId | null;
+  readonly projectId: ProjectId | null;
+  readonly icon: ReactNode;
+  readonly runAction: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly action: PluginAction;
+    readonly target: PluginActionTarget;
+  }) => Promise<void>;
+}): CommandPaletteActionItem[] {
+  if (!input.canOperate) return [];
+  const { environmentId } = input;
+  const entries = pluginActionsAt(input.actions, "command-palette", {
+    threadId: input.threadId,
+    projectId: input.projectId,
+  });
+  const labels = pluginActionLabels(entries.map((entry) => entry.action));
+  return entries.map(({ action, target }, index) => ({
+    kind: "action",
+    value: `plugin-action:${environmentId}:${action.id}`,
+    searchTerms: [action.title, action.name, action.pluginName, "plugin"],
+    title: labels[index] ?? action.title,
+    description: action.description ?? action.pluginName,
+    icon: input.icon,
+    run: () => input.runAction({ environmentId, action, target }),
   }));
 }
 

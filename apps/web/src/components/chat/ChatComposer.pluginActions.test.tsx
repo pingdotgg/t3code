@@ -128,12 +128,13 @@ function composerProps(
   route: "server" | "draft",
   onSend: ChatComposerProps["onSend"],
   promptRef: React.RefObject<string>,
+  canOperateThread: boolean,
 ): ChatComposerProps {
   const isServer = route === "server";
   return {
     composerDraftTarget: isServer ? threadRef : draftId,
     environmentId,
-    canOperateThread: true,
+    canOperateThread,
     attachmentUploadsCapabilityKnown: true,
     supportsAttachmentUploads: false,
     supportsQuestionAttachments: false,
@@ -237,10 +238,12 @@ function composerProps(
   };
 }
 
-async function renderComposer(route: "server" | "draft") {
+async function renderComposer(route: "server" | "draft", canOperateThread = true) {
   const onSend = vi.fn<ChatComposerProps["onSend"]>();
   const promptRef: React.RefObject<string> = { current: "" };
-  await act(async () => root.render(<ChatComposer {...composerProps(route, onSend, promptRef)} />));
+  await act(async () =>
+    root.render(<ChatComposer {...composerProps(route, onSend, promptRef, canOperateThread)} />),
+  );
   return { onSend, promptRef };
 }
 
@@ -357,5 +360,17 @@ describe("ChatComposer plugin actions in the slash menu", () => {
     });
     expect(promptRef.current).toBe("");
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("offers no plugin actions to a read-only connection and keeps the typed command", async () => {
+    const { promptRef } = await renderComposer("server", false);
+    await typePrompt("please\n/depl", " now");
+    expect(menuOptions().some((element) => element.textContent?.includes("/deploy"))).toBe(false);
+
+    await pressEnter();
+
+    expect(pluginActionsMock.runPluginAction).not.toHaveBeenCalled();
+    expect(promptRef.current).toBe("please\n/depl now");
+    expect(editorLines()).toEqual(["please", "/depl now"]);
   });
 });

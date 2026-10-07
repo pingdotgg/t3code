@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const fixture = vi.hoisted(() => ({
   actions: [] as ReadonlyArray<unknown>,
+  canOperate: true,
   runPluginAction: vi.fn(async () => {}),
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
@@ -29,6 +30,9 @@ vi.mock("../../state/server", () => ({
   serverEnvironment: { refreshProviders: Symbol("refreshProviders") },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => fixture.canOperate,
+}));
 vi.mock("../../state/plugin-actions", () => ({
   usePluginActions: () => fixture.actions,
   runPluginAction: fixture.runPluginAction,
@@ -91,6 +95,7 @@ let root: Root;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.actions = [deploy, dashboard];
+  fixture.canOperate = true;
   fixture.runPluginAction.mockClear();
   onUpdateInteractionMode.mockClear();
   onUsageLimits.mockClear();
@@ -148,5 +153,27 @@ describe("picking a plugin action from the slash menu", () => {
       action: dashboard,
       target: { _tag: "project", projectId },
     });
+  });
+
+  it("offers no plugin actions to a read-only connection and keeps the typed command", async () => {
+    fixture.canOperate = false;
+    const draft = "ship it\n/depl";
+    const offered = await openMenu(draft, draft.length, threadId);
+    expect(offered).toEqual([]);
+
+    // A stale entry picked after the grant changed is refused before the draft is touched.
+    await act(async () =>
+      latest.menu!.onSelect({
+        id: `plugin-action:${deploy.id}`,
+        type: "plugin-action",
+        action: deploy,
+        target: { _tag: "thread", threadId },
+        label: "/deploy",
+        description: deploy.title,
+      }),
+    );
+
+    expect(latest.draft).toBe(draft);
+    expect(fixture.runPluginAction).not.toHaveBeenCalled();
   });
 });

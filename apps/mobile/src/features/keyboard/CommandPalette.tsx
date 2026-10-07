@@ -1,7 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
-import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -28,12 +27,14 @@ import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
 import { useThreadSearch } from "../../state/queries";
+import { useEnvironmentScope } from "../../state/session";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
+  buildPluginActionPaletteItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
   type CommandPaletteItem,
@@ -150,6 +151,10 @@ export function CommandPalette(props: {
   const activeThread = useThreadShell(activeThreadRef);
   // Plugin actions belong to the environment of the thread the palette was opened on.
   const pluginActions = usePluginActions(activeThread?.environmentId ?? null);
+  const canRunPluginActions = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
@@ -306,21 +311,13 @@ export function CommandPalette(props: {
       );
     }
     if (activeThread) {
-      const entries = pluginActionsAt(pluginActions, "command-palette", {
-        threadId: activeThread.id,
-        projectId: activeThread.projectId,
-      });
-      const labels = pluginActionLabels(entries.map((entry) => entry.action));
       actions.push(
-        ...entries.map(({ action, target }, index) => ({
-          key: `plugin-action:${action.id}`,
-          kind: "action" as const,
-          title: labels[index] ?? action.title,
-          detail: action.description ?? action.pluginName,
-          searchTerms: [action.name, action.pluginName, "plugin"],
-          run: () =>
-            void runPluginAction({ environmentId: activeThread.environmentId, action, target }),
-        })),
+        ...buildPluginActionPaletteItems({
+          actions: pluginActions,
+          canOperate: canRunPluginActions,
+          thread: activeThread,
+          runAction: (input) => void runPluginAction(input),
+        }),
       );
     }
     const projectItems: CommandPaletteItem[] = projects.map((project) => ({
@@ -369,6 +366,7 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     navigation,
+    canRunPluginActions,
     pluginActions,
     projects,
     runCommand,

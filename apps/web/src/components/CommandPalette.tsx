@@ -133,7 +133,6 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { runPluginAction } from "../pluginActions";
 import { usePluginActions } from "../state/pluginActions";
-import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
@@ -167,6 +166,7 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
+  buildPluginActionItems,
   buildCommandPaletteRows,
   enumerateCommandPaletteItems,
   findHighlightedCommandPaletteItem,
@@ -1153,6 +1153,10 @@ function OpenCommandPaletteDialog(props: {
   // Plugin actions belong to the environment the palette was opened in.
   const pluginActionEnvironmentId = currentProjectEnvironmentId ?? primaryEnvironmentId;
   const pluginActions = usePluginActions(pluginActionEnvironmentId);
+  const canRunPluginActions = useEnvironmentScope(
+    pluginActionEnvironmentId,
+    AuthOrchestrationOperateScope,
+  );
   // Where "without a project" threads start: the current environment when it
   // offers them, otherwise the first connected one that does.
   const scratchTargetEnvironmentId = scratchEnvironmentId(
@@ -2042,23 +2046,17 @@ function OpenCommandPaletteDialog(props: {
   }
 
   if (pluginActionEnvironmentId !== null) {
-    const environmentId = pluginActionEnvironmentId;
-    const entries = pluginActionsAt(pluginActions, "command-palette", {
-      threadId: activeThread?.id ?? null,
-      projectId: currentProjectId,
-    });
-    const labels = pluginActionLabels(entries.map((entry) => entry.action));
-    entries.forEach(({ action, target }, index) => {
-      actionItems.push({
-        kind: "action",
-        value: `plugin-action:${environmentId}:${action.id}`,
-        searchTerms: [action.title, action.name, action.pluginName, "plugin"],
-        title: labels[index] ?? action.title,
-        description: action.description ?? action.pluginName,
+    actionItems.push(
+      ...buildPluginActionItems({
+        environmentId: pluginActionEnvironmentId,
+        actions: pluginActions,
+        canOperate: canRunPluginActions,
+        threadId: activeThread?.id ?? null,
+        projectId: currentProjectId,
         icon: <PlugIcon className={ITEM_ICON_CLASS} />,
-        run: () => runPluginAction({ environmentId, action, target }),
-      });
-    });
+        runAction: runPluginAction,
+      }),
+    );
   }
 
   actionItems.push({

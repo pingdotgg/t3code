@@ -31,6 +31,7 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => refreshProviders,
 }));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/plugin-actions", () => ({
   usePluginActions: () => [],
   runPluginAction: vi.fn(),

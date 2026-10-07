@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  PluginAction,
-  ProjectId,
-  ProviderInteractionMode,
-  ServerProvider,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type PluginAction,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -49,6 +50,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
 import {
   type PluginActionContext,
@@ -395,6 +397,8 @@ export function useComposerCommandMenu({
   });
 
   const pluginActions = usePluginActions(environmentId);
+  // Running a plugin action needs `orchestration:operate`.
+  const canRunPluginActions = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
@@ -450,7 +454,12 @@ export function useComposerCommandMenu({
       return [
         ...commandItems,
         ...skillItems,
-        ...buildPluginActionSlashItems(pluginActions, q, { threadId: currentThreadId, projectId }),
+        ...(canRunPluginActions
+          ? buildPluginActionSlashItems(pluginActions, q, {
+              threadId: currentThreadId,
+              projectId,
+            })
+          : []),
       ];
     }
 
@@ -570,6 +579,7 @@ export function useComposerCommandMenu({
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,
+    canRunPluginActions,
     pathSearch.entries,
     pluginActions,
     projectId,
@@ -654,7 +664,8 @@ export function useComposerCommandMenu({
       }
 
       if (item.type === "plugin-action") {
-        if (environmentId === null) return;
+        // Keep the typed command when this connection may no longer run actions.
+        if (environmentId === null || !canRunPluginActions) return;
         const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
         setSelection({ start: cleared.cursor, end: cleared.cursor });
         onChangeDraftMessage(cleared.text);
@@ -688,6 +699,7 @@ export function useComposerCommandMenu({
       }
     },
     [
+      canRunPluginActions,
       draftMessage,
       environmentId,
       ownerKey,
