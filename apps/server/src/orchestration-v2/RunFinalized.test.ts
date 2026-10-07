@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -52,6 +53,7 @@ const rootNodeId = NodeId.make("node:run-finalized-root");
 const providerThreadId = ProviderThreadId.make("provider-thread:run-finalized");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const checkpointId = CheckpointId.make("checkpoint:run-finalized");
+const attemptId = RunAttemptId.make("attempt:run-finalized");
 
 const maxAttempts = 2;
 /** The worker's backoff after a capture's first failed attempt. */
@@ -443,6 +445,67 @@ it.effect.each(["interrupted", "cancelled"] as const)(
         { type: "run.finalized", payload: { runId, outcome: status, checkpointId } },
       ]);
     }).pipe(Effect.provide(makeLayer(commitCapture(status)))),
+);
+
+/** Ends a running attempt through the ownership guard, as RunExecutionService does. */
+const finishGuardedTurn = (
+  status: "interrupted" | "cancelled",
+  guard: { readonly activeAttemptId: RunAttemptId; readonly expectedStatus: "running" | "waiting" },
+) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        runEvent("run.updated", makeRun(now, "running", { activeAttemptId: attemptId }), now),
+      ],
+    });
+    return yield* eventSink.writeIfRunCurrent({
+      threadId,
+      runId,
+      ...guard,
+      events: [
+        runEvent(
+          "run.updated",
+          makeRun(now, status, { activeAttemptId: attemptId, completedAt: now }),
+          now,
+        ),
+      ],
+      effects: [captureEffect],
+    });
+  });
+
+it.effect.each(["interrupted", "cancelled"] as const)(
+  "a guarded stop that queues a capture finalizes as %s after the capture",
+  (status) =>
+    Effect.gen(function* () {
+      yield* seedThread;
+      const result = yield* finishGuardedTurn(status, {
+        activeAttemptId: attemptId,
+        expectedStatus: "running",
+      });
+      assert.isTrue(result.committed);
+      assert.lengthOf(yield* finalizationRecords, 0);
+      yield* drainWorker;
+      assert.deepEqual(yield* finalizationRecords, [
+        { type: "run.finalized", payload: { runId, outcome: status, checkpointId } },
+      ]);
+    }).pipe(Effect.provide(makeLayer(commitCapture(status)))),
+);
+
+it.effect("a guarded stop that no longer owns the run commits and queues nothing", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    const result = yield* finishGuardedTurn("interrupted", {
+      activeAttemptId: RunAttemptId.make("attempt:run-finalized-stale"),
+      expectedStatus: "running",
+    });
+    assert.isFalse(result.committed);
+    assert.deepEqual(yield* captureStatus, Option.none());
+    assert.equal(yield* drainWorker, 0);
+    assert.equal(yield* runStatus, "running");
+    assert.lengthOf(yield* finalizationRecords, 0);
+  }).pipe(Effect.provide(makeLayer(commitCapture("interrupted")))),
 );
 
 it.effect("a run that ends without a capture finalizes in its terminal commit", () =>
