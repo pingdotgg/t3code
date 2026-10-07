@@ -26,17 +26,23 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Claude records carry their 1-hour cache writes. Older rows load with
+// none; see `decodeScanCache` for older Claude entries.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+/** Older cache files, newest first. */
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -79,6 +85,7 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   speed: number,
+  cacheCreation1hTokens?: number,
 ];
 
 interface SerializedFile {
@@ -137,6 +144,7 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.dedupeKey,
     record.reportedCostUsd,
     SPEEDS.indexOf(record.speed),
+    record.cacheCreation1hTokens ?? 0,
   ];
   return {
     s: entry.size,
@@ -258,6 +266,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         speedIndex,
+        cacheCreation1h = 0,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -271,6 +280,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning) ||
+        !Number.isFinite(cacheCreation1h) ||
         speed === undefined
       ) {
         return null;
@@ -288,6 +298,7 @@ export function decodeScanCache(document: unknown): ScanCache {
           outputTokens: output,
           reasoningTokens: reasoning,
         },
+        ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: cacheCreation1h } : {}),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
@@ -321,10 +332,12 @@ export function decodeScanCache(document: unknown): ScanCache {
       continue;
     }
     // v4 Codex records predate service tiers, so they all priced as standard.
-    // Keep them, because the rollout may be gone, but make a live rollout
-    // re-parse whole: no file has size -1, and a zero position cannot resume.
-    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
-    const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
+    // Pre-v6 Claude records predate 1-hour cache writes, so those priced at the
+    // 5-minute rate. Keep them, because the transcript may be gone, but make a
+    // live one re-parse whole: no file has size -1, and a zero position cannot
+    // resume.
+    const reparse = (entry.p === "codex" && version < 5) || (entry.p === "claude" && version < 6);
+    const codexState = reparse ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -333,12 +346,12 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacyCodex ? -1 : entry.s,
+      size: reparse ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: legacyCodex
+      position: reparse
         ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
         : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     });
