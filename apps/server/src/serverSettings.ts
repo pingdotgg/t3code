@@ -288,6 +288,13 @@ export class ServerSettingsService extends Context.Service<
      * snapshot and a lazily started stream must not be lost.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+
+    /** Subscribe without loading secrets, for settings that must react before secret-store I/O. */
+    readonly subscribePersistedChanges: Effect.Effect<
+      Stream.Stream<ServerSettings>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -309,6 +316,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
     const writeSemaphore = yield* Semaphore.make(1);
     const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -320,6 +328,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
           Effect.flatMap(update),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.tap((nextSettings) => PubSub.publish(changesPubSub, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
       );
@@ -346,8 +355,11 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         ),
       withSettingsSnapshot: (use) =>
         writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
+      streamChanges: Stream.fromPubSub(changesPubSub),
+      subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
+      subscribePersistedChanges: PubSub.subscribe(changesPubSub).pipe(
+        Effect.map(Stream.fromSubscription),
+      ),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -1389,6 +1401,9 @@ const make = Effect.gen(function* () {
       return PubSub.subscribe(changesPubSub).pipe(
         Effect.map((subscription) => materializeChanges(Stream.fromSubscription(subscription))),
       );
+    },
+    get subscribePersistedChanges() {
+      return PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription));
     },
   } satisfies ServerSettingsService["Service"];
 });

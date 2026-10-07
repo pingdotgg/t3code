@@ -359,6 +359,9 @@ function makeMutableServerSettingsService(
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
+      get subscribePersistedChanges() {
+        return PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription));
+      },
       get subscribeChanges() {
         return PubSub.subscribe(changes).pipe(
           Effect.map((subscription) => Stream.fromSubscription(subscription)),

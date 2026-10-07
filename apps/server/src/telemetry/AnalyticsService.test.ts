@@ -2,18 +2,23 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -52,9 +57,11 @@ interface RecordedBatchBody {
 
 const SentBatch = Schema.fromJsonString(
   Schema.Struct({
-    batch: Schema.Array(Schema.Struct({ uuid: Schema.String })),
+    batch: Schema.Array(Schema.Struct({ uuid: Schema.String, event: Schema.String })),
   }),
 );
+
+const decodeSentBatch = Schema.decodeEffect(SentBatch);
 
 /**
  * HTTP client that reads each batch, then fails as if the connection dropped
@@ -67,15 +74,42 @@ const layerAcceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid:
     HttpClient.make((request) =>
       Effect.gen(function* () {
         if (request.body._tag === "Uint8Array") {
-          const body = yield* Schema.decodeEffect(SentBatch)(
-            new TextDecoder().decode(request.body.body),
-          ).pipe(Effect.orDie);
+          const body = yield* decodeSentBatch(new TextDecoder().decode(request.body.body)).pipe(
+            Effect.orDie,
+          );
           batches.push(body.batch);
         }
         return yield* new HttpClientError.HttpClientError({
           reason: new HttpClientError.TransportError({ request, cause: "connection reset" }),
         });
       }),
+    ),
+  );
+
+const layerToggleTest = (
+  clientLayer: Layer.Layer<HttpClient.HttpClient>,
+  telemetryEnabled = true,
+  settingsLayer = ServerSettings.layerTest({ telemetryEnabled }),
+) =>
+  AnalyticsService.layer.pipe(
+    Layer.provideMerge(settingsLayer),
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-toggle-" }),
+    ),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
+        clientLayer,
+      ),
     ),
   );
 
@@ -86,7 +120,9 @@ it("retryDelayMs doubles from 2s and stays under the 5 minute cap", () => {
   assert.equal(AnalyticsService.retryDelayMs(30, 0.999_999), 300_000);
 });
 
-it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+const layerTest = Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest());
+
+it.layer(layerTest)("AnalyticsService test", (it) => {
   it.effect("a batch that keeps failing is retried with backoff, then dropped", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
@@ -267,11 +303,156 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       yield* Effect.gen(function* () {
         yield* Layer.launch(layerBatchServer).pipe(Effect.forkScoped);
         const analytics = yield* AnalyticsService.AnalyticsService;
+        const settings = yield* ServerSettings.ServerSettingsService;
         yield* analytics.record("test.disabled", { index: 1 });
+        yield* analytics.flush;
+        yield* settings.updateSettings({ telemetryEnabled: false });
+        yield* settings.updateSettings({ telemetryEnabled: true });
+        yield* analytics.record("test.environment-still-disabled");
         yield* analytics.flush;
       }).pipe(Effect.provide(layerRuntime));
 
       assert.deepEqual(capturedPaths, []);
     }),
+  );
+
+  it.effect("records and flushes without rereading settings after startup", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      let settingsReads = 0;
+      let batchesSent = 0;
+      const settingsLayer = Layer.succeed(ServerSettings.ServerSettingsService, {
+        ...settings,
+        getSettings: Effect.sync(() => settingsReads++).pipe(Effect.andThen(settings.getSettings)),
+      });
+      const clientLayer = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            batchesSent++;
+            return HttpClientResponse.fromWeb(request, new Response("{}"));
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        assert.equal(settingsReads, 1);
+        for (let index = 0; index < 25; index++) {
+          yield* analytics.record("test.cached-gate", { index });
+        }
+        yield* analytics.flush;
+        assert.equal(batchesSent, 2);
+        yield* settings.updateSettings({ telemetryEnabled: false });
+        yield* analytics.record("test.disabled");
+        yield* analytics.flush;
+        assert.equal(batchesSent, 2);
+        yield* settings.updateSettings({ telemetryEnabled: true });
+        yield* analytics.record("test.reenabled");
+        yield* analytics.flush;
+        assert.equal(batchesSent, 3);
+        assert.equal(settingsReads, 1);
+      }).pipe(Effect.provide(layerToggleTest(clientLayer, true, settingsLayer)));
+    }),
+  );
+
+  it.effect("rapid opt-out and opt-in discard queued events and retries", () =>
+    Effect.gen(function* () {
+      const batches: Array<typeof SentBatch.Type.batch> = [];
+      const layerRuntime = layerToggleTest(layerAcceptThenFailClient(batches), false);
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* analytics.record("test.disabled-at-startup");
+        yield* analytics.flush;
+        assert.deepEqual(batches, []);
+        yield* settings.updateSettings({ telemetryEnabled: true });
+        yield* analytics.record("server.boot.heartbeat");
+        yield* analytics.flush;
+        assert.equal(batches.length, 1);
+        yield* analytics.record("client.connected");
+        yield* settings.updateSettings({ telemetryEnabled: false });
+        yield* analytics.record("test.disabled");
+        yield* settings.updateSettings({ telemetryEnabled: true });
+        yield* analytics.flush;
+        assert.equal(batches.length, 1, "opt-out discarded queued events and retries");
+        yield* analytics.record("client.connected");
+        yield* analytics.flush;
+        assert.equal(batches.length, 2);
+        assert.deepEqual(
+          batches[1]?.map((event) => event.event),
+          ["client.connected"],
+        );
+        assert.notEqual(batches[0]?.[0]?.uuid, batches[1]?.[0]?.uuid);
+        // Prevent the shutdown flush from retrying the new failed batch.
+        yield* settings.updateSettings({ telemetryEnabled: false });
+      }).pipe(Effect.provide(layerRuntime));
+    }),
+  );
+
+  it.effect.each(["successful", "failed"] as const)(
+    "opt-out during a %s send discards pending batches",
+    (firstRequestOutcome) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const batches: Array<typeof SentBatch.Type.batch> = [];
+
+        const layerClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.gen(function* () {
+              if (Predicate.isTagged(request.body, "Uint8Array")) {
+                const body = yield* decodeSentBatch(
+                  new TextDecoder().decode(request.body.body),
+                ).pipe(Effect.orDie);
+
+                batches.push(body.batch);
+              }
+
+              if (batches.length === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+
+                if (firstRequestOutcome === "failed") {
+                  return yield* new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.TransportError({
+                      request,
+                      cause: "connection reset",
+                    }),
+                  });
+                }
+              }
+
+              return HttpClientResponse.fromWeb(request, new Response("{}"));
+            }),
+          ),
+        );
+
+        const layerRuntime = layerToggleTest(layerClient);
+        yield* Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+
+          for (let index = 0; index < 21; index++) {
+            yield* analytics.record("test.before-opt-out", { index });
+          }
+
+          const flushing = yield* analytics.flush.pipe(Effect.forkScoped);
+          yield* Deferred.await(started);
+          yield* settings.updateSettings({ telemetryEnabled: false });
+          yield* settings.updateSettings({ telemetryEnabled: true });
+          yield* analytics.record("test.after-opt-in");
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(flushing);
+          assert.equal(batches.length, 1, "the old flush stops after its in-flight request");
+          yield* analytics.flush;
+          assert.equal(batches.length, 2);
+          assert.deepEqual(
+            batches[1]?.map((event) => event.event),
+            ["test.after-opt-in"],
+            "only the new event is sent without old retries",
+          );
+        }).pipe(Effect.provide(layerRuntime));
+      }),
   );
 });

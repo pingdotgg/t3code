@@ -97,6 +97,26 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists the analytics opt-out and allows opting back in", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      assert.isTrue((yield* service.getSettings).telemetryEnabled);
+
+      for (const telemetryEnabled of [false, true]) {
+        yield* service.updateSettings({ telemetryEnabled });
+
+        const persisted = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+
+        assert.equal(persisted.telemetryEnabled, telemetryEnabled);
+        assert.equal((yield* service.getSettings).telemetryEnabled, telemetryEnabled);
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

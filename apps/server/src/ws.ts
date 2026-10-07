@@ -1210,6 +1210,7 @@ const layerWsRpc = (
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
+      const telemetryDisabledByEnvironment = !(yield* AnalyticsService.TelemetryEnabledConfig);
       // Client-origin attribution (#7774): every thread/turn the connecting
       // client starts is credited to its surface + app version. Best-effort:
       // attribution must never fail the user's command.
@@ -1733,6 +1734,7 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            telemetryDisabledByEnvironment,
           };
         });
 
