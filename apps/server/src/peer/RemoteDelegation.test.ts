@@ -60,6 +60,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as ThreadImportService from "../orchestration-v2/ThreadImportService.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -368,6 +369,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+    Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
     ),

@@ -38,6 +38,7 @@ import {
   ProviderOptionSelection,
   ProviderOptionSelectionValue,
 } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
@@ -532,6 +533,44 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   constraints: Schema.Array(Schema.String),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+
+/** One message of a conversation moved here from another environment. */
+export const OrchestratorMcpImportedMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String.check(Schema.isMaxLength(200_000)),
+  createdAt: IsoDateTime,
+});
+export type OrchestratorMcpImportedMessage = typeof OrchestratorMcpImportedMessage.Type;
+
+export const OrchestratorMcpThreadImportInput = Schema.Struct({
+  /** Where the conversation comes from; with `handoffId`, this names the import. */
+  source: Schema.Struct({
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    handoffId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  }),
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  modelSelection: ModelSelection,
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  /** The checkout the thread works in here, already prepared. Omit for the project root. */
+  worktreePath: Schema.optional(TrimmedNonEmptyString),
+  branch: Schema.optional(TrimmedNonEmptyString),
+  messages: Schema.Array(OrchestratorMcpImportedMessage).check(Schema.isMaxLength(2_000)),
+  /** Sent as the thread's first message here, so its agent picks up where it left off. */
+  continuationPrompt: Schema.optional(OrchestratorMcpPrompt),
+});
+export type OrchestratorMcpThreadImportInput = typeof OrchestratorMcpThreadImportInput.Type;
+
+export const OrchestratorMcpThreadImportResult = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  /** False when this import already happened; the thread is returned as it is. */
+  created: Schema.Boolean,
+  runId: Schema.NullOr(RunId),
+});
+export type OrchestratorMcpThreadImportResult = typeof OrchestratorMcpThreadImportResult.Type;
 
 export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

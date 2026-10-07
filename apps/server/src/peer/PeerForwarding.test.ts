@@ -34,6 +34,7 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as ThreadImportService from "../orchestration-v2/ThreadImportService.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
@@ -175,6 +176,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
     ),
   );
 
@@ -243,6 +245,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+    Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
     Layer.fresh,
   );
   const here = yield* Layer.build(layerHere);

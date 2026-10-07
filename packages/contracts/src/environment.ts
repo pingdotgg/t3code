@@ -224,6 +224,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       (`linkOrigin`). Another environment links to this one only when it is
       set, since without it that work could change the user's own threads. */
   linkFence: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `t3_thread_import`, for threads moved here from a linked environment. */
+  threadImport: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
