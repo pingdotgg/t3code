@@ -181,16 +181,21 @@ The linked pull request participates in automatic settlement.
 ## Find and reference work
 
 Search the sidebar, command palette, or mobile thread list for titles, linked pull
-requests, and message content. Add `project:` (or `in:`), `env:`, `branch:`,
+requests, and message content. Message search starts after two characters and
+includes your messages and final agent responses across connected environments.
+Add `project:`, `env:`, `branch:`,
 `provider:`, `status:`, `since:`, `before:`, or `is:archived`; comma-separated
 values mean "any", and `-` excludes a value. For example, `status:failed
 provider:claude` finds failed Claude work, and `project:"my app" since:7d`
 finds that project's work active in the last week. `since:` and `before:` use
 last activity; dates are `YYYY-MM-DD` or relative values such as `7d`, `12h`,
 `2w`, `today`, and `yesterday`.
+Valid statuses are `working`, `approval`, `input`, `waiting`, `failed`,
+`limited`, and `ready`. `is:archived` searches archived threads instead of
+active threads; choosing an archived result opens **Settings → Archive**.
 
-Open the command palette with `Cmd/Ctrl+K`; its filter button adds the same
-qualifiers for you.
+Open the command palette with `Cmd/Ctrl+K`; on web and desktop, its filter button
+adds the same qualifiers for you.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request

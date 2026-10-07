@@ -11,6 +11,16 @@ export type ThreadSearchQualifierKey =
 
 export type ThreadSearchQualifierToggleKey = ThreadSearchQualifierKey | "archived";
 
+export const THREAD_SEARCH_QUALIFIER_KEYS = [
+  "project",
+  "env",
+  "branch",
+  "provider",
+  "status",
+  "since",
+  "before",
+] as const satisfies ReadonlyArray<ThreadSearchQualifierKey>;
+
 export interface ThreadSearchClause {
   readonly values: ReadonlyArray<string>;
   readonly negated: boolean;
@@ -34,27 +44,13 @@ export interface ParsedThreadSearchQuery {
 }
 
 export interface ThreadSearchMatchContext<T = unknown> {
-  readonly projectName: (thread: T) => string;
+  readonly projectNames: (thread: T) => ReadonlyArray<string>;
   readonly environmentNames: (thread: T) => ReadonlyArray<string>;
   readonly providerNames: (thread: T) => ReadonlyArray<string>;
-  readonly status: (thread: T) => string;
+  readonly statusNames: (thread: T) => ReadonlyArray<string>;
   readonly activityAt: (thread: T) => string;
 }
 
-const STATUS_VALUES = new Set([
-  "working",
-  "approval",
-  "pending",
-  "input",
-  "awaiting",
-  "waiting",
-  "failed",
-  "error",
-  "limited",
-  "ready",
-  "done",
-  "completed",
-]);
 const STATUS_ALIASES: Readonly<Record<string, string>> = {
   pending: "approval",
   awaiting: "input",
@@ -62,10 +58,18 @@ const STATUS_ALIASES: Readonly<Record<string, string>> = {
   done: "ready",
   completed: "ready",
 };
-const DATE_PATTERN = /^(?:\d{4}-\d{2}-\d{2}|\d+[hdw]|today|yesterday)$/i;
+const STATUS_VALUES = new Set([
+  "working",
+  "approval",
+  "input",
+  "waiting",
+  "failed",
+  "limited",
+  "ready",
+  ...Object.keys(STATUS_ALIASES),
+]);
 const KEY_ALIASES: Readonly<Record<string, ThreadSearchQualifierKey>> = {
   project: "project",
-  in: "project",
   env: "env",
   environment: "env",
   branch: "branch",
@@ -77,7 +81,14 @@ const KEY_ALIASES: Readonly<Record<string, ThreadSearchQualifierKey>> = {
 
 interface QueryToken {
   readonly raw: string;
-  readonly value: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+interface ClassifiedQueryToken {
+  readonly key: ThreadSearchQualifierToggleKey;
+  readonly values: ReadonlyArray<string>;
+  readonly negated: boolean;
 }
 
 function tokenizeWithRaw(raw: string): QueryToken[] {
@@ -89,41 +100,68 @@ function tokenizeWithRaw(raw: string): QueryToken[] {
     if (index >= input.length) break;
 
     const start = index;
-    let token = "";
     let quoted = false;
     while (index < input.length) {
       const character = input[index]!;
-      if (character === '"' && !quoted) {
-        if (input.indexOf('"', index + 1) !== -1) {
-          quoted = true;
+      if (character === '"' && input[index - 1] !== "\\") {
+        if (!quoted) {
+          // An unmatched opening quote is ordinary text. This preserves the
+          // existing token behaviour for incomplete input while allowing
+          // quoted values to contain spaces.
+          quoted = input.slice(index + 1).includes('"');
+          if (!quoted) {
+            index += 1;
+            continue;
+          }
+        } else {
+          quoted = false;
           index += 1;
           continue;
         }
-        // An unmatched quote is ordinary text. Backslashes and apostrophes
-        // are ordinary text in every mode.
-        token += character;
-        index += 1;
-        continue;
-      }
-      if (character === '"' && quoted) {
-        quoted = false;
-        index += 1;
-        continue;
       }
       if (!quoted && /\s/.test(character)) break;
-      token += character;
       index += 1;
     }
-    tokens.push({ raw: input.slice(start, index), value: token });
+    tokens.push({ raw: input.slice(start, index), start, end: index });
     while (index < input.length && /\s/.test(input[index]!)) index += 1;
   }
   return tokens;
 }
 
-function tokenize(raw: string): string[] {
-  return tokenizeWithRaw(raw)
-    .map((token) => token.value)
-    .filter(Boolean);
+function splitCommaValues(raw: string): string[] | null {
+  const values: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index]!;
+    if (character === '"' && raw[index - 1] !== "\\") {
+      quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      values.push(raw.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (quoted) return null;
+  values.push(raw.slice(start));
+  return values;
+}
+
+function unquoteValue(raw: string): string | null {
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  if (!value.startsWith('"')) return value.includes('"') ? null : value;
+  if (!value.endsWith('"') || value.length < 2) return null;
+  const inner = value.slice(1, -1);
+  return inner.replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+}
+
+function parseQualifierValues(raw: string): string[] | null {
+  const parts = splitCommaValues(raw);
+  if (parts === null) return null;
+  const values = parts.map(unquoteValue);
+  return values.every((value): value is string => value !== null && value.length > 0)
+    ? values
+    : null;
 }
 
 function startOfLocalDay(date: Date): Date {
@@ -161,29 +199,59 @@ function parseDate(value: string, now: Date): number | null {
     : date.getTime();
 }
 
-function validValues(key: ThreadSearchQualifierKey, value: string, now: Date): string[] | null {
-  if (value.includes('"')) return null;
-  const values = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (values.length === 0) return null;
+function validValues(key: ThreadSearchQualifierKey, rawValue: string, now: Date): string[] | null {
+  const values = parseQualifierValues(rawValue);
+  if (values === null) return null;
   if (key === "status") {
     if (values.some((part) => !STATUS_VALUES.has(part.toLowerCase()))) return null;
     return values.map((part) => STATUS_ALIASES[part.toLowerCase()] ?? part.toLowerCase());
   }
-  if (
-    (key === "since" || key === "before") &&
-    values.some((part) => !DATE_PATTERN.test(part) || parseDate(part, now) === null)
-  )
+  if ((key === "since" || key === "before") && values.some((part) => parseDate(part, now) === null))
     return null;
   return values;
+}
+
+function classifyToken(token: QueryToken, now: Date): ClassifiedQueryToken | null {
+  const raw = token.raw;
+  if (raw.startsWith('"')) return null;
+  const negated = raw.startsWith("-");
+  const candidate = negated ? raw.slice(1) : raw;
+  if (candidate.toLowerCase() === "is:archived") {
+    return { key: "archived", values: ["archived"], negated };
+  }
+  const separator = candidate.indexOf(":");
+  if (separator <= 0) return null;
+  const key = KEY_ALIASES[candidate.slice(0, separator).toLowerCase()];
+  if (key === undefined) return null;
+  const values = validValues(key, candidate.slice(separator + 1), now);
+  return values === null ? null : { key, values, negated };
+}
+
+// Keep surviving text runs intact; only replace gaps created by removed qualifiers.
+function removeTokenSpans(
+  raw: string,
+  tokens: ReadonlyArray<QueryToken>,
+  remove: (index: number) => boolean,
+): string {
+  const runs: string[] = [];
+  let runStart = 0;
+  for (const [index, token] of tokens.entries()) {
+    if (!remove(index)) continue;
+    const run = raw.slice(runStart, token.start).trim();
+    if (run) runs.push(run);
+    runStart = token.end;
+  }
+  const tail = raw.slice(runStart).trim();
+  if (tail) runs.push(tail);
+  return runs.join(" ");
 }
 
 export function parseThreadSearchQuery(
   raw: string,
   options: { readonly now: Date },
 ): ParsedThreadSearchQuery {
+  const tokens = tokenizeWithRaw(raw);
+  const classified = tokens.map((token) => classifyToken(token, options.now));
   const filters: Record<ThreadSearchQualifierKey, ThreadSearchClause[]> = {
     project: [],
     env: [],
@@ -193,59 +261,26 @@ export function parseThreadSearchQuery(
     since: [],
     before: [],
   };
-  const text: string[] = [];
   let archived = false;
   let hasFilters = false;
-  for (const token of tokenize(raw)) {
-    const negated = token.startsWith("-");
-    const candidate = negated ? token.slice(1) : token;
-    const separator = candidate.indexOf(":");
-    const key =
-      separator > 0 ? KEY_ALIASES[candidate.slice(0, separator).toLowerCase()] : undefined;
-    const value = separator > 0 ? candidate.slice(separator + 1) : "";
-    if (candidate.toLowerCase() === "is:archived") {
-      if (!negated) {
-        archived = true;
-        hasFilters = true;
-      }
+  for (const token of classified) {
+    if (token == null) continue;
+    if (token.key === "archived") {
+      if (!token.negated) archived = true;
+      hasFilters = true;
       continue;
     }
-    if (key !== undefined) {
-      const values = validValues(key, value, options.now);
-      if (values !== null) {
-        filters[key].push({ values, negated });
-        hasFilters = true;
-        continue;
-      }
-    }
-    text.push(token);
+    filters[token.key].push({ values: token.values, negated: token.negated });
+    hasFilters = true;
   }
-  return { text: text.join(" "), filters: { ...filters, archived }, hasFilters };
-}
-
-interface RecognizedQueryToken {
-  readonly key: ThreadSearchQualifierToggleKey;
-  readonly values: ReadonlyArray<string>;
-  readonly negated: boolean;
-}
-
-function recognizedQueryToken(token: QueryToken): RecognizedQueryToken | null {
-  const negated = token.value.startsWith("-");
-  const candidate = negated ? token.value.slice(1) : token.value;
-  if (candidate.toLowerCase() === "is:archived") {
-    return { key: "archived", values: ["archived"], negated };
-  }
-  const separator = candidate.indexOf(":");
-  if (separator <= 0) return null;
-  const key = KEY_ALIASES[candidate.slice(0, separator).toLowerCase()];
-  if (key === undefined) return null;
-  // Editing validates date syntax, without resolving boundaries against the current time.
-  const values = validValues(key, candidate.slice(separator + 1), new Date(0));
-  return values === null ? null : { key, values, negated };
+  const text = removeTokenSpans(raw.trim(), tokens, (index) => classified[index] !== null);
+  return { text, filters: { ...filters, archived }, hasFilters };
 }
 
 function formatQualifierValue(value: string): string {
-  return /\s/.test(value) ? `"${value}"` : value;
+  return /[\s,"]/.test(value)
+    ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    : value;
 }
 
 function formatQualifier(
@@ -264,47 +299,69 @@ export function toggleThreadSearchQualifier(
   options: { readonly multi: boolean },
 ): string {
   const tokens = tokenizeWithRaw(query);
-  const recognized = tokens.map(recognizedQueryToken);
-  const positiveIndexes = recognized.flatMap((token, index) =>
+  const now = new Date();
+  const classified = tokens.map((token) => classifyToken(token, now));
+  const positiveIndexes = classified.flatMap((token, index) =>
     token?.key === key && !token.negated ? [index] : [],
   );
-  const existingValues = positiveIndexes.flatMap((index) => recognized[index]?.values ?? []);
-  const hasValue = existingValues.some(
-    (candidate) => candidate.toLowerCase() === value.toLowerCase(),
+  const valueIndex = positiveIndexes.find((index) =>
+    classified[index]?.values.some((candidate) => candidate.toLowerCase() === value.toLowerCase()),
   );
-  const nextValues = hasValue
-    ? existingValues.filter((candidate) => candidate.toLowerCase() !== value.toLowerCase())
-    : options.multi
-      ? [...existingValues, value]
-      : [value];
   const output: string[] = [];
-  const firstPositiveIndex = positiveIndexes[0];
+
+  if (valueIndex !== undefined) {
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = classified[index];
+      if (index !== valueIndex || token == null) {
+        output.push(tokens[index]!.raw);
+        continue;
+      }
+      const values = token.values.filter(
+        (candidate) => candidate.toLowerCase() !== value.toLowerCase(),
+      );
+      if (values.length > 0) output.push(formatQualifier(key, values));
+    }
+    return output.join(" ");
+  }
+
+  const targetIndex = options.multi ? positiveIndexes.at(-1) : positiveIndexes[0];
   for (let index = 0; index < tokens.length; index += 1) {
-    const token = recognized[index];
+    const token = classified[index];
     if (token?.key !== key || token.negated) {
       output.push(tokens[index]!.raw);
       continue;
     }
-    if (index !== firstPositiveIndex) continue;
-    if (nextValues.length > 0) output.push(formatQualifier(key, nextValues));
+    if (index !== targetIndex) {
+      if (options.multi) output.push(tokens[index]!.raw);
+      continue;
+    }
+    output.push(formatQualifier(key, options.multi ? [...token.values, value] : [value]));
   }
-  if (positiveIndexes.length === 0 && !hasValue) output.push(formatQualifier(key, [value]));
+  if (targetIndex === undefined) output.push(formatQualifier(key, [value]));
   return output.join(" ");
 }
 
 /** Remove all recognized qualifiers, leaving unknown tokens and free text intact. */
 export function clearThreadSearchQualifiers(query: string): string {
-  return tokenizeWithRaw(query)
-    .filter((token) => recognizedQueryToken(token) === null)
-    .map((token) => token.raw)
-    .join(" ");
+  const tokens = tokenizeWithRaw(query);
+  const now = new Date();
+  return removeTokenSpans(
+    query.trim(),
+    tokens,
+    (index) => classifyToken(tokens[index]!, now) !== null,
+  );
 }
 
-function matchesClause(value: string, clause: ThreadSearchClause): boolean {
-  const matched = clause.values.some((candidate) =>
-    value.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
-  );
-  return clause.negated ? !matched : matched;
+function matchesClauses(
+  names: ReadonlyArray<string>,
+  clauses: ReadonlyArray<ThreadSearchClause>,
+): boolean {
+  return clauses.every((clause) => {
+    const matched = clause.values.some((candidate) =>
+      names.some((name) => name.toLocaleLowerCase().includes(candidate.toLocaleLowerCase())),
+    );
+    return clause.negated ? !matched : matched;
+  });
 }
 
 function matchesDateClause(
@@ -323,42 +380,36 @@ function matchesDateClause(
   return clause.negated ? !matched : matched;
 }
 
-export function matchesThreadSearchFilters<
-  T extends { readonly updatedAt: string; readonly branch: string | null },
->(
+export function getThreadSearchProjectNames(
+  project: { readonly title: string; readonly workspaceRoot: string } | null | undefined,
+  groupedLabel?: string | null,
+): ReadonlyArray<string> {
+  const names = [
+    project?.title ?? "",
+    project?.workspaceRoot.split(/[\\/]/).pop() ?? "",
+    groupedLabel ?? "",
+  ];
+  return [...new Set(names.filter((name) => name.length > 0))];
+}
+
+export function matchesThreadSearchFilters<T extends { readonly branch: string | null }>(
   thread: T,
   filters: ThreadSearchFilters,
   context: ThreadSearchMatchContext<T>,
   options: { readonly now: Date },
 ): boolean {
-  const match = (clauses: ReadonlyArray<ThreadSearchClause>, value: string) =>
-    clauses.every((clause) => matchesClause(value, clause));
-  if (filters.project.length > 0 && !match(filters.project, context.projectName(thread)))
+  if (filters.project.length > 0 && !matchesClauses(context.projectNames(thread), filters.project))
     return false;
-  const environmentNames = filters.env.length > 0 ? context.environmentNames(thread) : [];
+  if (filters.env.length > 0 && !matchesClauses(context.environmentNames(thread), filters.env))
+    return false;
+  if (!matchesClauses([thread.branch ?? ""], filters.branch)) return false;
   if (
-    !filters.env.every((clause) => {
-      const matched = clause.values.some((value) =>
-        environmentNames.some((name) =>
-          name.toLocaleLowerCase().includes(value.toLocaleLowerCase()),
-        ),
-      );
-      return clause.negated ? !matched : matched;
-    })
+    filters.provider.length > 0 &&
+    !matchesClauses(context.providerNames(thread), filters.provider)
   )
     return false;
-  if (!match(filters.branch, thread.branch ?? "")) return false;
-  const providerNames = filters.provider.length > 0 ? context.providerNames(thread) : [];
-  if (
-    !filters.provider.every((clause) => {
-      const matched = clause.values.some((value) =>
-        providerNames.some((name) => name.toLocaleLowerCase().includes(value.toLocaleLowerCase())),
-      );
-      return clause.negated ? !matched : matched;
-    })
-  )
+  if (filters.status.length > 0 && !matchesClauses(context.statusNames(thread), filters.status))
     return false;
-  if (filters.status.length > 0 && !match(filters.status, context.status(thread))) return false;
   if (
     !filters.since.every((clause) =>
       matchesDateClause(context.activityAt(thread), clause, options.now, false),
@@ -372,4 +423,14 @@ export function matchesThreadSearchFilters<
   )
     return false;
   return true;
+}
+
+export function sortThreadsByActivity<
+  T extends { readonly updatedAt: string; readonly latestUserMessageAt?: string | null },
+>(threads: ReadonlyArray<T>): T[] {
+  return [...threads].sort((left, right) =>
+    (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
+      left.latestUserMessageAt ?? left.updatedAt,
+    ),
+  );
 }

@@ -30,7 +30,11 @@ import {
   matchesThreadSearchFilters,
   parseThreadSearchQuery,
 } from "@t3tools/client-runtime/state/threadSearchQuery";
-import { createMobileThreadSearchContext, sortThreadsByActivity } from "../threads/threadListV2";
+import {
+  getMobileThreadSearchEnvironmentNames,
+  sortThreadsByActivity,
+  useMobileThreadSearchContext,
+} from "../threads/threadListV2";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
 import { useWorkspaceEnvironments } from "../../state/workspace";
@@ -166,6 +170,14 @@ export function CommandPalette(props: {
   const { providersByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
   const [query, setQuery] = useState("");
   const parsedSearch = useMemo(() => parseThreadSearchQuery(query, { now: new Date() }), [query]);
+  const threadFilterSignature = useMemo(
+    () => JSON.stringify(parsedSearch.filters),
+    [parsedSearch.filters],
+  );
+  const threadFilterState = useMemo(
+    () => ({ hasFilters: parsedSearch.hasFilters, filters: parsedSearch.filters }),
+    [parsedSearch.hasFilters, threadFilterSignature],
+  );
   const [selection, setSelection] = useState<string | null>(null);
   const [visible, setVisible] = useState(true);
   const pendingAction = useRef<(() => void) | null>(null);
@@ -192,21 +204,25 @@ export function CommandPalette(props: {
         : threads,
     [archivedSnapshots.snapshots, parsedSearch.filters.archived, threads],
   );
-  const threadSearchContext = useMemo(
+  const environmentNames = useMemo(
     () =>
-      createMobileThreadSearchContext({
-        projects: projectByKey,
-        providers: providersByEnvironmentId,
-        environmentNames: (thread) =>
-          [
-            environments.find((environment) => environment.environmentId === thread.environmentId)
-              ?.environmentLabel,
-            savedConnectionsById[thread.environmentId]?.environmentLabel,
-            thread.environmentId,
-          ].filter((name): name is string => name !== undefined),
-      }),
-    [environments, projectByKey, providersByEnvironmentId, savedConnectionsById],
+      new Map(
+        environments.map((environment) => [
+          environment.environmentId,
+          getMobileThreadSearchEnvironmentNames({
+            environmentId: environment.environmentId,
+            workspaceLabel: environment.environmentLabel,
+            savedConnectionLabel: savedConnectionsById[environment.environmentId]?.environmentLabel,
+          }),
+        ]),
+      ),
+    [environments, savedConnectionsById],
   );
+  const threadSearchContext = useMobileThreadSearchContext({
+    projects: projectByKey,
+    providers: providersByEnvironmentId,
+    environmentNames,
+  });
   const search = useThreadSearch(
     searchEnvironmentIds,
     query.startsWith(">") ? "" : parsedSearch.text,
@@ -226,7 +242,7 @@ export function CommandPalette(props: {
       ),
     [search.matches],
   );
-  const items = useMemo(() => {
+  const actions = useMemo<CommandPaletteItem[]>(() => {
     const actions: CommandPaletteItem[] = [
       {
         key: "newTask",
@@ -346,60 +362,81 @@ export function CommandPalette(props: {
         })),
       );
     }
-    const projectItems: CommandPaletteItem[] = projects.map((project) => ({
-      key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
-      kind: "project",
-      title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
-      searchTerms: [project.workspaceRoot, "new thread", "project"],
-      run: () =>
-        navigation.navigate("NewTaskSheet", {
-          screen: "NewTaskDraft",
-          params: {
-            environmentId: project.environmentId,
-            projectId: project.id,
-            title: project.title,
-          },
-        }),
-    }));
-    const threadItems: CommandPaletteItem[] = sortThreadsByActivity(searchableThreads)
-      .filter((thread) => parsedSearch.filters.archived || thread.archivedAt === null)
-      .map((thread) => {
-        const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
-        const environment =
-          savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return {
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          kind: "thread",
-          title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
-          searchTerms: [
-            project?.title ?? "",
-            environment,
-            thread.branch ?? "",
-            ...threadPullRequestSearchTerms(thread),
-          ],
-          matchesSearch: () =>
-            matchesThreadSearchFilters(thread, parsedSearch.filters, threadSearchContext, {
+    return actions;
+  }, [activeThread, activeThreadRef, navigation, projectByKey, runCommand]);
+  const projectItems = useMemo<CommandPaletteItem[]>(
+    () =>
+      projects.map((project) => ({
+        key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
+        kind: "project",
+        title: project.title,
+        detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
+        searchTerms: [project.workspaceRoot, "new thread", "project"],
+        run: () =>
+          navigation.navigate("NewTaskSheet", {
+            screen: "NewTaskDraft",
+            params: {
+              environmentId: project.environmentId,
+              projectId: project.id,
+              title: project.title,
+            },
+          }),
+      })),
+    [navigation, projects, savedConnectionsById],
+  );
+  const threadItems = useMemo<CommandPaletteItem[]>(
+    () =>
+      sortThreadsByActivity(searchableThreads)
+        .filter((thread) => threadFilterState.filters.archived || thread.archivedAt === null)
+        .filter(
+          (thread) =>
+            !threadFilterState.hasFilters ||
+            matchesThreadSearchFilters(thread, threadFilterState.filters, threadSearchContext, {
               now: new Date(),
             }),
-          run: () => selectThread(thread),
-        };
-      });
-    return [...actions, ...projectItems, ...threadItems];
-  }, [
-    activeThread,
-    activeThreadRef,
-    navigation,
-    projectByKey,
-    projects,
-    parsedSearch,
-    runCommand,
-    savedConnectionsById,
-    selectThread,
-    searchableThreads,
-    threadSearchContext,
-  ]);
+        )
+        .map((thread) => {
+          const project = projectByKey.get(
+            scopedProjectKey(thread.environmentId, thread.projectId),
+          );
+          const environment =
+            savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
+          return {
+            key: scopedThreadKey(thread.environmentId, thread.id),
+            kind: "thread",
+            title: thread.title || "Untitled thread",
+            detail: [project?.title, environment].filter(Boolean).join(" · "),
+            searchTerms: [
+              project?.title ?? "",
+              environment,
+              thread.branch ?? "",
+              ...threadPullRequestSearchTerms(thread),
+            ],
+            run: () => {
+              if (thread.archivedAt !== null) {
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsArchive" },
+                });
+                return;
+              }
+              selectThread(thread);
+            },
+          };
+        }),
+    [
+      navigation,
+      projectByKey,
+      searchableThreads,
+      selectThread,
+      threadFilterState,
+      threadSearchContext,
+    ],
+  );
+  const items = useMemo(
+    () => [...actions, ...projectItems, ...threadItems],
+    [actions, projectItems, threadItems],
+  );
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),
     [items, matchedThreadKeys, query],
@@ -534,7 +571,12 @@ export function CommandPalette(props: {
                 contentContainerClassName="pb-2"
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
+                    {search.isPending ||
+                    (parsedSearch.filters.archived && archivedSnapshots.isLoading)
+                      ? "Searching…"
+                      : parsedSearch.filters.archived && archivedSnapshots.error
+                        ? archivedSnapshots.error
+                        : "No results"}
                   </Text>
                 }
                 renderItem={({ item, index }) => (

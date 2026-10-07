@@ -52,7 +52,8 @@ import {
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
   buildThreadListV2Items,
-  createMobileThreadSearchContext,
+  getMobileThreadSearchEnvironmentNames,
+  useMobileThreadSearchContext,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   threadListV2ListItemsAreEqual,
@@ -60,7 +61,6 @@ import {
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
-  sortThreadsByActivity,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
@@ -260,10 +260,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const searchableThreads = useMemo(
     () =>
       parsedSearch.filters.archived
-        ? sortThreadsByActivity(
-            archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
-              snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-            ),
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
           )
         : props.threads,
     [archivedSnapshots.snapshots, parsedSearch.filters.archived, props.threads],
@@ -531,22 +529,26 @@ export function HomeScreen(props: HomeScreenProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const threadSearchContext = useMemo(
+  const environmentNames = useMemo(
     () =>
-      createMobileThreadSearchContext({
-        projects: projectByKey,
-        providers: providersByEnvironmentId,
-        environmentNames: (thread) =>
-          [
-            props.environments.find(
-              (environment) => environment.environmentId === thread.environmentId,
-            )?.label,
-            props.savedConnectionsById[thread.environmentId]?.environmentLabel,
-            thread.environmentId,
-          ].filter((name): name is string => name !== undefined),
-      }),
-    [projectByKey, props.environments, props.savedConnectionsById, providersByEnvironmentId],
+      new Map(
+        props.environments.map((environment) => [
+          environment.environmentId,
+          getMobileThreadSearchEnvironmentNames({
+            environmentId: environment.environmentId,
+            workspaceLabel: environment.label,
+            savedConnectionLabel:
+              props.savedConnectionsById[environment.environmentId]?.environmentLabel,
+          }),
+        ]),
+      ),
+    [props.environments, props.savedConnectionsById],
   );
+  const threadSearchContext = useMobileThreadSearchContext({
+    projects: projectByKey,
+    providers: providersByEnvironmentId,
+    environmentNames,
+  });
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -590,15 +592,11 @@ export function HomeScreen(props: HomeScreenProps) {
     // Archive searches use the snapshot instead of the live shells.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: searchableThreads.filter(
-        (thread) => parsedSearch.filters.archived || thread.archivedAt === null,
-      ),
+      threads: searchableThreads,
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
-      searchQuery: parsedSearch.text,
-      searchFilters: parsedSearch.filters,
+      parsedSearch,
       searchFilterContext: threadSearchContext,
-      searchNow: new Date(),
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -653,18 +651,26 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2SearchQuery = parsedSearch.text.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
-      props.pendingTasks.filter(
-        (pendingTask) =>
-          (props.selectedEnvironmentId === null ||
-            pendingTask.environmentId === props.selectedEnvironmentId) &&
-          (v2ScopedProjectKeys === null ||
-            v2ScopedProjectKeys.has(
-              scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-            )) &&
-          (v2SearchQuery.length === 0 ||
-            pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-      ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+      parsedSearch.hasFilters
+        ? []
+        : props.pendingTasks.filter(
+            (pendingTask) =>
+              (props.selectedEnvironmentId === null ||
+                pendingTask.environmentId === props.selectedEnvironmentId) &&
+              (v2ScopedProjectKeys === null ||
+                v2ScopedProjectKeys.has(
+                  scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+                )) &&
+              (v2SearchQuery.length === 0 ||
+                pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+          ),
+    [
+      parsedSearch.hasFilters,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      v2ScopedProjectKeys,
+      v2SearchQuery,
+    ],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -770,6 +776,7 @@ export function HomeScreen(props: HomeScreenProps) {
           hasQueuedMessages={item.hasQueuedMessages}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
+          readOnly={item.item.readOnly}
           snoozePresetMinute={item.snoozePresetMinute ?? ""}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           timeLabel={item.timeLabel}
@@ -900,8 +907,11 @@ export function HomeScreen(props: HomeScreenProps) {
   // that matches nothing needs the in-list "No results" state, not the
   // full-page "No threads yet". Settled threads are unarchived live shells,
   // so the archived-at check already covers the settled shelf.
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+  const hasAnyThreads = parsedSearch.filters.archived
+    ? searchableThreads.length > 0 ||
+      archivedSnapshots.isLoading ||
+      archivedSnapshots.error !== null
+    : props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -967,10 +977,23 @@ export function HomeScreen(props: HomeScreenProps) {
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
+    hasSearchQuery &&
+    (threadSearch.isPending || (parsedSearch.filters.archived && archivedSnapshots.isLoading)) ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title="Searching…"
+        detail="Searching thread messages…"
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : hasSearchQuery ? (
+      <EmptyState
+        title={
+          parsedSearch.filters.archived && archivedSnapshots.error ? "Search failed" : "No results"
+        }
+        detail={
+          parsedSearch.filters.archived && archivedSnapshots.error
+            ? archivedSnapshots.error
+            : `No threads matching "${props.searchQuery}".`
+        }
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

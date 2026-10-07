@@ -464,11 +464,14 @@ export function filterCommandPaletteGroups(input: {
 }): CommandPaletteGroup[] {
   const isActionsFilter = input.query.startsWith(">");
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
-  const parsedQuery = parseThreadSearchQuery(searchQuery, { now: new Date() });
-  const normalizedQuery = normalizeSearchText(parsedQuery.text);
+  const parseQualifiers = !input.isInSubmenu && !isActionsFilter;
+  const parsedQuery = parseQualifiers
+    ? parseThreadSearchQuery(searchQuery, { now: new Date() })
+    : null;
+  const normalizedQuery = normalizeSearchText(parsedQuery?.text ?? searchQuery);
 
   if (normalizedQuery.length === 0) {
-    if (parsedQuery.hasFilters && !isActionsFilter) {
+    if (parsedQuery?.hasFilters === true) {
       return input.threadSearchItems.length > 0
         ? [{ value: "threads-search", label: "Threads", items: input.threadSearchItems }]
         : [];

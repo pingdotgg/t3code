@@ -4,6 +4,7 @@ import { useMemo, type RefObject } from "react";
 import {
   clearThreadSearchQualifiers,
   parseThreadSearchQuery,
+  THREAD_SEARCH_QUALIFIER_KEYS,
   toggleThreadSearchQualifier,
   type ParsedThreadSearchQuery,
   type ThreadSearchQualifierToggleKey,
@@ -37,7 +38,7 @@ const STATUS_OPTIONS: ReadonlyArray<FilterOption> = [
   { label: "Ready", value: "ready" },
 ];
 
-const UPDATED_OPTIONS: ReadonlyArray<FilterOption> = [
+const ACTIVITY_OPTIONS: ReadonlyArray<FilterOption> = [
   { label: "Today", value: "today" },
   { label: "Last 7 days", value: "7d" },
   { label: "Last 30 days", value: "30d" },
@@ -55,11 +56,51 @@ function hasSelectedValue(
   );
 }
 
-function countRecognizedQualifiers(parsedQuery: ParsedThreadSearchQuery): number {
-  const keys = ["project", "env", "branch", "provider", "status", "since", "before"] as const;
+function QualifierSubmenu({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  readonly label: string;
+  readonly options: ReadonlyArray<FilterOption>;
+  readonly selected: (value: string) => boolean;
+  readonly onToggle: (value: string) => void;
+}) {
   return (
-    keys.reduce((count, key) => count + parsedQuery.filters[key].length, 0) +
-    (parsedQuery.filters.archived ? 1 : 0)
+    <MenuSub>
+      <MenuSubTrigger>{label}</MenuSubTrigger>
+      <MenuSubPopup>
+        <MenuGroup>
+          <MenuGroupLabel>{label}</MenuGroupLabel>
+          {options.length === 0 ? (
+            <MenuItem disabled>
+              {label === "Project" ? "No projects" : `No ${label.toLowerCase()}s`}
+            </MenuItem>
+          ) : (
+            options.map((option) => (
+              <MenuCheckboxItem
+                closeOnClick
+                key={option.value}
+                checked={selected(option.value)}
+                onCheckedChange={() => onToggle(option.value)}
+              >
+                {option.label}
+              </MenuCheckboxItem>
+            ))
+          )}
+        </MenuGroup>
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}
+
+function countRecognizedQualifiers(parsedQuery: ParsedThreadSearchQuery): number {
+  return (
+    THREAD_SEARCH_QUALIFIER_KEYS.reduce(
+      (count, key) => count + parsedQuery.filters[key].length,
+      0,
+    ) + (parsedQuery.filters.archived ? 1 : 0)
   );
 }
 
@@ -120,68 +161,30 @@ export function CommandPaletteThreadFilters({
           ))}
         </MenuGroup>
         <MenuSeparator />
-        <MenuSub>
-          <MenuSubTrigger>Project</MenuSubTrigger>
-          <MenuSubPopup>
-            <MenuGroupLabel>Project</MenuGroupLabel>
-            {projects.length === 0 ? (
-              <MenuItem disabled>No projects</MenuItem>
-            ) : (
-              projects.map((option) => (
-                <MenuCheckboxItem
-                  closeOnClick
-                  key={option.value}
-                  checked={selected("project", option.value)}
-                  onCheckedChange={() => toggle("project", option.value, true)}
-                >
-                  {option.label}
-                </MenuCheckboxItem>
-              ))
-            )}
-          </MenuSubPopup>
-        </MenuSub>
-        <MenuSub>
-          <MenuSubTrigger>Provider</MenuSubTrigger>
-          <MenuSubPopup>
-            <MenuGroupLabel>Provider</MenuGroupLabel>
-            {providers.length === 0 ? (
-              <MenuItem disabled>No providers</MenuItem>
-            ) : (
-              providers.map((option) => (
-                <MenuCheckboxItem
-                  closeOnClick
-                  key={option.value}
-                  checked={selected("provider", option.value)}
-                  onCheckedChange={() => toggle("provider", option.value, true)}
-                >
-                  {option.label}
-                </MenuCheckboxItem>
-              ))
-            )}
-          </MenuSubPopup>
-        </MenuSub>
+        <QualifierSubmenu
+          label="Project"
+          onToggle={(value) => toggle("project", value, true)}
+          options={projects.filter((option) => !option.value.includes('"'))}
+          selected={(value) => selected("project", value)}
+        />
+        <QualifierSubmenu
+          label="Provider"
+          onToggle={(value) => toggle("provider", value, true)}
+          options={providers.filter((option) => !option.value.includes('"'))}
+          selected={(value) => selected("provider", value)}
+        />
         {environments.length > 0 ? (
-          <MenuSub>
-            <MenuSubTrigger>Environment</MenuSubTrigger>
-            <MenuSubPopup>
-              <MenuGroupLabel>Environment</MenuGroupLabel>
-              {environments.map((option) => (
-                <MenuCheckboxItem
-                  closeOnClick
-                  key={option.value}
-                  checked={selected("env", option.value)}
-                  onCheckedChange={() => toggle("env", option.value, true)}
-                >
-                  {option.label}
-                </MenuCheckboxItem>
-              ))}
-            </MenuSubPopup>
-          </MenuSub>
+          <QualifierSubmenu
+            label="Environment"
+            onToggle={(value) => toggle("env", value, true)}
+            options={environments.filter((option) => !option.value.includes('"'))}
+            selected={(value) => selected("env", value)}
+          />
         ) : null}
         <MenuSeparator />
         <MenuGroup>
-          <MenuGroupLabel>Updated</MenuGroupLabel>
-          {UPDATED_OPTIONS.map((option) => (
+          <MenuGroupLabel>Last activity</MenuGroupLabel>
+          {ACTIVITY_OPTIONS.map((option) => (
             <MenuCheckboxItem
               closeOnClick
               key={option.value}

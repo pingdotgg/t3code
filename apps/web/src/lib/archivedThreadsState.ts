@@ -4,6 +4,8 @@ import {
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { sortThreadsByActivity } from "@t3tools/client-runtime/state/threadSearchQuery";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
@@ -47,4 +49,20 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     ...result,
     refresh,
   };
+}
+
+export function searchableArchivedThreads(
+  snapshots: ReadonlyArray<ArchivedSnapshotEntry>,
+  projectKeys: ReadonlySet<string> | null = null,
+) {
+  return sortThreadsByActivity(
+    snapshots
+      .flatMap(({ environmentId, snapshot }) =>
+        snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+      )
+      .filter(
+        (thread) =>
+          projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+      ),
+  );
 }

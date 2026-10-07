@@ -69,7 +69,8 @@ import {
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
   buildThreadListV2Items,
-  createMobileThreadSearchContext,
+  getMobileThreadSearchEnvironmentNames,
+  useMobileThreadSearchContext,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   isThreadListV2ListItem,
@@ -78,7 +79,6 @@ import {
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
-  sortThreadsByActivity,
 } from "./threadListV2";
 
 /** The sidebar list: flat v2 rows with queued tasks spliced in, plus a
@@ -206,10 +206,8 @@ function ThreadNavigationSidebarPane(
   const searchableThreads = useMemo(
     () =>
       parsedSearch.filters.archived
-        ? sortThreadsByActivity(
-            archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
-              snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-            ),
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
           )
         : threads,
     [archivedSnapshots.snapshots, parsedSearch.filters.archived, threads],
@@ -354,22 +352,25 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const threadSearchContext = useMemo(
+  const environmentNames = useMemo(
     () =>
-      createMobileThreadSearchContext({
-        projects: projectByKey,
-        providers: providersByEnvironmentId,
-        environmentNames: (thread) =>
-          [
-            workspaceEnvironments.find(
-              (environment) => environment.environmentId === thread.environmentId,
-            )?.environmentLabel,
-            savedConnectionsById[thread.environmentId]?.environmentLabel,
-            thread.environmentId,
-          ].filter((name): name is string => name !== undefined),
-      }),
-    [projectByKey, providersByEnvironmentId, savedConnectionsById, workspaceEnvironments],
+      new Map(
+        workspaceEnvironments.map((environment) => [
+          environment.environmentId,
+          getMobileThreadSearchEnvironmentNames({
+            environmentId: environment.environmentId,
+            workspaceLabel: environment.environmentLabel,
+            savedConnectionLabel: savedConnectionsById[environment.environmentId]?.environmentLabel,
+          }),
+        ]),
+      ),
+    [savedConnectionsById, workspaceEnvironments],
   );
+  const threadSearchContext = useMobileThreadSearchContext({
+    projects: projectByKey,
+    providers: providersByEnvironmentId,
+    environmentNames,
+  });
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -412,15 +413,11 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: searchableThreads.filter(
-        (thread) => parsedSearch.filters.archived || thread.archivedAt === null,
-      ),
+      threads: searchableThreads,
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
-      searchQuery: parsedSearch.text,
-      searchFilters: parsedSearch.filters,
+      parsedSearch,
       searchFilterContext: threadSearchContext,
-      searchNow: new Date(),
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -476,17 +473,19 @@ function ThreadNavigationSidebarPane(
     // deletable while their environment is offline. Same environment scope
     // and search filter as the list.
     const v2SearchQuery = parsedSearch.text.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
+    const v2PendingTasks = parsedSearch.hasFilters
+      ? []
+      : pendingTasks.filter(
+          (pendingTask) =>
+            (options.selectedEnvironmentId === null ||
+              pendingTask.environmentId === options.selectedEnvironmentId) &&
+            (selectedProjectRefs === null ||
+              selectedProjectRefs.has(
+                scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+              )) &&
+            (v2SearchQuery.length === 0 ||
+              pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+        );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
       items: threadListV2Layout.items,
       pendingTasks: v2PendingTasks,
@@ -746,6 +745,7 @@ function ThreadNavigationSidebarPane(
               hasQueuedMessages={item.hasQueuedMessages}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
+              readOnly={item.item.readOnly}
               snoozePresetMinute={item.snoozePresetMinute ?? ""}
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               timeLabel={item.timeLabel}
@@ -929,9 +929,12 @@ function ThreadNavigationSidebarPane(
         : Platform.OS === "android" && !catalogState.hasConnections
           ? "No environments connected"
           : props.searchQuery.trim().length > 0
-            ? threadSearch.isPending
+            ? threadSearch.isPending ||
+              (parsedSearch.filters.archived && archivedSnapshots.isLoading)
               ? "Searching thread messages…"
-              : "No matching threads"
+              : parsedSearch.filters.archived && archivedSnapshots.error
+                ? archivedSnapshots.error
+                : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
               : "No threads yet"}

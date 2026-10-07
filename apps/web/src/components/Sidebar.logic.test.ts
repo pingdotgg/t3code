@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
@@ -1050,57 +1051,70 @@ describe("searchSidebarThreads", () => {
         threadSearchMatchKey({ environmentId: localEnvironmentId, threadId: ThreadId.make(id) }),
       ),
     );
+  const parse = (query: string) =>
+    parseThreadSearchQuery(query, { now: new Date("2026-10-07T12:00:00Z") });
+  const context = {
+    projectNames: (thread: (typeof threads)[number]) => [thread.project],
+    environmentNames: () => ["Local"],
+    providerNames: () => ["Codex"],
+    statusNames: () => ["ready"],
+    activityAt: (thread: (typeof threads)[number]) => thread.updatedAt,
+  };
 
   it("matches thread titles case-insensitively and preserves their order", () => {
-    expect(searchSidebarThreads(threads, "work")).toEqual([threads[0], threads[2]]);
+    expect(searchSidebarThreads(threads, parse("work"), new Set(), context, new Date())).toEqual([
+      threads[0],
+      threads[2],
+    ]);
   });
 
   it("does not match project metadata", () => {
-    expect(searchSidebarThreads(threads, "workspace")).toEqual([threads[0]]);
+    expect(
+      searchSidebarThreads(threads, parse("workspace"), new Set(), context, new Date()),
+    ).toEqual([threads[0]]);
   });
 
   it("returns no results for an empty query", () => {
-    expect(searchSidebarThreads(threads, "   ")).toEqual([]);
+    expect(searchSidebarThreads(threads, parse("   "), new Set(), context, new Date())).toEqual([]);
   });
 
   it("applies project qualifiers to both title and content matches", () => {
-    const filterContext = {
-      projectName: (thread: (typeof threads)[number]) => thread.project,
-      environmentNames: () => ["Local"],
-      providerNames: () => ["Codex"],
-      status: () => "ready",
-      activityAt: (thread: (typeof threads)[number]) => thread.updatedAt,
-    };
     expect(
-      searchSidebarThreads(threads, "project:Workspace", new Set(), { filterContext }),
+      searchSidebarThreads(threads, parse("project:Workspace"), new Set(), context, new Date()),
     ).toEqual([threads[1]]);
     expect(
-      searchSidebarThreads(threads, "work project:Alpha", contentKeys("thread-2"), {
-        filterContext,
-      }),
+      searchSidebarThreads(
+        threads,
+        parse("work project:Alpha"),
+        contentKeys("thread-2"),
+        context,
+        new Date(),
+      ),
     ).toEqual([threads[0]]);
   });
 
   it("appends content-only matches after every title match", () => {
-    expect(searchSidebarThreads(threads, "work", contentKeys("thread-2"))).toEqual([
-      threads[0],
-      threads[2],
-      threads[1],
-    ]);
+    expect(
+      searchSidebarThreads(threads, parse("work"), contentKeys("thread-2"), context, new Date()),
+    ).toEqual([threads[0], threads[2], threads[1]]);
   });
 
   it("lists a thread matching both title and content once", () => {
-    expect(searchSidebarThreads(threads, "work", contentKeys("thread-1"))).toEqual([
-      threads[0],
-      threads[2],
-    ]);
+    expect(
+      searchSidebarThreads(threads, parse("work"), contentKeys("thread-1"), context, new Date()),
+    ).toEqual([threads[0], threads[2]]);
   });
 
   it("ignores content matches for threads outside the sidebar collection", () => {
-    expect(searchSidebarThreads(threads, "work", contentKeys("thread-missing"))).toEqual([
-      threads[0],
-      threads[2],
-    ]);
+    expect(
+      searchSidebarThreads(
+        threads,
+        parse("work"),
+        contentKeys("thread-missing"),
+        context,
+        new Date(),
+      ),
+    ).toEqual([threads[0], threads[2]]);
   });
 });
 

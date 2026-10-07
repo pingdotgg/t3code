@@ -13,7 +13,8 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   matchesThreadSearchFilters,
-  parseThreadSearchQuery,
+  getThreadSearchProjectNames,
+  type ParsedThreadSearchQuery,
   type ThreadSearchMatchContext,
 } from "@t3tools/client-runtime/state/threadSearchQuery";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -1080,8 +1081,6 @@ export {
 export { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
-const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
-
 export function getThreadSearchEnvironmentNames(target: ConnectionTarget): ReadonlyArray<string> {
   if (target._tag === "PrimaryConnectionTarget") return [target.label, "Local"];
   if (isDesktopLocalConnectionTarget(target)) return [target.label, `${target.label} (Local)`];
@@ -1093,6 +1092,7 @@ export function createWebThreadSearchContext(input: {
     string,
     { readonly title: string; readonly workspaceRoot: string }
   >;
+  readonly projectDisplayNames?: ReadonlyMap<string, string>;
   readonly environmentNames: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
   readonly providerEntry: (
     thread: SidebarThreadSummary,
@@ -1100,9 +1100,12 @@ export function createWebThreadSearchContext(input: {
   ) => ProviderInstanceEntry | undefined;
 }): ThreadSearchMatchContext<SidebarThreadSummary> {
   return {
-    projectName: (thread) => {
-      const project = input.projects.get(`${thread.environmentId}:${thread.projectId}`);
-      return project?.title || project?.workspaceRoot.split(/[\\/]/).pop() || "";
+    projectNames: (thread) => {
+      const key = `${thread.environmentId}:${thread.projectId}`;
+      return getThreadSearchProjectNames(
+        input.projects.get(key),
+        input.projectDisplayNames?.get(key),
+      );
     },
     environmentNames: (thread) =>
       input.environmentNames.get(thread.environmentId) ?? [thread.environmentId],
@@ -1112,7 +1115,7 @@ export function createWebThreadSearchContext(input: {
         return entry ? [entry.driverKind, instanceId, entry.displayName] : [instanceId];
       });
     },
-    status: resolveSidebarThreadStatus,
+    statusNames: (thread) => [resolveSidebarThreadStatus(thread)],
     activityAt: (thread) => thread.latestUserMessageAt ?? thread.updatedAt,
   };
 }
@@ -1128,27 +1131,23 @@ export function searchSidebarThreads<
     readonly environmentId: EnvironmentId;
     readonly id: ThreadId;
     readonly title: string;
-    readonly updatedAt: string;
     readonly branch: string | null;
   } & Parameters<typeof threadPullRequestSearchTerms>[0],
 >(
   threads: readonly T[],
-  query: string,
-  contentMatchKeys: ReadonlySet<string> = EMPTY_CONTENT_MATCH_KEYS,
-  options?: { readonly now?: Date; readonly filterContext?: ThreadSearchMatchContext<T> },
+  parsed: ParsedThreadSearchQuery,
+  contentMatchKeys: ReadonlySet<string>,
+  filterContext: ThreadSearchMatchContext<T>,
+  now: Date,
 ): T[] {
-  const parsed = parseThreadSearchQuery(query, { now: options?.now ?? new Date() });
   const normalizedQuery = parsed.text.trim().toLowerCase();
   if (normalizedQuery.length === 0 && !parsed.hasFilters) return [];
   const titleMatches: T[] = [];
   const contentMatches: T[] = [];
   for (const thread of threads) {
-    if (parsed.hasFilters && options?.filterContext === undefined) continue;
     if (
-      options?.filterContext &&
-      !matchesThreadSearchFilters(thread, parsed.filters, options.filterContext, {
-        now: options.now ?? new Date(),
-      })
+      parsed.hasFilters &&
+      !matchesThreadSearchFilters(thread, parsed.filters, filterContext, { now })
     ) {
       continue;
     }

@@ -45,7 +45,6 @@ import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSear
 import { environmentCatalog } from "../connection/catalog";
 import {
   resolveThreadProviderStack,
-  presentThreadShell,
   threadRuntimeCanArchive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
@@ -163,7 +162,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
-import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
+import { searchableArchivedThreads, useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
@@ -172,7 +171,6 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
-import { getThreadSortTimestamp } from "../lib/threadSort";
 import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -2895,20 +2893,7 @@ export default function Sidebar() {
   const searchableThreads = useMemo(
     () =>
       parsedThreadSearch.filters.archived
-        ? archivedSnapshots.snapshots
-            .flatMap(({ environmentId, snapshot }) =>
-              snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-            )
-            .filter(
-              (thread) =>
-                scopedProjectKeys === null ||
-                scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
-            )
-            .sort(
-              (left, right) =>
-                getThreadSortTimestamp(right, "updated_at") -
-                getThreadSortTimestamp(left, "updated_at"),
-            )
+        ? searchableArchivedThreads(archivedSnapshots.snapshots, scopedProjectKeys)
         : [
             ...pinnedThreads,
             ...activeThreads,
@@ -2931,11 +2916,12 @@ export default function Sidebar() {
     () =>
       createWebThreadSearchContext({
         projects: projectByKey,
+        projectDisplayNames: projectDisplayNameByKey,
         environmentNames: environmentNamesById,
         providerEntry: (thread, instanceId) =>
           providerEntriesByEnvironment.get(thread.environmentId)?.get(instanceId),
       }),
-    [environmentNamesById, projectByKey, providerEntriesByEnvironment],
+    [environmentNamesById, projectByKey, projectDisplayNameByKey, providerEntriesByEnvironment],
   );
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(
@@ -2952,14 +2938,12 @@ export default function Sidebar() {
     () =>
       searchSidebarThreads(
         searchableThreads,
-        threadSearchQuery,
+        parsedThreadSearch,
         new Set(threadSearchMatchByKey.keys()),
-        {
-          now: new Date(),
-          filterContext: threadSearchContext,
-        },
+        threadSearchContext,
+        new Date(),
       ),
-    [searchableThreads, threadSearchQuery, threadSearchContext, threadSearchMatchByKey],
+    [searchableThreads, parsedThreadSearch, threadSearchContext, threadSearchMatchByKey],
   );
   const threadSearchResultOrderKey = threadSearchResults
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
@@ -5248,7 +5232,12 @@ export default function Sidebar() {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {parsedThreadSearch.filters.archived && archivedSnapshots.error
+                  ? archivedSnapshots.error
+                  : threadSearch.isPending ||
+                      (parsedThreadSearch.filters.archived && archivedSnapshots.isLoading)
+                    ? "Searching thread messages…"
+                    : "No threads found"}
               </p>
             )
           ) : null}

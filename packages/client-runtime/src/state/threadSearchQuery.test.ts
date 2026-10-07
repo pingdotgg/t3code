@@ -12,10 +12,10 @@ import {
 const now = new Date("2026-10-07T15:30:00");
 const thread = { updatedAt: "2026-10-07T10:00:00", branch: "feature/search" };
 const context = {
-  projectName: () => "My App",
+  projectNames: () => ["My App"],
   environmentNames: () => ["Office Mac", "Local"],
   providerNames: () => ["claudeAgent", "Claude"],
-  status: () => "failed",
+  statusNames: () => ["failed"],
   activityAt: (value: typeof thread) => value.updatedAt,
 };
 
@@ -49,6 +49,17 @@ describe("thread search query", () => {
     });
   });
 
+  it("preserves free text and treats leading quoted qualifiers as literals", () => {
+    expect(parseThreadSearchQuery('  "status:failed"   fix  ', { now }).text).toBe(
+      '"status:failed"   fix',
+    );
+    expect(parseThreadSearchQuery('project:"Acme, Inc" note', { now })).toMatchObject({
+      text: "note",
+      filters: { project: [{ values: ["Acme, Inc"], negated: false }] },
+      hasFilters: true,
+    });
+  });
+
   it("keeps apostrophes and backslashes literal", () => {
     expect(parseThreadSearchQuery("don't fix C:\\repo", { now }).text).toBe("don't fix C:\\repo");
   });
@@ -61,7 +72,7 @@ describe("thread search query", () => {
 
   it("matches all qualifier families and local day boundaries", () => {
     const parsed = parseThreadSearchQuery(
-      "in:app env:office branch:feature provider:claude status:error since:today before:2026-10-08",
+      "project:app env:office branch:feature provider:claude status:error since:today before:2026-10-08",
       { now },
     );
     expect(matchesThreadSearchFilters(thread, parsed.filters, context, { now })).toBe(true);
@@ -74,6 +85,11 @@ describe("thread search query", () => {
       ),
     ).toBe(false);
     expect(parseThreadSearchQuery("is:archived", { now }).filters.archived).toBe(true);
+    expect(parseThreadSearchQuery("-is:archived", { now })).toMatchObject({
+      text: "",
+      hasFilters: true,
+      filters: { archived: false },
+    });
   });
 
   it("matches dates against the resolved activity timestamp and all environment names", () => {
@@ -137,11 +153,12 @@ describe("thread search query", () => {
   });
 
   it("merges repeated positive clauses at the first qualifier's position", () => {
-    const query = 'first in:"My App" middle project:Docs last';
+    const query = 'first project:"My App" middle project:Docs last';
     const next = toggleThreadSearchQualifier(query, "project", "Website", { multi: true });
-    expect(next).toBe('first project:"My App",Docs,Website middle last');
+    expect(next).toBe('first project:"My App" middle project:Docs,Website last');
     expect(parseThreadSearchQuery(next, { now }).filters.project).toEqual([
-      { values: ["My App", "Docs", "Website"], negated: false },
+      { values: ["My App"], negated: false },
+      { values: ["Docs", "Website"], negated: false },
     ]);
   });
 
@@ -169,7 +186,7 @@ describe("thread search query", () => {
 
   it("clears all qualifier families and preserves invalid and unknown tokens verbatim", () => {
     const query =
-      '"fix this" in:"My App" environment:Local branch:main provider:Claude -status:error since:7d before:2026-10-08 is:archived -is:archived foo:"my thing" since:banana since:2026-02-30 status:unknown ""';
+      '"fix this" project:"My App" environment:Local branch:main provider:Claude -status:error since:7d before:2026-10-08 is:archived -is:archived foo:"my thing" since:banana since:2026-02-30 status:unknown ""';
     expect(clearThreadSearchQualifiers(query)).toBe(
       '"fix this" foo:"my thing" since:banana since:2026-02-30 status:unknown ""',
     );

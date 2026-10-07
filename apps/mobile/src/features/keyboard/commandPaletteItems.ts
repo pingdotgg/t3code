@@ -7,7 +7,6 @@ export interface CommandPaletteItem {
   readonly detail?: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly run: () => void;
-  readonly matchesSearch?: (query: string) => boolean;
 }
 
 /** `>` narrows to actions, matching the desktop palette. Stable ties retain recent-thread order. */
@@ -23,8 +22,11 @@ export function filterCommandPaletteItems(
   return items
     .flatMap((item, index) => {
       if (actionsOnly && item.kind !== "action") return [];
-      if (item.kind === "thread" && item.matchesSearch && !item.matchesSearch(query)) return [];
-      if (!normalized) return item.kind === "project" ? [] : [{ item, rank: 0, index }];
+      if (!normalized) {
+        if (parsed.hasFilters && !actionsOnly)
+          return item.kind === "thread" ? [{ item, rank: 0, index }] : [];
+        return item.kind === "project" ? [] : [{ item, rank: 0, index }];
+      }
       const title = item.title.toLocaleLowerCase();
       const haystack = [title, ...item.searchTerms].join(" ").toLocaleLowerCase();
       if (

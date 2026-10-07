@@ -116,7 +116,10 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
-import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
+import {
+  matchesThreadSearchFilters,
+  parseThreadSearchQuery,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -186,10 +189,8 @@ import {
   orderItemsByPreferredIds,
   sortLogicalProjectsForSidebar,
 } from "./Sidebar.logic";
-import { matchesThreadSearchFilters } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
-import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
+import { searchableArchivedThreads, useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteThreadFilters } from "./CommandPaletteThreadFilters";
 import {
@@ -718,6 +719,14 @@ function OpenCommandPaletteDialog(props: {
     () => parseThreadSearchQuery(deferredQuery, { now: new Date() }),
     [deferredQuery],
   );
+  const threadFilterSignature = useMemo(
+    () => JSON.stringify(parsedThreadSearch.filters),
+    [parsedThreadSearch.filters],
+  );
+  const threadFilterState = useMemo(
+    () => ({ hasFilters: parsedThreadSearch.hasFilters, filters: parsedThreadSearch.filters }),
+    [threadFilterSignature, parsedThreadSearch.hasFilters],
+  );
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
@@ -868,9 +877,7 @@ function OpenCommandPaletteDialog(props: {
   const searchableThreads = useMemo(
     () =>
       parsedThreadSearch.filters.archived
-        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
-            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-          )
+        ? searchableArchivedThreads(archivedSnapshots.snapshots)
         : threads,
     [archivedSnapshots.snapshots, parsedThreadSearch.filters.archived, threads],
   );
@@ -962,17 +969,6 @@ function OpenCommandPaletteDialog(props: {
       ),
     [environments],
   );
-  const threadFilterProjects = useMemo(() => {
-    const seen = new Set<string>();
-    return projects.flatMap((project) => {
-      const title = project.title || project.workspaceRoot.split(/[\\/]/).pop() || "";
-      if (!title) return [];
-      const key = title.toLocaleLowerCase();
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [{ label: title, value: title }];
-    });
-  }, [projects]);
   const threadFilterProviders = useMemo(() => {
     const seen = new Set<string>();
     return [...providerEntryByEnvironmentAndInstanceId.values()].flatMap((entry) => {
@@ -984,11 +980,9 @@ function OpenCommandPaletteDialog(props: {
   }, [providerEntryByEnvironmentAndInstanceId]);
   const threadFilterEnvironments = useMemo(() => {
     if (environmentIds.length <= 1) return [];
-    const labels = new Set(
-      environmentIds.map((id) => projectEnvironmentLocationById.get(id)?.label ?? id),
-    );
+    const labels = new Set(environmentIds.flatMap((id) => environmentNamesById.get(id) ?? [id]));
     return [...labels].map((label) => ({ label, value: label }));
-  }, [environmentIds, projectEnvironmentLocationById]);
+  }, [environmentIds, environmentNamesById]);
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -1028,6 +1022,16 @@ function OpenCommandPaletteDialog(props: {
       ),
     [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  const threadFilterProjects = useMemo(() => {
+    const seen = new Set<string>();
+    return projectGroups.flatMap((group) => {
+      const value = group.displayName;
+      const key = value.toLocaleLowerCase();
+      if (seen.has(key) || value.includes('"')) return [];
+      seen.add(key);
+      return [{ label: value, value }];
+    });
+  }, [projectGroups]);
   const contextualProjectRef = useMemo(
     () =>
       resolveThreadActionProjectRef({
@@ -1205,15 +1209,32 @@ function OpenCommandPaletteDialog(props: {
     () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.title])),
     [projects],
   );
+  const projectDisplayNamesByKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
   const threadSearchContext = useMemo(
     () =>
       createWebThreadSearchContext({
         projects: projectByKey,
+        projectDisplayNames: projectDisplayNamesByKey,
         environmentNames: environmentNamesById,
         providerEntry: (thread, instanceId) =>
           providerEntryByEnvironmentAndInstanceId.get(`${thread.environmentId}:${instanceId}`),
       }),
-    [environmentNamesById, projectByKey, providerEntryByEnvironmentAndInstanceId],
+    [
+      environmentNamesById,
+      projectByKey,
+      projectDisplayNamesByKey,
+      providerEntryByEnvironmentAndInstanceId,
+    ],
   );
 
   const activeThreadId = activeThread?.id;
@@ -1502,8 +1523,8 @@ function OpenCommandPaletteDialog(props: {
         sortOrder: clientSettings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
         filterThread: (thread) =>
-          !parsedThreadSearch.hasFilters ||
-          matchesThreadSearchFilters(thread, parsedThreadSearch.filters, threadSearchContext, {
+          !threadFilterState.hasFilters ||
+          matchesThreadSearchFilters(thread, threadFilterState.filters, threadSearchContext, {
             now: new Date(),
           }),
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
@@ -1568,7 +1589,7 @@ function OpenCommandPaletteDialog(props: {
       projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
-      parsedThreadSearch,
+      threadFilterState,
       searchableThreads,
       threadSearchContext,
       threadContentMatchByKey,
@@ -3660,9 +3681,12 @@ function OpenCommandPaletteDialog(props: {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : threadSearch.isPending
+                : threadSearch.isPending ||
+                    (parsedThreadSearch.filters.archived && archivedSnapshots.isLoading)
                   ? { emptyStateMessage: "Searching thread messages…" }
-                  : {})}
+                  : parsedThreadSearch.filters.archived && archivedSnapshots.error
+                    ? { emptyStateMessage: archivedSnapshots.error }
+                    : {})}
       />
     </CommandPaletteContent>
   );

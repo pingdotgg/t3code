@@ -21,7 +21,7 @@ const ThreadSearchKey = Schema.fromJsonString(
   Schema.Tuple([
     Schema.Array(EnvironmentId),
     OrchestrationSearchThreadsInput.fields.query,
-    Schema.optional(Schema.Boolean),
+    Schema.Boolean,
   ]),
 );
 const decodeThreadSearchKey = Schema.decodeUnknownOption(ThreadSearchKey);
@@ -32,10 +32,7 @@ export function makeThreadSearchKey(
   archived = false,
 ): string {
   const sortedEnvironmentIds = [...environmentIds].sort((left, right) => left.localeCompare(right));
-  const key = archived
-    ? ([sortedEnvironmentIds, query, true] as const)
-    : ([sortedEnvironmentIds, query] as const);
-  return JSON.stringify(key);
+  return JSON.stringify([sortedEnvironmentIds, query, archived]);
 }
 
 function parseThreadSearchKey(key: string) {
