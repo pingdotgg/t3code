@@ -352,8 +352,11 @@ const HEAD_LOOKUPS_PER_DOCUMENT = 50;
 /**
  * How long a head lookup waits for company. Branch discovery reaches GitHub only after each
  * branch's own git reads, so lookups started together arrive tens of milliseconds apart.
+ * A background sweep's lookups spread over up to ~300ms, and every document costs a point no
+ * matter how few heads it holds, so lookups no user waits on (no reserve) wait longer.
  */
 const HEAD_LOOKUP_BATCH_WINDOW = "50 millis";
+const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
 /** A full document is 5,000 rows of well under 2 KB each. */
 const HEAD_LOOKUP_MAX_RESPONSE_BYTES = 16_000_000;
 /**
@@ -705,9 +708,12 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
-  }).pipe(
+  }).pipe(RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT));
+  const interactiveHeadResolver = headResolver.pipe(
     RequestResolver.setDelay(HEAD_LOOKUP_BATCH_WINDOW),
-    RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT),
+  );
+  const backgroundHeadResolver = headResolver.pipe(
+    RequestResolver.setDelay(BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW),
   );
 
   const listByHead = Effect.fn("GitHubCli.listByHead")(function* (input: {
@@ -733,7 +739,7 @@ export const make = Effect.gen(function* () {
         limit: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
         allowReserve: input.allowReserve,
       }),
-      headResolver,
+      input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
     );
     if (!ownerMatch) return rows;
     const headOwner = ownerMatch[1]!.toLowerCase();
