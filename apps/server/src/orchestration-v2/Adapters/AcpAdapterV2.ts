@@ -1467,6 +1467,37 @@ interface SnapshotMessageState {
   loadingIndex: number;
 }
 
+/**
+ * Streamed tool updates resend the whole call so far. Persist the subset
+ * #7279 chose for V1; the agent's own completed/failed always persists, even
+ * when a flavor normalizes it to a non-terminal status.
+ */
+function shouldPersistToolUpdate(
+  context: ActiveAcpTurn,
+  key: string,
+  previous: AcpToolCallState | undefined,
+  next: AcpToolCallState,
+  reportedStatus: AcpToolCallState["status"],
+): boolean {
+  const emission = context.toolEmissions.get(key);
+  const decision =
+    reportedStatus === "completed" || reportedStatus === "failed"
+      ? { emit: true, skippedSinceEmit: 0 }
+      : decideToolCallUpdateEmission({
+          previous,
+          next,
+          lastEmittedDetailLength: emission?.lastEmittedDetailLength,
+          skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
+        });
+  context.toolEmissions.set(key, {
+    lastEmittedDetailLength: decision.emit
+      ? toolCallProgressLength(next)
+      : emission?.lastEmittedDetailLength,
+    skippedSinceEmit: decision.skippedSinceEmit,
+  });
+  return decision.emit;
+}
+
 export function makeAcpAdapterV2(
   options: AcpAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
@@ -3203,24 +3234,18 @@ export function makeAcpAdapterV2(
               return;
             }
           }
-          if (projectedStatus === undefined) {
-            const emission = context.toolEmissions.get(toolCall.toolCallId);
-            const decision =
-              merged.status === "completed" || merged.status === "failed"
-                ? { emit: true, skippedSinceEmit: 0 }
-                : decideToolCallUpdateEmission({
-                    previous,
-                    next: toolCall,
-                    lastEmittedDetailLength: emission?.lastEmittedDetailLength,
-                    skippedSinceEmit: emission?.skippedSinceEmit ?? 0,
-                  });
-            context.toolEmissions.set(toolCall.toolCallId, {
-              lastEmittedDetailLength: decision.emit
-                ? toolCallProgressLength(toolCall)
-                : emission?.lastEmittedDetailLength,
-              skippedSinceEmit: decision.skippedSinceEmit,
-            });
-            if (!decision.emit) return;
+          if (
+            projectedStatus === undefined &&
+            !shouldPersistToolUpdate(
+              context,
+              toolCall.toolCallId,
+              previous,
+              toolCall,
+              merged.status,
+            )
+          ) {
+            yield* rearmDeferredFinalize(context);
+            return;
           }
           const status = projectedStatus ?? toolStatus(toolCall.status);
           const now = yield* DateTime.now;
@@ -4395,8 +4420,11 @@ export function makeAcpAdapterV2(
                   continue;
                 }
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
-                const merged = mergeToolCallState(context.tools.get(key), toolCall);
+                const previous = context.tools.get(key);
+                const merged = mergeToolCallState(previous, toolCall);
                 context.tools.set(key, merged);
+                if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status))
+                  continue;
                 // Terminals are remembered under the raw session id: the child's
                 // own session, or the root one when the flavor routes child
                 // updates out of it (Devin).

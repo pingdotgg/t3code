@@ -998,54 +998,122 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("coalesces a streamed file write instead of persisting every chunk", () =>
+  it.effect("persists a bounded subset of streamed root and child tool updates", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      const instanceId = ProviderInstanceId.make("acp-test-streamed-write");
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      // Devin streams a file write as it generates it: each update resends the
+      // whole file so far, a few characters longer, with no status.
+      const file = `${"x = 1\n".repeat(800)}END_OF_FILE\n`;
+      const chunks = 200;
+      const streamedWrite = (
+        toolCallId: string,
+        meta: Record<string, unknown>,
+      ): Array<EffectAcpSchema.SessionUpdate> => {
+        const write = (text: string) => ({
+          sessionUpdate: "tool_call_update" as const,
+          toolCallId,
+          title: "Writing ./audit.py",
+          content: [
+            { type: "diff" as const, path: "/repo/audit.py", oldText: null, newText: text },
+          ],
+          rawInput: { file_path: "/repo/audit.py", content: text },
+          _meta: meta,
+        });
+        return [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Writing …",
+            kind: "edit",
+            status: "pending",
+            _meta: meta,
+          },
+          ...Array.from({ length: chunks }, (_, index) =>
+            write(file.slice(0, Math.ceil((file.length * (index + 1)) / chunks))),
+          ),
+          { ...write(file), status: "completed" },
+        ];
+      };
+      const instanceId = ProviderInstanceId.make("devin-streamed-write");
       const adapter = makeAcpAdapterV2({
-        crypto: yield* Crypto.Crypto,
         instanceId,
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
-            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
             wrapRuntime: (runtime) => ({
               ...runtime,
-              handleSessionUpdate: (handler) =>
+              handleSessionUpdate: (next) =>
                 Effect.sync(() => {
-                  sessionUpdateHandler = handler;
-                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const childContext = {
+                    "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                  };
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Write audit script",
+                          task: "Write audit.py.",
+                        },
+                      },
+                    },
+                    ...streamedWrite("root-write", {}),
+                    ...streamedWrite("child-write", childContext),
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "completed",
+                      _meta: {
+                        "cognition.ai/subagent_completed": {
+                          agentId: "child-a",
+                          success: true,
+                          summary: "Wrote audit.py",
+                        },
+                      },
+                    },
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return { stopReason: "end_turn" as const };
+                }),
             }),
           }),
         },
-        fileSystem,
-        idAllocator,
-        serverConfig,
-        selfInvocation,
       });
-      const threadId = ThreadId.make("thread-acp-streamed-write");
+      const threadId = ThreadId.make("devin-streamed-write");
+      const modelSelection = { instanceId, model: "default" };
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: process.cwd(),
       });
-      const modelSelection = { instanceId, model: "default" } as const;
       const runtime = yield* adapter.openSession({
         threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-streamed-write"),
+        providerSessionId: ProviderSessionId.make("devin-streamed-write-session"),
         modelSelection,
         runtimePolicy,
       });
@@ -1054,73 +1122,28 @@ describe("AcpAdapterV2", () => {
         modelSelection,
         runtimePolicy,
       });
-      yield* runtime
-        .startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now: yield* DateTime.now,
-            ordinal: 1,
-          }),
-        )
-        .pipe(Effect.forkScoped);
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "provider_turn.updated"),
-        Stream.runHead,
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
       );
-      assert.isDefined(sessionUpdateHandler);
-
-      // Devin streams a file write as it generates it: each update resends the
-      // whole file so far, a few characters longer, with no status.
-      const file = "x = 1\n".repeat(800);
-      const chunks = 200;
-      const toolCallId = "streamed-write";
-      const update = (text: string, status?: "completed") =>
-        sessionUpdateHandler!({
-          sessionId: "mock-session-1",
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId,
-            title: "Writing ./audit.py",
-            ...(status === undefined ? {} : { status }),
-            content: [{ type: "diff", path: "/repo/audit.py", oldText: null, newText: text }],
-            rawInput: { file_path: "/repo/audit.py", content: text },
-          },
-        });
-      yield* sessionUpdateHandler!({
-        sessionId: "mock-session-1",
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title: "Writing …",
-          kind: "edit",
-          status: "pending",
-        },
-      });
-      for (let chunk = 1; chunk <= chunks; chunk++) {
-        yield* update(file.slice(0, Math.ceil((file.length * chunk) / chunks)));
-      }
-      yield* update(file, "completed");
-
-      const writes = Array.from(
+      const items = Array.from(
         yield* runtime.events.pipe(
-          Stream.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
-              ? Stream.make(event.turnItem)
-              : Stream.empty,
-          ),
-          Stream.takeUntil((item) => item.status === "completed"),
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         ),
-      );
-      assert.isAtMost(writes.length, chunks / 5);
-      const last = writes.at(-1);
-      assert.equal(
-        last?.type === "file_change" ? last.diffStr?.match(/^\+x = 1$/gm)?.length : 0,
-        800,
-      );
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      for (const toolCallId of ["root-write", "child-write"]) {
+        const writes = items.filter((item) => item.nativeItemRef?.nativeId.endsWith(toolCallId));
+        assert.isAtLeast(writes.length, 2, toolCallId);
+        assert.isAtMost(writes.length, chunks / 5, toolCallId);
+        assert.equal(writes.at(-1)?.status, "completed", toolCallId);
+        assert.include(JSON.stringify(writes.at(-1)), "END_OF_FILE", toolCallId);
+      }
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
