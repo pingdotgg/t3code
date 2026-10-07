@@ -38,6 +38,8 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
+import * as ThreadHandoff from "../../../peer/handoff/ThreadHandoff.ts";
+import * as HandoffImport from "../../../peer/handoff/HandoffImport.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -51,6 +53,8 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(ThreadImportService.ThreadImportService)({}),
+  Layer.mock(ThreadHandoff.ThreadHandoff)({}),
+  Layer.mock(HandoffImport.HandoffImport)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
   Layer.mock(ProjectService.ProjectService)({}),

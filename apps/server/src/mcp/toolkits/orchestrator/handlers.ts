@@ -7,6 +7,7 @@ import { OrchestratorToolkit } from "./tools.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as ThreadHandoff from "../../../peer/handoff/ThreadHandoff.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -172,6 +173,50 @@ const handlers = {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
     }),
+  ),
+  t3_thread_handoff: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const handoff = yield* ThreadHandoff.ThreadHandoff;
+        const state = yield* handoff
+          .start({
+            threadId: input.threadId,
+            callerThreadId: scope.thread?.threadId,
+            environmentId: input.environmentId,
+            projectId: input.projectId,
+            continuationPrompt: input.continuationPrompt,
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code:
+                    error.reason === "not_found"
+                      ? "thread_not_found"
+                      : error.reason === "refused"
+                        ? "invalid_request"
+                        : "orchestration_error",
+                  message: error.message,
+                }),
+            ),
+          );
+        return {
+          state: state.state,
+          environmentId: state.environmentId,
+          label: state.label,
+          threadId: state.state === "departed" ? state.threadId : null,
+          message:
+            state.state === "pending"
+              ? `This thread moves to ${state.label} when this turn ends. End the turn now; a message to this thread before then cancels the move.`
+              : state.state === "departed"
+                ? `The thread moved to ${state.label}.`
+                : state.state === "failed"
+                  ? `The move failed: ${state.lastError}`
+                  : `The thread is moving to ${state.label}.`,
+        };
+      }),
   ),
   t3_environment_links: McpToolAccess.reads(() =>
     Effect.gen(function* () {

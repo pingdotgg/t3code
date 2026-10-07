@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
+import * as HandoffImport from "../../../peer/handoff/HandoffImport.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -210,21 +211,43 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "invalid_request",
             message: "The project was not found.",
           });
+        if (input.worktreePath !== undefined && input.bundle !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A bundle lands in a new worktree; omit worktreePath.",
+          });
         if (input.worktreePath !== undefined)
           yield* assertProjectWorktree(project.workspaceRoot, input.worktreePath);
         const imports = yield* ThreadImportService.ThreadImportService;
+        const handoffs = yield* HandoffImport.HandoffImport;
+        const bundle = input.bundle;
+        const workspace =
+          bundle === undefined
+            ? undefined
+            : handoffs.applyBundle({
+                repoRoot: project.workspaceRoot,
+                handoffId: input.source.handoffId,
+                bundle,
+              });
         return yield* imports
-          .importThread({ ...input, runtimeMode, interactionMode, linkOrigin })
+          .importThread({
+            ...input,
+            runtimeMode,
+            interactionMode,
+            linkOrigin,
+            ...(workspace === undefined ? {} : { workspace }),
+          })
           .pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code:
-                    error._tag === "ThreadImportProjectMismatchError"
-                      ? "invalid_request"
-                      : "orchestration_error",
-                  message: error.message,
-                }),
+            Effect.mapError((error) =>
+              error._tag === "OrchestratorMcpFailure"
+                ? error
+                : new OrchestratorMcpFailure({
+                    code:
+                      error._tag === "ThreadImportProjectMismatchError"
+                        ? "invalid_request"
+                        : "orchestration_error",
+                    message: error.message,
+                  }),
             ),
           );
       }),

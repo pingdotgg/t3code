@@ -61,6 +61,8 @@ import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./Peer
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 import * as ThreadImportService from "../orchestration-v2/ThreadImportService.ts";
+import * as ThreadHandoff from "./handoff/ThreadHandoff.ts";
+import * as HandoffImport from "./handoff/HandoffImport.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -370,6 +372,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
+    Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
+    Layer.provide(Layer.mock(HandoffImport.HandoffImport)({})),
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
     ),
@@ -480,6 +484,7 @@ const makeLaptop = (
         ),
       ),
       Layer.provide(Layer.succeedContext(linking)),
+      Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),

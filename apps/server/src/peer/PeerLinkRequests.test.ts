@@ -53,6 +53,7 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as ThreadHandoff from "./handoff/ThreadHandoff.ts";
 
 // The laptop's agent asks the user to link the box. The laptop is its real
 // orchestrator and toolkit; the box is its real descriptor and MCP OAuth on a
@@ -141,6 +142,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+    Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(layerThreads),

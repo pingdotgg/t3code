@@ -44,6 +44,8 @@ import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ThreadImportService from "../orchestration-v2/ThreadImportService.ts";
+import * as ThreadHandoff from "../peer/handoff/ThreadHandoff.ts";
+import * as HandoffImport from "../peer/handoff/HandoffImport.ts";
 
 // A linked environment's session drives this one's real orchestrator through
 // its real T3 tools. What the link starts carries its origin, and the link
@@ -130,13 +132,20 @@ const layerTools = Layer.mergeAll(
       update: () => Effect.die("A linked caller must never reach a project update."),
     }),
   ),
-  Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-  Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+  // Services the toolkits declare that these calls never reach.
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(PeerForwarding.PeerForwarding)({}),
+      Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+      Layer.mock(PeerLinks.PeerLinks)({}),
+      Layer.mock(ThreadImportService.ThreadImportService)({}),
+      Layer.mock(ThreadHandoff.ThreadHandoff)({}),
+      Layer.mock(HandoffImport.HandoffImport)({}),
+      Layer.mock(ThreadSearch.ThreadSearch)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+    ),
+  ),
   Layer.provide(
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
   ),

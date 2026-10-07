@@ -25,6 +25,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
+import * as HandoffImport from "../../../peer/handoff/HandoffImport.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -172,6 +173,7 @@ const ThreadImportTool = Tool.make("t3_thread_import", {
   dependencies: [
     ...shared.dependencies,
     ThreadImportService.ThreadImportService,
+    HandoffImport.HandoffImport,
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
   ],
