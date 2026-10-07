@@ -1476,6 +1476,25 @@ function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // A held drag that started on the strip is a scrub; one that started anywhere
+  // else is a text selection. While a selection crosses the strip, the strip
+  // lets the pointer through so the selection keeps following the text
+  // underneath, until the button is released.
+  const pressedOnStripRef = useRef(false);
+  const [passThrough, setPassThrough] = useState(false);
+
+  useEffect(() => {
+    if (!passThrough) return;
+    const endPassThrough = (event: globalThis.MouseEvent) => {
+      if (event.buttons === 0) setPassThrough(false);
+    };
+    window.addEventListener("mouseup", endPassThrough);
+    window.addEventListener("mousemove", endPassThrough);
+    return () => {
+      window.removeEventListener("mouseup", endPassThrough);
+      window.removeEventListener("mousemove", endPassThrough);
+    };
+  }, [passThrough]);
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
@@ -1486,7 +1505,8 @@ function TimelineMinimap({
       ),
     [items, resolvedActiveIndex],
   );
-  const navigationInteractive = resolveTimelineMinimapNavigationInteractive(hitStripWidth);
+  const navigationInteractive =
+    resolveTimelineMinimapNavigationInteractive(hitStripWidth) && !passThrough;
   const activeTopPercent =
     resolvedActiveIndex === null
       ? 0
@@ -1557,7 +1577,7 @@ function TimelineMinimap({
             "absolute top-1/2 left-3 -translate-y-1/2",
             // The strip is width-capped to the side gutter so it never overlays
             // the centered content column; with no usable gutter it goes inert.
-            hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+            hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
@@ -1609,12 +1629,26 @@ function TimelineMinimap({
               }
             }}
             onMouseLeave={() => setActiveIndex(null)}
-            onMouseMove={updateActiveIndexFromPointer}
+            onMouseMove={(event) => {
+              if (event.buttons !== 0 && !pressedOnStripRef.current) {
+                setPassThrough(true);
+                return;
+              }
+              updateActiveIndexFromPointer(event);
+            }}
             onMouseDown={(event) => {
               if (timelineMinimapEventTargetsPreview(event.target)) {
                 return;
               }
               event.preventDefault();
+              pressedOnStripRef.current = true;
+              window.addEventListener(
+                "mouseup",
+                () => {
+                  pressedOnStripRef.current = false;
+                },
+                { once: true },
+              );
             }}
             type="button"
           >
