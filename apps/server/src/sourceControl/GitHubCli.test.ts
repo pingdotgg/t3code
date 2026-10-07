@@ -301,6 +301,44 @@ describe("GitHubCli.listPullRequestsByHead", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("caps a background document at twenty-five heads", () => {
+    const headCounts: Array<number> = [];
+    const { layer } = harness({
+      remotes,
+      api: {
+        graphql: (input) =>
+          Effect.sync(() => {
+            const heads = Object.keys(input.variables ?? {}).filter((key) => /^h\d+$/.test(key));
+            headCounts.push(heads.length);
+            return encodeJson({
+              data: { repository: Object.fromEntries(heads.map((key) => [key, { nodes: [] }])) },
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const lookups = yield* Effect.all(
+        Array.from({ length: 26 }, (_, index) =>
+          gh.listPullRequestsByHead({
+            cwd: "/repo",
+            headSelector: `feature/${index}`,
+            state: "all",
+            limit: 100,
+            rateLimitHost: "github.com",
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("500 millis");
+      yield* Fiber.join(lookups);
+      assert.deepStrictEqual(
+        headCounts.toSorted((a, b) => a - b),
+        [1, 25],
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("matches an owner:branch selector on the head owner", () => {
     const { layer } = harness({
       remotes,

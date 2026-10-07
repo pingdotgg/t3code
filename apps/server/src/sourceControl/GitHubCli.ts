@@ -353,10 +353,16 @@ const HEAD_LOOKUPS_PER_DOCUMENT = 50;
  * How long a head lookup waits for company. Branch discovery reaches GitHub only after each
  * branch's own git reads, so lookups started together arrive tens of milliseconds apart.
  * A background sweep's lookups spread over up to ~300ms, and every document costs a point no
- * matter how few heads it holds, so lookups no user waits on (no reserve) wait longer.
+ * matter how few heads it holds, so reads without reserve wait longer.
  */
 const HEAD_LOOKUP_BATCH_WINDOW = "50 millis";
 const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
+/**
+ * Background documents fill up under the longer window, and a failed document fails every head
+ * in it. Fifty `main`-like heads of a hundred pull requests each took up to ~10s, GitHub's own
+ * processing limit; twenty-five took ~7s.
+ */
+const BACKGROUND_HEAD_LOOKUPS_PER_DOCUMENT = 25;
 /** A full document is 5,000 rows of well under 2 KB each. */
 const HEAD_LOOKUP_MAX_RESPONSE_BYTES = 16_000_000;
 /**
@@ -713,6 +719,7 @@ export const make = Effect.gen(function* () {
     RequestResolver.setDelay(HEAD_LOOKUP_BATCH_WINDOW),
   );
   const backgroundHeadResolver = headResolver.pipe(
+    RequestResolver.batchN(BACKGROUND_HEAD_LOOKUPS_PER_DOCUMENT),
     RequestResolver.setDelay(BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW),
   );
 
