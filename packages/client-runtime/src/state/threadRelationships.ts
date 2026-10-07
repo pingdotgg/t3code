@@ -1,7 +1,8 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
-  ThreadId,
+import {
+  isAgentOpenedThread,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -39,6 +40,18 @@ export function resolveMergeBackTargetThreadId(
   return projection.thread.forkedFrom?.type === "run"
     ? projection.thread.forkedFrom.threadId
     : projection.thread.lineage.parentThreadId;
+}
+
+/**
+ * Who opened an agent-opened thread. `null` when a person opened it.
+ * `threadId` is null when the opener is unknown: a caller outside a T3
+ * thread, a task an agent scheduled, or a thread from an older server.
+ */
+export function resolveThreadOpener(
+  thread: Pick<OrchestrationV2ThreadShell, "createdBy" | "lineage" | "openedByThreadId">,
+): { readonly threadId: ThreadId | null } | null {
+  if (!isAgentOpenedThread(thread)) return null;
+  return { threadId: thread.openedByThreadId ?? null };
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {

@@ -8,11 +8,46 @@ import {
   orderWebThreadLineageRows,
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
+  resolveThreadOpener,
   walkThreadRelationships,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  describe("resolveThreadOpener", () => {
+    const opener = ThreadId.make("opener");
+    const thread = (input: {
+      createdBy: "user" | "agent";
+      relationshipToParent?: "fork" | "subagent";
+      openedByThreadId?: ThreadId;
+    }) =>
+      ({
+        createdBy: input.createdBy,
+        lineage: { relationshipToParent: input.relationshipToParent ?? null },
+        openedByThreadId: input.openedByThreadId,
+      }) as never;
+
+    it("names the recorded opener of an agent-opened thread", () => {
+      expect(resolveThreadOpener(thread({ createdBy: "agent", openedByThreadId: opener }))).toEqual(
+        { threadId: opener },
+      );
+    });
+
+    it("keeps agent-opened threads without a recorded opener", () => {
+      expect(resolveThreadOpener(thread({ createdBy: "agent" }))).toEqual({ threadId: null });
+    });
+
+    it("ignores threads a person opened, subagents, and forks", () => {
+      expect(resolveThreadOpener(thread({ createdBy: "user" }))).toBeNull();
+      expect(
+        resolveThreadOpener(thread({ createdBy: "agent", relationshipToParent: "subagent" })),
+      ).toBeNull();
+      expect(
+        resolveThreadOpener(thread({ createdBy: "agent", relationshipToParent: "fork" })),
+      ).toBeNull();
+    });
+  });
+
   it.each([
     ["running", "completed"],
     ["completed", "running"],

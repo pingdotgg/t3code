@@ -394,6 +394,25 @@ it.effect("retains automation and sender attribution while a message waits in th
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("records the launching thread on the new thread and its shell", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const openedByThreadId = ThreadId.make("thread:launcher");
+    const launched = yield* launches.launch({
+      ...launchInput({ command: "command:opened-by", thread: "thread:opened-by" }),
+      openedByThreadId,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.thread.openedByThreadId, openedByThreadId);
+    const shell = yield* threads.getThreadShell(launched.threadId);
+    assert.equal(shell?.openedByThreadId, openedByThreadId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("returns a visible preparing message while provisioning is still blocked", () =>
   Effect.gen(function* () {
     const worktreeEntered = yield* Deferred.make<void>();

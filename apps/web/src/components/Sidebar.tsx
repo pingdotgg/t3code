@@ -54,6 +54,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  isAgentOpenedThread,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
@@ -64,6 +65,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BotIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -523,6 +525,12 @@ function SidebarThreadTooltip({
                 ? `${modelLabel} · ${providerEntry.displayName}`
                 : modelLabel}
             </div>
+          </div>
+        ) : null}
+        {isAgentOpenedThread(thread.source) ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <BotIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">Opened by an agent</div>
           </div>
         ) : null}
         {previousProviderNames.length > 0 ? (
@@ -1748,6 +1756,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
   ) : null;
+  // Quiet marker for threads an agent opened; the hover card and thread details name it.
+  const agentOpenedIndicator = isAgentOpenedThread(thread.source) ? (
+    <BotIcon
+      aria-label="Opened by an agent"
+      role="img"
+      data-testid={`sidebar-agent-opened-${thread.id}`}
+      className="size-3 shrink-0 text-muted-foreground/65"
+    />
+  ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1830,6 +1847,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {draftIndicator}
             {title}
+            {agentOpenedIndicator}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -2000,6 +2018,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {agentOpenedIndicator}
               {pinIndicator}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
