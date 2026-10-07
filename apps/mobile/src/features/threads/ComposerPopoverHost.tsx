@@ -20,8 +20,13 @@ export function useComposerPopoverHost() {
  * composer's KeyboardStickyView: popovers placed here move with the composer
  * and sit inside a parent that covers them, so Android delivers their scroll
  * gestures. It wraps the composer because measureLayout needs an ancestor.
+ * Pass `hidden` whenever the composer itself is hidden: popovers live outside
+ * the composer's subtree, so they don't hide with it.
  */
-export function ComposerPopoverHost(props: { readonly children: ReactNode }) {
+export function ComposerPopoverHost(props: {
+  readonly hidden: boolean;
+  readonly children: ReactNode;
+}) {
   const hostRef = useRef<ViewInstance>(null);
   const [content, setContent] = useState<ReactNode>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
@@ -37,7 +42,7 @@ export function ComposerPopoverHost(props: { readonly children: ReactNode }) {
         onLayout={() => setLayoutVersion((version) => version + 1)}
       >
         {props.children}
-        {content}
+        {props.hidden ? null : content}
       </View>
     </ComposerPopoverHostContext.Provider>
   );

@@ -560,6 +560,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
+  // A pending user-input request or a failed creation owns the composer slot.
+  const composerSlotHidden =
+    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -1173,7 +1176,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
           offset={{ closed: 0, opened: 0 }}
         >
-          <ComposerPopoverHost>
+          <ComposerPopoverHost hidden={composerSlotHidden}>
             {/* The fixed sticky host gives this bottom-anchored child a stable
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
@@ -1334,13 +1337,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 composer slot, so composer drafts and editor state survive.
                 A rejected creation has no thread to send to; the failure card
                 owns the slot instead. */}
-                <View
-                  style={
-                    activeUserInputRequestId !== null || props.creationState?.kind === "failed"
-                      ? { display: "none" }
-                      : undefined
-                  }
-                >
+                <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (
                     <View
                       className="self-center px-3 pt-1.5"
