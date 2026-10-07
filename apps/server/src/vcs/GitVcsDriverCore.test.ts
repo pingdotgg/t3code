@@ -2176,6 +2176,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isUndefined(status.branchChanges);
 
         const preview = yield* driver.getReviewDiffPreview({ cwd });
+        assert.isNotEmpty(preview.sources);
         assert.isTrue(preview.sources.every((source) => source.truncated));
       }),
     );
