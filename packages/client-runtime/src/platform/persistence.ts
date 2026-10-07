@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { DeferredShellSnapshot } from "../state/shellPullRequests.ts";
 import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import type { EnvironmentNickname } from "./storageDocument.ts";
 
 export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
@@ -21,6 +22,8 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
     operation: Schema.Literals([
       "list-targets",
       "list-disabled-targets",
+      "list-environment-nicknames",
+      "set-environment-nickname",
       "register-connection",
       "set-connection-routes",
       "remove-connection",
@@ -48,6 +51,10 @@ export class ConnectionTargetStore extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
     /** Saved environments the user switched off. See `ConnectionRegistrationStore.setEnabled`. */
     readonly listDisabled: Effect.Effect<ReadonlyArray<EnvironmentId>, ConnectionPersistenceError>;
+    readonly listNicknames: Effect.Effect<
+      ReadonlyArray<EnvironmentNickname>,
+      ConnectionPersistenceError
+    >;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionTargetStore") {}
 
@@ -74,6 +81,10 @@ export class ConnectionRegistrationStore extends Context.Service<
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly setNickname: (
+      environmentId: EnvironmentId,
+      nickname: string,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionRegistrationStore") {}

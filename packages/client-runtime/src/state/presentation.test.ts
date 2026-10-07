@@ -53,6 +53,27 @@ function harness() {
 }
 
 describe("environment summary subscriptions", () => {
+  it("uses nicknames in labels and restores the inferred name when cleared", () => {
+    const h = harness();
+    try {
+      const original = h.registry.get(h.catalog);
+      const first = original.entries.get(FIRST)!;
+      const ids = h.registry.get(h.environmentIdsAtom);
+      h.registry.set(h.catalog, {
+        ...original,
+        entries: new Map(original.entries).set(FIRST, { ...first, nickname: "Workstation" }),
+      });
+      expect(h.registry.get(h.identitiesAtom)[0]?.label).toBe("Workstation");
+      expect(h.registry.get(h.environmentsAtom)[0]?.environmentLabel).toBe("Workstation");
+      expect(h.registry.get(h.environmentIdsAtom)).toBe(ids);
+      h.registry.set(h.catalog, original);
+      expect(h.registry.get(h.identitiesAtom)[0]?.label).toBe(FIRST);
+      expect(h.registry.get(h.environmentsAtom)[0]?.environmentLabel).toBe(FIRST);
+    } finally {
+      h.registry.dispose();
+    }
+  });
+
   it("publishes full config updates without notifying membership, labels, connections or capability consumers", () => {
     const h = harness();
     h.registry.get(h.full.presentationsAtom);

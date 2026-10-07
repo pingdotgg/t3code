@@ -61,7 +61,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       previousPrepared = prepared;
       previous = {
         environmentId,
-        environmentLabel: presentation.entry.target.label,
+        environmentLabel: presentation.entry.nickname ?? presentation.entry.target.label,
         pairingUrl: displayUrl,
         displayUrl,
         httpBaseUrl,

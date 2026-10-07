@@ -33,7 +33,7 @@ function projectEnvironmentPresentation(
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
+    label: presentation.entry.nickname ?? presentation.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: hasRelayRoute(presentation.entry),
   };

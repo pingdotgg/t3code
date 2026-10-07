@@ -150,6 +150,15 @@ export class EnvironmentRegistry extends Context.Service<
       | PlatformEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly setNickname: (
+      environmentId: EnvironmentId,
+      nickname: string,
+    ) => Effect.Effect<
+      void,
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+      | Persistence.ConnectionPersistenceError
+    >;
     /**
      * Switches a saved environment on or off. Off drops the socket, stops the
      * retry ladder, and persists so the next launch stays off. Registration,
@@ -219,6 +228,9 @@ export const make = Effect.gen(function* () {
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
+  const nicknames = new Map(
+    (yield* storage.listNicknames).map((value) => [value.environmentId, value.nickname]),
+  );
   const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
     target: ConnectionTarget,
   ) {
@@ -258,6 +270,7 @@ export const make = Effect.gen(function* () {
               target: first.target,
               profile: first.profile,
               enabled: !disabledEnvironmentIds.has(environmentId),
+              ...(nicknames.has(environmentId) ? { nickname: nicknames.get(environmentId)! } : {}),
             },
             routes,
           ),
@@ -1018,6 +1031,33 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  const setNickname = Effect.fn("EnvironmentRegistry.setNickname")(function* (
+    environmentId: EnvironmentId,
+    nickname: string,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const trimmed = nickname.trim();
+        if ((entry.nickname ?? "") === trimmed) return;
+        yield* registrations.setNickname(environmentId, trimmed);
+        const { nickname: _previousNickname, ...rest } = entry;
+        const next = trimmed ? { ...rest, nickname: trimmed } : rest;
+        // Update the lease too so the next acquisition keeps the live connection.
+        yield* SubscriptionRef.update(serviceScopes, (current) => {
+          const lease = current.get(environmentId);
+          return lease === undefined
+            ? current
+            : new Map(current).set(environmentId, { ...lease, entry: next });
+        });
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(environmentId, next),
+        );
+      }),
+    );
+  });
+
   const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (
     environmentId: EnvironmentId,
     enabled: boolean,
@@ -1166,6 +1206,7 @@ export const make = Effect.gen(function* () {
     removeRelayEnvironments,
     retryNow,
     setEnabled,
+    setNickname,
     setCompatibility,
     state,
     stateChanges,

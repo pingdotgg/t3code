@@ -51,14 +51,14 @@ export function GitHubRoutingSettings() {
             <View key={environmentId}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${entry.target.label} GitHub routing`}
+                accessibilityLabel={`${entry.nickname ?? entry.target.label} GitHub routing`}
                 accessibilityState={{ expanded: expanded === environmentId }}
                 className="flex-row items-center gap-3 p-4"
                 onPress={() => setExpanded(expanded === environmentId ? null : environmentId)}
               >
                 <View className="min-w-0 flex-1 gap-0.5">
                   <Text className="text-base font-t3-bold text-foreground">
-                    {entry.target.label}
+                    {entry.nickname ?? entry.target.label}
                   </Text>
                   <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                     {connectionCatalogDisplayUrl(entry) ?? "T3 Connect"}

@@ -33,12 +33,15 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  setEnvironmentNicknameInCatalog,
 } from "./storageDocument.ts";
 
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocument);
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const decodeCatalogDocument = Schema.decodeUnknownSync(ConnectionCatalogDocument);
+const encodeCatalogJson = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+const decodeCatalogJson = Schema.decodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
 
 const RELAY_TARGET = new RelayConnectionTarget({
   environmentId: ENVIRONMENT_ID,
@@ -73,6 +76,41 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it("keeps nicknames through serialization, route changes and re-registration, and forgets them on removal", () => {
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new RelayConnectionRegistration({ target: RELAY_TARGET }),
+    );
+    expect(decodeCatalogDocument(registered).environmentNicknames).toBeUndefined();
+    const renamed = setEnvironmentNicknameInCatalog(
+      registered,
+      ENVIRONMENT_ID,
+      "  Build machine  ",
+    );
+    const restored = decodeCatalogJson(encodeCatalogJson(renamed));
+    const updated = registerConnectionInCatalog(
+      restored,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+      [BEARER_TARGET, RELAY_TARGET],
+    );
+    const reordered = setRoutesInCatalog(updated, ENVIRONMENT_ID, [RELAY_TARGET, BEARER_TARGET]);
+    expect(reordered.environmentNicknames).toEqual([
+      { environmentId: ENVIRONMENT_ID, nickname: "Build machine" },
+    ]);
+    expect(reordered.targets.map((target) => target.label)).toEqual(["Remote", "Remote"]);
+    expect(
+      setEnvironmentNicknameInCatalog(reordered, ENVIRONMENT_ID, " ").environmentNicknames,
+    ).toEqual([]);
+    expect(removeConnectionFromCatalog(reordered, ENVIRONMENT_ID).environmentNicknames).toEqual([]);
+    expect(
+      setEnvironmentNicknameInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, "Unknown"),
+    ).toBe(EMPTY_CONNECTION_CATALOG_DOCUMENT);
+  });
+
   it.effect("persists explicit GitHub trust and forgets it when a connection is removed", () =>
     Effect.gen(function* () {
       let document = EMPTY_CONNECTION_CATALOG_DOCUMENT;

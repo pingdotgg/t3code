@@ -62,6 +62,11 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+To give a saved environment a nickname, choose **Edit** from its menu in
+Settings → Connections. On mobile, open it under Settings → Environments and
+edit **Nickname**. Nicknames apply only on the device where you set them and
+survive reconnects and route changes. Clear the nickname to use the inferred name again.
+
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or

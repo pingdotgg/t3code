@@ -17,6 +17,12 @@ export const StoredConnectionCredential = Schema.Struct({
 });
 export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
+export const EnvironmentNickname = Schema.Struct({
+  environmentId: EnvironmentId,
+  nickname: Schema.String,
+});
+export type EnvironmentNickname = typeof EnvironmentNickname.Type;
+
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
@@ -24,6 +30,7 @@ export const ConnectionCatalogDocument = Schema.Struct({
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
   githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredGitHubRoutingPermission)),
+  environmentNicknames: Schema.optionalKey(Schema.Array(EnvironmentNickname)),
   // Saved environments the user switched off. They stay registered with their
   // credentials and cache but never connect until switched back on. Older
   // documents predate the key, so decoding defaults it to none.
@@ -178,6 +185,13 @@ export function removeConnectionFromCatalog(
   const next = setRoutesInCatalog(document, environmentId, []);
   return {
     ...next,
+    ...(next.environmentNicknames === undefined
+      ? {}
+      : {
+          environmentNicknames: next.environmentNicknames.filter(
+            (value) => value.environmentId !== environmentId,
+          ),
+        }),
     remoteDpopTokens: removeCatalogValue(
       next.remoteDpopTokens,
       (value) => value.environmentId,
@@ -195,6 +209,23 @@ export function removeConnectionFromCatalog(
             (permission) => permission.environmentId !== environmentId,
           ),
         }),
+  };
+}
+
+/** An empty nickname restores the inferred name. Only saved environments can be nicknamed. */
+export function setEnvironmentNicknameInCatalog(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+  nickname: string,
+): ConnectionCatalogDocument {
+  if (!document.targets.some((target) => target.environmentId === environmentId)) return document;
+  const without = (document.environmentNicknames ?? []).filter(
+    (value) => value.environmentId !== environmentId,
+  );
+  const trimmed = nickname.trim();
+  return {
+    ...document,
+    environmentNicknames: trimmed ? [...without, { environmentId, nickname: trimmed }] : without,
   };
 }
 

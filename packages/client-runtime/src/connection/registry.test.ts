@@ -163,6 +163,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    readonly initialNicknames?: ReadonlyArray<readonly [EnvironmentId, string]>;
+    readonly nicknameError?: Persistence.ConnectionPersistenceError;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -200,11 +202,26 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const storedDisabled = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(options?.initialDisabled ?? []),
   );
+  const storedNicknames = yield* Ref.make(new Map(options?.initialNicknames ?? []));
   const targetStore = Persistence.ConnectionTargetStore.of({
+    listNicknames: Ref.get(storedNicknames).pipe(
+      Effect.map((values) =>
+        [...values].map(([environmentId, nickname]) => ({ environmentId, nickname })),
+      ),
+    ),
     list: Ref.get(storedTargets),
     listDisabled: Ref.get(storedDisabled).pipe(Effect.map((ids) => [...ids])),
   });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
+    setNickname: (environmentId, nickname) =>
+      options?.nicknameError
+        ? Effect.fail(options.nicknameError)
+        : Ref.update(storedNicknames, (current) => {
+            const next = new Map(current);
+            if (nickname) next.set(environmentId, nickname);
+            else next.delete(environmentId);
+            return next;
+          }),
     register: (registration, routes) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRegister?.(registration) ?? Effect.void;
@@ -470,6 +487,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     storedCredentials,
     storedRemoteTokens,
     storedDisabled,
+    storedNicknames,
     disconnectedSshTargets,
     networkStatus,
     connectedRoutes,
@@ -516,6 +534,77 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
+  it.effect("hydrates, saves and clears a nickname without restarting the connection", () =>
+    Effect.gen(function* () {
+      const target = RELAY_TARGET;
+      const harness = yield* makeHarness([target], [], [], {
+        initialNicknames: [[target.environmentId, "Workstation"]],
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId)?.nickname,
+        ).toBe("Workstation");
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          target.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const state = yield* registry.state(target.environmentId);
+        const sessions = yield* Ref.get(harness.sessions);
+
+        yield* registry.setNickname(target.environmentId, "  Build machine  ");
+        const renamed = (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId);
+        expect(renamed?.nickname).toBe("Build machine");
+        expect(renamed?.target.label).toBe(target.label);
+        expect((yield* Ref.get(harness.storedNicknames)).get(target.environmentId)).toBe(
+          "Build machine",
+        );
+        expect(yield* registry.state(target.environmentId)).toEqual(state);
+        expect(yield* Ref.get(harness.sessions)).toBe(sessions);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+
+        yield* registry.register(
+          new RelayConnectionRegistration({
+            target: new RelayConnectionTarget({ ...target, label: "New inferred name" }),
+          }),
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId)?.nickname,
+        ).toBe("Build machine");
+
+        yield* registry.setNickname(target.environmentId, "   ");
+        const cleared = (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId);
+        expect(cleared?.nickname).toBeUndefined();
+        expect(cleared?.target.label).toBe("New inferred name");
+        expect((yield* Ref.get(harness.storedNicknames)).has(target.environmentId)).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the previous nickname when persistence fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET], [], [], {
+        initialNicknames: [[TARGET.environmentId, "Workstation"]],
+        nicknameError: new Persistence.ConnectionPersistenceError({
+          operation: "set-environment-nickname",
+          message: "Storage unavailable",
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const error = yield* registry
+          .setNickname(TARGET.environmentId, "Changed")
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("ConnectionPersistenceError");
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.nickname,
+        ).toBe("Workstation");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("replays connected state when arming a desktop commit observer", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);

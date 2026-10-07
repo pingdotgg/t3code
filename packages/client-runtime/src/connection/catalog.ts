@@ -59,6 +59,8 @@ export interface ConnectionRoute {
  * with `connectionRoutes`.
  */
 export interface ConnectionCatalogEntry {
+  /** Device-local display name, independent of route and server labels. */
+  readonly nickname?: string;
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;

@@ -170,6 +170,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.removeRoute(input.environmentId, input.routeId)),
       ),
   });
+  const setNickname = createRuntimeCommand(runtime, {
+    label: "environment-catalog:set-nickname",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly nickname: string }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.setNickname(input.environmentId, input.nickname)),
+      ),
+  });
   const reorderRoutes = createRuntimeCommand(runtime, {
     label: "environment-catalog:reorder-routes",
     scheduler: commandScheduler,
@@ -207,5 +216,6 @@ export function createEnvironmentCatalogAtoms<R, E>(
     removeRelayEnvironments,
     retryNow,
     setEnabled,
+    setNickname,
   };
 }

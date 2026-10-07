@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
+  PencilIcon,
   PlusIcon,
   QrCodeIcon,
   RouteIcon,
@@ -83,6 +84,7 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
+import { EditEnvironmentDialog } from "./EditEnvironmentDialog";
 import { usePreparedConnection } from "~/state/session";
 import {
   EnvironmentRow,
@@ -1484,7 +1486,7 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
 /**
  * One added machine in the Environments list. The switch is the main action;
  * the update icon appears only when that machine can take an update; the
- * row menu holds the icon override, trace ID, and removal.
+ * row menu holds environment details, the icon override, routes, and removal.
  */
 function SavedBackendListRow({
   environment,
@@ -1495,6 +1497,7 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1768,6 +1771,10 @@ function SavedBackendListRow({
           <EllipsisIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
+          <MenuItem onClick={() => setEditOpen(true)}>
+            <PencilIcon />
+            Edit…
+          </MenuItem>
           <EnvironmentIconMenu
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
@@ -1788,6 +1795,16 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {editOpen ? (
+        <EditEnvironmentDialog
+          environment={environment}
+          onClose={() => setEditOpen(false)}
+          onManageRoutes={() => {
+            setEditOpen(false);
+            setRoutesOpen(true);
+          }}
+        />
+      ) : null}
     </EnvironmentRow>
   );
 }
