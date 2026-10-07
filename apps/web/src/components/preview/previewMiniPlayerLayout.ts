@@ -94,7 +94,7 @@ export interface PreviewMiniPlayerObstacles {
   readonly detailsCard: (HorizontalSpan & { readonly bottom: number }) | null;
 }
 
-export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
+const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
   composer: null,
   detailsCard: null,
 };
