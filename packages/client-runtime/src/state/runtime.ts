@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -32,13 +33,29 @@ import {
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 
-// `catchTags` preserves unmatched errors at runtime; this signature keeps that
-// generic remainder while removing the one known connection-handoff error.
-const waitForEnvironmentConnectionSignal = Effect.catchTags({
-  EnvironmentRpcUnavailableError: () => Effect.never,
-}) as <A, E, R>(
-  effect: Effect.Effect<A, E | EnvironmentRpcUnavailableError, R>,
-) => Effect.Effect<A, E, R>;
+const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
+
+/**
+ * Keeps a query pending when its session was torn down before the atom saw the
+ * paired connection signal, which then selects the reconnecting or terminal
+ * branch. An unavailable error raised while that session is still current has
+ * no signal coming, so it stays a failure.
+ */
+const waitForEnvironmentConnectionSignal =
+  (observedSession: unknown) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchIf(isEnvironmentRpcUnavailableError, (error) =>
+        EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+          Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.session)),
+          Effect.flatMap((current) =>
+            Option.isSome(current) && current.value === observedSession
+              ? Effect.fail(error)
+              : Effect.never,
+          ),
+        ),
+      ),
+    );
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -573,13 +590,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         switch (connectionState.phase) {
           case "connected":
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input, emit)).pipe(
-                  // Session teardown and this atom's connection signal are
-                  // delivered independently. If the request observes teardown
-                  // first, keep it pending until the signal selects the
-                  // reconnecting or terminal branch instead of flashing a
-                  // transient unavailable failure.
-                  waitForEnvironmentConnectionSignal,
+              ? runInEnvironment(
+                  target.environmentId,
+                  options
+                    .execute(target.input, emit)
+                    .pipe(waitForEnvironmentConnectionSignal(session.value)),
                 )
               : Effect.never;
           case "connecting":
