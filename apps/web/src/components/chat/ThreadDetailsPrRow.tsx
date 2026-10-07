@@ -410,10 +410,11 @@ export function ThreadDetailsPrRow({
     <>
       {detail !== null && (showChecks || trailingAction !== null || watching) ? (
         // Two lines so the title keeps the full row width: the number, checks, watch, and the
-        // next action sit underneath, aligned with the title text.
-        <div>
+        // next action sit underneath, aligned with the title text. The second line hugs its title
+        // and the block keeps space below, so stacked pull requests read as separate pairs.
+        <div className="pb-2">
           {openRow(detail.title, "row")}
-          <div className="flex h-7 min-w-0 items-center gap-0.5 ps-9 pe-1 text-xs text-muted-foreground">
+          <div className="-mt-1 flex h-6 min-w-0 items-center gap-0.5 ps-9 pe-1 text-xs text-muted-foreground">
             <span className="me-1 shrink-0 tabular-nums">#{number}</span>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
