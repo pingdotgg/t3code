@@ -408,9 +408,14 @@ export function DeviceStreamView(props: {
         }}
       >
         <div
-          className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
+          className={cn(
+            "relative touch-none select-none",
+            showPhone && "invisible pointer-events-none",
+          )}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             pointerActive.current = true;
