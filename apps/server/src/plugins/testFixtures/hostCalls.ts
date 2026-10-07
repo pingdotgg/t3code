@@ -10,7 +10,7 @@ const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
 export const registrationFor = (
   id: string,
-  capabilities: ReadonlyArray<string> = ["status"],
+  capabilities: ReadonlyArray<string> = ["status", "notifications"],
 ): PluginRegistration => ({
   manifest: decodeManifest({
     id,

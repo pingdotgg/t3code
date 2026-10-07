@@ -106,6 +106,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pluginsNpmStageUpdate]: "plugins",
   [WS_METHODS.pluginsNpmApplyUpdate]: "plugins",
   [WS_METHODS.pluginsNpmDiscardUpdate]: "plugins",
+  [WS_METHODS.pluginsNotificationsSubscribe]: "plugins",
   [WS_METHODS.pluginViewsSubscribe]: "pluginViews",
   [WS_METHODS.pluginViewsReadBundle]: "pluginViews",
   [WS_METHODS.pluginViewsCall]: "pluginViews",

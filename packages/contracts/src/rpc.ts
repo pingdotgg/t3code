@@ -27,6 +27,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ContributionStatusSnapshot } from "./contributionStatus.ts";
+import { PluginNotificationFrame } from "./pluginNotifications.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -641,6 +642,7 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
   subscribeContributionStatus: "subscribeContributionStatus",
+  pluginsNotificationsSubscribe: "plugins.notifications.subscribe",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -2048,6 +2050,14 @@ const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributi
   stream: true,
 });
 
+/** Streams plugin notifications; see PluginNotificationFrame. Gated by the `pluginNotifications` capability. */
+const WsPluginsNotificationsSubscribeRpc = Rpc.make(WS_METHODS.pluginsNotificationsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginNotificationFrame,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
  * the handler runs. Every RPC in `WsRpcGroup` carries it, so a handler cannot
@@ -2254,6 +2264,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
   WsSubscribeContributionStatusRpc,
+  WsPluginsNotificationsSubscribeRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnItemRpc,

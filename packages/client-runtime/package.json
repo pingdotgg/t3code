@@ -179,6 +179,10 @@
       "types": "./src/state/contributionStatus.ts",
       "default": "./src/state/contributionStatus.ts"
     },
+    "./state/plugin-notifications": {
+      "types": "./src/state/pluginNotifications.ts",
+      "default": "./src/state/pluginNotifications.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"

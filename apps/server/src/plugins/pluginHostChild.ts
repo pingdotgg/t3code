@@ -186,6 +186,11 @@ export const runPluginHostChild = (): void => {
                 },
               }
             : undefined,
+          notify: message.capabilities.includes("notifications")
+            ? async (notification) => {
+                await hostCall("notifications.show", notification);
+              }
+            : undefined,
         }
       : undefined;
     const context: PluginContext = {

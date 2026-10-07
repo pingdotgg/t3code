@@ -2,6 +2,7 @@ import {
   PLUGIN_API_VERSION,
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_NOTIFICATIONS_CAPABILITY,
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_STATUS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
@@ -25,6 +26,7 @@ const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set
   "actions",
   PLUGIN_VIEWS_CAPABILITY,
   PLUGIN_STATUS_CAPABILITY,
+  PLUGIN_NOTIFICATIONS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -135,8 +137,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   if (manifest.capabilities.includes(PLUGIN_VIEWS_CAPABILITY) && !manifest.proposedApi)
     return yield* fail(`the "${PLUGIN_VIEWS_CAPABILITY}" capability needs "proposedApi": true.`);
 
-  // Statuses are proposed API, so they only exist with the opt-in.
-  for (const capability of [PLUGIN_STATUS_CAPABILITY])
+  // Statuses and notifications are proposed API, so they only exist with the opt-in.
+  for (const capability of [PLUGIN_STATUS_CAPABILITY, PLUGIN_NOTIFICATIONS_CAPABILITY])
     if (manifest.capabilities.includes(capability) && !manifest.proposedApi)
       return yield* fail(`the "${capability}" capability needs "proposedApi": true.`);
 

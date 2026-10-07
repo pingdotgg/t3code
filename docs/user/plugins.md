@@ -197,6 +197,20 @@ environment is full, a new status is not shown. Statuses live only in the server
 cleared when the plugin's process stops, for example when it is disabled or crashes, or the server
 restarts. Set them again once the plugin runs again.
 
+### Notifications
+
+With the `notifications` capability, `context.proposed.notify({ title, body, tone, threadId })` shows
+a short notification on every connected client: a toast on web and desktop, a banner at the top of
+the screen on mobile. `title` is one line of up to 80 characters and `body` up to 240. With a
+`threadId`, the notification offers to open that thread. A plugin can send 5 at once, then one every
+5 seconds; past that `notify` rejects.
+
+Notifications are best-effort, not a history. The server keeps the 20 most recent for 2 minutes, so a
+device that reconnects within that time shows the ones it missed, once. Anything older, anything sent
+before the app was opened, and everything from before a server restart is not shown. When the
+plugin's process stops, for example when it is disabled or crashes, its notifications close on every
+device.
+
 ### Publishing to npm
 
 Publish `t3-plugin.json` and the code at the package root. Because T3 Code never installs

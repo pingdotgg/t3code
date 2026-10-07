@@ -230,6 +230,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   pluginViews: Schema.optionalKey(Schema.Boolean),
   /** Server installs plugins from npm (`plugins.npm.*`). Absent on older servers. */
   pluginNpm: Schema.optionalKey(Schema.Boolean),
+  /** Server streams plugin notifications (`plugins.notifications.subscribe`). Absent on
+      older servers, so clients must not subscribe and show no plugin toasts. */
+  pluginNotifications: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

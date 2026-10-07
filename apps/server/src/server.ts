@@ -70,6 +70,7 @@ import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
 import * as PluginStatus from "./plugins/PluginStatus.ts";
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
@@ -438,6 +439,7 @@ const layerPlugin = Layer.mergeAll(
   PluginViews.layer,
   PluginNpm.layer,
   PluginStatus.layer,
+  PluginNotifications.layer,
 ).pipe(
   Layer.provideMerge(PluginCatalog.layer()),
   Layer.provide(PluginSupervisor.layer()),

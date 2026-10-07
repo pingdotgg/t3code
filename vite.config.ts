@@ -203,6 +203,7 @@ export default defineConfig({
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
           "apps/web/src/state/pluginViewSessions.ts",
+          "packages/client-runtime/src/state/pluginNotifications.ts",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },

@@ -257,6 +257,7 @@ export const make = Effect.gen(function* () {
       pluginActions: true,
       pluginViews: true,
       pluginNpm: true,
+      pluginNotifications: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       // V2 restart recovery uses the environment-owned opt-in. The old

@@ -107,6 +107,22 @@ interface PluginStatusApi {
   clear(status: { readonly threadId: string; readonly key: string }): Promise<void>;
 }
 
+/**
+ * A short notification, shown as a toast on connected clients. Present with
+ * the `notifications` capability. Best-effort, not durable: clients that are
+ * not connected may never see it. 5 at once, then one every 5 seconds;
+ * past that the call rejects.
+ */
+type PluginNotifyInput = {
+  /** One line, up to 80 characters. */
+  readonly title: string;
+  /** Up to 240 characters. */
+  readonly body?: string;
+  readonly tone?: PluginTone;
+  /** A thread the notification is about; clients offer to open it. */
+  readonly threadId?: string;
+};
+
 export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
@@ -125,6 +141,7 @@ export interface PluginProposedApi {
   readonly settings: PluginSettingsApi | undefined;
   readonly storage: PluginStorageApi | undefined;
   readonly status: PluginStatusApi | undefined;
+  readonly notify: ((notification: PluginNotifyInput) => Promise<void>) | undefined;
 }
 
 export interface PluginContext {

@@ -129,6 +129,7 @@ import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1237,6 +1238,7 @@ const layerWsRpc = (
       const pluginActions = yield* PluginActions.PluginActions;
       const pluginViews = yield* PluginViews.PluginViews;
       const pluginNpm = yield* PluginNpm.PluginNpm;
+      const pluginNotifications = yield* PluginNotifications.PluginNotifications;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2088,6 +2090,7 @@ const layerWsRpc = (
         [WS_METHODS.pluginsNpmStageUpdate]: (input) => pluginNpm.stageUpdate(input),
         [WS_METHODS.pluginsNpmApplyUpdate]: (input) => pluginNpm.applyUpdate(input),
         [WS_METHODS.pluginsNpmDiscardUpdate]: (input) => pluginNpm.discardUpdate(input),
+        [WS_METHODS.pluginsNotificationsSubscribe]: () => pluginNotifications.subscribe,
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
