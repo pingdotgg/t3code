@@ -2,8 +2,9 @@
 
 A trusted local plugin can add actions to the command palette, the thread
 menu and the composer's slash menu. Picking one runs the plugin's code right
-away, as your OS user. It does not write a prompt or start an agent turn, so
-only enable plugins you trust.
+away on the server's machine, as the OS account that runs the T3 Code server,
+which is not necessarily the account on the device you picked it from. It does
+not write a prompt or start an agent turn, so only enable plugins you trust.
 
 ## Offering an action
 
