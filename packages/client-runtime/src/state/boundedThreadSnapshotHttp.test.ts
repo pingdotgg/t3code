@@ -149,7 +149,7 @@ describe("boundedThreadSnapshotLoader", () => {
       });
     }).pipe(
       Effect.provide(
-        Layer.provide(boundedThreadSnapshotLoaderLayer, remoteHttpClientLayer(fetchFn)),
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
       ),
     );
   });
