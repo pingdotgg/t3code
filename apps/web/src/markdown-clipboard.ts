@@ -188,6 +188,17 @@ function serializeChildren(node: Node): string {
   return out;
 }
 
+/** KaTeX keeps the TeX source in MathML; partial selections may only retain its visible HTML. */
+function serializeMathElement(element: Element): string | null {
+  const display = element.classList.contains("katex-display");
+  if (!display && !element.classList.contains("katex")) return null;
+  const source = element.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+  if (source !== undefined && source !== null) {
+    return display ? `\n\n$$\n${source}\n$$\n\n` : `$${source}$`;
+  }
+  return element.querySelector(".katex-html")?.textContent ?? null;
+}
+
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
@@ -203,6 +214,8 @@ function serializeNode(node: Node): string {
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return markdownCopy;
+  const math = serializeMathElement(element);
+  if (math !== null) return math;
   if (isSkippedElement(element)) return "";
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
@@ -286,6 +299,11 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
     const markdownCopy = element.getAttribute("data-markdown-copy");
     if (markdownCopy !== null) {
       if (markdownCopy.trim().length > 0) scan.other = true;
+      continue;
+    }
+    const math = serializeMathElement(element);
+    if (math !== null) {
+      if (math.trim().length > 0) scan.other = true;
       continue;
     }
     if (isSkippedElement(element)) continue;
@@ -390,6 +408,23 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    const endElement =
+      range.endContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.endContainer as Element)
+        : range.endContainer.parentElement;
+    const endMath = endElement?.closest(".katex");
+    if (endMath) {
+      const mathRange = document.createRange();
+      mathRange.selectNodeContents(endMath);
+      // Hidden MathML precedes the visible equation, so a partial drag can
+      // include its complete annotation before reaching the final symbol.
+      if (range.compareBoundaryPoints(Range.END_TO_END, mathRange) < 0) {
+        const mathFragments = container.querySelectorAll(".katex");
+        mathFragments[mathFragments.length - 1]
+          ?.querySelector('annotation[encoding="application/x-tex"]')
+          ?.remove();
+      }
+    }
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;

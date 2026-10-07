@@ -1750,6 +1750,18 @@ code {
   margin-bottom: 0;
 }
 
+.chat-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.15em;
+}
+
+.chat-markdown .katex {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .chat-markdown p,
 .chat-markdown ul,
 .chat-markdown ol,

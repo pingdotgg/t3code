@@ -11,6 +11,7 @@ import { remarkCodexDirectives } from "@t3tools/client-runtime/codex-markdown-di
 import { remarkGithubAlerts } from "./markdown-github-alerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "./markdown-list-indentation";
+import { remarkChatMath } from "./markdown-math";
 
 function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: string[]) {
   let tree: Root | undefined;
@@ -32,6 +33,7 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
         observeParsing,
         capture,
         remarkGfm,
+        remarkChatMath,
         remarkGithubAlerts,
         remarkNormalizeListItemIndentation,
         remarkCodexDirectives,
@@ -73,6 +75,8 @@ describe("incremental Markdown parsing", () => {
     "```\na\n```\n\nnext\n\n~~~\nb\n~~~\n\nmore",
     "\n\n\tcode\n\nmore",
     "text <https://example.com> *bold*",
+    String.raw`Inline $f_1(x)$ and $$\frac{P}{W}$$`,
+    "$$f_1(x) \\le f_1(y)$$\n\n$$\n\\frac{P}{W}\n$$\n",
     "> [!NOTE]\n> alert\n\n- [ ] task",
     "\uFEFFtext after a byte-order mark",
   ])("preserves the parse tree, positions, and HTML while streaming %j", (tail) => {

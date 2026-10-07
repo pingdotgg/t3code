@@ -3,6 +3,7 @@
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -83,6 +84,150 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown equations", () => {
+  async function withMarkdown(
+    check: (
+      container: HTMLDivElement,
+      render: (props: ComponentProps<typeof ChatMarkdown>) => Promise<void>,
+    ) => Promise<void>,
+  ) {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = async (props: ComponentProps<typeof ChatMarkdown>) => {
+      await act(async () => root.render(<ChatMarkdown {...props} />));
+    };
+    try {
+      await check(container, render);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it.each([true, false])(
+    "renders inline and both display delimiters with parseRawHtml=%s",
+    async (parseRawHtml) => {
+      await withMarkdown(async (container, render) => {
+        await render({
+          cwd: undefined,
+          parseRawHtml,
+          text: String.raw`The objectives are $f_1$ and $f_2$.
+
+$$f_1(x) \le f_1(y), \quad f_2(x) \le f_2(y)$$
+
+$$
+\frac{P}{W}\bigg|_{\text{hover}} = \frac{\kappa_c}{\mathrm{FM}}\sqrt{\frac{\mathrm{DL}}{2\rho}}
+$$`,
+        });
+        expect(container.querySelectorAll(".katex")).toHaveLength(4);
+        expect(container.querySelectorAll(".katex-display")).toHaveLength(2);
+        expect(container.querySelector("math msub")?.textContent).toBe("f1");
+        expect(container.querySelector("math mfrac")).not.toBeNull();
+        expect(container.querySelector("math msqrt")).not.toBeNull();
+        expect(container.querySelectorAll(".katex-error")).toHaveLength(0);
+      });
+    },
+  );
+
+  it("leaves escaped dollars and code literal while rendering equations in lists", async () => {
+    await withMarkdown(async (container, render) => {
+      await render({
+        cwd: undefined,
+        lineBreaks: true,
+        text: String.raw`Costs are \$5 and \$10. Code: \`$f_1$\`.
+
+- $\rho$: air density
+- $\mathrm{DL} = W/A$: disk loading`.replaceAll("\\`", "`"),
+      });
+      expect(container.querySelector("p")?.textContent).toContain("Costs are $5 and $10.");
+      expect(container.querySelector("code")?.textContent).toBe("$f_1$");
+      expect(container.querySelectorAll("li .katex")).toHaveLength(2);
+    });
+  });
+
+  it("preserves prices and multiple skill mentions beside real equations", async () => {
+    await withMarkdown(async (container, render) => {
+      await render({
+        cwd: undefined,
+        skills: [
+          { name: "alpha", displayName: "Alpha" },
+          { name: "beta", displayName: "Beta" },
+        ],
+        text: String.raw`Use $alpha and $beta with $\rho$. Prices are $5, $10 and $20. Then $x^2$.`,
+      });
+      expect(
+        [...container.querySelectorAll("[data-markdown-copy]")].map((node) =>
+          node.getAttribute("data-markdown-copy"),
+        ),
+      ).toEqual(["$alpha", "$beta"]);
+      expect(container.textContent).toContain("Prices are $5, $10 and $20.");
+      expect(container.querySelectorAll(".katex")).toHaveLength(2);
+      expect(container.querySelector("math mi")?.textContent).toBe("ρ");
+    });
+  });
+
+  it("recovers from incomplete streamed equations and invalid LaTeX", async () => {
+    await withMarkdown(async (container, render) => {
+      for (const text of [
+        "Start $",
+        String.raw`Start $\frac{P}{`,
+        String.raw`Start $\frac{P}{W}$`,
+      ]) {
+        await render({ cwd: undefined, text, isStreaming: true });
+        expect(container.textContent).toContain("Start");
+      }
+      expect(container.querySelector("math mfrac")).not.toBeNull();
+      await render({ cwd: undefined, text: String.raw`$\frac{$` });
+      expect(container.querySelector(".katex-error")?.textContent).toBe(String.raw`\frac{`);
+      await render({ cwd: undefined, text: String.raw`$\rho$` });
+      expect(container.querySelector("math mi")?.textContent).toBe("ρ");
+    });
+  });
+
+  it("keeps raw HTML sanitization before math rendering", async () => {
+    await withMarkdown(async (container, render) => {
+      await render({
+        cwd: undefined,
+        text: String.raw`<img src="x" onerror="alert(1)"><script>alert(1)</script>
+
+$\href{javascript:alert(1)}{x}$`,
+      });
+      expect(container.querySelector("script, [onerror], a[href^='javascript:']")).toBeNull();
+    });
+  });
+
+  it.each([true, false])(
+    "rejects math commands that create links, images or HTML with parseRawHtml=%s",
+    async (parseRawHtml) => {
+      await withMarkdown(async (container, render) => {
+        await render({
+          cwd: undefined,
+          parseRawHtml,
+          text: [
+            "$x^2$",
+            String.raw`$$\href{https://example.com/unsafe}{click}$$`,
+            String.raw`$$\href{javascript:alert(1)}{click}$$`,
+            String.raw`$$\includegraphics{https://example.com/unsafe.png}$$`,
+            String.raw`$$\htmlClass{math-injection}{x}$$`,
+            String.raw`$$\htmlId{math-injection}{x}$$`,
+            String.raw`$$\htmlStyle{background-image:url(https://example.com/unsafe)}{x}$$`,
+            String.raw`$$\htmlData{math-injection=value}{x}$$`,
+          ].join("\n\n"),
+        });
+        expect(container.querySelector("math msup")?.textContent).toBe("x2");
+        expect(
+          container.querySelector(
+            "a, img, .math-injection, #math-injection, [data-math-injection], [style*='example.com']",
+          ),
+        ).toBeNull();
+      });
+    },
+  );
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
