@@ -47,7 +47,10 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         url,
         event: options.event ?? NO_MODIFIER,
         preference: await resolveBrowserLinkTargetPreference(),
-        canOpenInApp: targetThreadRef != null && readEnvironmentScope(targetThreadRef.environmentId, AuthPreviewOperateScope) && canOpenLinksInApp(targetThreadRef),
+        canOpenInApp:
+          targetThreadRef != null &&
+          readEnvironmentScope(targetThreadRef.environmentId, AuthPreviewOperateScope) &&
+          canOpenLinksInApp(targetThreadRef),
       });
       if (target === "app" && targetThreadRef) {
         const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });

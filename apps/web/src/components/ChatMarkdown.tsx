@@ -2868,7 +2868,8 @@ function useChatMarkdownState({
           revealLabel={revealInFileManagerLabel}
           onOpenInBrowser={
             threadRef &&
-            canOperatePreview && isPreviewAvailableFor(threadRef.environmentId) &&
+            canOperatePreview &&
+            isPreviewAvailableFor(threadRef.environmentId) &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
               : undefined
@@ -3145,7 +3146,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
         : null;
       const isSameDocumentLink = href?.startsWith("#") ?? false;
       const onClick = props.onClick;
-      const canOpenInPreview = canOperatePreview && Boolean(threadRef && isPreviewAvailableFor(threadRef.environmentId));
+      const canOpenInPreview =
+        canOperatePreview && Boolean(threadRef && isPreviewAvailableFor(threadRef.environmentId));
       const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
       const link = (
         <a
