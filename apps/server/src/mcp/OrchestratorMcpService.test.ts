@@ -28,6 +28,7 @@ import {
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -88,6 +89,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       const layerDependencies = Layer.mergeAll(
@@ -859,6 +861,306 @@ describe("OrchestratorMcpService provider resolution", () => {
     providerThreads: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  it.effect(
+    "blocks known shared quota without duplicating accepted tasks or guessing unknown windows",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const resetAt = new Date(now + 60_000).toISOString();
+        const codex = providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        });
+        const other = providerSnapshot({
+          instanceId: antigravityInstanceId,
+          driver: ProviderDriverKind.make("antigravity"),
+          model: "ant-model",
+        });
+        let providers: ReadonlyArray<ServerProvider> = [codex, other];
+        let tasks: OrchestrationV2ThreadProjection["subagents"] = [];
+        let child = childProjection;
+        let dispatches = 0;
+        let probes = 0;
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(threadId === parentThreadId ? parentProjection(tasks) : child),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                assert.equal(command.type, "delegated_task.request");
+                if (command.type !== "delegated_task.request")
+                  throw new Error("unexpected command");
+                dispatches++;
+                const task = {
+                  id: ids.derive.delegatedTaskNode({ commandId: command.commandId }),
+                  threadId: parentThreadId,
+                  runId: parentRunId,
+                  parentNodeId,
+                  origin: "app_owned" as const,
+                  providerInstanceId: command.modelSelection.instanceId,
+                  driver: ProviderDriverKind.make("codex"),
+                  childThreadId,
+                  model: command.modelSelection.model,
+                  status: "running" as const,
+                  result: null,
+                  completionDelivery: { state: "acknowledged" },
+                } as unknown as OrchestrationV2ThreadProjection["subagents"][number];
+                tasks = [...tasks, task];
+                return {
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: command.commandId,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never;
+              }),
+          }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.sync(() => providers),
+            refreshInstance: () =>
+              Effect.sync(() => {
+                probes++;
+                return providers;
+              }),
+          }),
+          adapterRegistryLayer([
+            codexInstanceId,
+            antigravityInstanceId,
+            ProviderInstanceId.make("codex-quota-peer"),
+          ]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const delegate = (key: string, instanceId = codexInstanceId, model = "gpt-5.4") =>
+            service.delegateTask(scope, {
+              task: "Review the diff.",
+              mode: "async",
+              clientRequestId: key,
+              target: { providerInstanceId: instanceId, model },
+            });
+          const initial = yield* delegate("accepted");
+          const exhausted = {
+            ...codex,
+            usageLimits: {
+              checkedAt: resetAt,
+              windows: [
+                {
+                  id: "primary",
+                  kind: "session" as const,
+                  label: "Session",
+                  usedPercent: 100,
+                  resetsAt: resetAt,
+                },
+              ],
+            },
+          };
+          providers = [exhausted, other];
+          const catalog = yield* service.capabilities(scope);
+          assert.equal(catalog.providers[0]?.admission?.state, "blocked");
+          assert.equal(catalog.providers[0]?.models[0]?.availability, "blocked");
+          assert.equal(catalog.providers[1]?.models[0]?.availability, "unknown");
+          const denied = yield* delegate("new").pipe(Effect.flip);
+          assert.equal(denied.code, "usage_limit");
+          assert.deepEqual(denied.failure, catalog.providers[0]?.admission?.failure);
+          assert.equal(denied.failure?.resetAt, resetAt);
+          const driverDenied = yield* service
+            .delegateTask(scope, {
+              task: "Review.",
+              mode: "async",
+              clientRequestId: "driver-cooldown",
+              target: { driverKind: ProviderDriverKind.make("codex"), model: "gpt-5.4" },
+            })
+            .pipe(Effect.flip);
+          assert.equal(driverDenied.code, "usage_limit");
+          assert.equal(driverDenied.failure?.resetAt, resetAt);
+          assert.equal(probes, 0);
+          const retry = yield* delegate("accepted");
+          assert.equal(retry.taskId, initial.taskId);
+          assert.equal(dispatches, 1);
+          yield* delegate("unrelated", antigravityInstanceId, "ant-model");
+          assert.equal(dispatches, 2);
+          for (const [id, resetsAt] of [
+            ["primary", undefined],
+            ["primary", new Date(now - 1).toISOString()],
+            ["seven_day_opus", resetAt],
+          ] as const) {
+            providers = [
+              {
+                ...exhausted,
+                usageLimits: {
+                  ...exhausted.usageLimits,
+                  windows: [
+                    {
+                      id,
+                      kind: "weekly",
+                      label: "unknown scope",
+                      usedPercent: 100,
+                      ...(resetsAt ? { resetsAt } : {}),
+                    },
+                  ],
+                },
+              },
+              other,
+            ];
+            const admitted = yield* delegate("admit-" + id + "-" + resetsAt);
+            assert.equal(admitted.model, "gpt-5.4");
+            assert.equal(
+              (yield* service.capabilities(scope)).providers[0]?.admission?.state,
+              "unknown",
+            );
+          }
+          assert.equal(dispatches, 5);
+          const claude = {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("claudeAgent"),
+              model: "claude-sonnet",
+            }),
+            usageLimits: {
+              checkedAt: resetAt,
+              windows: [
+                {
+                  id: "seven_day_opus",
+                  kind: "weekly" as const,
+                  label: "Opus",
+                  usedPercent: 100,
+                  resetsAt: resetAt,
+                },
+              ],
+            },
+          };
+          providers = [claude, other];
+          const sonnet = yield* delegate("scoped-opus", codexInstanceId, "claude-sonnet");
+          assert.equal(sonnet.model, "claude-sonnet");
+          for (const id of ["five_hour", "seven_day"]) {
+            providers = [
+              {
+                ...claude,
+                usageLimits: {
+                  ...claude.usageLimits,
+                  windows: [{ ...claude.usageLimits.windows[0]!, id }],
+                },
+              },
+              other,
+            ];
+            const error = yield* delegate(
+              "claude-shared-" + id,
+              codexInstanceId,
+              "claude-sonnet",
+            ).pipe(Effect.flip);
+            assert.equal(error.code, "usage_limit");
+          }
+          assert.equal(dispatches, 6);
+          const peerId = ProviderInstanceId.make("codex-quota-peer");
+          providers = [exhausted, { ...codex, instanceId: peerId }, other];
+          const peer = yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            mode: "async",
+            clientRequestId: "healthy-driver-peer",
+            target: { driverKind: ProviderDriverKind.make("codex"), model: "gpt-5.4" },
+          });
+          assert.equal(peer.providerInstanceId, peerId);
+          assert.equal(dispatches, 7);
+          const providerFailure = {
+            class: "transport_error" as const,
+            message: "Provider stream closed.",
+            code: "stream_closed",
+            retryable: true,
+            resetAt: null,
+          };
+          const failedRunId = RunId.make("run:quota-failed");
+          child = {
+            ...childProjection,
+            runs: [
+              {
+                id: failedRunId,
+                ordinal: 1,
+                status: "failed",
+                startedAt: DateTime.makeUnsafe(now),
+                completedAt: DateTime.makeUnsafe(now + 1),
+              },
+            ],
+            turnItems: [
+              { id: "error:quota", runId: failedRunId, type: "error", failure: providerFailure },
+            ],
+          } as unknown as OrchestrationV2ThreadProjection;
+          const failed = yield* service.taskStatus(scope, tasks.at(-1)!.id);
+          assert.equal(failed.status, "failed");
+          assert.deepEqual(failed.failure, providerFailure);
+          assert.deepEqual(failed.latestTerminalFailure, providerFailure);
+          child = {
+            ...child,
+            runs: child.runs.map((run) => ({ ...run, status: "completed" as const })),
+          };
+          const completed = yield* service.taskStatus(scope, tasks.at(-1)!.id);
+          assert.equal(completed.status, "completed");
+          assert.isNull(completed.failure);
+          assert.isNull(completed.latestTerminalFailure);
+          const original = tasks.at(-1)!;
+          const followupId = RunId.make("run:quota-followup");
+          for (const originalFailed of [false, true]) {
+            tasks = tasks.map((task) =>
+              task.id === original.id
+                ? {
+                    ...task,
+                    status: originalFailed ? ("failed" as const) : ("completed" as const),
+                    result: "original result",
+                  }
+                : task,
+            );
+            child = {
+              ...child,
+              runs: [
+                {
+                  ...child.runs[0]!,
+                  status: originalFailed ? ("failed" as const) : ("completed" as const),
+                },
+                {
+                  ...child.runs[0]!,
+                  id: followupId,
+                  ordinal: 2,
+                  status: originalFailed ? ("completed" as const) : ("failed" as const),
+                  completedAt: DateTime.makeUnsafe(now + 2),
+                },
+              ],
+              turnItems: [
+                {
+                  id: "original-error",
+                  runId: failedRunId,
+                  type: "error",
+                  failure: providerFailure,
+                },
+                {
+                  id: "followup-error",
+                  runId: followupId,
+                  type: "error",
+                  failure: providerFailure,
+                },
+              ],
+            } as unknown as OrchestrationV2ThreadProjection;
+            const published = yield* service.taskStatus(scope, original.id);
+            assert.equal(published.status, originalFailed ? "failed" : "completed");
+            assert.equal(published.summary, "original result");
+            assert.deepEqual(published.failure, originalFailed ? providerFailure : null);
+            assert.deepEqual(
+              published.latestTerminalFailure,
+              originalFailed ? null : providerFailure,
+            );
+          }
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }).pipe(Effect.provide(IdAllocator.layer)),
+  );
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",

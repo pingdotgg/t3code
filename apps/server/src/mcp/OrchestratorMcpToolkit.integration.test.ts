@@ -614,7 +614,7 @@ describe("orchestrator MCP toolkit", () => {
             layerOrchestrator,
             ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
           );
-          const layerProviderRegistry = ProviderRegistryMock.layer([
+          const providerSnapshots = [
             makeProviderSnapshot({
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
@@ -642,7 +642,8 @@ describe("orchestrator MCP toolkit", () => {
               driver: ProviderDriverKind.make("opencode"),
               model: "opencode/test",
             }),
-          ]);
+          ];
+          const layerProviderRegistry = ProviderRegistryMock.layer(providerSnapshots);
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
@@ -766,6 +767,42 @@ describe("orchestrator MCP toolkit", () => {
                 );
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
+
+            const originalProvider = providerSnapshots[1]!;
+            const resetAt = new Date(
+              DateTime.toEpochMillis(yield* DateTime.now) + 60_000,
+            ).toISOString();
+            providerSnapshots[1] = {
+              ...originalProvider,
+              usageLimits: {
+                checkedAt: resetAt,
+                windows: [
+                  {
+                    id: "five_hour",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 100,
+                    resetsAt: resetAt,
+                  },
+                ],
+              },
+            };
+            const cooldownCall = yield* invokeAs(invocation, "delegate_task", {
+              task: "Do not dispatch during known cooldown.",
+              target: { providerInstanceId: claudeInstanceId, model: claudeModel },
+              clientRequestId: "mcp-cooldown",
+            });
+            expect(cooldownCall.isError).toBe(true);
+            expect(declaredFailure(cooldownCall)).toMatchObject({
+              code: "usage_limit",
+              failure: {
+                class: "usage_limit",
+                code: "delegation_cooldown",
+                retryable: true,
+                resetAt,
+              },
+            });
+            providerSnapshots[1] = originalProvider;
 
             const refusedSettle = yield* invoke("t3_thread_organize", { action: "settle" });
             expect(refusedSettle.isError).toBe(true);
@@ -2064,7 +2101,24 @@ describe("orchestrator MCP toolkit", () => {
                 },
               ],
             };
+            const beforeIdleCreate = providerSnapshots[0]!;
+            providerSnapshots[0] = {
+              ...beforeIdleCreate,
+              usageLimits: {
+                checkedAt: resetAt,
+                windows: [
+                  {
+                    id: "primary",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 100,
+                    resetsAt: resetAt,
+                  },
+                ],
+              },
+            };
             const createCall = yield* invoke("create_threads", createInput);
+            providerSnapshots[0] = beforeIdleCreate;
             expect(createCall.isError).toBe(false);
             const created = yield* decodeCreateThreadsResult(createCall.structuredContent).pipe(
               Effect.orDie,

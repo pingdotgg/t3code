@@ -7,6 +7,7 @@ import {
   NodeId,
   TurnItemId,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -70,6 +71,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -276,6 +278,40 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/** Only provider-wide windows with a known future reset can block admission. */
+function delegationCooldown(
+  provider: ServerProvider,
+  now: number,
+): OrchestrationV2ProviderFailure | null {
+  const limits = provider.usageLimits;
+  if (!limits || limits.unavailable) return null;
+  const ids =
+    provider.driver === "codex"
+      ? ["primary", "secondary"]
+      : provider.driver === "claudeAgent"
+        ? ["five_hour", "seven_day"]
+        : [];
+  const windows = limits.windows.filter(
+    (window) =>
+      ids.includes(window.id) &&
+      window.usedPercent >= 100 &&
+      window.resetsAt !== undefined &&
+      Date.parse(window.resetsAt) > now,
+  );
+  const resetAt = windows
+    .flatMap((window) => (window.resetsAt ? [window.resetsAt] : []))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+  return resetAt === undefined
+    ? null
+    : {
+        class: "usage_limit",
+        code: "delegation_cooldown",
+        retryable: true,
+        resetAt,
+        message: `Provider ${provider.instanceId} has an exhausted provider-wide usage window until ${resetAt}.`,
+      };
 }
 
 /**
@@ -806,6 +842,7 @@ function timelineItem(input: {
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const ids = yield* IdAllocator.IdAllocatorV2;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1066,8 +1103,10 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    readonly admitDelegation?: boolean;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
       const requestedInstanceId = input.target?.providerInstanceId;
       const requestedDriver = input.target?.driverKind;
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
@@ -1091,12 +1130,21 @@ const make = Effect.gen(function* () {
         const inheritedCandidate = candidates.find(
           (candidate) =>
             candidate.instanceId === input.parent.thread.modelSelection.instanceId &&
-            providerConstraints(candidate, true).length === 0,
+            providerConstraints(candidate, true).length === 0 &&
+            (!input.admitDelegation || delegationCooldown(candidate, now) === null),
         );
         const availableCandidate = candidates.find(
-          (candidate) => providerConstraints(candidate, true).length === 0,
+          (candidate) =>
+            providerConstraints(candidate, true).length === 0 &&
+            (!input.admitDelegation || delegationCooldown(candidate, now) === null),
         );
-        instanceId = inheritedCandidate?.instanceId ?? availableCandidate?.instanceId;
+        const cooldownCandidate = input.admitDelegation
+          ? candidates.find((candidate) => providerConstraints(candidate, true).length === 0)
+          : undefined;
+        instanceId =
+          inheritedCandidate?.instanceId ??
+          availableCandidate?.instanceId ??
+          cooldownCandidate?.instanceId;
         if (instanceId === undefined) {
           return yield* failure(
             "provider_unavailable",
@@ -1128,6 +1176,15 @@ const make = Effect.gen(function* () {
           "provider_unavailable",
           `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
         );
+      }
+
+      const cooldown = input.admitDelegation ? delegationCooldown(provider, now) : null;
+      if (cooldown !== null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "usage_limit",
+          message: cooldown.message,
+          failure: cooldown,
+        });
       }
 
       const inheritedSelection = input.parent.thread.modelSelection;
@@ -1217,9 +1274,23 @@ const make = Effect.gen(function* () {
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
       const progress = delegatedTaskProgress(childControls);
+      const resultTransfers = parentProjection.contextTransfers.filter(
+        (transfer) =>
+          transfer.type === "subagent_result" &&
+          transfer.sourceThreadId === task.childThreadId &&
+          transfer.targetThreadId === scope.thread.threadId,
+      );
+      const publishedRun =
+        task.result === null
+          ? undefined
+          : childControls.runs.find(
+              (run) => run.id === (resultTransfers[0]?.sourcePoint.runId ?? childRun?.id),
+            );
       const resultRunIds = [
         ...new Set(
-          [progress.resultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
+          [progress.resultRun?.id, terminalRun?.id, publishedRun?.id].filter(
+            (id): id is RunId => id !== undefined,
+          ),
         ),
       ];
       const resultRecords = yield* threadManagement
@@ -1266,12 +1337,6 @@ const make = Effect.gen(function* () {
           : progress.resultRun !== undefined && isTerminalTaskStatus(status)
             ? subagentResultForRun(childProjection, progress.resultRun).text
             : null;
-      const resultTransfers = parentProjection.contextTransfers.filter(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === task.childThreadId &&
-          transfer.targetThreadId === scope.thread.threadId,
-      );
       const resultTransferForRun = (run: OrchestrationV2Run | undefined) =>
         !canExposeTaskRunResult(run)
           ? null
@@ -1282,7 +1347,20 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = resultTransfers[0] ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      const failureForRun = (run: OrchestrationV2Run | undefined) =>
+        !canExposeTaskRunResult(run) || run.status !== "failed"
+          ? null
+          : childProjection.turnItems.findLast(
+              (item) => item.runId === run.id && item.type === "error",
+            );
+      const taskFailure =
+        status === "failed"
+          ? failureForRun(task.result !== null ? publishedRun : (progress.resultRun ?? childRun))
+          : null;
+      const terminalFailure = failureForRun(terminalRun);
       const response = {
+        failure: taskFailure?.type === "error" ? taskFailure.failure : null,
+        latestTerminalFailure: terminalFailure?.type === "error" ? terminalFailure.failure : null,
         taskId: task.id,
         childThreadId: task.childThreadId,
         childRunId: childRun?.id ?? null,
@@ -1748,6 +1826,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
         return {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
@@ -1759,21 +1838,37 @@ const make = Effect.gen(function* () {
               provider,
               orchestrationCapableInstanceIds.has(provider.instanceId),
             );
+            const cooldown = delegationCooldown(provider, now);
+            const blocked = constraints.length > 0 || cooldown !== null;
             return {
+              admission: {
+                state: blocked ? ("blocked" as const) : ("unknown" as const),
+                failure:
+                  cooldown ??
+                  (constraints.length > 0
+                    ? {
+                        class: "provider_error" as const,
+                        code: "provider_unavailable",
+                        retryable: null,
+                        message: constraints.join(" "),
+                      }
+                    : null),
+              },
               providerInstanceId: provider.instanceId,
               driverKind: provider.driver,
               displayName: provider?.displayName ?? null,
               models:
                 provider?.models.map((model) => ({
                   id: model.slug,
+                  availability: blocked ? ("blocked" as const) : ("unknown" as const),
                   label: model.name ?? null,
                   ...(model.capabilities?.optionDescriptors === undefined
                     ? {}
                     : { options: model.capabilities.optionDescriptors }),
                 })) ?? [],
-              canRunChildTask: constraints.length === 0,
-              canRunCrossProviderChildTask: constraints.length === 0,
-              constraints: [...constraints],
+              canRunChildTask: !blocked,
+              canRunCrossProviderChildTask: !blocked,
+              constraints: [...constraints, ...(cooldown ? [cooldown.message] : [])],
             };
           }),
           features: {
@@ -1804,61 +1899,68 @@ const make = Effect.gen(function* () {
             "Delegated tasks require an active run owned by this MCP provider session.",
           );
         }
-        const providers = yield* loadProviders;
-        const target = yield* resolveTargetRechecking({
-          parent,
-          target: input.target,
-          providers,
-        });
-        const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
-        const interactionMode = yield* resolveInteractionMode(
-          parent.thread.interactionMode,
-          input.interactionMode,
-        );
         const key = yield* requestKey(input.clientRequestId);
-        const commandId = stableCommandId({
-          scope,
-          requestKey: key,
-          operation: "delegate-task",
-        });
-        const result = yield* threadManagement
-          .dispatch({
-            type: "delegated_task.request",
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId,
-            parentThreadId: scope.thread.threadId,
-            parentRunId: parentRun.id,
-            parentNodeId: parentRun.rootNodeId,
-            task: taskPrompt(input),
-            ...(input.title === undefined ? {} : { title: input.title }),
-            modelSelection: target.modelSelection,
-            runtimeMode,
-            interactionMode,
-            // Async delegations wake the parent on every child terminal; wait
-            // delegations deliver through the blocking tool call, so a wake is
-            // only needed if the parent settled first (timeout, disconnect).
-            completionWake: input.mode === "wait" ? "settled_only" : "always",
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Unable to create delegated task: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-        const taskEvent = result.storedEvents.find(
-          (stored) =>
-            stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
+        const commandId = stableCommandId({ scope, requestKey: key, operation: "delegate-task" });
+        const existing = parent.subagents.find(
+          (task) => task.id === ids.derive.delegatedTaskNode({ commandId }),
         );
-        if (taskEvent?.event.type !== "subagent.updated") {
-          return yield* failure(
-            "orchestration_error",
-            "Delegated task command did not produce a task projection.",
+        let taskId = existing?.id;
+        if (taskId === undefined) {
+          const providers = yield* loadProviders;
+          const target = yield* resolveTargetRechecking({
+            parent,
+            target: input.target,
+            providers,
+            admitDelegation: true,
+          });
+          const runtimeMode = yield* resolveRuntimeMode(
+            parent.thread.runtimeMode,
+            input.runtimeMode,
           );
+          const interactionMode = yield* resolveInteractionMode(
+            parent.thread.interactionMode,
+            input.interactionMode,
+          );
+          const result = yield* threadManagement
+            .dispatch({
+              type: "delegated_task.request",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId,
+              parentThreadId: scope.thread.threadId,
+              parentRunId: parentRun.id,
+              parentNodeId: parentRun.rootNodeId,
+              task: taskPrompt(input),
+              ...(input.title === undefined ? {} : { title: input.title }),
+              modelSelection: target.modelSelection,
+              runtimeMode,
+              interactionMode,
+              // Async delegations wake the parent on every child terminal; wait
+              // delegations deliver through the blocking tool call, so a wake is
+              // only needed if the parent settled first (timeout, disconnect).
+              completionWake: input.mode === "wait" ? "settled_only" : "always",
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to create delegated task: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          const taskEvent = result.storedEvents.find(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.origin === "app_owned",
+          );
+          if (taskEvent?.event.type !== "subagent.updated") {
+            return yield* failure(
+              "orchestration_error",
+              "Delegated task command did not produce a task projection.",
+            );
+          }
+          taskId = taskEvent.event.payload.id;
         }
-        const taskId = taskEvent.event.payload.id;
 
         if (input.mode !== "wait") {
           return yield* readTask(scope, taskId, false, true);
@@ -2472,4 +2574,4 @@ export const layer: Layer.Layer<
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
-> = Layer.effect(OrchestratorMcpService, make);
+> = Layer.effect(OrchestratorMcpService, make).pipe(Layer.provide(IdAllocator.layer));

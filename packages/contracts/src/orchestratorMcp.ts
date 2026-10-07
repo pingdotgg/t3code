@@ -27,6 +27,7 @@ import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
@@ -206,6 +207,8 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  failure: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailure)),
+  latestTerminalFailure: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailure)),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
@@ -474,8 +477,18 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       label: Schema.NullOr(Schema.String),
+      availability: Schema.optional(Schema.Literals(["unknown", "blocked"])).annotate({
+        description:
+          "Catalog presence does not prove model viability. Blocked reflects provider admission only.",
+      }),
       /** Model options a target may select (for example reasoning effort). */
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+    }),
+  ),
+  admission: Schema.optional(
+    Schema.Struct({
+      state: Schema.Literals(["unknown", "blocked"]),
+      failure: Schema.NullOr(OrchestrationV2ProviderFailure),
     }),
   ),
   canRunChildTask: Schema.Boolean,
@@ -642,6 +655,7 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "capability_denied",
       "parent_not_active",
       "provider_unavailable",
+      "usage_limit",
       "model_unavailable",
       "runtime_mode_escalation_denied",
       "interaction_mode_escalation_denied",
@@ -657,5 +671,6 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "target_required",
     ]),
     message: Schema.String,
+    failure: Schema.optional(OrchestrationV2ProviderFailure),
   },
 ) {}
