@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 
 import {
   HostedPairingRouteSurface,
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/pair")({
 });
 
 function PairRouteView() {
+  const router = useRouter();
   const { authGateState } = Route.useRouteContext();
 
   if (!authGateState) {
@@ -43,7 +44,9 @@ function PairRouteView() {
       onAuthenticated={() => {
         // Recreate the primary connection so its WebSocket and cached scopes
         // use the newly issued cookie after re-pairing.
-        window.location.replace("/");
+        router.history.replace("/");
+        router.history.flush();
+        window.location.reload();
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />
