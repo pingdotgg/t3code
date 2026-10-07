@@ -360,7 +360,7 @@ export const layer = HttpApiBuilder.group(
               args.payload.scope === undefined
                 ? undefined
                 : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ?? null);
-            if (requestedScopes === null) {
+            if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
             const proofKeyThumbprint = args.headers.dpop

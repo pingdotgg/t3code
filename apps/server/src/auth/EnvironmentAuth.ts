@@ -902,6 +902,9 @@ export const make = Effect.gen(function* () {
               requestedScopes === undefined
                 ? grant.scopes
                 : [...new Set(requestedScopes)].filter((scope) => grant.scopes.includes(scope));
+            if (grantedScopes.length === 0) {
+              return yield* new ServerAuthScopeNotGrantedError({});
+            }
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",

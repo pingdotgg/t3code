@@ -219,6 +219,16 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(firstSession.subject).toBe("reusable-dev-token-child");
       expect(secondSession.subject).toBe("reusable-dev-token-child");
       expect((yield* sessions.verify(token)).subject).toBe("reusable-dev-token");
+      const before = yield* serverAuth.listClientSessions(firstSession.sessionId);
+      const denied = yield* serverAuth
+        .exchangeBootstrapCredentialForAccessToken(token, ["review:write"], requestMetadata)
+        .pipe(Effect.flip);
+      expect(denied._tag).toBe("ServerAuthScopeNotGrantedError");
+      const empty = yield* serverAuth
+        .exchangeBootstrapCredentialForAccessToken(token, [], requestMetadata)
+        .pipe(Effect.flip);
+      expect(empty._tag).toBe("ServerAuthScopeNotGrantedError");
+      expect(yield* serverAuth.listClientSessions(firstSession.sessionId)).toEqual(before);
     }).pipe(
       Effect.provide(
         layerEnvironmentAuth({
