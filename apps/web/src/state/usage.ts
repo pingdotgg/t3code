@@ -9,6 +9,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
+  sessionGrantsScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageBucket,
@@ -173,7 +174,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       // A connected environment this connection may not read reports why.
       // Offline, saved usage still shows unless the known session denies it.
       const denied = offline
-        ? session !== null && !access.canReadDiagnostics
+        ? session !== null && !sessionGrantsScope(session, AuthDiagnosticsReadScope)
         : !access.canReadDiagnostics;
       if (denied) {
         statuses.push({
