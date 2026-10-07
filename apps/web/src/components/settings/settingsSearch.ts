@@ -511,6 +511,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "anonymous-analytics",
+    title: "Anonymous analytics",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["privacy telemetry usage data tracking opt out posthog"],
+  },
+  {
     id: "privacy-policy",
     title: "Privacy policy",
     to: "/settings/general",
