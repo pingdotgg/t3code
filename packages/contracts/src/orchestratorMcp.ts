@@ -556,11 +556,11 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
-      "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; use webhookPath with a reachable environment HTTP origin for direct delivery.",
+      "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; use webhookPath with a verified environment origin and the transport protections described there for direct delivery.",
   }),
   webhookPath: Schema.optional(Schema.String).annotate({
     description:
-      "Token-bearing path on this environment, available without T3 Connect. Combine with the environment HTTP origin reachable by the sender, such as localhost or Tailscale. Only returned when the caller may run the task.",
+      "Bearer-token path on this environment, available without T3 Connect. Combine with the verified environment origin reachable by the sender. Allow unprotected HTTP only on loopback; remote delivery requires HTTPS or an authenticated encrypted tunnel such as Tailscale. Never send the token over unencrypted LAN HTTP. Only returned when the caller may run the task.",
   }),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
     description: "Whether requests must carry a valid signature.",
