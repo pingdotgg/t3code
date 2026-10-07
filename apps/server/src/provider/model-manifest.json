@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-07T18:00:00Z",
+  "updatedAt": "2026-10-07T19:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -145,22 +145,6 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
-              },
-              {
-                "id": "contextWindow",
-                "label": "Context Window",
-                "type": "select",
-                "options": [
-                  {
-                    "id": "200k",
-                    "label": "200k"
-                  },
-                  {
-                    "id": "1m",
-                    "label": "1M",
-                    "isDefault": true
-                  }
-                ]
               }
             ]
           },
@@ -170,15 +154,7 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "modelSuffixes": {
-                "contextWindow": {
-                  "1m": "[1m]"
-                }
-              },
-              "contextWindowTokens": {
-                "200k": 200000,
-                "1m": 1000000
-              }
+              "fixedContextWindowTokens": 1000000
             }
           }
         },
@@ -204,23 +180,13 @@
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
-              {
-                "id": "contextWindow",
-                "label": "Context Window",
-                "type": "select",
-                "options": [
-                  { "id": "200k", "label": "200k" },
-                  { "id": "1m", "label": "1M", "isDefault": true }
-                ]
-              }
+              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": { "ultracode": "xhigh", "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "fixedContextWindowTokens": 1000000
             }
           }
         },
@@ -269,22 +235,6 @@
                 "id": "fastMode",
                 "label": "Fast Mode",
                 "type": "boolean"
-              },
-              {
-                "id": "contextWindow",
-                "label": "Context Window",
-                "type": "select",
-                "options": [
-                  {
-                    "id": "200k",
-                    "label": "200k"
-                  },
-                  {
-                    "id": "1m",
-                    "label": "1M",
-                    "isDefault": true
-                  }
-                ]
               }
             ]
           },
@@ -294,15 +244,7 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "modelSuffixes": {
-                "contextWindow": {
-                  "1m": "[1m]"
-                }
-              },
-              "contextWindowTokens": {
-                "200k": 200000,
-                "1m": 1000000
-              }
+              "fixedContextWindowTokens": 1000000
             }
           }
         },
@@ -524,7 +466,7 @@
             ]
           },
           "adapter": {
-            "claudeCode": {}
+            "claudeCode": { "fixedContextWindowTokens": 200000 }
           }
         },
         "sonnet-5": {
@@ -562,22 +504,6 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
-              },
-              {
-                "id": "contextWindow",
-                "label": "Context Window",
-                "type": "select",
-                "options": [
-                  {
-                    "id": "200k",
-                    "label": "200k",
-                    "isDefault": true
-                  },
-                  {
-                    "id": "1m",
-                    "label": "1M"
-                  }
-                ]
               }
             ]
           },
@@ -586,15 +512,7 @@
               "effortMap": {
                 "ultrathink": null
               },
-              "modelSuffixes": {
-                "contextWindow": {
-                  "1m": "[1m]"
-                }
-              },
-              "contextWindowTokens": {
-                "200k": 200000,
-                "1m": 1000000
-              }
+              "fixedContextWindowTokens": 1000000
             }
           }
         },
@@ -682,23 +600,13 @@
                   { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
-              },
-              {
-                "id": "contextWindow",
-                "label": "Context Window",
-                "type": "select",
-                "options": [
-                  { "id": "200k", "label": "200k" },
-                  { "id": "1m", "label": "1M", "isDefault": true }
-                ]
               }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": { "ultrathink": null },
-              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
-              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
+              "fixedContextWindowTokens": 1000000
             }
           }
         },
@@ -713,7 +621,7 @@
             ]
           },
           "adapter": {
-            "claudeCode": {}
+            "claudeCode": { "fixedContextWindowTokens": 200000 }
           }
         }
       },
