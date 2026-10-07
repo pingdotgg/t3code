@@ -66,7 +66,7 @@ interface ProjectScriptsControlProps {
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
-  onRunScript: (script: ProjectScript) => void;
+  onRunScript?: ((script: ProjectScript) => void) | undefined;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
@@ -198,7 +198,8 @@ export default function ProjectScriptsControl({
             density={presentation === "menu" ? "touch" : "default"}
             key={script.id}
             className="group"
-            onClick={() => onRunScript(script)}
+            disabled={!onRunScript}
+            onClick={() => onRunScript?.(script)}
           >
             <ScriptIcon icon={script.icon} className="size-4" />
             <MenuItemLabel>
@@ -255,7 +256,8 @@ export default function ProjectScriptsControl({
           {primaryScript && (
             <MenuItem
               density={presentation === "menu" ? "touch" : "default"}
-              onClick={() => onRunScript(primaryScript)}
+              disabled={!onRunScript}
+              onClick={() => onRunScript?.(primaryScript)}
             >
               <ScriptIcon icon={primaryScript.icon} className="size-4" />
               <MenuItemLabel>Run {primaryScript.name}</MenuItemLabel>
@@ -308,7 +310,8 @@ export default function ProjectScriptsControl({
                   // The tooltip wrapper replaces data-slot="button", so themed
                   // toolbar styling needs its own hook.
                   data-toolbar-control=""
-                  onClick={() => onRunScript(primaryScript)}
+                  aria-disabled={!onRunScript || undefined}
+                  onClick={() => onRunScript?.(primaryScript)}
                 />
               }
             >
@@ -325,7 +328,11 @@ export default function ProjectScriptsControl({
                 {primaryScript.name}
               </span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Run {primaryScript.name}</TooltipPopup>
+            <TooltipPopup side="top">
+              {onRunScript
+                ? `Run ${primaryScript.name}`
+                : "Pair this client again with permission to run terminal commands."}
+            </TooltipPopup>
           </Tooltip>
           {isPanel ? (
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />

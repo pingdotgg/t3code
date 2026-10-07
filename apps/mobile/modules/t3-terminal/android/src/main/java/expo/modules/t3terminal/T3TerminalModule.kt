@@ -30,6 +30,10 @@ class T3TerminalModule : Module() {
         view.focusRequest = focusRequest
       }
 
+      Prop("readOnly") { view: T3TerminalView, readOnly: Boolean ->
+        view.readOnly = readOnly
+      }
+
       Prop("autoFocus") { view: T3TerminalView, autoFocus: Boolean ->
         view.autoFocus = autoFocus
       }

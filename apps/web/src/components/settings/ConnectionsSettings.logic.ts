@@ -1,4 +1,34 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import {
+  type AdvertisedEndpoint,
+  type AuthGrantScope,
+  AuthTerminalOperateScope,
+  AuthTerminalReadScope,
+  type DesktopBridge,
+  type DesktopWslState,
+} from "@t3tools/contracts";
+
+/**
+ * Operating terminals without being able to list them leaves a client
+ * allocating a fresh shell for every script run it cannot see, so the pairing
+ * form keeps `terminal:read` alongside `terminal:operate`.
+ */
+export function togglePairingScopeSelection(
+  current: ReadonlyArray<AuthGrantScope>,
+  scope: AuthGrantScope,
+  checked: boolean,
+): ReadonlyArray<AuthGrantScope> {
+  const without = (scopes: ReadonlyArray<AuthGrantScope>) =>
+    scopes.filter((currentScope) => currentScope !== scope);
+  if (!checked) {
+    return scope === AuthTerminalReadScope
+      ? without(current).filter((currentScope) => currentScope !== AuthTerminalOperateScope)
+      : without(current);
+  }
+  const next = [...without(current), scope];
+  return scope === AuthTerminalOperateScope && !next.includes(AuthTerminalReadScope)
+    ? [...next, AuthTerminalReadScope]
+    : next;
+}
 
 /** A missing access list says nothing about whether other clients exist. */
 export function canRevokeOtherClients(
