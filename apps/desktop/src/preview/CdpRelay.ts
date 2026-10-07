@@ -158,9 +158,14 @@ export function createCdpRelayConnection(
   };
 
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
-    // The page is already running; nothing waits for a debugger.
-    if (command.method === "Runtime.runIfWaitingForDebugger") return Promise.resolve({});
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
+    // The page itself is already running, but its child frames are not:
+    // Playwright auto-attaches with waitForDebuggerOnStart, so Chromium pauses
+    // every new cross-site iframe and worker until this reaches it. Swallowing
+    // it left sign-in checks and captchas, which run in such frames, frozen.
+    if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
+      return Promise.resolve({});
+    }
     return target.send(command.method, command.params ?? {}, child);
   };
 

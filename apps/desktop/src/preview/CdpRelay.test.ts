@@ -75,6 +75,28 @@ describe("CDP relay", () => {
     });
   });
 
+  it("resumes paused child frames, so cross-site iframes run", async () => {
+    const send = vi.fn(async () => ({}));
+    const relay = createCdpRelayConnection(makeTarget(send), () => {});
+    // The page's own session is already running; only its children wait.
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Runtime.runIfWaitingForDebugger",
+        sessionId: "t3-preview-page",
+      }),
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: "Runtime.runIfWaitingForDebugger",
+        sessionId: "iframe-session",
+      }),
+    );
+    await settle();
+    expect(send.mock.calls).toEqual([["Runtime.runIfWaitingForDebugger", {}, "iframe-session"]]);
+  });
+
   it("routes tab events to the page session once the page is announced", async () => {
     const written: Array<Record<string, unknown>> = [];
     const relay = createCdpRelayConnection(makeTarget(vi.fn()), (raw) =>
