@@ -39,7 +39,7 @@ keeps the rest of the user's Codex configuration. Arrays and plain values replac
 A provider instance entry needs its `driver`. Disabling the built-in `codex` instance does not stop
 a user from adding a second Codex instance.
 
-Telemetry export settings (`observability`) cannot be managed yet; T3 Code ignores them in a policy.
+OpenTelemetry export URLs (`observability`) cannot be managed yet.
 
 In a configuration profile, use the same top-level keys, with dictionaries for nested objects and
 arrays for lists.
@@ -50,6 +50,7 @@ T3 Code reads the policy when its server starts. Restart the desktop app, or the
 apply a change. The user's own `settings.json` is never rewritten with managed values, so removing
 a key from the policy restores the user's previous value.
 
-If a policy file cannot be parsed, T3 Code ignores that file. If one key has an invalid value or is
-not a known setting, T3 Code ignores that key and enforces the rest. Both cases are written to the
-server log.
+If a policy cannot be read or parsed, or sets a key that is unknown, cannot be managed, or has an
+invalid value, T3 Code refuses to start rather than run with part of the policy unenforced. The
+error names the file and every bad key. Because unknown keys are rejected, deploy a policy that
+uses a new setting only after every machine runs a T3 Code version that has it.

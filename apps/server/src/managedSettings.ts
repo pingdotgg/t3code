@@ -15,9 +15,9 @@
  * - Linux: `/etc/t3code/managed-settings.json`
  *
  * Policy is read once at startup; a change takes effect when the server
- * restarts. A source that cannot be parsed is skipped, and a key whose value
- * does not decode is dropped, each with a logged error, so one bad entry does
- * not lift the rest of the policy.
+ * restarts. A source that exists but cannot be read, cannot be parsed, or
+ * holds a key that is unknown, unmanageable, or invalid fails startup: running
+ * with part of a policy silently unenforced is worse than not running.
  *
  * @module ManagedSettings
  */
@@ -52,6 +52,19 @@ export class ManagedSettings extends Context.Reference<ManagedSettingsPolicy>(
   { defaultValue: () => EMPTY_MANAGED_SETTINGS },
 ) {}
 
+export class ManagedSettingsError extends Schema.TaggedError<ManagedSettingsError>()(
+  "ManagedSettingsError",
+  {
+    path: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Invalid managed settings at ${this.path}: ${this.detail}`;
+  }
+}
+
 export const MANAGED_PREFERENCES_DOMAIN = "com.t3tools.t3code";
 
 export interface ManagedSettingsSource {
@@ -81,8 +94,9 @@ const decodeDocumentJson = Schema.decodeUnknownEffect(
   fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
 );
 const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
-// Telemetry export is resolved from settings.json at process start, before
-// policy loads, so locking it would show a value the exporter never uses.
+// OpenTelemetry export URLs are resolved from settings.json at process start,
+// before policy loads, and env vars outrank them, so a policy could not
+// enforce them.
 const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set(["observability"]);
 const ENCODED_DEFAULT_SERVER_SETTINGS = Schema.encodeSync(ServerSettings)(
   DEFAULT_SERVER_SETTINGS,
@@ -103,34 +117,25 @@ function leafPaths(
 }
 
 /**
- * Keep each top-level key whose value decodes on top of the defaults. A key
- * is judged on its own, so one typo drops only that key.
+ * Check each top-level key on its own, on top of the defaults, so the error
+ * names every bad key rather than the first decode failure.
  */
-const validateDocument = Effect.fn("ManagedSettings.validateDocument")(function* (
+function validateDocument(
   source: ManagedSettingsSource,
   document: Readonly<Record<string, unknown>>,
-) {
-  const valid: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(document)) {
-    const known = Object.hasOwn(ServerSettings.fields, key);
-    const manageable = known && !UNMANAGEABLE_KEYS.has(key);
-    const decoded =
-      manageable &&
-      Exit.isSuccess(
-        decodeServerSettingsExit(deepMerge(ENCODED_DEFAULT_SERVER_SETTINGS, { [key]: value })),
-      );
-    if (decoded) {
-      valid[key] = value;
-      continue;
-    }
-    yield* Effect.logError("ignoring invalid managed setting", {
-      path: source.path,
-      key,
-      reason: !known ? "unknown key" : manageable ? "invalid value" : "not manageable",
-    });
-  }
-  return valid;
-});
+): Effect.Effect<Readonly<Record<string, unknown>>, ManagedSettingsError> {
+  const problems = Object.entries(document).flatMap(([key, value]) => {
+    if (!Object.hasOwn(ServerSettings.fields, key)) return [`unknown key "${key}"`];
+    if (UNMANAGEABLE_KEYS.has(key)) return [`"${key}" cannot be managed`];
+    const decoded = decodeServerSettingsExit(
+      deepMerge(ENCODED_DEFAULT_SERVER_SETTINGS, { [key]: value }),
+    );
+    return Exit.isSuccess(decoded) ? [] : [`invalid value for "${key}"`];
+  });
+  return problems.length === 0
+    ? Effect.succeed(document)
+    : Effect.fail(new ManagedSettingsError({ path: source.path, detail: problems.join(", ") }));
+}
 
 const readSourceText = Effect.fn("ManagedSettings.readSourceText")(function* (
   source: ManagedSettingsSource,
@@ -156,17 +161,19 @@ const readSource = Effect.fn("ManagedSettings.readSource")(function* (
   source: ManagedSettingsSource,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const exists = yield* fs.exists(source.path).pipe(Effect.orElseSucceed(() => false));
+  const unreadable = (detail: string) => (cause: unknown) =>
+    new ManagedSettingsError({ path: source.path, detail, cause });
+  const exists = yield* fs
+    .exists(source.path)
+    .pipe(Effect.mapError(unreadable("could not check whether it exists")));
   if (!exists) return {};
-  return yield* readSourceText(source).pipe(
-    Effect.flatMap(decodeDocumentJson),
-    Effect.flatMap((document) => validateDocument(source, document)),
-    Effect.catchCause((cause) =>
-      Effect.logError("ignoring unreadable managed settings", { path: source.path, cause }).pipe(
-        Effect.as({}),
-      ),
+  const document = yield* readSourceText(source).pipe(
+    Effect.mapError(unreadable("could not be read")),
+    Effect.flatMap((text) =>
+      decodeDocumentJson(text).pipe(Effect.mapError(unreadable("not a JSON object"))),
     ),
   );
+  return yield* validateDocument(source, document);
 });
 
 /** Merge validated documents, lowest precedence first, into one policy. */
