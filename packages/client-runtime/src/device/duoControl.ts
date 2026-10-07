@@ -1,4 +1,6 @@
 // @effect-diagnostics globalTimers:off - The stream owns this browser control queue and its timeout.
+import type { DeviceScreenSize } from "./stream.ts";
+
 /** Native hinge presets. Each one also sets the device's physical orientation. */
 export type DuoPose = "closed" | "book" | "open" | "laptop" | "tent";
 export type DuoOrientation =
@@ -17,6 +19,23 @@ export type DuoControlState = {
   requested: DuoCommand | null;
   error: string | null;
 };
+
+/**
+ * The fold the device is in and the way it is held. Missing hinge fields fall back the same way
+ * the 3D view does, so controls never disagree with what is drawn. The inner panel is mounted a
+ * quarter turn from the cover, so its landscape orientation means a vertical phone.
+ */
+export function duoFoldState(
+  screen: Pick<DeviceScreenSize, "orientation" | "screenId" | "hingeAngle" | "hingePose">,
+) {
+  const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
+  const landscape = screen.orientation.startsWith("landscape");
+  return {
+    fold: angle === 0 ? "closed" : angle === 180 ? "open" : "half",
+    stand: screen.hingePose === "laptop" || screen.hingePose === "tent",
+    phoneVertical: screen.screenId === 1 ? !landscape : landscape,
+  } as const;
+}
 
 /** One in-flight native transaction. Hinge motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
 export function createDuoControl(options: {

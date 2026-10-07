@@ -1,4 +1,8 @@
-import type { DuoCommand, DuoControlState } from "@t3tools/client-runtime/device/duo-control";
+import {
+  duoFoldState,
+  type DuoCommand,
+  type DuoControlState,
+} from "@t3tools/client-runtime/device/duo-control";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 import { Button } from "~/components/ui/button";
@@ -27,12 +31,7 @@ export function DeviceDuoControls(props: {
   onCommand: (command: DuoCommand) => void;
 }) {
   const { screen } = props;
-  const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
-  const stand = screen.hingePose === "laptop" || screen.hingePose === "tent";
-  // The inner panel is mounted a quarter turn from the cover.
-  const landscape = screen.orientation.startsWith("landscape");
-  const phoneVertical = screen.screenId === 1 ? !landscape : landscape;
-  const fold = angle === 0 ? "closed" : angle === 180 ? "open" : "half";
+  const { fold, stand, phoneVertical } = duoFoldState(screen);
   const foldLabels = {
     closed: "Closed",
     half: phoneVertical ? "Book" : "Laptop",
