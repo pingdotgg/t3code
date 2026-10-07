@@ -424,6 +424,13 @@ export const make = Effect.gen(function* () {
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
+    // A client reading a pull request can see it merge or close before the next sweep does.
+    const stateChanges = yield* pullRequests.subscribeStateChanges;
+    yield* forkParked(
+      Stream.runForEach(stateChanges, requestSync).pipe(
+        Effect.catchCause(logSkipped("pull request state change stream failed", {})),
+      ),
+    );
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         switch (event.type) {
