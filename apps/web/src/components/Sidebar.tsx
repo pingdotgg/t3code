@@ -601,14 +601,15 @@ function SnoozeMenuButton(props: {
           // the snooze item: nested, a press-drag-release over it would also
           // fire the snooze item, and arrow keys could not reach it.
           return (
-            <div key={preset.id} className="flex items-center">
+            <div key={preset.id} className="group/favorite flex items-center">
               {item}
               <MenuItem
                 closeOnClick={false}
                 aria-label={`Remove ${preset.label} from favorites`}
                 label={`Remove ${preset.label} from favorites`}
                 variant="ghost"
-                className="size-7 min-h-7 w-7 justify-center"
+                // Shown on row hover, keyboard highlight, and touch (no hover).
+                className="size-7 min-h-7 w-7 justify-center opacity-0 group-hover/favorite:opacity-100 group-has-[[data-highlighted]]/favorite:opacity-100 pointer-coarse:opacity-100"
                 onClick={(event) => {
                   event.stopPropagation();
                   updateSnoozeFavorites(
