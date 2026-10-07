@@ -188,7 +188,14 @@ describe("usage environment selection", () => {
 describe("environmentsNeedingBaseline", () => {
   it("needs every answering environment, except an offline one counted elsewhere", () => {
     const live = environment("live", 10);
-    const quiet = { ...environment("quiet", 0), offline: true, savedAt: "2026-09-04T11:00:00Z" };
+    // Saved usage of its own, but none in this span.
+    const base = environment("quiet", 0);
+    const quiet = {
+      ...base,
+      summary: base.summary === null ? null : { ...base.summary, buckets: [] },
+      offline: true,
+      savedAt: "2026-09-04T11:00:00Z",
+    };
     // Reads the same folder as "live": its saved usage is counted from there.
     const copy = {
       ...environment("copy", 10, "live"),
