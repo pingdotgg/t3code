@@ -203,7 +203,7 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
-function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
+export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
 ): Stream.Stream<
