@@ -52,9 +52,24 @@ export const makeLineDecoder = (input: {
   readonly onLine: (line: string, bytes: number) => void;
   readonly onOverflow: () => void;
 }) => {
-  let parts: Array<Buffer> = [];
+  // The unterminated tail is copied into one buffer that grows by doubling, so a
+  // line trickled in tiny chunks costs its bytes, not one allocation per chunk,
+  // and does not keep the chunks it arrived in alive.
+  let pending: Buffer | undefined;
   let buffered = 0;
   let overflowed = false;
+  const append = (piece: Buffer) => {
+    const needed = buffered + piece.length;
+    if (pending === undefined || needed > pending.length) {
+      const grown = Buffer.allocUnsafe(
+        Math.min(input.maxBytes, Math.max(needed, 2 * (pending?.length ?? 0), 256)),
+      );
+      pending?.copy(grown, 0, 0, buffered);
+      pending = grown;
+    }
+    piece.copy(pending, buffered);
+    buffered = needed;
+  };
   return (chunk: Buffer): void => {
     let start = 0;
     while (!overflowed) {
@@ -62,20 +77,21 @@ export const makeLineDecoder = (input: {
       const piece = chunk.subarray(start, newline === -1 ? chunk.length : newline);
       if (buffered + piece.length > input.maxBytes) {
         overflowed = true;
-        parts = [];
+        pending = undefined;
         input.onOverflow();
         return;
       }
       if (newline === -1) {
-        if (piece.length > 0) {
-          parts.push(piece);
-          buffered += piece.length;
-        }
+        if (piece.length > 0) append(piece);
         return;
       }
       const bytes = buffered + piece.length;
-      const line = (parts.length === 0 ? piece : Buffer.concat([...parts, piece])).toString("utf8");
-      parts = [];
+      const line = (
+        pending === undefined || buffered === 0
+          ? piece
+          : Buffer.concat([pending.subarray(0, buffered), piece])
+      ).toString("utf8");
+      pending = undefined;
       buffered = 0;
       start = newline + 1;
       input.onLine(line, bytes);
