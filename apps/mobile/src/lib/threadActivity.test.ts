@@ -975,6 +975,74 @@ describe("buildThreadFeed", () => {
     ).toBe(true);
   });
 
+  it("keeps a settled run's still-running subagents visible while its other work folds", () => {
+    const subagent = (
+      id: string,
+      updatedAt: string,
+      ordinal: number,
+      status: OrchestrationV2TurnItem["status"],
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, updatedAt, ordinal),
+      providerTurnId: ProviderTurnId.make("provider-turn-1"),
+      status,
+      completedAt: status === "running" ? null : DateTime.makeUnsafe(updatedAt),
+      type: "subagent",
+      subagentId: NodeId.make(id),
+      origin: "app_owned",
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      childThreadId: sourceThreadId,
+      prompt: `Inspect ${id}`,
+      result: null,
+    });
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:05.000Z",
+    };
+    const present = (children: ReadonlyArray<OrchestrationV2TurnItem>) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed([
+          projected(userMessage(), 0),
+          projected(command("2026-06-20T00:00:02.000Z"), 1),
+          ...children.map((child, index) => projected(child, index + 2)),
+          projected(assistantMessage("2026-06-20T00:00:05.000Z"), 5),
+        ]),
+        latestRun,
+        new Set(),
+      );
+    const visibleSubagentIds = (presented: ReadonlyArray<ThreadFeedEntry>) =>
+      presented.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? entry.activities.flatMap((activity) =>
+              activity.projectedItem.item.type === "subagent"
+                ? [activity.projectedItem.item.id]
+                : [],
+            )
+          : [],
+      );
+
+    const live = present([subagent("item-live", "2026-06-20T00:00:03.000Z", 2, "running")]);
+    expect(live.map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "activity-group",
+      "message",
+    ]);
+    expect(visibleSubagentIds(live)).toEqual(["item-live"]);
+
+    // A launch batch stays whole while any member is live.
+    const mixed = present([
+      subagent("item-done", "2026-06-20T00:00:03.000Z", 2, "completed"),
+      subagent("item-live", "2026-06-20T00:00:04.000Z", 3, "running"),
+    ]);
+    expect(visibleSubagentIds(mixed)).toEqual(["item-done", "item-live"]);
+
+    const finished = present([subagent("item-done", "2026-06-20T00:00:03.000Z", 2, "completed")]);
+    expect(finished.map((entry) => entry.type)).toEqual(["message", "run-fold", "message"]);
+  });
+
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),
