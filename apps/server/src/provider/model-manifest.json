@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-02T19:45:00Z",
+  "updatedAt": "2026-10-07T05:46:48Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -818,5 +818,501 @@
         }
       ]
     }
+  },
+  "benchmarks": {
+    "source": "Slopalytics",
+    "url": "https://slopalytics.com/?frontier=true",
+    "updatedAt": "2026-10-07T05:46:48Z",
+    "variants": [
+      { "model": "apodex-1-1", "effort": "default", "intelligence": 26.41, "costPerTask": 0.4637 },
+      { "model": "celeris-1", "effort": "none", "intelligence": 6.35, "costPerTask": 0.05016 },
+      {
+        "model": "claude-4-5-haiku",
+        "effort": "default",
+        "intelligence": 16.88,
+        "costPerTask": 0.2768
+      },
+      {
+        "model": "claude-4-5-sonnet",
+        "effort": "default",
+        "intelligence": 20.67,
+        "costPerTask": 0.5566
+      },
+      { "model": "claude-fable-5", "effort": "max", "intelligence": 49.63, "costPerTask": 8.746 },
+      { "model": "claude-fable-5-1", "effort": "low", "intelligence": 46.82, "costPerTask": 2.371 },
+      {
+        "model": "claude-fable-5-1",
+        "effort": "medium",
+        "intelligence": 48.92,
+        "costPerTask": 2.983
+      },
+      {
+        "model": "claude-fable-5-1",
+        "effort": "high",
+        "intelligence": 51.15,
+        "costPerTask": 3.913
+      },
+      {
+        "model": "claude-fable-5-1",
+        "effort": "xhigh",
+        "intelligence": 53.2,
+        "costPerTask": 5.978
+      },
+      { "model": "claude-fable-5-1", "effort": "max", "intelligence": 53.35, "costPerTask": 7.63 },
+      { "model": "claude-opus-4-8", "effort": "max", "intelligence": 41.79, "costPerTask": 4.081 },
+      { "model": "claude-opus-5", "effort": "low", "intelligence": 39.35, "costPerTask": 1.098 },
+      { "model": "claude-opus-5", "effort": "medium", "intelligence": 44.83, "costPerTask": 2.189 },
+      { "model": "claude-opus-5", "effort": "high", "intelligence": 48.12, "costPerTask": 3.613 },
+      { "model": "claude-opus-5", "effort": "xhigh", "intelligence": 49.68, "costPerTask": 4.878 },
+      { "model": "claude-opus-5", "effort": "max", "intelligence": 50.78, "costPerTask": 5.858 },
+      { "model": "claude-opus-5-5", "effort": "low", "intelligence": 42.31, "costPerTask": 0.5512 },
+      {
+        "model": "claude-opus-5-5",
+        "effort": "medium",
+        "intelligence": 51.24,
+        "costPerTask": 1.336
+      },
+      { "model": "claude-opus-5-5", "effort": "high", "intelligence": 53.58, "costPerTask": 1.823 },
+      {
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "intelligence": 55.99,
+        "costPerTask": 3.459
+      },
+      { "model": "claude-opus-5-5", "effort": "max", "intelligence": 57.62, "costPerTask": 5.982 },
+      {
+        "model": "claude-sonnet-4-6",
+        "effort": "max",
+        "intelligence": 30.06,
+        "costPerTask": 2.486
+      },
+      { "model": "claude-sonnet-5", "effort": "low", "intelligence": 24.26, "costPerTask": 0.5088 },
+      {
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+        "intelligence": 28.05,
+        "costPerTask": 0.9991
+      },
+      { "model": "claude-sonnet-5", "effort": "high", "intelligence": 31.66, "costPerTask": 1.792 },
+      {
+        "model": "claude-sonnet-5",
+        "effort": "xhigh",
+        "intelligence": 34.38,
+        "costPerTask": 2.872
+      },
+      { "model": "claude-sonnet-5", "effort": "max", "intelligence": 38.16, "costPerTask": 5.091 },
+      {
+        "model": "claude-sonnet-5-5",
+        "effort": "medium",
+        "intelligence": 40.74,
+        "costPerTask": 0.5862
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "effort": "high",
+        "intelligence": 46.74,
+        "costPerTask": 1.08
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "effort": "xhigh",
+        "intelligence": 51.85,
+        "costPerTask": 2.743
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "effort": "max",
+        "intelligence": 55.98,
+        "costPerTask": 7.621
+      },
+      {
+        "model": "deepseek-r1-0120",
+        "effort": "default",
+        "intelligence": 11.41,
+        "costPerTask": 0.2617
+      },
+      { "model": "deepseek-v3", "effort": "none", "intelligence": 8.49, "costPerTask": 0.01975 },
+      {
+        "model": "deepseek-v3-0324",
+        "effort": "none",
+        "intelligence": 9.72,
+        "costPerTask": 0.0202
+      },
+      {
+        "model": "deepseek-v4-1-flash",
+        "effort": "none",
+        "intelligence": 24.67,
+        "costPerTask": 0.1467
+      },
+      {
+        "model": "deepseek-v4-1-flash",
+        "effort": "max",
+        "intelligence": 39.46,
+        "costPerTask": 0.2652
+      },
+      {
+        "model": "deepseek-v4-flash",
+        "effort": "max",
+        "intelligence": 34.33,
+        "costPerTask": 0.2196
+      },
+      {
+        "model": "deepseek-v4-flash-0420",
+        "effort": "max",
+        "intelligence": 24.17,
+        "costPerTask": 0.1075
+      },
+      {
+        "model": "deepseek-v4-flash-0420",
+        "effort": "high",
+        "intelligence": 24.38,
+        "costPerTask": 0.1271
+      },
+      {
+        "model": "deepseek-v4-flash-vision",
+        "effort": "max",
+        "intelligence": 34.84,
+        "costPerTask": 0.3144
+      },
+      {
+        "model": "deepseek-v4-pro",
+        "effort": "none",
+        "intelligence": 20.36,
+        "costPerTask": 0.4774
+      },
+      { "model": "deepseek-v4-pro", "effort": "max", "intelligence": 36, "costPerTask": 0.674 },
+      {
+        "model": "deepseek-v4-pro-0424",
+        "effort": "max",
+        "intelligence": 30.45,
+        "costPerTask": 0.1215
+      },
+      {
+        "model": "gemini-2-5-pro",
+        "effort": "default",
+        "intelligence": 16.08,
+        "costPerTask": 0.2317
+      },
+      {
+        "model": "gemini-3-1-flash-lite",
+        "effort": "high",
+        "intelligence": 15.55,
+        "costPerTask": 0.03941
+      },
+      {
+        "model": "gemini-3-1-pro-preview",
+        "effort": "default",
+        "intelligence": 29.72,
+        "costPerTask": 0.6747
+      },
+      { "model": "gemini-3-5-flash", "effort": "high", "intelligence": 32.6, "costPerTask": 1.563 },
+      {
+        "model": "gemini-3-5-flash-lite",
+        "effort": "high",
+        "intelligence": 22.17,
+        "costPerTask": 0.1235
+      },
+      {
+        "model": "gemini-3-6-flash",
+        "effort": "high",
+        "intelligence": 33.98,
+        "costPerTask": 0.9288
+      },
+      {
+        "model": "gemini-3-7-flash",
+        "effort": "high",
+        "intelligence": 39.06,
+        "costPerTask": 0.9253
+      },
+      {
+        "model": "gemini-3-8-flash",
+        "effort": "medium",
+        "intelligence": 39.77,
+        "costPerTask": 0.931
+      },
+      {
+        "model": "gemini-3-8-flash",
+        "effort": "high",
+        "intelligence": 40.93,
+        "costPerTask": 1.243
+      },
+      { "model": "gemini-4-argon", "effort": "high", "intelligence": 52.56, "costPerTask": 1.99 },
+      { "model": "glm-5-1", "effort": "default", "intelligence": 26.06, "costPerTask": 1.019 },
+      { "model": "glm-5-2", "effort": "max", "intelligence": 33.71, "costPerTask": 1.473 },
+      { "model": "glm-5-3", "effort": "low", "intelligence": 34.3, "costPerTask": 0.8522 },
+      { "model": "glm-5-3", "effort": "max", "intelligence": 44.78, "costPerTask": 2.006 },
+      { "model": "glm-5-3-flash", "effort": "max", "intelligence": 41.81, "costPerTask": 0.2533 },
+      { "model": "gpt-5-4-mini", "effort": "xhigh", "intelligence": 24.07, "costPerTask": 0.4474 },
+      { "model": "gpt-5-4-nano", "effort": "xhigh", "intelligence": 20.72, "costPerTask": 0.1831 },
+      { "model": "gpt-5-5", "effort": "medium", "intelligence": 33.8, "costPerTask": 0.9017 },
+      { "model": "gpt-5-5", "effort": "high", "intelligence": 36.98, "costPerTask": 1.541 },
+      { "model": "gpt-5-5", "effort": "xhigh", "intelligence": 38.36, "costPerTask": 2.634 },
+      {
+        "model": "gpt-5-5-instant-06-26",
+        "effort": "default",
+        "intelligence": 26.01,
+        "costPerTask": 0.6915
+      },
+      { "model": "gpt-5-6-luna", "effort": "low", "intelligence": 21.01, "costPerTask": 0.009827 },
+      { "model": "gpt-5-6-luna", "effort": "none", "intelligence": 15.53, "costPerTask": 0.01009 },
+      { "model": "gpt-5-6-luna", "effort": "medium", "intelligence": 25.04, "costPerTask": 0.0156 },
+      { "model": "gpt-5-6-luna", "effort": "high", "intelligence": 32.12, "costPerTask": 0.04398 },
+      { "model": "gpt-5-6-luna", "effort": "xhigh", "intelligence": 34.56, "costPerTask": 0.08534 },
+      { "model": "gpt-5-6-luna", "effort": "max", "intelligence": 37.32, "costPerTask": 0.1783 },
+      { "model": "gpt-5-6-sol", "effort": "low", "intelligence": 33.47, "costPerTask": 0.2606 },
+      { "model": "gpt-5-6-sol", "effort": "medium", "intelligence": 39.24, "costPerTask": 0.505 },
+      { "model": "gpt-5-6-sol", "effort": "high", "intelligence": 42.35, "costPerTask": 0.808 },
+      { "model": "gpt-5-6-sol", "effort": "xhigh", "intelligence": 44.01, "costPerTask": 1.184 },
+      { "model": "gpt-5-6-sol", "effort": "max", "intelligence": 46.97, "costPerTask": 1.988 },
+      { "model": "gpt-5-6-terra", "effort": "none", "intelligence": 20.78, "costPerTask": 0.1397 },
+      { "model": "gpt-5-6-terra", "effort": "low", "intelligence": 27.5, "costPerTask": 0.1445 },
+      {
+        "model": "gpt-5-6-terra",
+        "effort": "medium",
+        "intelligence": 30.09,
+        "costPerTask": 0.1834
+      },
+      { "model": "gpt-5-6-terra", "effort": "high", "intelligence": 34.24, "costPerTask": 0.3379 },
+      { "model": "gpt-5-6-terra", "effort": "xhigh", "intelligence": 37.95, "costPerTask": 0.6318 },
+      { "model": "gpt-5-6-terra", "effort": "max", "intelligence": 42.08, "costPerTask": 1.399 },
+      { "model": "gpt-5-mini", "effort": "high", "intelligence": 16.77, "costPerTask": 0.0535 },
+      { "model": "gpt-6-1-sol", "effort": "low", "intelligence": 42.08, "costPerTask": 0.1308 },
+      { "model": "gpt-6-1-sol", "effort": "medium", "intelligence": 47.78, "costPerTask": 0.2137 },
+      { "model": "gpt-6-1-sol", "effort": "high", "intelligence": 50.24, "costPerTask": 0.3191 },
+      { "model": "gpt-6-1-sol", "effort": "xhigh", "intelligence": 51.04, "costPerTask": 0.3929 },
+      { "model": "gpt-6-1-sol", "effort": "max", "intelligence": 51.83, "costPerTask": 0.7242 },
+      { "model": "gpt-6-astra", "effort": "low", "intelligence": 45.78, "costPerTask": 0.8175 },
+      { "model": "gpt-6-astra", "effort": "medium", "intelligence": 49.57, "costPerTask": 1.541 },
+      { "model": "gpt-6-astra", "effort": "high", "intelligence": 50.92, "costPerTask": 1.725 },
+      { "model": "gpt-6-astra", "effort": "xhigh", "intelligence": 52.39, "costPerTask": 2.309 },
+      { "model": "gpt-6-astra", "effort": "max", "intelligence": 52.67, "costPerTask": 3.258 },
+      { "model": "gpt-6-luna", "effort": "low", "intelligence": 21.53, "costPerTask": 0.004515 },
+      { "model": "gpt-6-luna", "effort": "none", "intelligence": 18.47, "costPerTask": 0.01134 },
+      { "model": "gpt-6-luna", "effort": "medium", "intelligence": 29.93, "costPerTask": 0.01748 },
+      { "model": "gpt-6-luna", "effort": "high", "intelligence": 32.93, "costPerTask": 0.02902 },
+      { "model": "gpt-6-luna", "effort": "xhigh", "intelligence": 34.56, "costPerTask": 0.04218 },
+      { "model": "gpt-6-luna", "effort": "max", "intelligence": 38.12, "costPerTask": 0.06765 },
+      { "model": "gpt-6-sol", "effort": "low", "intelligence": 34.15, "costPerTask": 0.1328 },
+      { "model": "gpt-6-sol", "effort": "medium", "intelligence": 39.81, "costPerTask": 0.2473 },
+      { "model": "gpt-6-sol", "effort": "none", "intelligence": 28.51, "costPerTask": 0.3337 },
+      { "model": "gpt-6-sol", "effort": "high", "intelligence": 42.4, "costPerTask": 0.3728 },
+      { "model": "gpt-6-sol", "effort": "xhigh", "intelligence": 44.24, "costPerTask": 0.5208 },
+      { "model": "gpt-6-sol", "effort": "max", "intelligence": 47.63, "costPerTask": 1.045 },
+      { "model": "gpt-oss-120b", "effort": "high", "intelligence": 11.6, "costPerTask": 0.1074 },
+      { "model": "gpt-oss-20b", "effort": "high", "intelligence": 8.97, "costPerTask": 0.01246 },
+      {
+        "model": "granite-4-2-3b",
+        "effort": "default",
+        "intelligence": 9.06,
+        "costPerTask": 0.00598
+      },
+      {
+        "model": "granite-4-2-8b",
+        "effort": "default",
+        "intelligence": 11.08,
+        "costPerTask": 0.0236
+      },
+      { "model": "grok-4-3", "effort": "none", "intelligence": 13.99, "costPerTask": 0.1697 },
+      { "model": "grok-4-3", "effort": "high", "intelligence": 24.88, "costPerTask": 0.2054 },
+      { "model": "grok-4-5", "effort": "high", "intelligence": 38.81, "costPerTask": 1.036 },
+      { "model": "grok-4-6", "effort": "low", "intelligence": 35.12, "costPerTask": 0.4753 },
+      { "model": "grok-4-6", "effort": "medium", "intelligence": 42.84, "costPerTask": 1.496 },
+      { "model": "grok-4-6", "effort": "high", "intelligence": 44.31, "costPerTask": 1.859 },
+      { "model": "grok-4-6", "effort": "xhigh", "intelligence": 44.2, "costPerTask": 2.324 },
+      { "model": "grok-4-7", "effort": "high", "intelligence": 46.33, "costPerTask": 2.726 },
+      { "model": "grok-4-7", "effort": "xhigh", "intelligence": 46.45, "costPerTask": 3.738 },
+      { "model": "hy3", "effort": "default", "intelligence": 25.3, "costPerTask": 0.0718 },
+      {
+        "model": "inkling-small",
+        "effort": "default",
+        "intelligence": 25.66,
+        "costPerTask": 0.08946
+      },
+      { "model": "kimi-k2-6", "effort": "default", "intelligence": 26.98, "costPerTask": 0.7998 },
+      {
+        "model": "kimi-k2-7-code",
+        "effort": "default",
+        "intelligence": 25.81,
+        "costPerTask": 0.5412
+      },
+      { "model": "kimi-k3", "effort": "low", "intelligence": 30.07, "costPerTask": 1.146 },
+      { "model": "kimi-k3", "effort": "max", "intelligence": 43.59, "costPerTask": 2 },
+      {
+        "model": "longcat-2-0",
+        "effort": "default",
+        "intelligence": 19.11,
+        "costPerTask": 0.05899
+      },
+      { "model": "mercury-2-5", "effort": "default", "intelligence": 12.34, "costPerTask": 0.1167 },
+      {
+        "model": "mimo-v2-5-pro",
+        "effort": "default",
+        "intelligence": 25.99,
+        "costPerTask": 0.05407
+      },
+      {
+        "model": "mimo-v2-6-flash",
+        "effort": "default",
+        "intelligence": 37.88,
+        "costPerTask": 0.06219
+      },
+      {
+        "model": "mimo-v2-6-pro",
+        "effort": "default",
+        "intelligence": 46.32,
+        "costPerTask": 0.1332
+      },
+      { "model": "minimax-m3", "effort": "default", "intelligence": 29.22, "costPerTask": 0.5076 },
+      {
+        "model": "ministral-3-14b",
+        "effort": "none",
+        "intelligence": 6.04,
+        "costPerTask": 0.01944
+      },
+      {
+        "model": "ministral-3-3b",
+        "effort": "none",
+        "intelligence": 4.84,
+        "costPerTask": 0.007847
+      },
+      { "model": "ministral-3-8b", "effort": "none", "intelligence": 5.48, "costPerTask": 0.01109 },
+      {
+        "model": "mistral-large-3",
+        "effort": "none",
+        "intelligence": 9.27,
+        "costPerTask": 0.03113
+      },
+      {
+        "model": "mistral-medium-3-5",
+        "effort": "high",
+        "intelligence": 14.19,
+        "costPerTask": 0.502
+      },
+      {
+        "model": "mistral-small-3-1",
+        "effort": "none",
+        "intelligence": 7.12,
+        "costPerTask": 0.03503
+      },
+      {
+        "model": "mistral-small-4",
+        "effort": "default",
+        "intelligence": 11.27,
+        "costPerTask": 0.01505
+      },
+      { "model": "muse-glimmer", "effort": "high", "intelligence": 17.48, "costPerTask": 0.05671 },
+      { "model": "muse-spark-1-1", "effort": "xhigh", "intelligence": 33.73, "costPerTask": 1.38 },
+      {
+        "model": "muse-spark-1-2",
+        "effort": "xhigh",
+        "intelligence": 39.58,
+        "costPerTask": 0.9747
+      },
+      { "model": "muse-spark-1-3", "effort": "xhigh", "intelligence": 45.07, "costPerTask": 1.368 },
+      { "model": "muse-spark-1-3", "effort": "max", "intelligence": 48.09, "costPerTask": 1.605 },
+      {
+        "model": "nemotron-3-5-lightning",
+        "effort": "default",
+        "intelligence": 12.86,
+        "costPerTask": 0.0931
+      },
+      {
+        "model": "nemotron-3-ultra-550b-a55b",
+        "effort": "default",
+        "intelligence": 22.93,
+        "costPerTask": 0.5976
+      },
+      {
+        "model": "nvidia-nemotron-3-nano-30b-a3b",
+        "effort": "default",
+        "intelligence": 8.9,
+        "costPerTask": 0.01675
+      },
+      {
+        "model": "nvidia-nemotron-3-super-120b-a12b",
+        "effort": "default",
+        "intelligence": 12.83,
+        "costPerTask": 1.639
+      },
+      { "model": "quasar-438b", "effort": "max", "intelligence": 26.74, "costPerTask": 2.025 },
+      {
+        "model": "qwen3-235b-a22b-instruct-2507-reasoning",
+        "effort": "default",
+        "intelligence": 12.71,
+        "costPerTask": 0.08056
+      },
+      {
+        "model": "qwen3-30b-a3b-2507-reasoning",
+        "effort": "default",
+        "intelligence": 9.81,
+        "costPerTask": 0.07656
+      },
+      {
+        "model": "qwen3-5-122b-a10b",
+        "effort": "default",
+        "intelligence": 15.57,
+        "costPerTask": 0.3247
+      },
+      {
+        "model": "qwen3-5-397b-a17b",
+        "effort": "default",
+        "intelligence": 18.42,
+        "costPerTask": 0.4746
+      },
+      { "model": "qwen3-5-9b", "effort": "default", "intelligence": 11.2, "costPerTask": 0.2126 },
+      { "model": "qwen3-6-27b", "effort": "default", "intelligence": 21.43, "costPerTask": 0.6212 },
+      {
+        "model": "qwen3-6-35b-a3b",
+        "effort": "default",
+        "intelligence": 18.23,
+        "costPerTask": 0.4751
+      },
+      { "model": "qwen3-7-max", "effort": "default", "intelligence": 29.46, "costPerTask": 1.147 },
+      { "model": "qwen3-7-plus", "effort": "default", "intelligence": 25.16, "costPerTask": 0.217 },
+      {
+        "model": "qwen3-8-2-4t-a95b",
+        "effort": "default",
+        "intelligence": 39.89,
+        "costPerTask": 2.156
+      },
+      { "model": "qwen3-8-27b", "effort": "xhigh", "intelligence": 33.7, "costPerTask": 1.007 },
+      { "model": "qwen3-8-27b", "effort": "low", "intelligence": 26.2, "costPerTask": 1.048 },
+      { "model": "qwen3-8-27b", "effort": "medium", "intelligence": 27.55, "costPerTask": 1.133 },
+      { "model": "qwen3-8-27b", "effort": "none", "intelligence": 20.15, "costPerTask": 2.488 },
+      {
+        "model": "qwen3-8-flash-next",
+        "effort": "default",
+        "intelligence": 39.82,
+        "costPerTask": 0.3722
+      },
+      { "model": "qwen3-8-max", "effort": "default", "intelligence": 40.15, "costPerTask": 2.67 },
+      {
+        "model": "qwen3-8-max-0902",
+        "effort": "default",
+        "intelligence": 45.42,
+        "costPerTask": 5.409
+      },
+      {
+        "model": "qwen3-coder-next",
+        "effort": "none",
+        "intelligence": 9.24,
+        "costPerTask": 0.5518
+      },
+      { "model": "ring-2-6-1t", "effort": "xhigh", "intelligence": 16.62, "costPerTask": 0.2872 },
+      { "model": "solar-mini4", "effort": "default", "intelligence": 24.05, "costPerTask": 0.3634 },
+      { "model": "solar-pro-3", "effort": "high", "intelligence": 7.82, "costPerTask": 0.07943 },
+      {
+        "model": "step-5-preview",
+        "effort": "default",
+        "intelligence": 43.73,
+        "costPerTask": 0.7175
+      },
+      {
+        "model": "trinity-large-thinking",
+        "effort": "default",
+        "intelligence": 10.82,
+        "costPerTask": 0.1188
+      }
+    ]
   }
 }
