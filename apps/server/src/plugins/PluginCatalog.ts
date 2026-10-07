@@ -108,6 +108,7 @@ const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
   ...(manifest.description === undefined ? {} : { description: manifest.description }),
   capabilities: manifest.capabilities,
   proposedApi: manifest.proposedApi,
+  ...(manifest.tools === undefined || manifest.tools.length === 0 ? {} : { tools: manifest.tools }),
 });
 
 const catalogError = (
@@ -130,6 +131,8 @@ export class PluginCatalog extends Context.Service<
   PluginCatalog,
   {
     readonly list: Effect.Effect<PluginCatalogSnapshot>;
+    /** Changes whenever `list` could show different installation records, so a reader can cache what it derives from them. */
+    readonly revision: Effect.Effect<number>;
     /** One snapshot now, then a fresh one after every catalogue or plugin state change. */
     readonly subscribe: Stream.Stream<PluginCatalogSnapshot>;
     readonly add: (
@@ -716,6 +719,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   return PluginCatalog.of({
     list,
+    revision: Effect.sync(() => revision),
     subscribe: Stream.unwrap(
       // Subscribe before the first snapshot so a change in between is not lost.
       PubSub.subscribe(changes).pipe(

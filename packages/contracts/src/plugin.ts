@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PLUGIN_TOOL_LIMITS, PluginToolDeclaration } from "./pluginTools.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -60,6 +61,12 @@ export const PluginManifest = Schema.Struct({
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Opts into APIs that may change or disappear without an API version bump. */
   proposedApi: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Tools for agents; needs the `tools` capability (see PluginTools). */
+  tools: Schema.optionalKey(
+    Schema.Array(PluginToolDeclaration).check(
+      Schema.isMaxLength(PLUGIN_TOOL_LIMITS.maxToolsPerPlugin),
+    ),
+  ),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

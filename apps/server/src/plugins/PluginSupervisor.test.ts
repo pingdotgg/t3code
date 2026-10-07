@@ -168,7 +168,9 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
             Effect.map((error) => error.message),
           );
         expect(yield* reason({ apiVersion: 2 })).toContain("targets plugin API version 2");
-        expect(yield* reason({ capabilities: ["tools"] })).toContain("does not support tools");
+        expect(yield* reason({ capabilities: ["unimplemented"] })).toContain(
+          "does not support unimplemented",
+        );
         expect(yield* reason({ entry: "../main.mjs" })).toContain("is invalid");
         expect(yield* reason({ entry: "main.ts" })).toContain("is invalid");
         expect(yield* reason({ id: "Not-Qualified" })).toContain("is invalid");
@@ -721,6 +723,26 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
 
         const gated = yield* supervisor.invoke(stable.manifest.id, "ping", null).pipe(Effect.flip);
         expect(gated.message).toContain("activation failed");
+      }),
+    );
+
+    it.effect("lets plugins register t3.tool handlers and keeps other t3 names reserved", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        const { registration } = yield* preparePlugin("test.reserved", {
+          entry: "reservedHandlers.mjs",
+        });
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+
+        expect(yield* supervisor.invoke(pluginId, "t3.tool.echo", { text: "hi" })).toEqual({
+          handler: "t3.tool.echo",
+          input: { text: "hi" },
+        });
+        expect(yield* supervisor.invoke(pluginId, "refusals", null)).toEqual({
+          "t3.events": 'Handler names starting with "t3." are reserved.',
+          "t3.other": 'Handler names starting with "t3." are reserved.',
+        });
       }),
     );
   });

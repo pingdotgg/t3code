@@ -2,6 +2,7 @@ import {
   PLUGIN_API_VERSION,
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_TOOLS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
 } from "@t3tools/contracts";
@@ -10,9 +11,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { preparePluginTools } from "./pluginToolDeclarations.ts";
+
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
 const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
   PLUGIN_EVENTS_CAPABILITY,
+  PLUGIN_TOOLS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -36,6 +40,17 @@ export interface PluginRegistration {
   /** Real path of the entry module, inside `directory`. */
   readonly entryPath: string;
 }
+
+/** Declared tools need the capability and the proposed `handle` API, and must compile. */
+const checkTools = (manifest: PluginManifest): string | undefined => {
+  const tools = manifest.tools ?? [];
+  if (tools.length === 0) return undefined;
+  if (!manifest.capabilities.includes(PLUGIN_TOOLS_CAPABILITY))
+    return "it declares tools without the tools capability.";
+  if (!manifest.proposedApi) return "it declares tools, which need proposedApi: true.";
+  const prepared = preparePluginTools(manifest, tools);
+  return "problem" in prepared ? prepared.problem : undefined;
+};
 
 /**
  * Reads and validates `t3-plugin.json` in `directory`. The entry must resolve,
@@ -77,6 +92,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   // Events arrive through `context.proposed.onEvent`, which only exists with the opt-in.
   if (manifest.capabilities.includes(PLUGIN_EVENTS_CAPABILITY) && !manifest.proposedApi)
     return yield* fail(`the "${PLUGIN_EVENTS_CAPABILITY}" capability needs "proposedApi": true.`);
+  const toolProblem = checkTools(manifest);
+  if (toolProblem !== undefined) return yield* fail(toolProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
