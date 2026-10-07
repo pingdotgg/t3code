@@ -2,14 +2,14 @@ import type * as cf from "@cloudflare/workers-types";
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import {
   RpcClient,
   RpcSerialization,
   type Rpc,
   type RpcGroup,
-} from "effect/unstable/rpc";
-import type * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+} from "effect/rpc";
+import type * as RpcClientError from "effect/rpc/RpcClientError";
 import {
   asEffectOrStream,
   decodeRpcResult,

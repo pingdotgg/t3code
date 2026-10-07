@@ -19,105 +19,138 @@ const logLevel = Effect.provideService(
   MinimumLogLevel,
   process.env.DEBUG ? "Debug" : "Info",
 );
-test.provider("create and delete hyperdrive with default props", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete hyperdrive with default props",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const { db, hd } = yield* stack.deploy(
-      Effect.gen(function* () {
-        const db = yield* Neon.Project("DefaultProject");
-        const hd = yield* Cloudflare.Hyperdrive.Connection(
-          "DefaultHyperdrive",
-          {
-            origin: db.origin,
-          },
-        );
-        return { db, hd };
-      }),
-    );
+      const { db, hd } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const db = yield* Neon.Project("DefaultProject");
+          const hd = yield* Cloudflare.Hyperdrive.Connection(
+            "DefaultHyperdrive",
+            {
+              origin: db.origin,
+            },
+          );
+          return { db, hd };
+        }),
+      );
 
-    expect(hd.hyperdriveId).toBeDefined();
-    expect(hd.name).toBeDefined();
+      expect(hd.hyperdriveId).toBeDefined();
+      expect(hd.name).toBeDefined();
 
-    const actual = yield* hyperdrive.getConfig({
-      accountId,
-      hyperdriveId: hd.hyperdriveId,
-    });
-    expect(actual.id).toEqual(hd.hyperdriveId);
-    assert("host" in actual.origin, "db.origin must have a host");
-    expect(actual.origin.host).toEqual(db.origin.host);
+      const actual = yield* hyperdrive.getConfig({
+        accountId,
+        hyperdriveId: hd.hyperdriveId,
+      });
+      expect(actual.id).toEqual(hd.hyperdriveId);
+      assert("host" in actual.origin, "db.origin must have a host");
+      expect(actual.origin.host).toEqual(db.origin.host);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForConfigToBeDeleted(hd.hyperdriveId, accountId);
-  }).pipe(logLevel),
+      yield* waitForConfigToBeDeleted(hd.hyperdriveId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+  },
 );
 
-test.provider("create, update, delete hyperdrive", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, delete hyperdrive",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const hd = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Neon.Project("CRUDProject");
-        return yield* Cloudflare.Hyperdrive.Connection("CRUDHyperdrive", {
-          origin: project.origin,
-          caching: { disabled: false, maxAge: 60 },
-        });
-      }),
-    );
+      const hd = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Neon.Project("CRUDProject");
+          return yield* Cloudflare.Hyperdrive.Connection("CRUDHyperdrive", {
+            origin: project.origin,
+            caching: { disabled: false, maxAge: 60 },
+          });
+        }),
+      );
 
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Neon.Project("CRUDProject");
-        return yield* Cloudflare.Hyperdrive.Connection("CRUDHyperdrive", {
-          origin: project.origin,
-          caching: { disabled: true },
-        });
-      }),
-    );
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Neon.Project("CRUDProject");
+          return yield* Cloudflare.Hyperdrive.Connection("CRUDHyperdrive", {
+            origin: project.origin,
+            caching: { disabled: true },
+          });
+        }),
+      );
 
-    expect(updated.hyperdriveId).toEqual(hd.hyperdriveId);
+      expect(updated.hyperdriveId).toEqual(hd.hyperdriveId);
 
-    const actual = yield* hyperdrive.getConfig({
-      accountId,
-      hyperdriveId: updated.hyperdriveId,
-    });
-    // After PUT with `disabled: true`, caching should reflect the change.
-    expect(actual.caching).toBeDefined();
+      const actual = yield* hyperdrive.getConfig({
+        accountId,
+        hyperdriveId: updated.hyperdriveId,
+      });
+      // After PUT with `disabled: true`, caching should reflect the change.
+      expect(actual.caching).toBeDefined();
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForConfigToBeDeleted(hd.hyperdriveId, accountId);
-  }).pipe(logLevel),
+      yield* waitForConfigToBeDeleted(hd.hyperdriveId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates the deployed hyperdrive", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed hyperdrive",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const hd = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Neon.Project("ListProject");
-        return yield* Cloudflare.Hyperdrive.Connection("ListHyperdrive", {
-          origin: project.origin,
-        });
-      }),
-    );
+      const hd = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Neon.Project("ListProject");
+          return yield* Cloudflare.Hyperdrive.Connection("ListHyperdrive", {
+            origin: project.origin,
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Hyperdrive.Connection,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Hyperdrive.Connection,
+      );
+      const all = yield* provider.list();
 
-    expect(all.some((x) => x.hyperdriveId === hd.hyperdriveId)).toBe(true);
+      expect(all.some((x) => x.hyperdriveId === hd.hyperdriveId)).toBe(true);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+  },
 );
 
 const waitForConfigToBeDeleted = Effect.fn(function* (

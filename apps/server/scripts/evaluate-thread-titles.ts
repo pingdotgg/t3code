@@ -6,7 +6,7 @@
 // Add --initial to evaluate only the opening request.
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -157,9 +157,11 @@ await Effect.runPromise(
               ForgejoCli.layer,
               AzureDevOpsCli.layer,
               // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
-              BitbucketApi.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+              BitbucketApi.layer,
             ),
           ),
+          // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),
           Layer.provide(VcsProcess.layer),

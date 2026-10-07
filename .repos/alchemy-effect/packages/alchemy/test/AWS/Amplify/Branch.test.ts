@@ -106,5 +106,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertBranchDeleted(created.appId, "release");
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:amplify", "live"], timeout: 240_000 },
 );

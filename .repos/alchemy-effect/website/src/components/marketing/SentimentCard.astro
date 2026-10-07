@@ -1,0 +1,64 @@
+---
+import { avatar, type Post } from "../../data/sentiment";
+import { icons } from "@iconify-json/simple-icons";
+
+interface Props {
+  post: Post;
+  /** Decorative duplicate (marquee loop): not focusable. */
+  hidden?: boolean;
+}
+const { post, hidden } = Astro.props;
+const discord = post.source === "discord";
+const where = discord ? "the Alchemy Discord" : "X";
+---
+
+<a
+  class="snt-card"
+  href={post.url}
+  target="_blank"
+  rel="noopener"
+  tabindex={hidden ? -1 : undefined}
+  aria-label={hidden ? undefined : `${post.name} on ${where}: ${post.text}`}
+>
+  <span class="snt-card__head">
+    <img
+      class="snt-avatar"
+      src={avatar(post)}
+      alt=""
+      width="32"
+      height="32"
+      loading="lazy"
+      decoding="async"
+    />
+    <span class="snt-card__who">
+      <span class="snt-card__name">{post.name}</span>
+      <span class="snt-handle">@{post.handle}</span>
+    </span>
+    {
+      discord ? (
+        <svg
+          class="snt-card__x"
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          aria-hidden="true"
+          set:html={icons.icons.discord!.body}
+        />
+      ) : (
+            <svg
+              class="snt-card__x"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+              fill="currentColor"
+            >
+              <path
+                d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+              ></path>
+            </svg>
+      )
+    }
+  </span>
+  <p class="snt-card__text">{post.text}</p>
+</a>

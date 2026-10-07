@@ -16,12 +16,16 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
@@ -102,6 +106,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
       Schema.Struct({ type: Schema.Literal("regenerate") }),
     ]),
   }),
+  /** Follows a Stop: sends `thread.stop` to every delegated task under the stopped thread. */
+  Schema.Struct({
+    type: Schema.Literal("delegated-tasks.stop"),
+    reason: Schema.optional(Schema.String),
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -113,6 +122,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
+  "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -131,6 +141,21 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
   "cancelled",
 ]);
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
+
+/**
+ * How long a succeeded or cancelled effect row is kept after it completes.
+ * Claiming, recovery, the orchestrator and storage cleanup only ask whether a
+ * row is pending, running or failed, so a missing succeeded or cancelled row
+ * reads the same as a present one. Its one other use is deduplication: `enqueue`
+ * ignores an id that already exists, and ids are deterministic per command or
+ * run. Command retries are deduplicated by their receipts first, and a run's
+ * effects are re-enqueued only around one server restart, so a week is far
+ * longer than either and leaves recent history for debugging.
+ * Failed rows are kept: storage cleanup keeps a deleted thread's worktree while
+ * any of its effects failed.
+ */
+export const SETTLED_EFFECT_RETENTION = Duration.days(7);
+const PRUNE_BATCH_SIZE = 500;
 
 export interface OrchestrationEffectV2 {
   readonly id: string;
@@ -217,6 +242,8 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly error: string;
   }) => Effect.Effect<boolean, EffectOutboxError>;
+  /** Deletes succeeded and cancelled rows older than `SETTLED_EFFECT_RETENTION`. Returns the count. */
+  readonly pruneSettled: Effect.Effect<number, EffectOutboxError>;
 }
 
 export class EffectOutboxV2 extends Context.Service<EffectOutboxV2, EffectOutboxV2Shape>()(
@@ -278,9 +305,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    // Each thread runs its effects one at a time, in enqueue (rowid) order. An earlier
+    // effect waiting out a retry backoff still blocks later ones, so a turn
+    // cannot start while a failed rollback is about to restore files. A claim
+    // that skips restart continuations is not blocked by them either.
     // Title generation is correlated metadata work, so it has its own
     // per-thread lane and cannot delay provider lifecycle effects.
-    const claimableCandidatePredicate = (availableBefore?: string) =>
+    const claimableCandidatePredicate = (
+      availableBefore?: string,
+      excludeRestartContinuations = false,
+    ) =>
       sql`
         ${
           availableBefore === undefined
@@ -292,7 +326,18 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active
           WHERE active.thread_id = candidate.thread_id
-            AND active.status = 'running'
+            AND (
+              active.status = 'running'
+              OR (
+                active.status = 'pending'
+                AND active.rowid < candidate.rowid
+                AND ${
+                  excludeRestartContinuations
+                    ? sql`active.effect_type != 'provider-runtime.continue'`
+                    : sql`1 = 1`
+                }
+              )
+            )
             AND (
               (
                 candidate.effect_type = 'thread-title.generate'
@@ -492,7 +537,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
-              WHERE ${claimableCandidatePredicate(nowIso)}
+              WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
@@ -611,8 +656,48 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         }).pipe(
           Effect.mapError((cause) => new EffectOutboxError({ operation: "fail", effectId, cause })),
         ),
+      pruneSettled: Effect.gen(function* () {
+        const cutoff = DateTime.formatIso(
+          DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION),
+        );
+        // Each batch is its own statement, so a large backlog never holds the
+        // write lock for long and writers can commit between batches.
+        const deleteBatch = sql<{ readonly effect_id: string }>`
+          DELETE FROM orchestration_v2_effect_outbox
+          WHERE rowid IN (
+            SELECT rowid
+            FROM orchestration_v2_effect_outbox
+            WHERE status IN ('succeeded', 'cancelled')
+              AND completed_at < ${cutoff}
+            LIMIT ${PRUNE_BATCH_SIZE}
+          )
+          RETURNING effect_id
+        `;
+        let pruned = 0;
+        while (true) {
+          const deleted = (yield* deleteBatch).length;
+          pruned += deleted;
+          if (deleted < PRUNE_BATCH_SIZE) return pruned;
+          yield* Effect.yieldNow;
+        }
+      }).pipe(
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "prune-settled", cause })),
+      ),
     };
 
     return service;
+  }),
+);
+
+/** Prunes settled effect rows once the server is active, then every hour. */
+export const layerPruneWorker = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutboxV2;
+    yield* forkParked(
+      outbox.pruneSettled.pipe(
+        Effect.catch((cause) => Effect.logWarning("Failed to prune settled effects", { cause })),
+        Effect.repeat(Schedule.spaced(Duration.hours(1))),
+      ),
+    );
   }),
 );

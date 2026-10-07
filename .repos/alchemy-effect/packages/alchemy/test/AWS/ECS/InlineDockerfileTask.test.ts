@@ -103,5 +103,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW || !!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:ecs",
+      "provider:docker",
+      "provider:docker:dockerfile",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );

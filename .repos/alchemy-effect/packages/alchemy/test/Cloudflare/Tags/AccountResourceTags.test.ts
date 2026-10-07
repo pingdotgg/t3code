@@ -54,136 +54,170 @@ const expectTagsCleared = (
     Effect.map((tags) => expect(tags).toEqual({})),
   );
 
-test.provider("create, update, and clear tags on a KV namespace", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, and clear tags on a KV namespace",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const v1 = yield* stack.deploy(
-      Effect.gen(function* () {
-        const kv = yield* Cloudflare.KV.Namespace("TagsKv", {
-          title: KV_TITLE_CRUD,
-        });
-        const tags = yield* Cloudflare.Tags.AccountResourceTags("KvTags", {
-          resourceType: "kv_namespace",
-          resourceId: kv.namespaceId,
-          tags: { env: "test", team: "alchemy" },
-        }).pipe(adopt(true));
-        return { kv, tags };
-      }),
-    );
+      const v1 = yield* stack.deploy(
+        Effect.gen(function* () {
+          const kv = yield* Cloudflare.KV.Namespace("TagsKv", {
+            title: KV_TITLE_CRUD,
+          });
+          const tags = yield* Cloudflare.Tags.AccountResourceTags("KvTags", {
+            resourceType: "kv_namespace",
+            resourceId: kv.namespaceId,
+            tags: { env: "test", team: "alchemy" },
+          }).pipe(adopt(true));
+          return { kv, tags };
+        }),
+      );
 
-    expect(v1.tags.accountId).toEqual(accountId);
-    expect(v1.tags.resourceType).toEqual("kv_namespace");
-    expect(v1.tags.resourceId).toEqual(v1.kv.namespaceId);
-    expect(v1.tags.tags).toEqual({ env: "test", team: "alchemy" });
-    expect(v1.tags.etag).toBeTruthy();
+      expect(v1.tags.accountId).toEqual(accountId);
+      expect(v1.tags.resourceType).toEqual("kv_namespace");
+      expect(v1.tags.resourceId).toEqual(v1.kv.namespaceId);
+      expect(v1.tags.tags).toEqual({ env: "test", team: "alchemy" });
+      expect(v1.tags.etag).toBeTruthy();
 
-    const live = yield* getTags(accountId, v1.kv.namespaceId, "kv_namespace");
-    expect(live).toEqual({ env: "test", team: "alchemy" });
+      const live = yield* getTags(accountId, v1.kv.namespaceId, "kv_namespace");
+      expect(live).toEqual({ env: "test", team: "alchemy" });
 
-    // In-place update — PUT replaces the full set: change `env`, drop
-    // `team`, add `owner`.
-    const v2 = yield* stack.deploy(
-      Effect.gen(function* () {
-        const kv = yield* Cloudflare.KV.Namespace("TagsKv", {
-          title: KV_TITLE_CRUD,
-        });
-        const tags = yield* Cloudflare.Tags.AccountResourceTags("KvTags", {
-          resourceType: "kv_namespace",
-          resourceId: kv.namespaceId,
-          tags: { env: "prod", owner: "qa" },
-        }).pipe(adopt(true));
-        return { kv, tags };
-      }),
-    );
+      // In-place update — PUT replaces the full set: change `env`, drop
+      // `team`, add `owner`.
+      const v2 = yield* stack.deploy(
+        Effect.gen(function* () {
+          const kv = yield* Cloudflare.KV.Namespace("TagsKv", {
+            title: KV_TITLE_CRUD,
+          });
+          const tags = yield* Cloudflare.Tags.AccountResourceTags("KvTags", {
+            resourceType: "kv_namespace",
+            resourceId: kv.namespaceId,
+            tags: { env: "prod", owner: "qa" },
+          }).pipe(adopt(true));
+          return { kv, tags };
+        }),
+      );
 
-    // Same target resource — not a replacement.
-    expect(v2.kv.namespaceId).toEqual(v1.kv.namespaceId);
-    expect(v2.tags.tags).toEqual({ env: "prod", owner: "qa" });
+      // Same target resource — not a replacement.
+      expect(v2.kv.namespaceId).toEqual(v1.kv.namespaceId);
+      expect(v2.tags.tags).toEqual({ env: "prod", owner: "qa" });
 
-    const updated = yield* getTags(
-      accountId,
-      v2.kv.namespaceId,
-      "kv_namespace",
-    );
-    expect(updated).toEqual({ env: "prod", owner: "qa" });
+      const updated = yield* getTags(
+        accountId,
+        v2.kv.namespaceId,
+        "kv_namespace",
+      );
+      expect(updated).toEqual({ env: "prod", owner: "qa" });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectTagsCleared(accountId, v1.kv.namespaceId, "kv_namespace");
-  }).pipe(logLevel),
+      yield* expectTagsCleared(accountId, v1.kv.namespaceId, "kv_namespace");
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:tags",
+      "live",
+    ],
+  },
 );
 
-test.provider("changing resourceId triggers replacement", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing resourceId triggers replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const a = yield* Cloudflare.KV.Namespace("KvA", {
-          title: KV_TITLE_REPLACE_A,
-        });
-        const b = yield* Cloudflare.KV.Namespace("KvB", {
-          title: KV_TITLE_REPLACE_B,
-        });
-        const tags = yield* Cloudflare.Tags.AccountResourceTags("ReplaceTags", {
-          resourceType: "kv_namespace",
-          resourceId: a.namespaceId,
-          tags: { pinned: "yes" },
-        }).pipe(adopt(true));
-        return { a, b, tags };
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const a = yield* Cloudflare.KV.Namespace("KvA", {
+            title: KV_TITLE_REPLACE_A,
+          });
+          const b = yield* Cloudflare.KV.Namespace("KvB", {
+            title: KV_TITLE_REPLACE_B,
+          });
+          const tags = yield* Cloudflare.Tags.AccountResourceTags(
+            "ReplaceTags",
+            {
+              resourceType: "kv_namespace",
+              resourceId: a.namespaceId,
+              tags: { pinned: "yes" },
+            },
+          ).pipe(adopt(true));
+          return { a, b, tags };
+        }),
+      );
 
-    expect(initial.tags.resourceId).toEqual(initial.a.namespaceId);
-    const onA = yield* getTags(
-      accountId,
-      initial.a.namespaceId,
-      "kv_namespace",
-    );
-    expect(onA).toEqual({ pinned: "yes" });
+      expect(initial.tags.resourceId).toEqual(initial.a.namespaceId);
+      const onA = yield* getTags(
+        accountId,
+        initial.a.namespaceId,
+        "kv_namespace",
+      );
+      expect(onA).toEqual({ pinned: "yes" });
 
-    // Repoint the tag set at namespace B — `(resourceType, resourceId)`
-    // is the tag set's identity, so this is a replacement: B gets
-    // tagged, and the old set on A is cleared by the replacement delete.
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        const a = yield* Cloudflare.KV.Namespace("KvA", {
-          title: KV_TITLE_REPLACE_A,
-        });
-        const b = yield* Cloudflare.KV.Namespace("KvB", {
-          title: KV_TITLE_REPLACE_B,
-        });
-        const tags = yield* Cloudflare.Tags.AccountResourceTags("ReplaceTags", {
-          resourceType: "kv_namespace",
-          resourceId: b.namespaceId,
-          tags: { pinned: "yes" },
-        }).pipe(adopt(true));
-        return { a, b, tags };
-      }),
-    );
+      // Repoint the tag set at namespace B — `(resourceType, resourceId)`
+      // is the tag set's identity, so this is a replacement: B gets
+      // tagged, and the old set on A is cleared by the replacement delete.
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          const a = yield* Cloudflare.KV.Namespace("KvA", {
+            title: KV_TITLE_REPLACE_A,
+          });
+          const b = yield* Cloudflare.KV.Namespace("KvB", {
+            title: KV_TITLE_REPLACE_B,
+          });
+          const tags = yield* Cloudflare.Tags.AccountResourceTags(
+            "ReplaceTags",
+            {
+              resourceType: "kv_namespace",
+              resourceId: b.namespaceId,
+              tags: { pinned: "yes" },
+            },
+          ).pipe(adopt(true));
+          return { a, b, tags };
+        }),
+      );
 
-    expect(replaced.tags.resourceId).toEqual(replaced.b.namespaceId);
-    expect(replaced.tags.resourceId).not.toEqual(initial.a.namespaceId);
+      expect(replaced.tags.resourceId).toEqual(replaced.b.namespaceId);
+      expect(replaced.tags.resourceId).not.toEqual(initial.a.namespaceId);
 
-    const onB = yield* getTags(
-      accountId,
-      replaced.b.namespaceId,
-      "kv_namespace",
-    );
-    expect(onB).toEqual({ pinned: "yes" });
+      const onB = yield* getTags(
+        accountId,
+        replaced.b.namespaceId,
+        "kv_namespace",
+      );
+      expect(onB).toEqual({ pinned: "yes" });
 
-    // The old tag set on A was cleared as part of the replacement.
-    yield* expectTagsCleared(accountId, replaced.a.namespaceId, "kv_namespace");
+      // The old tag set on A was cleared as part of the replacement.
+      yield* expectTagsCleared(
+        accountId,
+        replaced.a.namespaceId,
+        "kv_namespace",
+      );
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectTagsCleared(accountId, replaced.b.namespaceId, "kv_namespace");
-  }).pipe(logLevel),
+      yield* expectTagsCleared(
+        accountId,
+        replaced.b.namespaceId,
+        "kv_namespace",
+      );
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:tags",
+      "live",
+    ],
+  },
 );
 
 test.provider(
@@ -254,53 +288,64 @@ test.provider(
 
       yield* expectTagsCleared(accountId, accountId, "account");
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:tags", "live"] },
 );
 
 const KV_TITLE_LIST = "alchemy-account-tags-list";
 
-test.provider("list enumerates account-wide tagged resources", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates account-wide tagged resources",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const kv = yield* Cloudflare.KV.Namespace("ListKv", {
-          title: KV_TITLE_LIST,
-        });
-        const tags = yield* Cloudflare.Tags.AccountResourceTags("ListTags", {
-          resourceType: "kv_namespace",
-          resourceId: kv.namespaceId,
-          tags: { env: "list-test", team: "alchemy" },
-        }).pipe(adopt(true));
-        return { kv, tags };
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const kv = yield* Cloudflare.KV.Namespace("ListKv", {
+            title: KV_TITLE_LIST,
+          });
+          const tags = yield* Cloudflare.Tags.AccountResourceTags("ListTags", {
+            resourceType: "kv_namespace",
+            resourceId: kv.namespaceId,
+            tags: { env: "list-test", team: "alchemy" },
+          }).pipe(adopt(true));
+          return { kv, tags };
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Tags.AccountResourceTags,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Tags.AccountResourceTags,
+      );
+      const all = yield* provider.list();
 
-    const match = all.find(
-      (x) =>
-        x.resourceType === "kv_namespace" &&
-        x.resourceId === deployed.kv.namespaceId,
-    );
-    expect(match).toBeDefined();
-    expect(match?.accountId).toEqual(accountId);
-    expect(match?.tags).toEqual({ env: "list-test", team: "alchemy" });
-    expect(match?.etag).toBeTruthy();
+      const match = all.find(
+        (x) =>
+          x.resourceType === "kv_namespace" &&
+          x.resourceId === deployed.kv.namespaceId,
+      );
+      expect(match).toBeDefined();
+      expect(match?.accountId).toEqual(accountId);
+      expect(match?.tags).toEqual({ env: "list-test", team: "alchemy" });
+      expect(match?.etag).toBeTruthy();
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectTagsCleared(
-      accountId,
-      deployed.kv.namespaceId,
-      "kv_namespace",
-    );
-  }).pipe(logLevel),
+      yield* expectTagsCleared(
+        accountId,
+        deployed.kv.namespaceId,
+        "kv_namespace",
+      );
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:kv",
+      "provider:cloudflare:tags",
+      "live",
+    ],
+  },
 );
 
 /**

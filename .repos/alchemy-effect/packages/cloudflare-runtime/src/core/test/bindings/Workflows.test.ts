@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Workflows from "../../bindings/workflows/Workflows.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -156,6 +156,11 @@ export default {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
       return Response.json(await instance.status());
     }
+    if (url.pathname === "/subscribe") {
+      const instance = await env.LIFECYCLE_WORKFLOW.get(id);
+      using subscription = await instance.subscribe({ filter: ["workflow_queued"] });
+      return Response.json(await subscription.next());
+    }
     if (url.pathname === "/pause") {
       const instance = await env.LIFECYCLE_WORKFLOW.get(id);
       await instance.pause();
@@ -243,6 +248,18 @@ export default {
 layer(localRuntimeLayer, { excludeTestServices: true })(
   "Workflows binding lifecycle",
   (it) => {
+    it.effect("subscribes through the local workflow wrapper", () =>
+      Effect.gen(function* () {
+        const worker = yield* startLifecycleWorker();
+        const id = "subscription-test";
+        yield* worker.fetchJson(`/create?id=${id}`);
+        expect(yield* worker.fetchJson(`/subscribe?id=${id}`)).toMatchObject({
+          done: false,
+          value: { type: "workflow_queued", instanceId: id },
+        });
+      }),
+    );
+
     it.effect(
       "pause and resume a running workflow",
       () =>

@@ -167,14 +167,64 @@ export default defineConfig({
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
+      "t3code/no-raw-mcp-registration": "error",
       "t3code/no-test-in-loop": "error",
+      "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
+      "t3code/no-unscoped-has": "error",
       "t3code/namespace-node-imports": "error",
+      "t3code/prefer-catch-tags": "error",
+      "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
+      },
+      {
+        // Only shared command boundaries install the session-backed permission guard.
+        files: [
+          "packages/client-runtime/src/state/runtime.ts",
+          "packages/client-runtime/src/state/vcsAction.ts",
+        ],
+        rules: {
+          "t3code/no-rpc-permission-bypass": [
+            "error",
+            { allowGuardInstallation: true, allowRawClientAccess: false },
+          ],
+        },
+      },
+      {
+        // These clients are session metadata, device streams, and an Expo update adapter.
+        files: [
+          "apps/web/src/components/settings/ConnectionsSettings.tsx",
+          "apps/mobile/src/features/updates/app-updates.ts",
+          "apps/web/src/components/device/DevicePhoneViewport.tsx",
+          "apps/web/src/components/device/DeviceDuoViewport.tsx",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
+      },
+      {
+        // Incompatible hosts cannot open a normal session; their updater uses a dedicated socket.
+        files: ["packages/client-runtime/src/connection/outdatedHostUpdate.ts"],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
+      {
+        // RPC implementation and transport test fixtures need the raw client.
+        files: [
+          "packages/client-runtime/src/rpc/**",
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
       {
         // The one place that reads the host platform to seed the injected references.
         files: ["packages/shared/src/hostProcess.ts"],
         rules: { "t3code/no-global-process-runtime": "off" },
+      },
+      {
+        // The registration helpers that only accept handlers built by McpToolAccess.
+        files: ["apps/server/src/mcp/McpHttpServer.ts"],
+        rules: { "t3code/no-raw-mcp-registration": "off" },
       },
       {
         files: ["apps/web/src/**"],
@@ -333,27 +383,6 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
-      // Legacy manual Effect runners tracked as debt: no net-new occurrences.
-      // Lower a ceiling when you migrate a file, and delete its entry at zero.
-      ...Object.entries({
-        "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts": 42,
-        "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
-        "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
-        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
-        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
-        "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
-        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
-        "apps/server/src/orchestration/projector.test.ts": 20,
-        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
-        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
-        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
-        "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
-      }).map(([file, maxOccurrences]) => {
-        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
-        return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
-      }),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

@@ -1,6 +1,6 @@
 import * as Credentials from "@distilled.cloud/aws/Credentials";
 import * as Region from "@distilled.cloud/aws/Region";
-import { AwsV4Signer } from "aws4fetch";
+import * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -71,21 +71,18 @@ export const GraphQLHttp = Layer.effect(
             return { credentials, region };
           }).pipe(Effect.provideContext(services));
 
-          const signer = new AwsV4Signer({
+          const signed = yield* SigV4.sign({
             method: "POST",
             url: url.toString(),
             headers: { "content-type": "application/json" },
             body,
             accessKeyId: Redacted.value(credentials.accessKeyId),
-            secretAccessKey: Redacted.value(credentials.secretAccessKey),
-            sessionToken: credentials.sessionToken
-              ? Redacted.value(credentials.sessionToken)
-              : undefined,
+            secretAccessKey: credentials.secretAccessKey,
+            sessionToken: credentials.sessionToken,
             service: "appsync",
             region,
             allHeaders: true,
           });
-          const signed = yield* Effect.promise(() => signer.sign());
 
           const toError = (status: number) => (cause: unknown) =>
             new GraphQLApiError({
@@ -95,10 +92,10 @@ export const GraphQLHttp = Layer.effect(
 
           const response = yield* Effect.tryPromise({
             try: () =>
-              fetch(signed.url.toString(), {
+              fetch(signed.url, {
                 method: signed.method,
                 headers: signed.headers,
-                body: signed.body as BodyInit | undefined,
+                body,
               }),
             catch: toError(0),
           });

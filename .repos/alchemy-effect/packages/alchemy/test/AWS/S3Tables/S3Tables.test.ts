@@ -185,7 +185,7 @@ test.provider(
         s3tables.getTableBucket({ tableBucketARN: bucket.tableBucketArn }),
       );
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:s3tables", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -226,7 +226,7 @@ test.provider(
         s3tables.getTableBucket({ tableBucketARN: second.tableBucketArn }),
       );
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:s3tables", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -302,5 +302,5 @@ test.provider(
       // Clear the now-stale stack state through the normal idempotent path.
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:s3tables", "live"], timeout: 120_000 },
 );

@@ -11,7 +11,8 @@ import {
   makeClaudeRestartReplayHarness,
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as EffectWorker from "../EffectWorker.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./fixtures/claude_background_subagent_after_root/input.ts";
 import {
@@ -20,6 +21,8 @@ import {
   projectionFor,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { runOrchestratorV2Scenario } from "./OrchestratorScenario.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { readProviderReplayTranscript } from "./ReplayTranscriptNdjson.ts";
 
@@ -155,23 +158,9 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   // Phase 1 ends once the root run settles; the subagent is still open.
   const firstIdle = materialized.steps.findIndex((step) => step.type === "await_thread_idle");
   const phase1Steps = materialized.steps.slice(0, firstIdle + 1);
-  const threadId = materialized.projectionThreadIds[0]!;
-  const phase2Steps = [
-    // Let recovery's continuation (run 2) finish before the next user message.
-    ...(input.continueThreadsAfterServerUpdate
-      ? [
-          {
-            type: "await_run_status" as const,
-            threadId,
-            runId: (yield* IdAllocator.IdAllocatorV2).derive.run({ threadId, ordinal: 2 }),
-            status: "completed" as const,
-          },
-        ]
-      : []),
-    ...materialized.steps.slice(firstIdle + 1),
-  ];
+  const phase2Steps = materialized.steps.slice(firstIdle + 1);
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
-  const databaseLayer = makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
+  const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
     Layer.provide(NodeServices.layer),
   );
   const scenario = (name: string, steps: typeof materialized.steps) => ({
@@ -185,17 +174,42 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const before = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("before-restart", phase1Steps), harness, {
-      databaseLayer,
+      databaseLayer: layerDatabase,
     }),
   );
   const settled = projectionFor(before, SCENARIO);
   assert.equal(settled.runs[0]?.status, "completed");
   assert.equal(settled.subagents[0]?.status, "running");
 
+  // Drain recovery before submitting any user work, which would otherwise
+  // take precedence over an incorrectly queued automatic continuation.
+  const restartScenario = scenario("restarted", []);
+  const restarted = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* worker.drain();
+      return yield* runOrchestratorV2Scenario(restartScenario);
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerProviderReplay(restartScenario, harness, {
+          databaseLayer: layerDatabase,
+          recoverOnStartup: true,
+          continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
+        }),
+      ),
+    ),
+  );
+  const recovered = projectionFor(restarted, SCENARIO);
+  assert.deepEqual(
+    recovered.runs.map((run) => run.status),
+    ["completed"],
+  );
+  assert.equal(recovered.subagents[0]?.status, "cancelled");
+  assert.equal(recovered.runs[0]?.restartCancelledBackgroundWork?.[0]?.kind, "subagent");
+
   const after = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
-      databaseLayer,
-      recoverOnStartup: true,
+      databaseLayer: layerDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
     }),
   );
@@ -210,61 +224,37 @@ const userTexts = (projection: ReturnType<typeof projectionFor>) =>
   projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : []));
 
 describe("restart-cancelled background work", () => {
-  it.effect("tells the next provider turn once that its background subagent died", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const projection = yield* runRestart({
-          // The first turn after the restart carries the note; the second does not.
-          resumedPrompts: [
-            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
+  it.effect.each([false, true])(
+    "keeps the thread settled and tells the next user turn once when continuation is %s",
+    (continueThreadsAfterServerUpdate) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const projection = yield* runRestart({
+            // The first turn after the restart carries the note; the second does not.
+            resumedPrompts: [
+              `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
+              SECOND_AFTER_RESTART,
+            ],
+            userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+            continueThreadsAfterServerUpdate,
+          });
+          assert.deepEqual(
+            projection.runs.map((run) => run.status),
+            ["completed", "completed", "completed"],
+          );
+          assert.isFalse(
+            projection.runs.some((run) => run.restartContinuationOfRunId !== undefined),
+          );
+          // The note reaches the provider only; the timeline keeps what the user sent.
+          assert.deepEqual(userTexts(projection), [
+            CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+            FIRST_AFTER_RESTART,
             SECOND_AFTER_RESTART,
-          ],
-          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
-          continueThreadsAfterServerUpdate: false,
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed", "completed", "completed"],
-        );
-        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
-        // The note reaches the provider only; the timeline keeps what the user sent.
-        assert.deepEqual(userTexts(projection), [
-          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-          FIRST_AFTER_RESTART,
-          SECOND_AFTER_RESTART,
-        ]);
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          ]);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        ),
       ),
-    ),
-  );
-
-  it.effect("continues a settled thread with the note when restart continuation is on", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const projection = yield* runRestart({
-          // Recovery's continuation prompts with the note; the user turn after it does not.
-          resumedPrompts: [NOTE, FIRST_AFTER_RESTART],
-          userMessagesAfterRestart: [FIRST_AFTER_RESTART],
-          continueThreadsAfterServerUpdate: true,
-        });
-        const [root, continuation, user] = projection.runs;
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed", "completed", "completed"],
-        );
-        assert.equal(continuation?.restartContinuationOfRunId, root?.id);
-        assert.isUndefined(user?.restartContinuationOfRunId);
-        assert.deepEqual(userTexts(projection), [
-          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-          NOTE,
-          FIRST_AFTER_RESTART,
-        ]);
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
-      ),
-    ),
   );
 });

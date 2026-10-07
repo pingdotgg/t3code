@@ -1,3 +1,4 @@
+import { rootDir } from "../Auth/Paths.ts";
 import { exec } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -8,9 +9,8 @@ import * as Effect from "effect/Effect";
 
 import packageJson from "../../package.json" with { type: "json" };
 
-const ALCHEMY_DIR = nodePath.join(os.homedir(), ".alchemy");
-const ID_PATH = nodePath.join(ALCHEMY_DIR, "id");
-const DISABLED_PATH = nodePath.join(ALCHEMY_DIR, "telemetry-disabled");
+const idPath = () => nodePath.join(rootDir(), "id");
+const disabledPath = () => nodePath.join(rootDir(), "telemetry-disabled");
 
 /**
  * OTel resource attributes describing the user, project, runtime, and
@@ -58,14 +58,14 @@ const execCapture = (cmd: string): Effect.Effect<string | null> =>
   });
 
 const getOrCreateUserId: Effect.Effect<string> = Effect.gen(function* () {
-  const existing = yield* tryRead(ID_PATH);
+  const existing = yield* tryRead(idPath());
   if (existing) return existing;
 
   const id = crypto.randomUUID();
   yield* Effect.tryPromise({
     try: async () => {
-      await fs.mkdir(ALCHEMY_DIR, { recursive: true });
-      await fs.writeFile(ID_PATH, id);
+      await fs.mkdir(rootDir(), { recursive: true });
+      await fs.writeFile(idPath(), id);
     },
     catch: () => null as never,
   }).pipe(Effect.catch(() => Effect.void));
@@ -136,7 +136,7 @@ const TELEMETRY_DISABLED_ENV = (): boolean =>
 export const isTelemetryDisabled: Effect.Effect<boolean> = Effect.gen(
   function* () {
     if (TELEMETRY_DISABLED_ENV()) return true;
-    const persisted = yield* tryRead(DISABLED_PATH);
+    const persisted = yield* tryRead(disabledPath());
     return persisted === "true";
   },
 );
@@ -147,13 +147,13 @@ export const isTelemetryDisabled: Effect.Effect<boolean> = Effect.gen(
  */
 export const setTelemetryDisabled: Effect.Effect<void> = Effect.tryPromise(
   async () => {
-    await fs.mkdir(ALCHEMY_DIR, { recursive: true });
-    await fs.writeFile(DISABLED_PATH, "true");
+    await fs.mkdir(rootDir(), { recursive: true });
+    await fs.writeFile(disabledPath(), "true");
   },
 ).pipe(Effect.ignore);
 
 export const setTelemetryEnabled: Effect.Effect<void> = Effect.tryPromise(() =>
-  fs.rm(DISABLED_PATH, { force: true }),
+  fs.rm(disabledPath(), { force: true }),
 ).pipe(Effect.ignore);
 
 const collectAttributesUncached: Effect.Effect<TelemetryAttributes> =

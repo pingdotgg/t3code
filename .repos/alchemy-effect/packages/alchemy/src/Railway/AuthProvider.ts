@@ -1,10 +1,12 @@
-import * as railway from "@distilled.cloud/railway";
-import { DEFAULT_API_BASE_URL } from "@distilled.cloud/railway";
+import {
+  DEFAULT_API_BASE_URL,
+  type GqlTransport,
+} from "@distilled.cloud/railway";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import * as Os from "node:os";
 import {
   AuthError,
@@ -28,6 +30,8 @@ import {
 } from "../Auth/StoredAuthProvider.ts";
 import * as Interaction from "../Interaction.ts";
 import {
+  cancelLoginSession,
+  createLoginSession,
   loginSessionUrl,
   pollLoginSessionToken,
   provideAnonymousRailway,
@@ -151,11 +155,10 @@ export const RailwayAuth = AuthProviderLayer<
         }
       });
 
-      const withAnonymous = <A, E>(
-        effect: Effect.Effect<A, E, railway.GraphQLRequirements>,
-      ) => provideAnonymousRailway(effect, apiBaseUrl);
+      const withAnonymous = <A, E>(effect: Effect.Effect<A, E, GqlTransport>) =>
+        provideAnonymousRailway(effect, apiBaseUrl);
 
-      const code = yield* withAnonymous(railway.createLoginSession({})).pipe(
+      const code = yield* withAnonymous(createLoginSession()).pipe(
         Effect.mapError(
           (e) =>
             new AuthError({
@@ -178,7 +181,7 @@ export const RailwayAuth = AuthProviderLayer<
         Effect.catch(() => Effect.succeed(true)),
       );
 
-      const cancel = withAnonymous(railway.cancelLoginSession({ code })).pipe(
+      const cancel = withAnonymous(cancelLoginSession(code)).pipe(
         Effect.catch(() => Effect.void),
       );
 

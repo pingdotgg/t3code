@@ -27,7 +27,8 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -42,25 +43,25 @@ import {
   selectInheritedBackgroundTurnItems,
 } from "./RunExecutionService.ts";
 
-const TestDatabaseLayer = SqlitePersistenceMemory;
-const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(TestDatabaseLayer),
+const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provide(layerTestDatabase),
 );
 
-const TestEventSinkLayer = EventSink.layer.pipe(
-  Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
+const layerTestEventSink = EventSink.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
 
-const TestLayer = Layer.mergeAll(
-  TestStoresLayer,
-  TestEventSinkLayer,
+const layerTest = Layer.mergeAll(
+  layerTestStores,
+  layerTestEventSink,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestStoresLayer,
-        TestEventSinkLayer,
+        layerTestStores,
+        layerTestEventSink,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
       ),
@@ -133,11 +134,11 @@ function threadCreatedEvent(
   });
 }
 
-const layer = it.layer(TestLayer);
+const layer = it.layer(layerTest);
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const analytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
     record: (properties: Readonly<Record<string, unknown>>) =>
       Effect.sync(() => {
         recorded.push(properties);
@@ -232,7 +233,7 @@ it.effect("records accepted billed turn usage once without billing the context w
       interactionMode: "default",
       durationMs: 120,
     });
-  }).pipe(Effect.provide(TestLayer.pipe(Layer.provide(analytics))));
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
 layer("ProviderEventIngestorV2", (it) => {
@@ -1166,6 +1167,97 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(DateTime.toEpochMillis(errorStartedAt), DateTime.toEpochMillis(retryStartedAt));
       assert.equal(errorItem.providerThreadId, providerThreadId);
       assert.equal(errorItem.providerTurnId, providerTurnId);
+    }),
+  );
+
+  it.effect("stores tool image bytes only where a tool-output-image asset serves them", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const readBase64 = Buffer.alloc(30_000, 7).toString("base64");
+      const screenshotBase64 = Buffer.alloc(20_000, 9).toString("base64");
+      const toolItem = (
+        id: string,
+        ordinal: number,
+        toolName: string,
+        output: unknown,
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: toolName,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName,
+        input: {},
+        output,
+      });
+      const read = toolItem("turn-item:read-image", 1, "Read", {
+        type: "image",
+        file: { base64: readBase64, type: "image/png", originalSize: 30_000 },
+      });
+      const screenshot = toolItem("turn-item:screenshot", 2, "mcp__t3-code__device_screenshot", {
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: screenshotBase64 },
+          },
+        ],
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      for (const turnItem of [read, screenshot]) {
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+      }
+
+      const storedEvents = yield* eventStore
+        .read({ threadId: threadEvent.threadId, eventType: "turn-item.updated" })
+        .pipe(Stream.runCollect);
+      const storedJson = JSON.stringify(Array.from(storedEvents, (stored) => stored.event));
+      const projectedRead = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: read.id,
+      });
+      const projectedScreenshot = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: screenshot.id,
+      });
+
+      assert.equal(storedJson.includes(readBase64), false);
+      assert.equal(storedJson.includes(screenshotBase64), true);
+      assert.deepEqual(projectedRead?.type === "dynamic_tool" ? projectedRead.output : null, {
+        type: "image",
+        file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
+      });
+      assert.deepEqual(
+        toolOutputImages(
+          projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
+        ),
+        [{ mimeType: "image/png", data: screenshotBase64 }],
+      );
     }),
   );
 

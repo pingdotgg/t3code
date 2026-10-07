@@ -10,12 +10,17 @@ import {
   type ModelSelection,
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2ProviderGoal,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
+  orchestrationV2RunWorkStartedAt,
   type ThreadId,
 } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -141,6 +146,18 @@ export function deriveProviderSubagentStatus(
   };
 }
 
+/** The observed selection belongs to the active provider thread, never a previous handoff. */
+export function deriveReportedModelSelection(
+  projection: OrchestrationV2ThreadProjection,
+): ModelSelection | null {
+  const providerThread = projection.providerThreads.find(
+    (candidate) =>
+      candidate.id === projection.thread.activeProviderThreadId &&
+      candidate.providerInstanceId === projection.thread.modelSelection.instanceId,
+  );
+  return providerThread?.nativeMetadata?.modelSelection ?? null;
+}
+
 // Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 
@@ -154,6 +171,7 @@ const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "
 export function formatModelSelectionEffort(
   selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> = [],
+  reportedSelection?: ModelSelection | null,
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
@@ -161,7 +179,7 @@ export function formatModelSelectionEffort(
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = descriptors.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const label = getProviderOptionCurrentLabel(descriptor);
+    const label = getProviderOptionCurrentLabel(descriptor, selection, reportedSelection);
     if (label) return label;
   }
   return null;
@@ -213,28 +231,42 @@ export function deriveThreadRuntime(
   const usageLimitedRun = presentedUsageLimitRun(projection);
   const latestRunProjection = presentedLatestRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
-  if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
-  const activeRunId =
-    latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
-  const hasPendingBackgroundTasks =
+  const liveActivityRun = latestMatchingRun(projection, (run) =>
+    ACTIVITY_RUN_STATUSES.has(run.status),
+  );
+  // Same rule as the shell runtime: only background work that holds the
+  // completion parks the thread at idle; a dev server left running does not.
+  const backgroundWorkHoldsRun = backgroundWorkHoldsCompletion(
     derivePendingBackgroundWork({
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
-    }).length > 0;
+      pullRequests: projection.thread.pullRequests,
+    }),
+  );
+  // A pull request watch can hold a thread that never ran.
+  if (
+    latestRun === null &&
+    projection.thread.activeProviderThreadId === null &&
+    !backgroundWorkHoldsRun
+  ) {
+    return null;
+  }
+  const activeRunId =
+    latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
   return {
     status: usageLimitedRun
       ? "failed"
-      : hasPendingBackgroundTasks && latestRunProjection?.status !== "failed"
+      : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
         : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
-      activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)
-        ? (activityRun.startedAt ?? activityRun.requestedAt)
-        : null,
+      liveActivityRun === null
+        ? null
+        : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
@@ -278,9 +310,17 @@ export interface PendingBackgroundWorkItem {
 }
 
 export interface PendingBackgroundWorkPresentation {
-  /** "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command". */
+  /**
+   * "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command",
+   * or "Running: Start the dev server" when only commands remain.
+   */
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+  /**
+   * True when the work will wake the agent (subagents, monitors). False when
+   * only commands remain, such as a dev server: the agent is done.
+   */
+  readonly waiting: boolean;
 }
 
 function joinWithAnd(parts: ReadonlyArray<string>): string {
@@ -288,11 +328,12 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-/** Names what a settled thread is still waiting on, grouped by kind, for the composer strip. */
+/** Names what a settled thread still runs, grouped by kind, for the composer strip. */
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
+  const waiting = backgroundWorkHoldsCompletion(tasks);
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
@@ -318,10 +359,15 @@ export function presentPendingBackgroundWork(
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
-    return {
-      title: only.label === noun ? `Waiting on a ${noun}` : `Waiting on ${noun} ${only.label}`,
-      items,
-    };
+    const named = only.label !== noun;
+    const title = waiting
+      ? named
+        ? `Waiting on ${noun} ${only.label}`
+        : `Waiting on a ${noun}`
+      : named
+        ? `Running: ${only.label}`
+        : `Running a ${noun}`;
+    return { title, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -329,7 +375,62 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `Waiting on ${joinWithAnd(groups)}`, items };
+  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+}
+
+export interface ProviderGoalPresentation {
+  /** "Pursuing goal", "Goal paused", "Goal complete"... */
+  readonly title: string;
+  readonly objective: string;
+  /** "12k / 50k tokens · 4m" for Codex, "2 checks" for Claude; null when nothing is reported. */
+  readonly usage: string | null;
+  /** Only Codex stops a goal short of done, and only a stopped goal can resume. */
+  readonly canResume: boolean;
+}
+
+const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string> = {
+  active: "Pursuing goal",
+  paused: "Goal paused",
+  blocked: "Goal blocked",
+  usage_limited: "Goal hit a usage limit",
+  budget_limited: "Goal reached its token budget",
+  complete: "Goal complete",
+};
+
+function formatGoalTokens(tokens: number): string {
+  if (tokens < 1_000) return `${tokens}`;
+  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
+
+/**
+ * Status line for a native `/goal`, shared by the web composer row and mobile.
+ * An active goal on an idle thread (Claude after Stop) is set, not pursued.
+ */
+export function presentProviderGoal(
+  goal: OrchestrationV2ProviderGoal,
+  working: boolean,
+): ProviderGoalPresentation {
+  const usage: Array<string> = [];
+  if (goal.tokensUsed !== undefined && goal.tokensUsed > 0) {
+    usage.push(
+      goal.tokenBudget == null
+        ? `${formatGoalTokens(goal.tokensUsed)} tokens`
+        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} tokens`,
+    );
+  }
+  if (goal.timeUsedSeconds !== undefined && goal.timeUsedSeconds >= 60) {
+    usage.push(formatDuration(goal.timeUsedSeconds * 1_000));
+  }
+  if (goal.checks !== undefined && goal.checks > 0) {
+    usage.push(`${goal.checks} ${goal.checks === 1 ? "check" : "checks"}`);
+  }
+  return {
+    title: goal.status === "active" && !working ? "Goal set" : PROVIDER_GOAL_TITLES[goal.status],
+    objective: goal.objective,
+    usage: usage.length === 0 ? null : usage.join(" · "),
+    canResume: goal.status !== "active" && goal.status !== "complete",
+  };
 }
 
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */

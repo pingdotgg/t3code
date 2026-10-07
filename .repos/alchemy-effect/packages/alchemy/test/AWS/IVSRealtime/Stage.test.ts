@@ -24,7 +24,10 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ivsrealtime", "live"],
+    timeout: 60_000,
+  },
 );
 
 const assertStageGone = (arn: string) =>
@@ -89,5 +92,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertStageGone(created.stageArn);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ivsrealtime", "live"],
+    timeout: 240_000,
+  },
 );

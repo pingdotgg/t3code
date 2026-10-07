@@ -83,5 +83,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:tunnel", "live"],
+    timeout: 120_000,
+  },
 );

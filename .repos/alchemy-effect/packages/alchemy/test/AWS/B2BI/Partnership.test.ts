@@ -141,5 +141,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertPartnershipGone(created.partnershipId);
     }),
-  { timeout: 150_000 },
+  {
+    tags: ["provider:aws", "provider:aws:b2bi", "provider:aws:s3", "live"],
+    timeout: 150_000,
+  },
 );
