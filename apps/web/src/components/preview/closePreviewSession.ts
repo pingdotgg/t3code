@@ -6,6 +6,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { useClosedViewStore } from "~/closedViewStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 
 interface ClosePreviewSessionInput<E> {
@@ -32,6 +33,12 @@ export async function closePreviewSession<E>(
   });
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
+  } else if (input.snapshot) {
+    useClosedViewStore.getState().remember({
+      kind: "browser",
+      threadRef: input.threadRef,
+      snapshot: input.snapshot,
+    });
   }
   return result;
 }
