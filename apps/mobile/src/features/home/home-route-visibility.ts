@@ -2,7 +2,7 @@ import { RegistryContext } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 /**
  * Whether the Home route can be seen. Home stays mounted under a pushed
