@@ -194,22 +194,29 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  /** Cache key: the host plus its pinned account, so a changed pin misses the cache. */
-  const cacheKey = (host: string, account: string | undefined) =>
-    account === undefined ? host : `${host}\u0000${account}`;
+  /**
+   * Cache key: the host plus its pinned account, so a changed pin misses the cache. A project's
+   * own account is kept apart from the same login pinned for the host, because only the host's
+   * pin may fall back to another login.
+   */
+  const cacheKey = (host: string, account: string | undefined, project = false) =>
+    account === undefined ? host : `${host}\u0000${account}${project ? "\u0000project" : ""}`;
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, choice, project] = key.split("\u0000");
     // An environment token wins over a pinned account, exactly as it does in gh.
     const fromEnv = environmentToken(host, environment);
-    // A pinned login gh no longer holds (logged out, expired) falls back to the active one,
-    // which is what discovery reports as the account in use.
+    // A host's pinned login gh no longer holds (logged out, expired) falls back to the active
+    // one, which is what discovery reports as the account in use. A project's own login does
+    // not: acting as someone else there would put that project's work under the wrong account.
     const token =
       fromEnv ??
       (yield* fromGh(host, choice).pipe(
         Effect.catchTags({
           GitHubNotSignedInError: (error) =>
-            choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
+            choice === undefined || project !== undefined
+              ? Effect.fail(error)
+              : fromGh(host, undefined),
         }),
       ));
     return {
@@ -251,13 +258,19 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      return yield* Cache.get(cache, cacheKey(host, account ?? choice?.account));
+      return yield* Cache.get(
+        cache,
+        account ? cacheKey(host, account, true) : cacheKey(host, choice?.account),
+      );
     }),
     invalidate: (rawHost, account) => {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(
         Effect.flatMap((choice) =>
-          Cache.invalidate(cache, cacheKey(host, account ?? choice?.account)),
+          Cache.invalidate(
+            cache,
+            account ? cacheKey(host, account, true) : cacheKey(host, choice?.account),
+          ),
         ),
       );
     },
