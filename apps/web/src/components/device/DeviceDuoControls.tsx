@@ -74,7 +74,7 @@ export function DeviceDuoControls(props: {
             foldLabels[id],
             !stand && fold === id,
             () => props.onCommand({ control: "angle", value }),
-            <DeviceDuoGlyph pose={id === "half" ? "book" : id} vertical={phoneVertical} />,
+            <DeviceDuoGlyph pose={id === "half" ? "book" : id} rotated={!phoneVertical} />,
           ),
         )}
       </div>
