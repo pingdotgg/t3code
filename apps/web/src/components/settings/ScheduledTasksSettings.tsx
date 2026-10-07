@@ -1148,38 +1148,41 @@ function ScheduledTaskEditorDialog({
               </div>
             </Field>
 
-            <Field label="Permissions" htmlFor="scheduled-task-permissions">
-              <Select
-                value={runtimeMode}
-                onValueChange={(mode) => {
-                  if (mode) setDraft((current) => ({ ...current, runtimeMode: mode }));
-                }}
-              >
-                <SelectTrigger size="sm" id="scheduled-task-permissions">
-                  <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  <SelectValue>{runtimeModeConfig[runtimeMode].label}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {compatibleRuntimeModes.map((mode) => {
-                    const option = runtimeModeConfig[mode];
-                    const Icon = option.icon;
-                    return (
-                      <SelectItem key={mode} value={mode}>
-                        <div className="grid gap-0.5">
-                          <span className="inline-flex items-center gap-1.5 font-medium">
-                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                            {option.label}
-                          </span>
-                          <span className="text-xs leading-4 text-muted-foreground">
-                            {option.description}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectPopup>
-              </Select>
-            </Field>
+            {/* A task bound to a thread runs with that thread's permissions. */}
+            {draft.threadId ? null : (
+              <Field label="Permissions" htmlFor="scheduled-task-permissions">
+                <Select
+                  value={runtimeMode}
+                  onValueChange={(mode) => {
+                    if (mode) setDraft((current) => ({ ...current, runtimeMode: mode }));
+                  }}
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-permissions">
+                    <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <SelectValue>{runtimeModeConfig[runtimeMode].label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {compatibleRuntimeModes.map((mode) => {
+                      const option = runtimeModeConfig[mode];
+                      const Icon = option.icon;
+                      return (
+                        <SelectItem key={mode} value={mode}>
+                          <div className="grid gap-0.5">
+                            <span className="inline-flex items-center gap-1.5 font-medium">
+                              <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                              {option.label}
+                            </span>
+                            <span className="text-xs leading-4 text-muted-foreground">
+                              {option.description}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectPopup>
+                </Select>
+              </Field>
+            )}
 
             <div className="space-y-3">
               {task?.schedule.type === "interval" &&
