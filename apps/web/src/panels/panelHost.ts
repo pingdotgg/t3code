@@ -24,6 +24,28 @@ export interface PanelHost {
   ) => void;
 }
 
+/** The newest annotation sender, tagged with the thread whose render created it. */
+export interface ThreadAnnotationSender {
+  readonly threadKey: string;
+  readonly send: PanelHost["sendAnnotation"];
+}
+
+/**
+ * A stable `sendAnnotation` for one thread. It forwards to the newest sender
+ * only while that sender belongs to the same thread, so a pick that settles
+ * after the chat view moved to another thread is never sent there.
+ */
+export function threadBoundAnnotationSender(
+  latestSender: () => ThreadAnnotationSender | null,
+  threadKey: string,
+): PanelHost["sendAnnotation"] {
+  return (annotation, image) => {
+    const latest = latestSender();
+    if (latest?.threadKey !== threadKey) return;
+    latest.send(annotation, image);
+  };
+}
+
 export const PanelHostContext = createContext<PanelHost | null>(null);
 
 export function usePanelHost(): PanelHost {

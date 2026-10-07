@@ -167,7 +167,12 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import { RegisteredSidePanel } from "~/panels/bundledPanels";
-import { PanelHostContext, type PanelHost } from "~/panels/panelHost";
+import {
+  PanelHostContext,
+  threadBoundAnnotationSender,
+  type PanelHost,
+  type ThreadAnnotationSender,
+} from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -11001,6 +11006,17 @@ export default function ChatView(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
+  // Plain server threads share one ChatView, so the sender carries its thread
+  // and a host only forwards to a sender for the thread it was built for.
+  const annotationSenderRef = useRef<ThreadAnnotationSender | null>(null);
+  annotationSenderRef.current = activeThreadKey
+    ? {
+        threadKey: activeThreadKey,
+        send: (annotation, image) => {
+          void onSend(undefined, "auto", "foreground", { annotation, image });
+        },
+      }
+    : null;
   // Memoized so mounted panels re-render only when a host field changes.
   const panelHost = useMemo<PanelHost | null>(
     () =>
@@ -11010,14 +11026,19 @@ export default function ChatView(props: ChatViewProps) {
             visible: rightPanelOpen,
             composerDraftTarget,
             workspaceMutationId,
-            // PreviewView drops a pick that settles after a thread switch, so the
-            // latest send only ever receives picks for the thread it belongs to.
-            sendAnnotation: (annotation, image) => {
-              void onSendRef.current(undefined, "auto", "foreground", { annotation, image });
-            },
+            sendAnnotation: threadBoundAnnotationSender(
+              () => annotationSenderRef.current,
+              scopedThreadKey(activeThreadRef),
+            ),
           }
         : null,
-    [activeThreadRef, composerDraftTarget, rightPanelOpen, workspaceMutationId],
+    [
+      activeThreadRef,
+      annotationSenderRef,
+      composerDraftTarget,
+      rightPanelOpen,
+      workspaceMutationId,
+    ],
   );
 
   // Empty state: no active thread
