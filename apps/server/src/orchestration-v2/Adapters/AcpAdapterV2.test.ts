@@ -1092,6 +1092,14 @@ describe("AcpAdapterV2", () => {
                       status: "in_progress" as const,
                       rawOutput: `tick ${index + 1}`,
                     })),
+                    ...Array.from({ length: 5 }, (_, index) => ({
+                      sessionUpdate: "tool_call_update" as const,
+                      toolCallId: "text-ticker",
+                      title: "Watch ticks",
+                      kind: "execute" as const,
+                      status: "in_progress" as const,
+                      rawOutput: { type: "Text", text: `tock ${index + 1}` },
+                    })),
                     {
                       sessionUpdate: "tool_call_update",
                       toolCallId: "child-a",
@@ -1153,12 +1161,17 @@ describe("AcpAdapterV2", () => {
         assert.equal(writes.at(-1)?.status, "completed", toolCallId);
         assert.include(JSON.stringify(writes.at(-1)), "END_OF_FILE", toolCallId);
       }
-      const ticks = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith("ticker"));
-      for (let tick = 1; tick <= 5; tick++) {
-        assert.isTrue(
-          ticks.some((item) => JSON.stringify(item).includes(`tick ${tick}`)),
-          `tick ${tick} must persist`,
-        );
+      for (const [toolCallId, word] of [
+        ["ticker", "tick"],
+        ["text-ticker", "tock"],
+      ] as const) {
+        const ticks = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith(toolCallId));
+        for (let tick = 1; tick <= 5; tick++) {
+          assert.isTrue(
+            ticks.some((item) => JSON.stringify(item).includes(`${word} ${tick}`)),
+            `${word} ${tick} must persist`,
+          );
+        }
       }
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
