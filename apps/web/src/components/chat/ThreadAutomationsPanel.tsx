@@ -1,8 +1,14 @@
+import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
 import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
-import type { EnvironmentId, ScheduledTask, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ScheduledTask,
+  type ThreadId,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -15,6 +21,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
+import { readEnvironmentScope } from "../../state/session";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -40,6 +47,9 @@ export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const canOperate = useAtomValue(
+    serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
+  );
   const tasksQuery = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
   );
@@ -71,7 +81,11 @@ export function ThreadAutomationsPanel(props: {
   };
 
   const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {
-    if (busyTaskId !== null) return;
+    if (
+      busyTaskId !== null ||
+      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     setBusyTaskId(task.id);
     // Partial update: only the enabled flag changes, so a toggle can never
     // revert concurrent edits made to the task elsewhere.
@@ -86,7 +100,11 @@ export function ThreadAutomationsPanel(props: {
   };
 
   const runNow = async (task: ScheduledTask) => {
-    if (busyTaskId !== null) return;
+    if (
+      busyTaskId !== null ||
+      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     setBusyTaskId(task.id);
     const result = await runTaskNow({
       environmentId: props.environmentId,
@@ -196,7 +214,9 @@ export function ThreadAutomationsPanel(props: {
                       variant="ghost"
                       part="icon"
                       aria-label={`Run ${task.title} now`}
-                      disabled={busyTaskId !== null || task.lastRunStatus === "running"}
+                      disabled={
+                        !canOperate || busyTaskId !== null || task.lastRunStatus === "running"
+                      }
                       onClick={() => void runNow(task)}
                     >
                       <PlayIcon className="size-3.5" />
@@ -208,7 +228,7 @@ export function ThreadAutomationsPanel(props: {
             )}
             <Switch
               checked={task.enabled}
-              disabled={busyTaskId !== null}
+              disabled={!canOperate || busyTaskId !== null}
               aria-label={task.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
               onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
             />

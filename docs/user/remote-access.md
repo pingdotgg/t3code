@@ -220,6 +220,12 @@ only reports what it would change.
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
 
+## Connect an outside agent
+
+Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive
+threads on an environment through its MCP server. See
+[outside agents](./outside-agents.md) for setup.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create
@@ -229,6 +235,46 @@ management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
 expires.
+
+To choose a token's permissions, pass `--scope` once for each scope you want:
+
+```sh
+npx t3 pair --scope orchestration:read --scope relay:read
+```
+
+The selected scopes replace the default permissions. The same option works with
+`npx t3 auth pairing create` and `npx t3 auth session issue`; each command's
+`--help` lists the available scopes. Without `--scope`, pairing tokens retain
+standard client permissions and issued bearer sessions retain administrative
+permissions.
+
+To change an existing client's permissions, create a fresh pairing link with the
+scopes it needs. In a browser opened directly on the environment, open that link
+to replace the browser's current grant. For mobile or a saved remote environment
+in web or desktop, use **Add Environment** with the fresh link or code; pairing
+the same environment replaces its saved grant. Reconnecting alone does not change
+permissions.
+
+Grouping checkouts does not combine their permissions. Shared project settings
+require `orchestration:operate` on every member environment; actions on one
+checkout use that checkout's permissions.
+
+`source-control:write` covers direct Git and pull request changes made from the
+client: pushing, switching or creating branches, cloning, and removing
+worktrees. It does not restrict what a task does. Starting a task in a new
+worktree still creates that branch and worktree with `orchestration:operate`,
+and the agent it runs can use Git however the environment allows.
+
+Settings changes, provider management, and environment maintenance can be granted
+separately from access administration. New standard pairings include these
+permissions. Existing clients can stay connected after an update, but newly separated
+features may require pairing again with the permissions they need. Older clients
+may show controls that the server denies. Create a fresh pairing link to change
+a client's permissions.
+
+`filesystem:read` allows browsing host files, opening workspace files, and viewing
+local changes. Add `filesystem:write` to allow editing files or saving plans to
+the workspace. These scopes control direct file access from the client.
 
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This

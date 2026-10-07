@@ -1582,10 +1582,10 @@ export function makeCursorAdapterV2(
               },
               prompt: args.prompt,
               title: args.description,
-              model: args.model?.trim() || null,
               result: null,
               startedAt: now,
             }),
+            model: args.model?.trim() || existing?.task.model || null,
             nativeTaskRef: {
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeId: input.callId,

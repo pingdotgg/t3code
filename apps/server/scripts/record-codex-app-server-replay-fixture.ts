@@ -73,6 +73,7 @@ const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
+  extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } },
 } as const;
 const CODEX_REPLAY_DEFAULT_MODEL = "gpt-6-luna";
 const CODEX_REPLAY_MODEL_OVERRIDE = readArgValue("--model") ?? process.env.T3_CODEX_REPLAY_MODEL;

@@ -1638,7 +1638,11 @@ async function recordClaudeStreamingQuery(input: {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
-        uuid: ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`),
+        uuid: await Effect.runPromise(
+          ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+        ),
       });
       input.entries.push({
         type: "expect_outbound",

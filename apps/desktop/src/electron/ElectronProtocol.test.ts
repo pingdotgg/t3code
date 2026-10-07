@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
@@ -174,12 +176,60 @@ describe("ElectronProtocol", () => {
             targetOrigin: new URL("http://127.0.0.1:5733/"),
             clerkFrontendApiHostname: undefined,
           });
-          return yield* Effect.promise(() => handler!(new Request("t3code-dev://app/")));
+          const fiber = yield* Effect.forkChild(
+            Effect.promise(() => handler!(new Request("t3code-dev://app/"))),
+          );
+          yield* TestClock.adjust("50 millis");
+          return yield* Fiber.join(fiber);
         }),
       );
 
       assert.equal(yield* Effect.promise(() => response.text()), "ready");
       assert.equal(netFetchMock.mock.calls.length, 2);
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+
+  it.effect("rejects with the last renderer target failure after 50ms and 150ms retries", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      const lastFailure = new Error("connect ECONNREFUSED 127.0.0.1:5733 (3)");
+      netFetchMock
+        .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:5733 (1)"))
+        .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:5733 (2)"))
+        .mockRejectedValueOnce(lastFailure);
+
+      const rejection = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:5733/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          const fiber = yield* Effect.forkChild(
+            Effect.promise(() =>
+              handler!(new Request("t3code-dev://app/")).then(
+                () => null,
+                (error: unknown) => error,
+              ),
+            ),
+          );
+          yield* TestClock.adjust("49 millis");
+          assert.equal(netFetchMock.mock.calls.length, 1);
+          yield* TestClock.adjust("1 millis");
+          assert.equal(netFetchMock.mock.calls.length, 2);
+          yield* TestClock.adjust("149 millis");
+          assert.equal(netFetchMock.mock.calls.length, 2);
+          yield* TestClock.adjust("1 millis");
+          return yield* Fiber.join(fiber);
+        }),
+      );
+
+      assert.strictEqual(rejection, lastFailure);
+      assert.equal(netFetchMock.mock.calls.length, 3);
     }).pipe(Effect.provide(layerProtocol)),
   );
 
