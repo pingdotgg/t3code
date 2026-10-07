@@ -108,5 +108,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       revision: credentials.accessToken,
     } satisfies CodexEffectiveRuntime;
   });
-  return { auth, resolve, installation, homePath, homeLayout };
+  // Refreshes like `resolve`, so an expiring token reads as a new revision.
+  const revision = auth.access.pipe(Effect.map((credentials) => credentials.accessToken));
+  return { auth, resolve, revision, installation, homePath, homeLayout };
 });

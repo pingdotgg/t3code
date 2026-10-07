@@ -1114,6 +1114,35 @@ export const layerWithOptions = (
           );
         });
 
+      // A process launched with since-renewed credentials keeps failing auth
+      // until it restarts. Release it only when idle release could: a running
+      // turn or pending background work keeps the current process.
+      const releaseIfStaleCredentials = (entry: LiveSessionEntry) =>
+        Effect.gen(function* () {
+          const runtime = entry.runtime;
+          if (entry.busyTurns.size > 0 || runtime.hasStaleCredentials === undefined) return;
+          if (!(yield* runtime.hasStaleCredentials)) return;
+          if (
+            runtime.hasPendingBackgroundWork !== undefined &&
+            (yield* runtime.hasPendingBackgroundWork)
+          ) {
+            return;
+          }
+          yield* releaseEntry({
+            providerSessionId: runtime.providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Provider credentials were renewed.",
+            onlyIfIdleGeneration: entry.idleGeneration,
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.driver-session.stale-credentials-release-failed", {
+              providerSessionId: entry.runtime.providerSessionId,
+              cause,
+            }),
+          ),
+        );
+
       const withActivityError = <A, E, R>(
         providerSessionId: ProviderSessionId,
         effect: Effect.Effect<A, E, R>,
@@ -1834,6 +1863,8 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
+              const live = (yield* Ref.get(sessions)).get(key);
+              if (live !== undefined) yield* releaseIfStaleCredentials(live);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 if (

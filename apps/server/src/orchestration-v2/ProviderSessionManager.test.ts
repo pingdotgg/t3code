@@ -319,6 +319,8 @@ function makeProviderAdapter(
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    /** Each session launches with the current value and is stale once it changes. */
+    readonly credentialRevision?: Ref.Ref<number>;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
@@ -389,6 +391,9 @@ function makeProviderAdapter(
           yield* countClose;
           if (options.hangSessionScopeClose === true) yield* hangClose;
         }
+        const credentialRevision = options.credentialRevision;
+        const launchedRevision =
+          credentialRevision === undefined ? undefined : yield* Ref.get(credentialRevision);
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
@@ -407,6 +412,13 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(credentialRevision === undefined
+            ? {}
+            : {
+                hasStaleCredentials: Ref.get(credentialRevision).pipe(
+                  Effect.map((revision) => revision !== launchedRevision),
+                ),
+              }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -463,6 +475,7 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly credentialRevision?: Ref.Ref<number>;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -488,6 +501,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.credentialRevision === undefined
+        ? {}
+        : { credentialRevision: input.credentialRevision }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -2710,6 +2726,82 @@ it.effect("ProviderSessionManagerV2 defers idle release while background work is
           state,
           idleTimeoutMs: 1000,
           hasPendingBackgroundWork: Ref.get(pendingWork),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 replaces an idle session whose credentials were renewed", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const credentialRevision = yield* Ref.make(1);
+    const startTurnReached = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-renewed-credentials");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const first = yield* open;
+      assert.strictEqual(yield* open, first);
+
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const running = yield* first
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "running while the token renews",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(startTurnReached);
+      yield* Ref.set(credentialRevision, 2);
+
+      // A running turn keeps the process it started on.
+      assert.strictEqual(yield* open, first);
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      yield* Fiber.interrupt(running);
+      const replacement = yield* open;
+      assert.notStrictEqual(replacement, first);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.strictEqual(yield* open, replacement);
+      const session = (yield* projectionStore.getThreadRecords(threadId, ["providerSessions"]))
+        .providerSessions[0];
+      assert.equal(session?.status, "ready");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          credentialRevision,
+          startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
         }),
       ),
     );

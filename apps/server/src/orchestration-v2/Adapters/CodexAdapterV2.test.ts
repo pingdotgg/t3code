@@ -21,6 +21,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -1680,6 +1681,10 @@ describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    hooks: Pick<
+      CodexAdapterV2.CodexAdapterV2Options,
+      "resolveRuntime" | "currentRuntimeRevision"
+    > = {},
   ) =>
     Effect.gen(function* () {
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1721,6 +1726,7 @@ describe("CodexAdapterV2 session initialize", () => {
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig: yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
+        ...hooks,
       });
       const runtime = yield* adapter.openSession({
         threadId: ThreadId.make(`thread-${transcript.scenario}`),
@@ -1736,6 +1742,7 @@ describe("CodexAdapterV2 session initialize", () => {
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
         initializeRequests: () => initializeRequests,
+        hasStaleCredentials: runtime.hasStaleCredentials,
       };
     });
 
@@ -1851,6 +1858,42 @@ describe("CodexAdapterV2 session initialize", () => {
       const providerThread = yield* session.ensureThread("thread-initialize-interrupted");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-interrupted");
       assert.equal(session.initializeRequests(), 2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("reports stale credentials once the token it launched with is renewed", () =>
+    Effect.gen(function* () {
+      const currentToken = yield* Ref.make<string | null>("token-1");
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({ scenario: "stale-credentials", entries: [] }),
+        undefined,
+        {
+          resolveRuntime: Effect.succeed({
+            config: DEFAULT_CODEX_SETTINGS,
+            environment: { ACCESS_TOKEN: "token-1" },
+            revision: "token-1",
+          }),
+          currentRuntimeRevision: Ref.get(currentToken).pipe(
+            Effect.flatMap((token) =>
+              token === null
+                ? Effect.fail(
+                    new ProviderSetupError({
+                      instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+                      operation: "refresh",
+                      detail: "Could not renew the ChatGPT connection.",
+                    }),
+                  )
+                : Effect.succeed(token),
+            ),
+          ),
+        },
+      );
+      assert.isFalse(yield* session.hasStaleCredentials!);
+      yield* Ref.set(currentToken, "token-2");
+      assert.isTrue(yield* session.hasStaleCredentials!);
+      // A failed renewal keeps the session rather than replacing it blindly.
+      yield* Ref.set(currentToken, null);
+      assert.isFalse(yield* session.hasStaleCredentials!);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 });
