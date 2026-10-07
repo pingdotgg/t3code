@@ -1920,7 +1920,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         providerThreadId: null,
         userMessageId: MessageId.make("message:projection-shell-interruptible"),
         rootNodeId,
-        activeAttemptId: null,
+        activeAttemptId: RunAttemptId.make("attempt:waiting-clock"),
         status: "running" as const,
         requestedAt: now,
         startedAt: now,
@@ -2004,6 +2004,50 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       assert.equal(shell?.status, "waiting");
       assert.isNull(shell?.activeRunId);
+      const turnCompletedAt = DateTime.add(now, { minutes: 45 });
+      yield* projectionStore.apply({
+        id: EventId.make("event:waiting-clock:attempt"),
+        type: "run-attempt.updated",
+        threadId,
+        runId,
+        occurredAt: turnCompletedAt,
+        payload: {
+          id: run.activeAttemptId,
+          runId,
+          attemptOrdinal: 1,
+          rootNodeId,
+          providerInstanceId,
+          providerThreadId: ProviderThreadId.make("provider-thread:waiting-clock"),
+          providerTurnId: null,
+          reason: "initial",
+          status: "completed",
+          startedAt: now,
+          completedAt: turnCompletedAt,
+        },
+      });
+      // Both shell paths retain the turn stop time while capture is pending,
+      // and after a later checkpoint completion advances the projection clock.
+      for (const status of ["waiting", "completed"] as const) {
+        const checkpointAt = DateTime.add(turnCompletedAt, { minutes: 1 });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:waiting-clock:${status}`),
+          type: "run.updated",
+          threadId,
+          runId,
+          occurredAt: checkpointAt,
+          payload: { ...run, status, completedAt: status === "completed" ? checkpointAt : null },
+        });
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const row of [sqlShell, ProjectionStore.threadShellFromProjection(projection)]) {
+          assert.equal(
+            row.latestRunTurnCompletedAt && DateTime.toEpochMillis(row.latestRunTurnCompletedAt),
+            DateTime.toEpochMillis(turnCompletedAt),
+          );
+        }
+      }
       const later = DateTime.add(now, { hours: 1 });
       for (const status of ["queued", "cancelled"] as const) {
         yield* projectionStore.apply({

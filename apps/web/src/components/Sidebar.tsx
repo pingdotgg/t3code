@@ -209,6 +209,8 @@ import {
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
+  resolveWaitingStartedAt,
+  shouldShowSidebarV2Duration,
   sidebarListItemId,
   sidebarMarkerId,
   sidebarThreadKeyAtY,
@@ -359,7 +361,7 @@ function JumpHintBadge(props: { label: string }) {
 }
 
 // Self-ticking so only this span re-renders each second, not the whole row.
-function WorkingDuration(props: { startedAt: string | null }) {
+function ThreadDuration(props: { startedAt: string | null }) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -2069,9 +2071,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
                           <span role="status">{topStatus.label}</span>
-                          {status === "working" ? (
+                          {shouldShowSidebarV2Duration(status) ? (
                             <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                              <ThreadDuration
+                                startedAt={
+                                  status === "waiting"
+                                    ? resolveWaitingStartedAt(thread)
+                                    : resolveWorkingStartedAt(thread)
+                                }
+                              />
                             </span>
                           ) : null}
                         </span>

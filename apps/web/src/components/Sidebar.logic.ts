@@ -2,6 +2,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
+import * as DateTime from "effect/DateTime";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -1039,7 +1040,7 @@ export function resolveSidebarV2TopStatus(input: {
 }
 
 export function shouldShowSidebarV2Duration(status: SidebarThreadStatus): boolean {
-  return status === "working";
+  return status === "working" || status === "waiting";
 }
 
 /** First VALID timestamp wins: `a ?? b` falls through on null, but a present-
@@ -1151,6 +1152,32 @@ export function resolveWorkingStartedAt(
   thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
   return resolveThreadWorkingStartedAt(thread);
+}
+
+/** Waiting starts when the provider turn ends, not when its work began or
+ * when checkpoint capture / background progress last updated the thread. */
+export function resolveWaitingStartedAt(
+  thread: Pick<SidebarThreadSummary, "source" | "pendingBackgroundTasks" | "pullRequests">,
+): string | null {
+  const completedAt = thread.source.latestRunTurnCompletedAt;
+  let startedMs = completedAt == null ? Number.NaN : DateTime.toEpochMillis(completedAt);
+  // A PR watch can start after the turn, including on a thread that never ran.
+  if (
+    thread.pendingBackgroundTasks.every((task) => task.taskId.startsWith("pull-request-watch:"))
+  ) {
+    const watchStarts = thread.pullRequests
+      .flatMap((link) =>
+        link.source !== "stack-dismissed" && link.watch !== undefined
+          ? [Date.parse(link.watch.startedAt)]
+          : [],
+      )
+      .filter(Number.isFinite);
+    if (watchStarts.length > 0) {
+      const watchStartedMs = Math.min(...watchStarts);
+      startedMs = Number.isFinite(startedMs) ? Math.max(startedMs, watchStartedMs) : watchStartedMs;
+    }
+  }
+  return Number.isFinite(startedMs) ? new Date(startedMs).toISOString() : null;
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {
