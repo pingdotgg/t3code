@@ -61,9 +61,10 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
+const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 /** The identity a turn's start and its `turn.terminal` share. */
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
-  `${providerThreadId}#${runOrdinal}`;
+  `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
@@ -228,6 +229,18 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   /** Set when idle release is deferred for pending background work; bounds total deferral. */
   readonly pinnedSinceMs: number | null;
+  /**
+   * Shared runtimes only: the provider thread each attached app thread last
+   * started a turn on, and the timer that unloads it once it has been idle
+   * for `idleTimeoutMs`.
+   */
+  readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
+}
+
+interface IdleThreadUnload {
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly generation: number;
+  readonly fiber: Fiber.Fiber<void, never> | null;
 }
 
 type ProviderSessionEventSignal =
@@ -1400,7 +1413,11 @@ export const layerWithOptions = (
       // Clearing a turn that is not marked busy (one whose failed start already
       // cleared it, or a subagent turn the manager never started) only
       // records activity.
-      const markIdle = (providerSessionId: ProviderSessionId, turnKey: string) =>
+      const markIdle = (
+        providerSessionId: ProviderSessionId,
+        providerThreadId: ProviderThreadId,
+        runOrdinal: number,
+      ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
@@ -1412,7 +1429,7 @@ export const layerWithOptions = (
                 return current;
               }
               const busyTurns = new Set(entry.busyTurns);
-              busyTurns.delete(turnKey);
+              busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
               const updated = new Map(current);
               updated.set(key, {
                 ...entry,
@@ -1422,8 +1439,180 @@ export const layerWithOptions = (
               return updated;
             });
             yield* scheduleIdleReleaseInternal(providerSessionId);
+            yield* scheduleThreadUnload(providerSessionId, providerThreadId);
           }),
         );
+
+      const hasBusyTurn = (entry: LiveSessionEntry, providerThreadId: ProviderThreadId) => {
+        const prefix = busyTurnPrefix(providerThreadId);
+        for (const turnKey of entry.busyTurns) {
+          if (turnKey.startsWith(prefix)) return true;
+        }
+        return false;
+      };
+
+      const updateIdleThreadUnload = (
+        providerSessionId: ProviderSessionId,
+        threadId: ThreadId,
+        update: (current: IdleThreadUnload | undefined) => IdleThreadUnload | undefined,
+      ) =>
+        Ref.modify(sessions, (current) => {
+          const key = sessionKey(providerSessionId);
+          const entry = current.get(key);
+          if (entry === undefined) return [undefined, current] as const;
+          const previous = entry.idleThreadUnloads.get(threadId);
+          const next = update(previous);
+          const idleThreadUnloads = new Map(entry.idleThreadUnloads);
+          if (next === undefined) idleThreadUnloads.delete(threadId);
+          else idleThreadUnloads.set(threadId, next);
+          const updated = new Map(current);
+          updated.set(key, { ...entry, idleThreadUnloads });
+          return [previous, updated] as const;
+        });
+
+      /**
+       * Starts tracking the provider thread an app thread runs its turns on, and
+       * stops any unload pending for it. Called before the thread is resumed or
+       * given a turn, so an unload cannot land between a resume that found the
+       * thread loaded and the turn that relies on it.
+       */
+      const holdThreadLoaded = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly providerThread: OrchestrationV2ProviderThread;
+      }) =>
+        Effect.gen(function* () {
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+          if (
+            entry === undefined ||
+            !entry.supportsMultipleProviderThreads ||
+            entry.exposedRuntime.unloadThread === undefined ||
+            input.providerThread.nativeThreadRef === null
+          ) {
+            return;
+          }
+          const previous = yield* updateIdleThreadUnload(
+            input.providerSessionId,
+            input.threadId,
+            (current) => ({
+              providerThread: input.providerThread,
+              generation: (current?.generation ?? 0) + 1,
+              fiber: null,
+            }),
+          );
+          yield* cancelIdleFiber(previous?.fiber ?? null);
+        });
+
+      /**
+       * A shared runtime never goes idle while any of its threads is in use, so
+       * its threads get the idle timeout one by one: a thread with no turn for
+       * `idleTimeoutMs` is unloaded from the runtime, along with the native MCP
+       * servers it started. Its next turn's resume loads it again.
+       */
+      const scheduleThreadUnload = (
+        providerSessionId: ProviderSessionId,
+        providerThreadId: ProviderThreadId,
+      ) =>
+        Effect.gen(function* () {
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+          if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
+          const tracked = Array.from(entry.idleThreadUnloads).find(
+            ([, pending]) => pending.providerThread.id === providerThreadId,
+          );
+          if (tracked === undefined) return;
+          const [threadId, pending] = tracked;
+          const generation = pending.generation + 1;
+          const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+            Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
+            Effect.forkIn(layerScope),
+          );
+          // A turn that started meanwhile already moved the generation on.
+          const previous = yield* updateIdleThreadUnload(providerSessionId, threadId, (current) =>
+            current?.generation === pending.generation
+              ? { ...current, generation, fiber }
+              : current,
+          );
+          yield* cancelIdleFiber(
+            previous?.generation === pending.generation ? previous.fiber : fiber,
+          );
+        });
+
+      const unloadIdleThread = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly generation: number;
+      }): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const outcome = yield* threadAttachment.withLock(
+            threadAttachmentKey(input),
+            Effect.gen(function* () {
+              const key = sessionKey(input.providerSessionId);
+              const entry = (yield* Ref.get(sessions)).get(key);
+              const pending = entry?.idleThreadUnloads.get(input.threadId);
+              const unloadThread = entry?.exposedRuntime.unloadThread;
+              if (
+                entry === undefined ||
+                pending === undefined ||
+                pending.generation !== input.generation ||
+                unloadThread === undefined ||
+                !entry.attachedThreadIds.has(input.threadId) ||
+                hasBusyTurn(entry, pending.providerThread.id)
+              ) {
+                return "skipped" as const;
+              }
+              // Unloading stops the native thread's background terminals, so a
+              // thread still running background work stays loaded.
+              const hasPendingWork =
+                entry.runtime.hasPendingBackgroundWorkForThread === undefined
+                  ? false
+                  : yield* entry.runtime
+                      .hasPendingBackgroundWorkForThread(pending.providerThread)
+                      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+              if (hasPendingWork) return "deferred" as const;
+              const unloading = yield* Ref.modify(sessions, (current) => {
+                const latest = current.get(key);
+                if (
+                  latest?.runtime !== entry.runtime ||
+                  latest.idleThreadUnloads.get(input.threadId)?.generation !== input.generation
+                ) {
+                  return [false, current] as const;
+                }
+                const loadedProviderThreadKeyByThread = new Map(
+                  latest.loadedProviderThreadKeyByThread,
+                );
+                loadedProviderThreadKeyByThread.delete(input.threadId);
+                const idleThreadUnloads = new Map(latest.idleThreadUnloads);
+                idleThreadUnloads.delete(input.threadId);
+                const updated = new Map(current);
+                updated.set(key, {
+                  ...latest,
+                  loadedProviderThreadKeyByThread,
+                  idleThreadUnloads,
+                });
+                return [true, updated] as const;
+              });
+              if (!unloading) return "skipped" as const;
+              yield* unloadThread({ providerThread: pending.providerThread }).pipe(
+                Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
+                    providerSessionId: input.providerSessionId,
+                    threadId: input.threadId,
+                    providerThreadId: pending.providerThread.id,
+                    cause,
+                  }),
+                ),
+              );
+              return "unloaded" as const;
+            }),
+          );
+          // Re-check on this fiber after another idle window, outside the
+          // lock so the thread's next attach is not held up meanwhile.
+          if (outcome === "deferred") {
+            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+            return yield* unloadIdleThread(input);
+          }
+        });
 
       const observeActivity = (
         providerSessionId: ProviderSessionId,
@@ -1545,6 +1734,13 @@ export const layerWithOptions = (
               }),
             ).pipe(
               Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
@@ -1608,6 +1804,13 @@ export const layerWithOptions = (
               // again changes nothing, so another thread's turn on a shared
               // session stays busy either way.
               Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId: input.threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
                 Effect.acquireUseRelease(
                   observeActivity(
                     providerSessionId,
@@ -1622,10 +1825,7 @@ export const layerWithOptions = (
                     Exit.isFailure(exit)
                       ? observeActivity(
                           providerSessionId,
-                          markIdle(
-                            providerSessionId,
-                            busyTurnKey(input.providerThread.id, input.runOrdinal),
-                          ),
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
                         )
                       : Effect.void,
                 ),
@@ -1692,7 +1892,8 @@ export const layerWithOptions = (
               event.type === "turn.terminal"
                 ? markIdle(
                     entry.runtime.providerSessionId,
-                    busyTurnKey(event.providerThreadId, event.runOrdinal),
+                    event.providerThreadId,
+                    event.runOrdinal,
                   )
                 : touchActivity(entry.runtime.providerSessionId),
             ).pipe(
@@ -1965,6 +2166,7 @@ export const layerWithOptions = (
                 lastActivityAtMs: now,
                 idleFiber: null,
                 pinnedSinceMs: null,
+                idleThreadUnloads: new Map(),
               };
               yield* Ref.update(sessions, (current) => {
                 const updated = new Map(current);
@@ -2111,10 +2313,16 @@ export const layerWithOptions = (
                 );
               }
             }
-            const detached = yield* Ref.modify(sessions, (current) => {
+            const detachResult = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
-                return [Option.none<LiveSessionEntry>(), current] as const;
+                return [
+                  Option.none<{
+                    readonly entry: LiveSessionEntry;
+                    readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
+                  }>(),
+                  current,
+                ] as const;
               }
               const attachedThreadIds = new Set(entry.attachedThreadIds);
               attachedThreadIds.delete(input.threadId);
@@ -2135,16 +2343,30 @@ export const layerWithOptions = (
                       return pruned;
                     })()
                   : entry.mcpCredentialIdByThread;
+              // The detach unloads the thread itself below.
+              const idleThreadUnloads = new Map(entry.idleThreadUnloads);
+              idleThreadUnloads.delete(input.threadId);
               const updatedEntry = {
                 ...entry,
                 attachedThreadIds,
                 loadedProviderThreadKeyByThread,
                 mcpCredentialIdByThread,
+                idleThreadUnloads,
               };
               const updated = new Map(current);
               updated.set(key, updatedEntry);
-              return [Option.some(updatedEntry), updated] as const;
+              return [
+                Option.some({
+                  entry: updatedEntry,
+                  idleUnloadFiber: entry.idleThreadUnloads.get(input.threadId)?.fiber ?? null,
+                }),
+                updated,
+              ] as const;
             });
+            if (Option.isSome(detachResult)) {
+              yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
+            }
+            const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches deliberately do not revoke: a detached thread's
             // provider process may still be alive (shared multi-thread codex
             // session across a workspace handoff) and holds its MCP client's
