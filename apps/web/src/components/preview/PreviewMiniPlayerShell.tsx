@@ -44,15 +44,15 @@ const GESTURE_SLOP_PX = 6;
 
 const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
 
-const RESIZE_CURSORS = {
-  north: "ns-resize",
-  south: "ns-resize",
-  west: "ew-resize",
-  east: "ew-resize",
-  northwest: "nwse-resize",
-  northeast: "nesw-resize",
-  southwest: "nesw-resize",
-  southeast: "nwse-resize",
+const RESIZE_CURSOR_CLASSES = {
+  north: "cursor-ns-resize",
+  south: "cursor-ns-resize",
+  west: "cursor-ew-resize",
+  east: "cursor-ew-resize",
+  northwest: "cursor-nwse-resize",
+  northeast: "cursor-nesw-resize",
+  southwest: "cursor-nesw-resize",
+  southeast: "cursor-nwse-resize",
 } satisfies Record<BrowserViewportResizeDirection, string>;
 const MOVE_DELTAS: Record<string, { x: number; y: number }> = {
   ArrowLeft: { x: -1, y: 0 },
@@ -242,8 +242,10 @@ export function PreviewMiniPlayerShell({
       {activeGesture ? (
         // Cover guests during a gesture so an Electron webview or iframe cannot steal it.
         <div
-          className="pointer-events-auto absolute inset-0 z-[49]"
-          style={{ cursor: activeGesture === "move" ? "grabbing" : RESIZE_CURSORS[activeGesture] }}
+          className={cn(
+            "pointer-events-auto absolute inset-0 z-[49]",
+            activeGesture === "move" ? "cursor-grabbing" : RESIZE_CURSOR_CLASSES[activeGesture],
+          )}
         />
       ) : null}
       {frame ? (
