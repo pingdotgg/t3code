@@ -937,7 +937,8 @@ export function ProviderInstanceCard({
               {versionAdvisoryNode}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
-              {statusDotNode ? (
+              {/* The dot describes provider health, not the update in progress. */}
+              {statusDotNode && !updateProgress ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}
               <ProviderStatusDiagnostic detail={statusDiagnostic}>
