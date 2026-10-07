@@ -202,6 +202,11 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },
       {
+        // Incompatible hosts cannot open a normal session; their updater uses a dedicated socket.
+        files: ["packages/client-runtime/src/connection/outdatedHostUpdate.ts"],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
+      {
         // RPC implementation and transport test fixtures need the raw client.
         files: [
           "packages/client-runtime/src/rpc/**",
