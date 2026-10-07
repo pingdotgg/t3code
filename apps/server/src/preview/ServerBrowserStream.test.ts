@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   AuthSessionId,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
@@ -64,15 +65,29 @@ const mutations = [
 ];
 
 it.effect.each([
-  { hasOperateScope: false, interactive: true },
-  { hasOperateScope: true, interactive: true },
-  { hasOperateScope: true, interactive: false },
-])("streams frames and acks while gating page mutations (%s)", ({ hasOperateScope, interactive }) =>
+  { name: "read only", scopes: [AuthOrchestrationReadScope], interactive: true, canOperate: false },
+  {
+    name: "preview operate",
+    scopes: [AuthOrchestrationReadScope, AuthPreviewOperateScope],
+    interactive: true,
+    canOperate: true,
+  },
+  {
+    name: "preview operate, non-interactive",
+    scopes: [AuthOrchestrationReadScope, AuthPreviewOperateScope],
+    interactive: false,
+    canOperate: false,
+  },
+  // Orchestration control alone does not grant preview control.
+  {
+    name: "orchestration operate only",
+    scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+    interactive: true,
+    canOperate: false,
+  },
+])("streams frames and acks while gating page mutations ($name)", (testCase) =>
   Effect.gen(function* () {
-    const canOperate = hasOperateScope && interactive;
-    const scopes = hasOperateScope
-      ? [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]
-      : [AuthOrchestrationReadScope];
+    const { scopes, interactive, canOperate } = testCase;
     const auth = makeAuth(scopes);
     const inputs: unknown[] = [];
     const attachments: Parameters<ServerBrowser.ServerBrowser["Service"]["attachViewer"]>[0][] = [];
@@ -245,7 +260,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("passes uploaded files to the page's open picker and needs operate scope", () =>
+it.effect("passes uploaded files to the page's open picker and needs preview operate scope", () =>
   Effect.gen(function* () {
     const answers: Array<{ chooserId: string; files: Array<{ name: string; text: string }> }> = [];
     const browser = ServerBrowser.ServerBrowser.of({
@@ -288,12 +303,13 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
         );
       });
     expect((yield* upload([AuthOrchestrationReadScope], "chooser-1")).status).toBe(403);
+    expect((yield* upload([AuthOrchestrationOperateScope], "chooser-1")).status).toBe(403);
     expect(answers).toEqual([]);
-    expect((yield* upload([AuthOrchestrationOperateScope], "chooser-1")).status).toBe(204);
+    expect((yield* upload([AuthPreviewOperateScope], "chooser-1")).status).toBe(204);
     expect(answers).toEqual([
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
-    expect((yield* upload([AuthOrchestrationOperateScope], "stale")).status).toBe(409);
+    expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
   }).pipe(Effect.scoped),
 );
 

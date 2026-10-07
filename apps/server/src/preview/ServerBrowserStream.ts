@@ -1,7 +1,7 @@
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import {
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
 } from "@t3tools/contracts";
@@ -72,8 +72,7 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
     const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
     const params = url.value.searchParams;
     const canOperate =
-      session.scopes.includes(AuthOrchestrationOperateScope) &&
-      params.get("interactive") !== "false";
+      session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
     const threadId = params.get("threadId") ?? "";
     const tabId = params.get("tabId") ?? "";
     if (threadId.length === 0 || tabId.length === 0) {
@@ -237,7 +236,7 @@ const UPLOAD_MAX_FILES = 20;
  */
 const receiveUpload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
-    yield* authenticateMediaRequest(AuthOrchestrationOperateScope);
+    yield* authenticateMediaRequest(AuthPreviewOperateScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const fs = yield* FileSystem.FileSystem;
     const parts = yield* request.multipart.pipe(
