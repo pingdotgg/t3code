@@ -342,7 +342,11 @@ describe("ProviderFailureExplanationService", () => {
       const harness = makeHarness({
         lastError: "Provider session crashed",
         lastErrorClass: null,
-        turnItems: [rootError("item:root-error", 1, "turn failed")],
+        turnItems: [
+          rootError("item:root-error", 1, "turn failed", {
+            retry: { attempt: 2, maxAttempts: 3 },
+          }),
+        ],
       });
       const result = yield* explain({ revision: "Provider session crashed" }).pipe(
         Effect.provide(harness.layer),
@@ -354,6 +358,7 @@ describe("ProviderFailureExplanationService", () => {
       assert.include(context, "Message: Provider session crashed");
       assert.notInclude(context, "turn failed");
       assert.notInclude(context, "E_BOOM");
+      assert.notInclude(context, "Retried by the provider");
     }),
   );
 

@@ -229,8 +229,9 @@ const make = Effect.gen(function* () {
     // The run's own failure when it is the one reported; otherwise the failure is
     // the session's, and only its message and class are known.
     const runFailure = latestRootProviderFailure(run, runItems);
+    const reportsRunFailure = runFailure !== null && runFailure.message === lastError;
     const failure: OrchestrationV2ProviderFailure =
-      runFailure !== null && runFailure.message === lastError
+      runFailure !== null && reportsRunFailure
         ? runFailure
         : {
             class: shell.lastErrorClass ?? "unknown",
@@ -253,7 +254,8 @@ const make = Effect.gen(function* () {
       model: (run?.modelSelection ?? shell.modelSelection).model,
       runtimeMode: shell.runtimeMode,
       failure,
-      retry: failureItem?.type === "error" ? failureItem.retry : undefined,
+      // Retry progress belongs to the run's failure, not to a session error replacing it.
+      retry: reportsRunFailure && failureItem?.type === "error" ? failureItem.retry : undefined,
       userMessage:
         userMessageItem?.type === "user_message"
           ? {

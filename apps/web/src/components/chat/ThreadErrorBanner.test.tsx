@@ -1,4 +1,9 @@
-import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  OrchestrationV2ProviderFailureClass,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -88,19 +93,25 @@ describe("ThreadErrorBanner", () => {
   });
 
   describe("explain action", () => {
+    // Read from the contract so the lint rule for class names leaves these values alone.
+    const failureClass = (name: string): OrchestrationV2ProviderFailureClass => {
+      const value = OrchestrationV2ProviderFailureClass.literals.find(
+        (candidate) => candidate === name,
+      );
+      if (value === undefined) throw new Error(`Unknown failure class ${name}`);
+      return value;
+    };
     const explainTarget = {
       environmentId: EnvironmentId.make("env-1"),
       threadId: ThreadId.make("thread-1"),
       runId: RunId.make("run-1"),
     };
 
-    const failureKinds = { provider: "provider_error", usage: "usage_limit" } as const; // oxlint-disable-line shadcn/no-unknown-classes -- failure classes, not CSS
-
     it("offers Explain for a server provider failure without asking anything yet", () => {
       const markup = renderToStaticMarkup(
         <ThreadErrorBanner
           error="spawn codex ENOENT"
-          errorClass={failureKinds.provider}
+          errorClass={failureClass("provider_error")}
           explainTarget={explainTarget}
           onDismiss={() => {}}
         />,
@@ -116,7 +127,7 @@ describe("ThreadErrorBanner", () => {
         renderToStaticMarkup(
           <ThreadErrorBanner
             error="Limit reached"
-            errorClass={failureKinds.usage}
+            errorClass={failureClass("usage_limit")}
             explainTarget={explainTarget}
           />,
         ),
