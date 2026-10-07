@@ -29,6 +29,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -36,10 +37,13 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -701,12 +705,50 @@ export const layer = Layer.effect(
       );
     });
 
+    type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
+    const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
+      Option.none(),
+    );
+
+    // Untargeted refreshes probe every live source, so any read-scoped client
+    // can request them. Concurrent callers share one in-flight pass instead of
+    // each starting their own set of provider processes.
     const refreshAll = Effect.fn("refreshAll")(function* () {
-      const sources = yield* getLiveSources;
-      return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
-        concurrency: "unbounded",
-        discard: true,
-      }).pipe(Effect.andThen(Ref.get(providersRef)));
+      const claimed = yield* Ref.modify(
+        refreshAllInFlightRef,
+        (
+          inFlight,
+        ): readonly [
+          { readonly owner: boolean; readonly completion: RefreshAllCompletion },
+          Option.Option<RefreshAllCompletion>,
+        ] => {
+          if (Option.isSome(inFlight)) {
+            return [{ owner: false, completion: inFlight.value }, inFlight];
+          }
+          const completion = Deferred.makeUnsafe<ReadonlyArray<ServerProvider>>();
+          return [{ owner: true, completion }, Option.some(completion)];
+        },
+      );
+      if (claimed.owner) {
+        // Detached so an interrupted first caller cannot cancel the pass that
+        // other callers are already awaiting.
+        yield* getLiveSources.pipe(
+          Effect.flatMap((sources) =>
+            Effect.forEach(sources, (source) => refreshOneSource(source), {
+              concurrency: "unbounded",
+              discard: true,
+            }),
+          ),
+          Effect.andThen(Ref.get(providersRef)),
+          Effect.onExit((exit) =>
+            Ref.set(refreshAllInFlightRef, Option.none()).pipe(
+              Effect.andThen(Deferred.done(claimed.completion, exit)),
+            ),
+          ),
+          Effect.forkDetach,
+        );
+      }
+      return yield* Deferred.await(claimed.completion);
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
@@ -1008,13 +1050,20 @@ export const layer = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const now = yield* DateTime.now;
       if (
         !provider ||
         !provider.enabled ||
-        (!input.fresh && scannedFrom && !scannedFrom.slashCommandsPending)
+        (!input.fresh &&
+          scannedFrom &&
+          !scannedFrom.slashCommandsPending &&
+          isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
       ) {
         return providers;
       }
+      // Drivers spread their machine snapshot, whose `checkedAt` is the last
+      // health check. The TTL needs the time this scan started reading files.
+      const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
@@ -1046,7 +1095,10 @@ export const layer = Layer.effect(
                     currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
                       Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
+                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                            ...scopedSnapshot,
+                            checkedAt: scannedAt,
+                          })
                         : candidate,
                     ),
                   );

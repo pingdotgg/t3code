@@ -1,4 +1,6 @@
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
@@ -22,6 +24,7 @@ import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
+  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
@@ -41,6 +44,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
         environments.map(async (environment) => {
           if (environment.connection.phase !== "connected" || !environment.serverConfig) {
             throw new Error("Environment disconnected");
+          }
+          if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
+            throw new Error("This connection cannot change device settings.");
           }
           return update({
             environmentId: environment.environmentId,
@@ -85,7 +91,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
         <Button
           size="sm"
           variant="outline"
-          disabled={projectScope || busy || !props.environmentId || editing !== null}
+          disabled={
+            !canConfigure || projectScope || busy || !props.environmentId || editing !== null
+          }
           onClick={() => {
             setOriginalHost(null);
             setEditing({ id: randomUUID(), label: "", target: "" });
@@ -113,7 +121,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                   environmentLabel={environment.label}
                   environmentId={environment.environmentId}
                   hosts={environment.serverConfig?.settings.deviceHosts ?? []}
-                  busy={projectScope || busy}
+                  busy={!canConfigure || projectScope || busy}
                   checks={checks}
                   testConnection={async (host) => {
                     const results = await testConnection(host);

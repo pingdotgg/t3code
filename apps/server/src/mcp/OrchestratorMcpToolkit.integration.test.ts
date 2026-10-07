@@ -2232,6 +2232,44 @@ describe("orchestrator MCP toolkit", () => {
               reason: "user",
             });
 
+            expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
+            expect(metadataRead.thread.link).toBe(
+              `[Metadata-managed thread](t3-thread://v1/environment%3Amcp-orchestrator/${encodeURIComponent(emptyThread.threadId)})`,
+            );
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make("command:mcp-empty:snooze"),
+              threadId: emptyThread.threadId,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedListCall = yield* invoke("t3_thread_list", { snoozed: true, limit: 100 });
+            const snoozedList = yield* decodeThreadListResult(
+              snoozedListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedList.threads.map((thread) => thread.threadId)).toEqual([
+              emptyThread.threadId,
+            ]);
+            expect(snoozedList.threads[0]).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedReadCall = yield* invoke("t3_thread_read", {
+              threadId: emptyThread.threadId,
+            });
+            const snoozedRead = yield* decodeThreadReadResult(
+              snoozedReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedRead.thread).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.unsnooze",
+              commandId: CommandId.make("command:mcp-empty:unsnooze"),
+              threadId: emptyThread.threadId,
+              reason: "user",
+            });
+
             const unlinkedCall = yield* invoke("t3_thread_update", {
               threadId: emptyThread.threadId,
               action: "unlink_pull_request",

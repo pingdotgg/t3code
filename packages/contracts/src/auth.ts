@@ -3,6 +3,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import {
   AuthSessionId,
+  ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
   TrimmedNonEmptyString,
@@ -80,8 +81,18 @@ export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
+export const AuthSettingsWriteScope = "settings:write" as const;
+export const AuthProvidersManageScope = "providers:manage" as const;
+export const AuthEnvironmentMaintainScope = "environment:maintain" as const;
+export const AuthPreviewOperateScope = "preview:operate" as const;
+export const AuthDiagnosticsReadScope = "diagnostics:read" as const;
+export const AuthTerminalReadScope = "terminal:read" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
-export const AuthReviewWriteScope = "review:write" as const;
+export const AuthSourceControlWriteScope = "source-control:write" as const;
+export const AuthFilesystemReadScope = "filesystem:read" as const;
+export const AuthFilesystemWriteScope = "filesystem:write" as const;
+/** Retained for decoding existing credentials; grants no current RPC access. */
+const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
@@ -89,8 +100,17 @@ export const AuthRelayWriteScope = "relay:write" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  AuthEnvironmentMaintainScope,
+  AuthPreviewOperateScope,
+  AuthDiagnosticsReadScope,
+  AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthReviewWriteScope,
+  AuthSourceControlWriteScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayReadScope,
@@ -100,11 +120,101 @@ export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
 export type AuthEnvironmentScopes = typeof AuthEnvironmentScopes.Type;
 
-export const AuthStandardClientScopes = [
+export const AuthGrantScope = Schema.Literals(
+  AuthEnvironmentScope.literals.filter((scope) => scope !== AuthReviewWriteScope),
+);
+export type AuthGrantScope = typeof AuthGrantScope.Type;
+export const AuthGrantScopes = Schema.Array(AuthGrantScope);
+export type AuthGrantScopes = typeof AuthGrantScopes.Type;
+
+// Frozen wire vocabulary for clients released before granular permissions.
+const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   AuthReviewWriteScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+]);
+
+/** Format public auth metadata without changing the server's authorization grant. */
+export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
+  return { scopes: scopes.filter((scope) => legacyScopes.has(scope)), permissions: scopes };
+}
+
+const authScopeResponseFields = {
+  scopes: AuthEnvironmentScopes,
+  permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
+};
+
+// Only clients talking to an old server use these parent checks. Servers never
+// expand stored grants, and an explicitly empty permissions array grants nothing.
+const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
+  [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
+  [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
+  [AuthSettingsWriteScope]: AuthOrchestrationOperateScope,
+  [AuthProvidersManageScope]: AuthOrchestrationOperateScope,
+  [AuthEnvironmentMaintainScope]: AuthOrchestrationOperateScope,
+  [AuthPreviewOperateScope]: AuthOrchestrationOperateScope,
+  [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
+  [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
+  [AuthTerminalReadScope]: AuthTerminalOperateScope,
+};
+
+/** Keep permission denials decodable by clients with the original scope enum. */
+export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentScope) {
+  return {
+    requiredScope: legacyParents[requiredPermission] ?? requiredPermission,
+    requiredPermission,
+  };
+}
+
+export interface SessionGrantInput {
+  readonly authenticated: boolean;
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly permissions?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly auth?: { readonly serverUpdateScope?: string | undefined } | undefined;
+}
+
+export function sessionGrantsScope(
+  session: SessionGrantInput,
+  scope: AuthEnvironmentScope,
+): boolean {
+  if (!session.authenticated) return false;
+  if (session.permissions !== undefined) return session.permissions.includes(scope);
+  if (session.scopes?.includes(scope)) return true;
+  // Also recognize servers from the first granular-scope release.
+  if (session.auth?.serverUpdateScope !== undefined) return false;
+  const parent = legacyParents[scope];
+  return parent !== undefined && session.scopes?.includes(parent) === true;
+}
+
+/** Old-only grants lost the child permissions formerly implied by their broad scopes. */
+export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {
+  const permissions = session.permissions;
+  return (
+    session.authenticated &&
+    permissions !== undefined &&
+    permissions.every((scope) => legacyScopes.has(scope)) &&
+    Object.values(legacyParents).some((parent) => permissions.includes(parent))
+  );
+}
+
+export const AuthStandardClientScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  AuthEnvironmentMaintainScope,
+  AuthPreviewOperateScope,
+  AuthDiagnosticsReadScope,
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
+  AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthRelayReadScope,
 ] as const;
 export const AuthAdministrativeScopes = [
@@ -145,6 +255,8 @@ export const ServerAuthDescriptor = Schema.Struct({
   bootstrapMethods: Schema.Array(ServerAuthBootstrapMethod),
   sessionMethods: Schema.Array(ServerAuthSessionMethod),
   sessionCookieName: TrimmedNonEmptyString,
+  /** Older servers omit this and authorize self-updates with orchestration:operate. */
+  serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
@@ -155,7 +267,7 @@ export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
 export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
@@ -221,7 +333,7 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 // Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
@@ -242,7 +354,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
@@ -299,6 +411,7 @@ export class EnvironmentAuthorizationError extends Schema.TaggedError<Environmen
   {
     message: Schema.String,
     requiredScope: AuthEnvironmentScope,
+    requiredPermission: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -341,7 +454,7 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  scopes: Schema.optionalKey(AuthGrantScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
@@ -349,6 +462,7 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
@@ -448,7 +562,10 @@ export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Typ
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
-  /** Where the code goes: always a loopback address on the browser's machine. */
+  /**
+   * Where the code goes: a loopback address on the browser's machine (a CLI
+   * agent), or an https host (a hosted agent).
+   */
   redirectHost: Schema.String,
   environmentHost: Schema.String,
   /** Present when this browser's session may approve without a pairing code. */

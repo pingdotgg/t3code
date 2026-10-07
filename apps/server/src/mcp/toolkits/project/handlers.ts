@@ -1,4 +1,5 @@
 import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -57,7 +58,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     (input, { runtimeMode, interactionMode }) =>
       Effect.gen(function* () {
         const context = yield* readCaller();
-        const { caller } = context;
+        const { caller, scope } = context;
         const commandId = yield* newCommandId();
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
@@ -146,6 +147,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
+          link: formatThreadLink({
+            environmentId: scope.environmentId,
+            threadId: thread.id,
+            title: thread.title,
+          }),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,

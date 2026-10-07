@@ -118,6 +118,7 @@ function parseDiscoveredModels(
     parsed.push({
       slug,
       name: recordString(model, "name") ?? slug,
+      subProvider: provider,
       isCustom: false,
       capabilities: thinkingCapabilitiesForPiModel(model, defaultThinkingLevel),
     });
