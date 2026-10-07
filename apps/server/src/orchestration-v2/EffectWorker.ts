@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -535,6 +536,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
+      const workerScope = yield* Effect.scope;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
@@ -678,65 +680,91 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
-          const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
-            .pipe(Effect.as("executed" as const));
-          const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
-            Effect.ensuring(outbox.clearCancellation(effect.id)),
-          );
-          if (Exit.isSuccess(exit) && exit.value === "cancelled") {
-            return true;
-          }
-          if (Exit.isSuccess(exit)) {
-            return yield* Effect.gen(function* () {
-              const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
-              if (!completed) {
-                if (yield* wasCancelled(effect.id)) return true;
-                return yield* new OrchestrationEffectWorkerError({
-                  operation: "complete",
-                  effectId: effect.id,
-                  cause: "The worker no longer owns the effect lease.",
-                });
-              }
+          const settle = Effect.gen(function* () {
+            const execution = executor
+              .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+              .pipe(Effect.as("executed" as const));
+            const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
+              Effect.ensuring(outbox.clearCancellation(effect.id)),
+            );
+            if (Exit.isSuccess(exit) && exit.value === "cancelled") {
               return true;
-            }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
-          }
+            }
+            if (Exit.isSuccess(exit)) {
+              return yield* Effect.gen(function* () {
+                const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
+                if (!completed) {
+                  if (yield* wasCancelled(effect.id)) return true;
+                  return yield* new OrchestrationEffectWorkerError({
+                    operation: "complete",
+                    effectId: effect.id,
+                    cause: "The worker no longer owns the effect lease.",
+                  });
+                }
+                return true;
+              }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
+            }
 
-          const error = Cause.pretty(exit.cause);
-          const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
-          yield* Effect.logWarning("Orchestration effect execution failed", {
+            const error = Cause.pretty(exit.cause);
+            const nonRetryable = isNonRetryableProviderTurnControlFailure(
+              effect.request.type,
+              error,
+            );
+            yield* Effect.logWarning("Orchestration effect execution failed", {
+              effectId: effect.id,
+              effectType: effect.request.type,
+              attemptCount: effect.attemptCount,
+              nonRetryable,
+              error,
+            });
+            // Prefer succeed for terminal interrupt races so the outbox does not
+            // keep a failed interrupt around; fail only when we must not retry.
+            const updated = nonRetryable
+              ? yield* outbox
+                  .succeed({ effectId: effect.id, workerId })
+                  .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+              : effect.attemptCount >= maxAttempts
+                ? yield* outbox
+                    .fail({ effectId: effect.id, workerId, error })
+                    .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+                : yield* outbox
+                    .retry({
+                      effectId: effect.id,
+                      workerId,
+                      error,
+                      delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    })
+                    .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+            if (!updated) {
+              if (yield* wasCancelled(effect.id)) return true;
+              return yield* new OrchestrationEffectWorkerError({
+                operation: "reschedule",
+                effectId: effect.id,
+                cause: "The worker no longer owns the effect lease.",
+              });
+            }
+            return true;
+          });
+          // An effect that outlives its lease keeps running and keeps its row
+          // `running`, so the thread's later effects still wait behind it. It
+          // stops holding this worker slot, though: a provider that never
+          // answers would otherwise take every slot and stall all threads.
+          const settlement = yield* Effect.forkIn(settle, workerScope);
+          const settled = yield* Fiber.await(settlement).pipe(
+            Effect.timeoutOption(Duration.millis(leaseDurationMs)),
+            Effect.onInterrupt(() => Fiber.interrupt(settlement)),
+          );
+          if (Option.isSome(settled)) return yield* settled.value;
+          yield* Effect.logWarning("Orchestration effect outlived its lease; freeing its worker", {
             effectId: effect.id,
             effectType: effect.request.type,
-            attemptCount: effect.attemptCount,
-            nonRetryable,
-            error,
           });
-          // Prefer succeed for terminal interrupt races so the outbox does not
-          // keep a failed interrupt around; fail only when we must not retry.
-          const updated = nonRetryable
-            ? yield* outbox
-                .succeed({ effectId: effect.id, workerId })
-                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
-              ? yield* outbox
-                  .fail({ effectId: effect.id, workerId, error })
-                  .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-              : yield* outbox
-                  .retry({
-                    effectId: effect.id,
-                    workerId,
-                    error,
-                    delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
-                  })
-                  .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
-          if (!updated) {
-            if (yield* wasCancelled(effect.id)) return true;
-            return yield* new OrchestrationEffectWorkerError({
-              operation: "reschedule",
-              effectId: effect.id,
-              cause: "The worker no longer owns the effect lease.",
-            });
-          }
+          yield* Fiber.join(settlement).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Orchestration effect worker failed", cause),
+            ),
+            Effect.forkIn(workerScope),
+          );
           return true;
         }).pipe(
           Effect.mapError((cause) =>

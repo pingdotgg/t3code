@@ -1316,6 +1316,73 @@ it.effect("ProviderSessionManagerV2 releases an idle session whose turn start wa
   }),
 );
 
+it.effect("ProviderSessionManagerV2 fails a turn start the provider never answers", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const startTurnReached = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-unanswered-turn-start");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const starting = yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "sent to a provider that stopped answering",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(startTurnReached);
+
+      yield* TestClock.adjust("2 minutes");
+      const exit = yield* Fiber.await(starting);
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.include(Cause.pretty(exit.cause), "did not answer the turn start within 2 minutes");
+      }
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 keeps a shared session busy when another thread's start is stopped early",
   () =>
