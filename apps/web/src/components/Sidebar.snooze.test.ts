@@ -27,6 +27,12 @@ describe("resolveSnoozePresets", () => {
     expect(twoHours).toMatchObject({ label: "In 2 hours" });
     expect(new Date(twoHours!.snoozedUntil).getHours()).toBe(12);
     expect(twoHours!.whenLabel).not.toBe("");
+    // Same-day wakes show only the time; a favorite on another day names it.
+    const weekday = (preset: { snoozedUntil: string }) =>
+      new Date(preset.snoozedUntil).toLocaleDateString(undefined, { weekday: "short" });
+    const twoDays = presets.find((preset) => preset.id === "favorite:2-days");
+    expect(twoHours!.whenLabel).not.toContain(weekday(twoHours!));
+    expect(twoDays!.whenLabel.startsWith(weekday(twoDays!))).toBe(true);
   });
 
   it("keeps wake times ascending when evening falls before three hours", () => {

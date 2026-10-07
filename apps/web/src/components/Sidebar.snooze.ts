@@ -30,8 +30,11 @@ export function resolveSnoozePresets(
       const time = timeOfDayLabel(wake, timestampFormat);
       return {
         ...preset,
+        // A wake on another day names its weekday, so a saved duration such
+        // as "26 hours" does not read as earlier than "Tomorrow".
         whenLabel:
-          preset.id === "next-week"
+          preset.id === "next-week" ||
+          (preset.id.startsWith("favorite:") && wake.toDateString() !== now.toDateString())
             ? `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
             : time,
       };
