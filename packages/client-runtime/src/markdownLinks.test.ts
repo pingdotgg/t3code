@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileBasename,
+  formatFilePathPosition,
   inlineCodeFilePathCandidate,
   isMarkdownFileLinkLabel,
   parseFileUrlHref,
@@ -20,6 +21,9 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:99", "/repo/src/example.ts:12", false],
     ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
     ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
+    ["example.ts:49-74", "/repo/src/example.ts:49-74", true],
+    ["example.ts:49-75", "/repo/src/example.ts:49-74", false],
+    ["example.ts:49-74", "/repo/src/example.ts:49", false],
     ["example.ts:12", "/repo/src/example.ts", false],
     ["src/example.ts:12", "/repo/src/example.ts:12", true],
     ["./src/example.ts", "/repo/src/example.ts", true],
@@ -40,14 +44,21 @@ describe("inlineCodeFilePathCandidate", () => {
     ["\\\\server\\share\\image.png", "\\\\server\\share\\image.png"],
     ["conf.d/nginx.conf", "conf.d/nginx.conf"],
     ["script.pl:10", "script.pl:10"],
+    ["main.ts:49-74", "main.ts:49-74"],
+    ["src\\main.ts:49-74", "src/main.ts:49-74"],
+    ["Makefile:49-74", "Makefile:49-74"],
+    ["script.pl:49-74", "script.pl:49-74"],
     ["node.meta", null],
     ["Recorded evidence here: /tmp/image.png", null],
     ["origin/main", null],
     ["127.0.0.1:3000", null],
+    ["localhost:49-74", null],
+    ["example.com:49-74", null],
     ["example.com/index.html", null],
     ["example.pl/index.html", null],
     ["z-ai/glm-5.3", null],
     ["z-ai/glm-5.3:12", null],
+    ["z-ai/glm-5.3:49-74", null],
     ["python/3.12", null],
     ["Qwen/Qwen2.5-Coder", null],
     ["meta-llama/Llama-3.1-8B", null],
@@ -91,6 +102,12 @@ describe("splitFilePathPosition", () => {
     ["src/main.ts", "", { path: "src/main.ts" }],
     ["src/main.ts:12", "", { path: "src/main.ts", line: 12 }],
     ["src/main.ts:12:5", "", { path: "src/main.ts", line: 12, column: 5 }],
+    ["src/main.ts:49-74", "", { path: "src/main.ts", line: 49, endLine: 74 }],
+    ["src/main.ts:49-49", "", { path: "src/main.ts", line: 49, endLine: 49 }],
+    ["src/main.ts:49-0", "", { path: "src/main.ts", line: 49 }],
+    ["src/main.ts:74-49", "", { path: "src/main.ts", line: 74 }],
+    ["src/main.ts:0-74", "", { path: "src/main.ts" }],
+    ["src/main.ts:49-", "", { path: "src/main.ts:49-" }],
     ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
     ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
     ["src/main.ts:0", "", { path: "src/main.ts" }],
@@ -124,6 +141,10 @@ describe("parseMarkdownFileLink", () => {
     ["~/notes/today.md", "~/notes/today.md"],
     ["AGENTS.md", "AGENTS.md"],
     ["script.ts:10", "script.ts"],
+    ["script.ts:49-74", "script.ts"],
+    ["apps/mobile/src/index.ts:49-74", "apps/mobile/src/index.ts"],
+    ["/Users/julius/project/src/main.ts:49-74", "/Users/julius/project/src/main.ts"],
+    ["C:\\Users\\mike\\project\\src\\main.ts:49-74", "C:\\Users\\mike\\project\\src\\main.ts"],
     ["/tmp/clip%23one.mp4#t=2", "/tmp/clip#one.mp4"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
@@ -141,6 +162,9 @@ describe("parseMarkdownFileLink", () => {
     "/app#L1",
     "readme",
     "TODO:12",
+    "TODO:49-74",
+    "script.ts:49-",
+    "script.ts:49-nope",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });
@@ -152,6 +176,9 @@ describe("parseMarkdownFileLink", () => {
   });
 
   it("reads positions from suffixes and line anchors", () => {
+    const range = parseMarkdownFileLink("script.ts:49-74");
+    expect(range).toEqual({ path: "script.ts", line: 49, endLine: 74 });
+    expect(formatFilePathPosition(range!)).toBe("script.ts:49-74");
     expect(parseMarkdownFileLink("/Users/julius/project/src/main.ts#L42C7")).toEqual({
       path: "/Users/julius/project/src/main.ts",
       line: 42,

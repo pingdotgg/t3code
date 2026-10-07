@@ -3,14 +3,13 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*$/;
+const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+$/;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
-const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
+const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+)|-(\d+))?$/;
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
@@ -244,6 +243,7 @@ export interface FilePathPosition {
   readonly path: string;
   readonly line?: number;
   readonly column?: number;
+  readonly endLine?: number;
 }
 
 export function splitFilePathPosition(path: string, hash = ""): FilePathPosition {
@@ -253,15 +253,18 @@ export function splitFilePathPosition(path: string, hash = ""): FilePathPosition
 
   const line = Number.parseInt(match[1], 10);
   const column = match[2] === undefined ? undefined : Number.parseInt(match[2], 10);
+  const endLine = match[3] === undefined ? undefined : Number.parseInt(match[3], 10);
   return {
     path: suffixMatch ? path.slice(0, -suffixMatch[0].length) : path,
     ...(line > 0 ? { line } : {}),
     ...(column !== undefined && column > 0 ? { column } : {}),
+    ...(line > 0 && endLine !== undefined && endLine >= line ? { endLine } : {}),
   };
 }
 
 export function formatFilePathPosition(position: FilePathPosition): string {
   if (!position.line) return position.path;
+  if (position.endLine) return `${position.path}:${position.line}-${position.endLine}`;
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
@@ -274,7 +277,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const labelPosition = splitFilePathPosition(label.trim());
   if (
     (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
   ) {
     return false;
   }
@@ -312,7 +316,7 @@ function looksLikeFilePath(path: string, authoredPath: string): boolean {
   if (isWindowsAbsolutePath(path) || RELATIVE_PATH_PREFIX_PATTERN.test(path)) return true;
   if (path.startsWith("/")) return looksLikePosixFilesystemPath(authoredPath);
   if (EXTENSIONLESS_FILE_NAMES.has(path)) return true;
-  return RELATIVE_FILE_PATH_PATTERN.test(authoredPath) || RELATIVE_FILE_NAME_PATTERN.test(path);
+  return RELATIVE_FILE_PATH_PATTERN.test(path) || RELATIVE_FILE_NAME_PATTERN.test(path);
 }
 
 function hasExternalScheme(path: string): boolean {

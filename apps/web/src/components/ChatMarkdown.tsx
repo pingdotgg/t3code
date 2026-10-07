@@ -51,7 +51,11 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  formatFilePathPosition,
+  inlineCodeFilePathCandidate,
+  splitFilePathPosition,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -2150,7 +2154,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        // Editors accept a single line/column; keep ranges for display and copying.
+        const { endLine, ...position } = splitFilePathPosition(targetPath);
+        const result = await onOpen(
+          endLine === undefined ? targetPath : formatFilePathPosition(position),
+        );
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -2835,7 +2843,7 @@ function useChatMarkdownState({
       }
       if (fileLinkMeta.line) {
         labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+          `L${fileLinkMeta.line}${fileLinkMeta.endLine ? `-${fileLinkMeta.endLine}` : fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
         );
       }
       const mediaPath = mediaSource ?? fileLinkMeta.filePath;

@@ -4,13 +4,12 @@ import {
   inlineCodeFilePathCandidate,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
+  splitFilePathPosition,
 } from "@t3tools/client-runtime/markdown-links";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
-
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 
 export type MarkdownLinkPresentation =
   | {
@@ -26,6 +25,7 @@ export type MarkdownLinkPresentation =
       readonly path: string;
       readonly line?: number;
       readonly column?: number;
+      readonly endLine?: number;
     }
   | {
       readonly kind: "link";
@@ -249,7 +249,7 @@ export function normalizeNativeMarkdownUrl(value: string): string {
 }
 
 export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
-  const basename = fileBasename(value).replace(POSITION_SUFFIX_PATTERN, "").toLowerCase();
+  const basename = fileBasename(splitFilePathPosition(value).path).toLowerCase();
   if (videoMimeType({ name: basename, mimeType: "" }) !== null) return "video";
   const exactIcon = FILE_ICON_BY_NAME[basename];
   if (exactIcon) return exactIcon;
@@ -289,6 +289,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
       path: target.path,
       ...(target.line ? { line: target.line } : {}),
       ...(target.column ? { column: target.column } : {}),
+      ...(target.endLine ? { endLine: target.endLine } : {}),
     };
   }
 

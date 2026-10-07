@@ -188,22 +188,47 @@ function offeredActions() {
   return state.choose.mock.lastCall![0].map((item: { id: string }) => item.id);
 }
 
-it("removes host actions after revocation while keeping file preview and copying", async () => {
-  await renderMarkdown("[Readme](docs/readme.md)");
-  await openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
-  await act(async () => {
-    state.allowed = false;
-    for (const listener of state.listeners) listener();
-  });
-  state.choose.mockResolvedValue("copy-full");
-  await openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
-  expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md");
-  await act(async () => anchor().props.onClick(menuEvent()));
-  expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
-  expect(state.openEditor).not.toHaveBeenCalled();
-});
+it.each([
+  {
+    text: "[Readme](docs/readme.md)",
+    path: "docs/readme.md",
+    position: "",
+    editorPosition: "",
+    line: undefined,
+  },
+  {
+    text: "`docs/readme.md:49-74`",
+    path: "docs/readme.md",
+    position: ":49-74",
+    editorPosition: ":49",
+    line: 49,
+  },
+])(
+  "keeps $path preview and copying after host actions are revoked",
+  async ({ text, path, position, editorPosition, line }) => {
+    await renderMarkdown(text);
+    await openContextMenu();
+    expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+    state.choose.mockResolvedValue("open");
+    await openContextMenu();
+    expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: { cwd: `/work/${path}${editorPosition}`, editor: "vscode" },
+    });
+    state.openEditor.mockClear();
+    await act(async () => {
+      state.allowed = false;
+      for (const listener of state.listeners) listener();
+    });
+    state.choose.mockResolvedValue("copy-full");
+    await openContextMenu();
+    expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
+    expect(state.copy).toHaveBeenCalledWith(`/work/${path}${position}`);
+    await act(async () => anchor().props.onClick(menuEvent()));
+    expect(state.openFile).toHaveBeenCalledWith(threadRef, path, line);
+    expect(state.openEditor).not.toHaveBeenCalled();
+  },
+);
 
 it("does not launch an editor after revocation during a native context menu", async () => {
   let choose: (action: string) => void = () => {

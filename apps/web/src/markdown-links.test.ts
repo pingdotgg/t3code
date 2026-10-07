@@ -344,8 +344,13 @@ describe("relative links inside a rendered host file", () => {
       filePath: "/tmp/report/appendix.md",
       workspaceRelativePath: null,
     });
-    const inline = resolveInlineCodeFileLinkMeta("Makefile:12", "/repo", "/tmp/report");
-    expect(inline).toMatchObject({ filePath: "/tmp/report/Makefile", line: 12 });
+    const inline = resolveInlineCodeFileLinkMeta("Makefile:12-18", "/repo", "/tmp/report");
+    expect(inline).toMatchObject({
+      filePath: "/tmp/report/Makefile",
+      targetPath: "/tmp/report/Makefile:12-18",
+      line: 12,
+      endLine: 18,
+    });
     expect(resolveMarkdownFileLinkMeta("src/main.ts", "/repo", "/repo/docs")).toMatchObject({
       filePath: "/repo/docs/src/main.ts",
       workspaceRelativePath: "docs/src/main.ts",
@@ -382,13 +387,59 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     });
   });
 
-  it("links relative paths with line positions", () => {
-    expect(
-      resolveInlineCodeFileLinkMeta("src/processRunner.ts:71", "/Users/julius/project"),
-    ).toMatchObject({
-      targetPath: "/Users/julius/project/src/processRunner.ts:71",
-      line: 71,
-    });
+  it.each([
+    {
+      source: "src/processRunner.ts:71",
+      cwd: "/Users/julius/project",
+      expected: { targetPath: "/Users/julius/project/src/processRunner.ts:71", line: 71 },
+    },
+    {
+      source: "src/processRunner.ts:49-74",
+      cwd: "/Users/julius/project",
+      expected: {
+        filePath: "/Users/julius/project/src/processRunner.ts",
+        targetPath: "/Users/julius/project/src/processRunner.ts:49-74",
+        displayPath: "project/src/processRunner.ts:49-74",
+        workspaceRelativePath: "src/processRunner.ts",
+        basename: "processRunner.ts",
+        line: 49,
+        endLine: 74,
+      },
+    },
+    {
+      source: "script.ts:49-74",
+      cwd: "/Users/julius/project",
+      expected: {
+        filePath: "/Users/julius/project/script.ts",
+        targetPath: "/Users/julius/project/script.ts:49-74",
+        workspaceRelativePath: "script.ts",
+        line: 49,
+        endLine: 74,
+      },
+    },
+    {
+      source: "/Users/julius/project/src/processRunner.ts:49-74",
+      cwd: undefined,
+      expected: {
+        filePath: "/Users/julius/project/src/processRunner.ts",
+        targetPath: "/Users/julius/project/src/processRunner.ts:49-74",
+        line: 49,
+        endLine: 74,
+      },
+    },
+    {
+      source: "src\\main.ts:49-74",
+      cwd: "C:\\Users\\mike\\project",
+      expected: {
+        filePath: "C:\\Users\\mike\\project\\src\\main.ts",
+        targetPath: "C:\\Users\\mike\\project\\src\\main.ts:49-74",
+        workspaceRelativePath: "src/main.ts",
+        line: 49,
+        endLine: 74,
+      },
+    },
+  ])("links $source with line positions", ({ source, cwd, expected }) => {
+    expect(resolveInlineCodeFileLinkMeta(source, cwd)).toMatchObject(expected);
   });
 
   it("links bare filenames only when a line suffix marks them as file references", () => {
