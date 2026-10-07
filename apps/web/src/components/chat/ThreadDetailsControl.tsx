@@ -20,6 +20,7 @@ import { ChevronDownIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
+  "group-row": `${THREAD_DETAILS_PANEL_ROW_CLASS} hover:!bg-transparent dark:hover:!bg-transparent`,
   select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
   primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
   secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
