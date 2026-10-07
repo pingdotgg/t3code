@@ -9,6 +9,7 @@ import {
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
+import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -39,6 +40,7 @@ interface CompactToolOutput {
   scheduledTaskId?: string;
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
+  [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
 }
@@ -124,6 +126,9 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     if (data.status === "rolled_back") output.status = "rolled_back";
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
+    const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
+    // Kept under its stored key, so the compact wire output reads back the same way.
+    if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
     const nestedThreadId = Predicate.isObject(data.thread)
       ? boundedId(data.thread.threadId)
       : undefined;
@@ -159,11 +164,21 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       }
     }
   }
-  if (encoder.encode(JSON.stringify(output)).byteLength > MAX_METADATA_BYTES) {
+  const oversized = () => encoder.encode(JSON.stringify(output)).byteLength > MAX_METADATA_BYTES;
+  if (oversized()) {
     delete output.threads;
     delete output.threadId;
     delete output.status;
   }
+  // An app's declared origins are the only unbounded-ish part of its
+  // reference; hosting works without them (the stored document carries its
+  // own policy), so they go before the app does.
+  const app = output[MCP_APP_OUTPUT_KEY];
+  if (app?.csp !== undefined && oversized()) {
+    const { csp: _csp, ...rest } = app;
+    output[MCP_APP_OUTPUT_KEY] = rest;
+  }
+  if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
@@ -175,6 +190,21 @@ export function htmlRenderFromToolItem(item: {
   if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
+}
+
+/**
+ * The MCP App a completed tool call carries, if any. The adapter that captured
+ * it put the reference in the output, beside the tool's own result. A tool's
+ * result can imitate that shape, so the reference only counts when it names
+ * the very server and tool the item records: a server can then only ever
+ * point at an app of its own.
+ */
+export function mcpAppFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): McpAppReference | undefined {
+  const app = compactDynamicToolOutput(item.output)?.[MCP_APP_OUTPUT_KEY];
+  return app !== undefined && item.toolName === `${app.server}.${app.tool}` ? app : undefined;
 }
 
 /** Some providers report completion even when command output describes a failure. */

@@ -1319,6 +1319,25 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
+  it("hosts a captured MCP app in place, from any provider's tool", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "weather",
+      tool: "get_weather",
+      resourceUri: "ui://weather/dashboard",
+    };
+    const call = renderCall("completed", { t3McpApp: mcpApp, result: { content: [] } });
+    const entries = turn(
+      call.type === "dynamic_tool" ? { ...call, toolName: "weather.get_weather" } : call,
+    );
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({
+      id: "render",
+      itemId: "render",
+      mcpApp,
+    });
+    expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
+  });
+
   it("keeps a render visible when its superseded attempt folds", () => {
     const attempt: OrchestrationV2RunAttempt = {
       id: RunAttemptId.make("attempt-superseded"),

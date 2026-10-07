@@ -2511,3 +2511,35 @@ describe("html renders", () => {
     }
   });
 });
+
+describe("MCP apps", () => {
+  const app = {
+    attachmentId: "attachment-app",
+    server: "weather",
+    tool: "get_weather",
+    resourceUri: "ui://weather/dashboard",
+  };
+  const appCall = (status: OrchestrationV2TurnItem["status"]): OrchestrationV2TurnItem => ({
+    ...base("item-app", "2026-06-20T00:00:02.500Z", 2),
+    status,
+    type: "dynamic_tool",
+    toolName: "weather.get_weather",
+    input: { city: "Oslo" },
+    output: { t3McpApp: app, result: { content: [] } },
+  });
+  const feed = (status: OrchestrationV2TurnItem["status"]) =>
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(appCall(status), 1),
+      projected(assistantMessage("2026-06-20T00:00:04.000Z"), 2),
+    ]);
+
+  it("hosts a completed app in place of its tool row, owned by its source item", () => {
+    const entry = feed("completed").find((candidate) => candidate.type === "mcp-app");
+    expect(entry).toMatchObject({ type: "mcp-app", app, itemId: "item-app", runId });
+  });
+
+  it("keeps a running app call an ordinary work row", () => {
+    expect(feed("running").some((candidate) => candidate.type === "mcp-app")).toBe(false);
+  });
+});

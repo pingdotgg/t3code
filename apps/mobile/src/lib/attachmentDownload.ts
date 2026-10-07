@@ -274,3 +274,26 @@ export async function shareLocalAttachment(input: {
     cached.preview.dispose();
   }
 }
+
+/**
+ * Shares bytes made on this device (an MCP App's download) through the same
+ * cache and share sheet. False when the share sheet could not be shown.
+ */
+export async function shareGeneratedAttachment(input: {
+  readonly bytes: Uint8Array;
+  readonly attachment: AttachmentFileMetadata;
+  readonly signal: AbortSignal;
+}): Promise<boolean> {
+  // An unavailable share sheet is a refusal for the caller, not a failure.
+  const sharing = await availableSharing(input.signal).catch(() => null);
+  if (sharing === null) return false;
+  const cached = await createCachedAttachmentFile(input.attachment);
+  try {
+    if (input.signal.aborted) return false;
+    cached.file.write(input.bytes);
+    await cached.preview.share(input.signal);
+    return true;
+  } finally {
+    cached.preview.dispose();
+  }
+}

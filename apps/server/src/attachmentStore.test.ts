@@ -243,4 +243,24 @@ describe("threadHtmlRenderAttachmentIds", () => {
       ]),
     ).toEqual([own]);
   });
+
+  it("includes captured MCP App documents from any tool", () => {
+    const app = createAttachmentId("thread-a", "html")!;
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        {
+          toolName: "weather.get_weather",
+          output: {
+            t3McpApp: {
+              attachmentId: app,
+              server: "weather",
+              tool: "get_weather",
+              resourceUri: "ui://weather/dashboard",
+            },
+            result: { content: [] },
+          },
+        },
+      ]),
+    ).toEqual([app]);
+  });
 });
