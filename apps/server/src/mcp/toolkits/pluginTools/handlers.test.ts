@@ -149,7 +149,8 @@ it.effect(
           text: "This tool acts as the calling T3 thread, so it needs an agent running inside T3 Code. This MCP client signed in from outside a thread.",
         },
       ]);
-      expect(seen).toEqual([{ granted: [], options: {} }]);
+      expect(outsideList.structuredContent).toEqual({ tools: [], notInThisSession: [] });
+      expect(seen).toEqual([]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

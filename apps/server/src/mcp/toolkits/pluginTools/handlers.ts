@@ -9,13 +9,16 @@ const make = Effect.gen(function* () {
   const tools = yield* PluginTools.PluginTools;
   return {
     // Scope and grants come from the session's credential, never from the agent.
+    // A caller without a thread can call no plugin tool, so it learns of no plugins either.
     plugin_tools_list: McpToolAccess.reads((input) =>
       McpInvocationContext.McpInvocationContext.pipe(
         Effect.flatMap((scope) =>
-          tools.list(scope.pluginToolGrants ?? [], {
-            ...(input.plugin === undefined ? {} : { plugin: input.plugin }),
-            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-          }),
+          scope.thread === undefined
+            ? Effect.succeed({ tools: [], notInThisSession: [] })
+            : tools.list(scope.pluginToolGrants ?? [], {
+                ...(input.plugin === undefined ? {} : { plugin: input.plugin }),
+                ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+              }),
         ),
       ),
     ),
