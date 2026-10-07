@@ -124,6 +124,8 @@ export interface UsageExplorerProps {
   readonly onPreferencesChange: (next: UsageExplorerPreferences) => void;
   /** The environments selected in the page's environment menu. */
   readonly environmentIds: readonly string[];
+  /** A short note for an environment row, such as when an offline one last reported. */
+  readonly environmentNote?: (environmentId: string) => string | null;
   readonly environmentLabel: (environmentId: string) => string;
   readonly accountLabel: (account: string, provider: UsageProviderKind) => string;
   readonly zoomed: boolean;
@@ -1015,6 +1017,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
             )
           }
           rowName={rowName}
+          environmentNote={props.environmentNote}
           threads={data}
           favorites={favorites}
           onToggleOpen={toggleOpen}
@@ -1479,6 +1482,7 @@ function BreakdownTable({
   sort,
   onSort,
   rowName,
+  environmentNote,
   threads,
   favorites,
   onToggleOpen,
@@ -1500,6 +1504,7 @@ function BreakdownTable({
   readonly sort: UsageSort | null;
   readonly onSort: (column: UsageSort["column"]) => void;
   readonly rowName: (row: ItemRow) => string;
+  readonly environmentNote: ((environmentId: string) => string | null) | undefined;
   readonly threads: UsageExplorerData;
   readonly favorites: ReadonlySet<string>;
   readonly onToggleOpen: (path: string) => void;
@@ -1732,6 +1737,11 @@ function BreakdownTable({
                         </Tag>
                       ) : null}
                       {info?.agent && row.depth === 0 ? <Tag>sub-agent</Tag> : null}
+                      {row.dimension === "environment" && environmentNote?.(row.key) ? (
+                        <Tag hint="Not connected; this is the usage it last reported">
+                          {environmentNote(row.key)}
+                        </Tag>
+                      ) : null}
                       {info?.t3 ? (
                         <span className="shrink-0 text-xs opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
                           <InlineButton tone="muted" onClick={() => onOpenThread(row.key)}>

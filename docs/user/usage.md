@@ -59,8 +59,10 @@ your app understands. Update the app to include newly supported providers.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
-results appear as each one responds. Environments on one machine that read the same history folder count
-it once, under the environment that ran most of that work in T3 threads.
+results appear as each one responds. When an environment is offline, Usage shows the usage it
+last reported to this browser, marked with the time it was read, and switches back to live usage
+when the environment reconnects. Environments on one machine that read the same history folder
+count it once, under the environment that ran most of that work in T3 threads.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.

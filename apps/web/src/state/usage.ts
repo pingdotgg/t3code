@@ -18,14 +18,16 @@ import {
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
+import { loadSavedUsage, pickSavedUsage, saveUsage } from "./savedUsage";
 import { serverEnvironment } from "./server";
 
 export interface EnvironmentUsageStatus {
@@ -37,7 +39,27 @@ export interface EnvironmentUsageStatus {
   readonly needsCursorKeychainAccess: boolean;
   /** Read by day because the server cannot read this span by hour. */
   readonly readByDay: boolean;
+  /** Not connected now; `summary` is what it reported last, if anything. */
+  readonly offline: boolean;
+  /** When the shown summary was read, if it is not a live read. */
+  readonly savedAt: string | null;
+  /** The window `summary` answers, for saving it. */
+  readonly window: UsageSummaryInput;
 }
+
+/** The read last saved per environment and window, so a read is saved once. */
+const lastSavedRead = new Map<string, string>();
+
+/** Connection phases in which an environment cannot answer a read. */
+const UNREACHABLE = new Set(["available", "offline", "reconnecting", "error", "unsupported"]);
+
+/** Saved reads per environment, loaded once and reloaded after each save. */
+const savedUsageAtom = Atom.family((environmentId: string) =>
+  Atom.make(Effect.promise(() => loadSavedUsage(environmentId))).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`web-usage:saved:${environmentId}`),
+  ),
+);
 
 const HOUR_MS = 60 * 60 * 1000;
 const isUsageReadError = Schema.is(UsageReadError);
@@ -116,19 +138,37 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       })),
     );
     for (const [index, [environmentId, presentation]] of [...presentations].entries()) {
+      let window = input;
       let result = get(serverEnvironment.usageSummary({ environmentId, input }));
       let readByDay = false;
       if (fallbackInput !== null && isRejectedWindow(result)) {
+        window = fallbackInput;
         result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackInput }));
         readByDay = true;
       }
-      const summary = Option.getOrNull(AsyncResult.value(result));
+      const offline = UNREACHABLE.has(presentation.connection.phase);
+      let summary = Option.getOrNull(AsyncResult.value(result));
+      // Offline, the page keeps what this session read last, or else what
+      // this browser saved the last time the environment answered.
+      if (summary === null && offline) {
+        const saved = pickSavedUsage(
+          Option.getOrElse(AsyncResult.value(get(savedUsageAtom(environmentId))), () => []),
+          input,
+        );
+        summary = saved?.summary ?? null;
+        readByDay = saved?.readByDay ?? false;
+        window = readByDay && fallbackInput !== null ? fallbackInput : input;
+      }
       statuses.push({
         environmentId,
         label: labels[index] ?? presentation.entry.target.label,
-        isPending: result.waiting,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
+        isPending: !offline && result.waiting,
+        error:
+          !offline && result._tag === "Failure" ? "This environment could not report usage." : null,
         readByDay,
+        offline,
+        savedAt: offline ? (summary?.readAt ?? null) : null,
+        window,
         summary,
         needsCursorKeychainAccess: needsCursorKeychainAccess(
           summary,
@@ -216,13 +256,27 @@ export function useUsage(
     [selectedEnvironments, windowKey],
   );
 
+  // Keep each live read, so an environment's usage still shows while it is offline.
+  useEffect(() => {
+    for (const status of environments) {
+      if (status.offline || status.isPending || status.summary === null) continue;
+      const key = `${status.environmentId}\u0000${JSON.stringify(status.window)}`;
+      if (lastSavedRead.get(key) === status.summary.readAt) continue;
+      lastSavedRead.set(key, status.summary.readAt);
+      void saveUsage(status.environmentId, { input: status.window, summary: status.summary }).then(
+        () => appAtomRegistry.refresh(savedUsageAtom(status.environmentId)),
+      );
+    }
+  }, [environments]);
+
   const merged = useMemo(() => mergeAnsweredUsage(selectedEnvironments), [selectedEnvironments]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
   ).length;
   const stillReporting = selectedEnvironments.filter(
-    (environment) => environment.summary === null && environment.error === null,
+    (environment) =>
+      environment.summary === null && environment.error === null && !environment.offline,
   ).length;
 
   return {

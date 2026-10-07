@@ -168,6 +168,15 @@ export function UsagePage() {
     [selectedEnvironments],
   );
   const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const environmentNote = useCallback(
+    (environmentId: string) => {
+      const environment = selectedEnvironments.find(
+        (entry) => entry.environmentId === environmentId,
+      );
+      return environment?.savedAt ? `Offline · as of ${formatSavedAt(environment.savedAt)}` : null;
+    },
+    [selectedEnvironments],
+  );
   const sourceMessages = [
     ...new Set(
       selectedEnvironments.flatMap(
@@ -546,6 +555,15 @@ export function UsagePage() {
                     {message}
                   </p>
                 ))}
+                {selectedEnvironments.some((environment) => environment.offline) ? (
+                  <div className="mb-4 flex flex-col gap-1 text-sm text-muted-foreground">
+                    {selectedEnvironments
+                      .filter((environment) => environment.offline)
+                      .map((environment) => (
+                        <p key={environment.environmentId}>{offlineNotice(environment)}</p>
+                      ))}
+                  </div>
+                ) : null}
                 <UsageExplorer
                   merged={merged}
                   previous={wantsPrevious && !previous.isPending ? previous.merged : null}
@@ -555,6 +573,7 @@ export function UsagePage() {
                   preferences={explorerPreferences}
                   onPreferencesChange={changeExplorerPreferences}
                   environmentIds={selectedEnvironmentIdList}
+                  environmentNote={environmentNote}
                   environmentLabel={environmentLabel}
                   accountLabel={accountLabel}
                   zoomed={range.kind === "zoom"}
@@ -845,6 +864,7 @@ function UsageCoverageNotice({
   readonly contractMismatches: MergedUsage["contractMismatches"];
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
+  const offline = environments.filter((environment) => environment.offline);
   const mismatchByEnvironment = new Map(
     contractMismatches.map((mismatch) => [mismatch.environmentId, mismatch]),
   );
@@ -852,7 +872,12 @@ function UsageCoverageNotice({
     const mismatch = mismatchByEnvironment.get(environment.environmentId);
     return mismatch === undefined ? [] : [{ environment, mismatch }];
   });
-  if (failed.length === 0 && incompatible.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    offline.length === 0 &&
+    incompatible.length === 0 &&
+    duplicateSources.length === 0
+  ) {
     return null;
   }
 
@@ -860,6 +885,9 @@ function UsageCoverageNotice({
     <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
         <span key={environment.environmentId}>{environment.label} could not report usage.</span>
+      ))}
+      {offline.map((environment) => (
+        <span key={environment.environmentId}>{offlineNotice(environment)}</span>
       ))}
       {incompatible.map(({ environment, mismatch }) => (
         <span key={environment.environmentId}>
@@ -906,10 +934,12 @@ function UsageEnvironmentFilter({
       : `${selectedEnvironments.length} environments`;
   const pendingCount = selectedEnvironments.filter(
     (environment) =>
-      environment.error === null && (environment.isPending || environment.summary === null),
+      environment.error === null &&
+      !environment.offline &&
+      (environment.isPending || environment.summary === null),
   ).length;
   const hasIssue =
-    selectedEnvironments.some((environment) => environment.error !== null) ||
+    selectedEnvironments.some((environment) => environment.error !== null || environment.offline) ||
     contractMismatches.length > 0;
 
   return (
@@ -928,7 +958,7 @@ function UsageEnvironmentFilter({
           ) : showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
-              aria-label="Some environments could not report usage"
+              aria-label="Some environments are offline or could not report usage"
             />
           ) : (
             <ChevronDownIcon
@@ -951,8 +981,11 @@ function UsageEnvironmentFilter({
           const checked =
             selectedEnvironmentIds === null ||
             selectedEnvironmentIds.has(environment.environmentId);
-          const status =
-            environment.error !== null
+          const status = environment.offline
+            ? environment.savedAt === null
+              ? "Offline"
+              : `Offline · as of ${formatSavedAt(environment.savedAt)}`
+            : environment.error !== null
               ? "Unavailable"
               : environment.summary !== null &&
                   !isCompatibleUsageContractVersion(
@@ -1093,4 +1126,22 @@ function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
       ))}
     </div>
   );
+}
+
+const savedAtFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/** When an offline environment's shown usage was read, such as "Oct 7, 10:42 AM". */
+function formatSavedAt(readAt: string): string {
+  return savedAtFormat.format(new Date(readAt));
+}
+
+function offlineNotice(environment: EnvironmentUsageStatus): string {
+  return environment.savedAt === null
+    ? `${environment.label} is offline, and this browser has no saved usage from it.`
+    : `${environment.label} is offline. Its usage is shown as of ${formatSavedAt(environment.savedAt)}, when it last reported.`;
 }

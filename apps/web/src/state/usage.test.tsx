@@ -39,6 +39,9 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
     error: null,
     needsCursorKeychainAccess: false,
     readByDay: false,
+    offline: false,
+    savedAt: null,
+    window: input,
     summary:
       cost === null
         ? null
