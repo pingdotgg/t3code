@@ -20,6 +20,11 @@ export const CredentialScope = Context.Reference<string>("t3/sourceControl/Crede
 interface RateLimitKey {
   readonly provider: SourceControlProviderKind;
   readonly host: string;
+  /**
+   * The quota the request spends, for a host that keeps several (GitHub's `core` and `graphql`).
+   * A pause then holds only that quota's requests. Without one, a pause holds the whole host.
+   */
+  readonly resource?: string;
 }
 
 interface RateLimitLease extends RateLimitKey {
@@ -64,7 +69,7 @@ export class SourceControlRateLimit extends Context.Service<
 >()("t3/sourceControl/SourceControlRateLimit") {}
 
 function normalizedKey(key: RateLimitKey, scope: string): string {
-  return `${key.provider}\0${key.host.trim().toLowerCase()}\0${scope}`;
+  return `${key.provider}\0${key.host.trim().toLowerCase()}\0${key.resource ?? ""}\0${scope}`;
 }
 
 function fallbackCooldownMs(attempt: number): number {

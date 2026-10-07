@@ -12,7 +12,7 @@ import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/h
 
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
-import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
+import * as GitHubQuota from "./githubQuota.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -49,7 +49,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
   );
   const layer = GitHubApi.layer.pipe(
     Layer.provide(Layer.mergeAll(credentials, http)),
-    Layer.provideMerge(GitHubGraphQlBudget.layer),
+    Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
   return { layer, requests, invalidations: () => invalidations };
@@ -97,15 +97,8 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubApi", () => {
-  it.effect("sends GraphQL with the token and records the reported budget", () => {
-    const { layer, requests } = harness(() =>
-      json({
-        data: {
-          viewer: { login: "julius" },
-          rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-10-05T13:00:00Z" },
-        },
-      }),
-    );
+  it.effect("sends GraphQL with the token, and the document as written", () => {
+    const { layer, requests } = harness(() => json({ data: { viewer: { login: "julius" } } }));
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
       const api = yield* GitHubApi.GitHubApi;
@@ -117,11 +110,16 @@ describe("GitHubApi", () => {
       expect(body).toContain('"login":"julius"');
       expect(requests[0]!.url).toBe("https://api.github.com/graphql");
       expect(requests[0]!.headers.authorization).toBe("Bearer first");
+      // No `rateLimit` selection is added: the quota is read off the response headers.
+      const sent = requests[0]!.body;
+      expect(sent._tag === "Uint8Array" ? new TextDecoder().decode(sent.body) : "").toContain(
+        '"query":"query { viewer { login } }"',
+      );
     }).pipe(Effect.provide(layer));
   });
 
   it.effect(
-    "traces the operation, path, query and cost, never the query string or variables",
+    "traces the operation, path, query and quota, never the query string or variables",
     () => {
       const spans: Array<Tracer.NativeSpan> = [];
       const tracer = Tracer.make({
@@ -134,17 +132,7 @@ describe("GitHubApi", () => {
       const { layer } = harness((request) =>
         request.url.endsWith("/graphql")
           ? json(
-              {
-                data: {
-                  viewer: { login: "julius" },
-                  rateLimit: {
-                    cost: 3,
-                    limit: 5000,
-                    remaining: 4990,
-                    resetAt: "2026-10-05T13:00:00Z",
-                  },
-                },
-              },
+              { data: { viewer: { login: "julius" } } },
               { headers: { "x-ratelimit-remaining": "4990", "x-ratelimit-resource": "graphql" } },
             )
           : json({ ok: true }, { headers: { "x-ratelimit-remaining": "4800" } }),
@@ -168,8 +156,10 @@ describe("GitHubApi", () => {
         expect(graphql).toMatchObject({
           "github.operation": "getPullRequestDetail",
           "github.graphql.query": "query($body: String!) { viewer { login } }",
-          "github.graphql.cost": 3,
-          "github.graphql.remaining": 4990,
+        });
+        expect(Object.fromEntries(byName("GitHubApi.send")[0]!.attributes)).toMatchObject({
+          "github.ratelimit.remaining": 4990,
+          "github.ratelimit.resource": "graphql",
         });
         expect(String(graphql["github.graphql.query_hash"])).toMatch(/^[0-9a-f]{8}$/);
         const rest = Object.fromEntries(byName("GitHubApi.send")[1]!.attributes);
@@ -232,29 +222,71 @@ describe("GitHubApi", () => {
     },
   );
 
-  it.effect("pauses the host after a GraphQL RATE_LIMITED answer until the reset", () => {
+  it.effect("pauses GraphQL after a RATE_LIMITED answer until the reset, and only GraphQL", () => {
     const reset = Math.floor(NOW / 1000) + 600;
-    const { layer, requests } = harness(() =>
-      json(
-        { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
-        { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
-      ),
+    const { layer, requests } = harness((request) =>
+      request.url.endsWith("/graphql")
+        ? json(
+            { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
+            { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
+          )
+        : json({ ok: true }),
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
       const api = yield* GitHubApi.GitHubApi;
-      const first = yield* Effect.flip(
-        api.graphql({ host: "github.com", operation: "summary", query: "query { viewer { id } }" }),
-      );
+      const read = { host: "github.com", operation: "summary", query: "query { viewer { id } }" };
+      const first = yield* Effect.flip(api.graphql(read));
       expect(first).toMatchObject({ _tag: "GitHubApiRateLimitError", retryAt: reset * 1000 });
-      const second = yield* Effect.flip(
-        api.rest({ host: "github.com", operation: "stack", path: "repos/acme/web/stacks" }),
-      );
+      const second = yield* Effect.flip(api.graphql(read));
       expect(second).toMatchObject({
         _tag: "SourceControlRateLimitPausedError",
         retryAt: reset * 1000,
       });
-      expect(requests).toHaveLength(1);
+      // REST spends its own quota, which GitHub has not refused.
+      const rest = yield* api.rest({
+        host: "github.com",
+        operation: "stack",
+        path: "repos/acme/web/stacks",
+      });
+      expect(rest.status).toBe(200);
+      expect(requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the last tenth of a quota for interactive requests until it resets", () => {
+    const reset = Math.floor(NOW / 1000) + 600;
+    const quota = (remaining: number) => ({
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": String(remaining),
+      "x-ratelimit-reset": String(reset),
+    });
+    let remaining = 499;
+    const { layer, requests } = harness((request) =>
+      request.url.endsWith("/graphql")
+        ? json({ data: { viewer: { id: "1" } } })
+        : json({ ok: true }, { headers: quota(remaining--) }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubApi.GitHubApi;
+      const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
+      // The first answer leaves 499 of 5000, under the last tenth; the next background read waits.
+      yield* api.rest(read);
+      const refused = yield* Effect.flip(api.rest(read));
+      expect(refused).toMatchObject({
+        _tag: "SourceControlRateLimitPausedError",
+        retryAt: reset * 1000,
+      });
+      // A user's own request may spend the reserve, and GraphQL has a quota of its own.
+      yield* api.rest(read).pipe(Effect.provideService(GitHubApi.AllowGitHubReserve, true));
+      yield* api.graphql({ host: "github.com", operation: "x", query: "query { viewer { id } }" });
+      expect(requests).toHaveLength(3);
+      // The reset gives the background its quota back.
+      yield* TestClock.setTime(reset * 1000);
+      yield* api.rest(read);
+      expect(requests).toHaveLength(4);
     }).pipe(Effect.provide(layer));
   });
 
