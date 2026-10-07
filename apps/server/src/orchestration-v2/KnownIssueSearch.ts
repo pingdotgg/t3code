@@ -220,7 +220,7 @@ const GUIDANCE_SENTENCE =
   /\b(?:retry the turn|if it keeps failing|check the (?:provider|server)|check that the provider|check the provider and server logs|check the provider setup|try again|restart)\b/i;
 
 /** The message's sentences that describe the failure, without T3's guidance. */
-export function withoutGuidance(message: string): string {
+function withoutGuidance(message: string): string {
   return message
     .split(/(?<=[.!?])\s+|\n+/)
     .filter((sentence) => !GUIDANCE_SENTENCE.test(sentence))
@@ -277,8 +277,7 @@ function cleanTitle(title: string): string {
     : `${truncateOnCodePoint(flat, MAX_TITLE_CHARS - 3).trimEnd()}...`;
 }
 
-export const knownIssueUrl = (number: number) =>
-  `https://github.com/${T3_REPOSITORY}/issues/${number}`;
+const knownIssueUrl = (number: number) => `https://github.com/${T3_REPOSITORY}/issues/${number}`;
 
 const SearchResponse = Schema.Struct({
   items: Schema.Array(
