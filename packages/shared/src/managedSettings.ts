@@ -14,17 +14,18 @@
  *   `/Library/Managed Preferences/com.t3tools.t3code.plist`
  * - Linux: `/etc/t3code/managed-settings.json`
  *
- * Policy is read once at startup; a change takes effect when the server
- * restarts. A source that exists but cannot be read, cannot be parsed, or
+ * The server CLI loads the policy once, before resolving its own config, and
+ * provides it as `ManagedSettings`; the desktop main process loads it too for
+ * its own OpenTelemetry export. A change takes effect on restart. A source that exists but cannot be read, cannot be parsed, or
  * holds a key that is unknown, unmanageable, or invalid fails startup: running
  * with part of a policy silently unenforced is worse than not running.
  *
  * @module ManagedSettings
  */
 import { DEFAULT_SERVER_SETTINGS, ServerSettings } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import { deepMerge } from "@t3tools/shared/Struct";
+import { HostProcessPlatform } from "./hostProcess.ts";
+import { fromLenientJson } from "./schemaJson.ts";
+import { deepMerge } from "./Struct.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -41,11 +42,11 @@ export interface ManagedSettingsPolicy {
   readonly paths: ReadonlyArray<ReadonlyArray<string>>;
 }
 
-const EMPTY_MANAGED_SETTINGS: ManagedSettingsPolicy = { document: {}, paths: [] };
+export const EMPTY_MANAGED_SETTINGS: ManagedSettingsPolicy = { document: {}, paths: [] };
 
 /**
  * Defaults to no policy so tests and tools that build settings without a
- * machine policy stay hermetic. The server provides `layer`.
+ * machine policy stay hermetic. Entry points provide the loaded policy.
  */
 export class ManagedSettings extends Context.Reference<ManagedSettingsPolicy>(
   "t3/managedSettings",
@@ -94,10 +95,6 @@ const decodeDocumentJson = Schema.decodeUnknownEffect(
   fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
 );
 const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
-// OpenTelemetry export URLs are resolved from settings.json at process start,
-// before policy loads, and env vars outrank them, so a policy could not
-// enforce them.
-const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set(["observability"]);
 const ENCODED_DEFAULT_SERVER_SETTINGS = Schema.encodeSync(ServerSettings)(
   DEFAULT_SERVER_SETTINGS,
 ) as Record<string, unknown>;
@@ -126,7 +123,6 @@ function validateDocument(
 ): Effect.Effect<Readonly<Record<string, unknown>>, ManagedSettingsError> {
   const problems = Object.entries(document).flatMap(([key, value]) => {
     if (!Object.hasOwn(ServerSettings.fields, key)) return [`unknown key "${key}"`];
-    if (UNMANAGEABLE_KEYS.has(key)) return [`"${key}" cannot be managed`];
     const decoded = decodeServerSettingsExit(
       deepMerge(ENCODED_DEFAULT_SERVER_SETTINGS, { [key]: value }),
     );
@@ -203,13 +199,25 @@ export const loadManagedSettings = Effect.fn("ManagedSettings.load")(function* (
   return policy;
 });
 
-export const layer = Layer.effect(
-  ManagedSettings,
-  Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
-    return yield* loadManagedSettings(managedSettingsSources(platform));
-  }),
-);
+type ManagedOtlpUrlKey = "otlpTracesUrl" | "otlpMetricsUrl" | "otlpLogsUrl";
+
+/** A managed OpenTelemetry export URL; blank means that signal is off. */
+export function managedOtlpUrl(
+  policy: ManagedSettingsPolicy,
+  key: ManagedOtlpUrlKey,
+): string | undefined {
+  const observability = policy.document.observability;
+  const value = P.isObject(observability)
+    ? (observability as Record<string, unknown>)[key]
+    : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+/** The policy deployed on this machine. */
+export const loadHostManagedSettings = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* loadManagedSettings(managedSettingsSources(platform));
+});
 
 /** A fixed policy, validated the same way as a deployed document. */
 export const layerTest = (document: Readonly<Record<string, unknown>>) =>

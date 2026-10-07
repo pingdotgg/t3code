@@ -55,7 +55,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
-import * as ManagedSettings from "./managedSettings.ts";
+import { ManagedSettings } from "@t3tools/shared/managedSettings";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -141,7 +141,31 @@ const dropManagedProjectOverrides = (
   return { ...settings, projectSettingsOverrides };
 };
 
-/** `managedDocument` is laid over the encoded settings first; see `managedSettings.ts`. */
+/**
+ * A built-in provider configured only through legacy `providers.<kind>` gets its
+ * default instance synthesized from that blob at hydration, unless an explicit
+ * `providerInstances.<kind>` exists. A managed entry for that instance would be
+ * such an explicit entry and silently drop the user's legacy config, so seed it
+ * from the legacy blob first and let the policy merge into the real config.
+ */
+const seedManagedDefaultInstances = (
+  encoded: Record<string, unknown>,
+  managedDocument: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => {
+  const managedInstances = managedDocument.providerInstances;
+  if (typeof managedInstances !== "object" || managedInstances === null) return encoded;
+  const providers = (encoded.providers ?? {}) as Record<string, unknown>;
+  const instances = { ...(encoded.providerInstances as Record<string, unknown> | undefined) };
+  let seeded = false;
+  for (const instanceId of Object.keys(managedInstances)) {
+    if (Object.hasOwn(instances, instanceId) || !Object.hasOwn(providers, instanceId)) continue;
+    instances[instanceId] = { driver: instanceId, config: providers[instanceId] };
+    seeded = true;
+  }
+  return seeded ? { ...encoded, providerInstances: instances } : encoded;
+};
+
+/** `managedDocument` is laid over the encoded settings first; see `@t3tools/shared/managedSettings`. */
 const normalizeServerSettings = (
   settings: ServerSettings,
   managedDocument?: Readonly<Record<string, unknown>>,
@@ -150,7 +174,10 @@ const normalizeServerSettings = (
     Effect.map((encoded) =>
       managedDocument === undefined
         ? encoded
-        : deepMerge(encoded as Record<string, unknown>, managedDocument),
+        : deepMerge(
+            seedManagedDefaultInstances(encoded as Record<string, unknown>, managedDocument),
+            managedDocument,
+          ),
     ),
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
@@ -875,7 +902,7 @@ const make = Effect.gen(function* () {
   // The cache and settings.json hold only the user's own values; managed
   // policy is laid over them on the way out. Keyed by the cached object, so
   // the overlay runs once per load or write rather than once per read.
-  const managedSettings = yield* ManagedSettings.ManagedSettings;
+  const managedSettings = yield* ManagedSettings;
   const managedOverlays = new WeakMap<ServerSettings, ServerSettings>();
   const withManagedSettings = (
     settings: ServerSettings,

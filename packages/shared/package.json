@@ -63,6 +63,10 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./managedSettings": {
+      "types": "./src/managedSettings.ts",
+      "import": "./src/managedSettings.ts"
+    },
     "./otelEnvironment": {
       "types": "./src/otelEnvironment.ts",
       "import": "./src/otelEnvironment.ts"

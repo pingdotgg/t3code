@@ -29,17 +29,35 @@ enforce:
 {
   "enableAgentBrowserAccess": false,
   "providerInstances": {
-    "codex": { "driver": "codex", "enabled": false }
+    "claudeAgent": { "driver": "claudeAgent", "enabled": false },
+    "codex": { "driver": "codex", "config": { "binaryPath": "/opt/corp/bin/codex" } }
+  },
+  "observability": {
+    "otlpTracesUrl": "https://otel.example.com/v1/traces",
+    "otlpMetricsUrl": ""
   }
 }
 ```
 
-Nested objects merge key by key, so the example above turns off the built-in Codex instance and
-keeps the rest of the user's Codex configuration. Arrays and plain values replace the user's value.
-A provider instance entry needs its `driver`. Disabling the built-in `codex` instance does not stop
-a user from adding a second Codex instance.
+Nested objects merge key by key. Arrays and plain values replace the user's value.
 
-OpenTelemetry export URLs (`observability`) cannot be managed yet.
+### Providers
+
+Manage a provider through `providerInstances`, keyed by instance id. The built-in instance of each
+provider uses the provider's id, such as `codex` or `claudeAgent`. Each entry needs its `driver`.
+Values under `config` merge into the user's configuration for that instance, so the example above
+pins the Codex binary and keeps the user's other Codex settings. Set `enabled` to `false` to turn an
+instance off.
+
+A policy only reaches the instances it names. Disabling the built-in `claudeAgent` instance does not
+stop a user from adding a second Claude instance.
+
+### OpenTelemetry export
+
+A managed `observability` URL replaces the user's URL for that signal, including one set through
+`T3CODE_OTLP_*_URL` or `OTEL_*` environment variables. An empty string turns that signal's export
+off. Users can still turn all export off with `OTEL_SDK_DISABLED`. Product usage telemetry is
+separate and cannot be managed yet.
 
 In a configuration profile, use the same top-level keys, with dictionaries for nested objects and
 arrays for lists.
@@ -50,7 +68,7 @@ T3 Code reads the policy when its server starts. Restart the desktop app, or the
 apply a change. The user's own `settings.json` is never rewritten with managed values, so removing
 a key from the policy restores the user's previous value.
 
-If a policy cannot be read or parsed, or sets a key that is unknown, cannot be managed, or has an
-invalid value, T3 Code refuses to start rather than run with part of the policy unenforced. The
-error names the file and every bad key. Because unknown keys are rejected, deploy a policy that
-uses a new setting only after every machine runs a T3 Code version that has it.
+If a policy cannot be read or parsed, or sets a key that is unknown or has an invalid value, T3 Code
+refuses to start rather than run with part of the policy unenforced. The error names the file and
+every bad key. Because unknown keys are rejected, deploy a policy that uses a new setting only after
+every machine runs a T3 Code version that has it.

@@ -16,6 +16,7 @@ import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
+import * as ManagedSettings from "@t3tools/shared/managedSettings";
 import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -710,6 +711,59 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: 443,
       });
     }),
+  );
+
+  it.effect(
+    "lets managed export URLs replace env and Settings, and a blank one turn export off",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-managed-" });
+        const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
+        yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
+        yield* fs.writeFileString(
+          derivedPaths.settingsPath,
+          `${JSON.stringify({
+            observability: { otlpMetricsUrl: "http://user.test/v1/metrics" },
+          })}\n`,
+        );
+
+        const resolved = yield* resolveServerConfig(
+          {
+            mode: Option.some("desktop"),
+            port: Option.some(4888),
+            host: Option.none(),
+            baseDir: Option.some(baseDir),
+            cwd: Option.none(),
+            devUrl: Option.none(),
+            noBrowser: Option.none(),
+            bootstrapFd: Option.none(),
+            autoBootstrapProjectFromCwd: Option.none(),
+            logWebSocketEvents: Option.none(),
+            tailscaleServeEnabled: Option.none(),
+            tailscaleServePort: Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: { T3CODE_OTLP_TRACES_URL: "http://user.test/v1/traces" },
+                }),
+              ),
+              NetService.layer,
+              ManagedSettings.layerTest({
+                observability: { otlpTracesUrl: "https://corp.test/v1/traces", otlpMetricsUrl: "" },
+              }),
+            ),
+          ),
+        );
+
+        expect(resolved.otlpTracesUrl).toBe("https://corp.test/v1/traces");
+        expect(resolved.otlpMetricsUrl).toBeUndefined();
+      }),
   );
 
   it.effect("zeroes an endpoint stored in Settings when the SDK is disabled", () =>
