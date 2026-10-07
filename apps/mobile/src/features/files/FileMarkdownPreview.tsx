@@ -236,6 +236,7 @@ export function FileMarkdownPreview(props: {
   return (
     <ScrollView
       className="flex-1 bg-sheet"
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ padding: 18 }}
       refreshControl={
         props.onRefresh ? (
