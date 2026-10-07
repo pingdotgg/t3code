@@ -25,6 +25,21 @@ function layer(input: {
   );
 }
 
+const jjHandle = (rootPath: string) => ({
+  kind: "jj" as const,
+  repository: {
+    kind: "jj" as const,
+    rootPath,
+    metadataPath: `${rootPath}/.jj`,
+    freshness: {
+      source: "live-local" as const,
+      observedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+      expiresAt: Option.none(),
+    },
+  },
+  driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
+});
+
 describe("GitWorkflowService", () => {
   it.effect("distinguishes no VCS from a non-Git repository", () =>
     Effect.gen(function* () {
@@ -39,23 +54,7 @@ describe("GitWorkflowService", () => {
     }).pipe(
       Effect.provide(
         layer({
-          detect: (input) =>
-            input.cwd === "/folder"
-              ? Effect.succeed(null)
-              : Effect.succeed({
-                  kind: "jj",
-                  repository: {
-                    kind: "jj",
-                    rootPath: "/jj-repo",
-                    metadataPath: "/jj-repo/.jj",
-                    freshness: {
-                      source: "live-local",
-                      observedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
-                      expiresAt: Option.none(),
-                    },
-                  },
-                  driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
-                }),
+          detect: (input) => Effect.succeed(input.cwd === "/folder" ? null : jjHandle("/jj-repo")),
         }),
       ),
     ),
@@ -67,27 +66,7 @@ describe("GitWorkflowService", () => {
       const isRepository = yield* workflow.isRepository("/jj-repo");
 
       assert.equal(isRepository, false);
-    }).pipe(
-      Effect.provide(
-        layer({
-          detect: () =>
-            Effect.succeed({
-              kind: "jj",
-              repository: {
-                kind: "jj",
-                rootPath: "/jj-repo",
-                metadataPath: "/jj-repo/.jj",
-                freshness: {
-                  source: "live-local",
-                  observedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
-                  expiresAt: Option.none(),
-                },
-              },
-              driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
-            }),
-        }),
-      ),
-    ),
+    }).pipe(Effect.provide(layer({ detect: () => Effect.succeed(jjHandle("/jj-repo")) }))),
   );
 
   it.effect("returns an empty local status when no VCS repository is detected", () =>

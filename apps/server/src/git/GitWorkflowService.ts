@@ -37,10 +37,8 @@ export class GitWorkflowService extends Context.Service<
   {
     readonly isRepository: (cwd: string) => Effect.Effect<boolean, GitManagerServiceError>;
     /**
-     * Whether a Git repository backs this cwd. False only when no VCS repository
-     * is there at all; a non-Git repository (jj) fails with the driver's own
-     * "supports Git repositories only" error, so callers never mistake another
-     * VCS for a plain folder.
+     * False only when no VCS repository backs this cwd at all; a non-Git repository
+     * (jj) fails, so a caller never mistakes another VCS for a plain folder.
      */
     readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, GitCommandError>;
     readonly hasCommit: (input: {

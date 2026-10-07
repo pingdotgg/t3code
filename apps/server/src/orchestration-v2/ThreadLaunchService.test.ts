@@ -247,6 +247,19 @@ function makeHarness(options: HarnessOptions = {}) {
   };
 }
 
+/** A Scratch-style project whose threads each get `folderPath`, recorded in `claims`. */
+function scratchFolders(folderPath: string, claims: Array<string>) {
+  return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    folderForThread: (input) =>
+      Effect.sync(() => {
+        if (input.projectId !== projectId) return Option.none();
+        claims.push(input.threadId);
+        return Option.some(folderPath);
+      }),
+  });
+}
+
 function launchInput(input: {
   readonly command: string;
   readonly thread: string;
@@ -1108,101 +1121,10 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
 
 it.effect("runs a worktree request against a non-repository project as a root launch", () =>
   Effect.gen(function* () {
-    // Only `projectId` stands in for the Scratch project here.
-    const harness = makeHarness({
-      isGitRepository: () => Effect.succeed(false),
-      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        folderForThread: (input) =>
-          Effect.sync(() =>
-            input.projectId === projectId ? Option.some(`/scratch/folder-worktree`) : Option.none(),
-          ),
-      }),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const launched = yield* launches.launch(
-        launchInput({
-          command: "command:launch:scratch-worktree",
-          thread: "thread:launch:scratch-worktree",
-          message: "Review this",
-          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
-        }),
-      );
-      assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-worktree");
-      assert.isNull(launched.projection.thread.branch);
-      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
-      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-worktree");
-      assert.equal(harness.createWorktree.mock.calls.length, 0);
-    }).pipe(Effect.provide(harness.layer));
-  }),
-);
-
-it.effect("keeps the claimed folder when a retried launch never dispatched its message", () =>
-  Effect.gen(function* () {
-    // The first attempt claims the folder and then fails to dispatch the message,
-    // so the retry has a launch receipt but no message receipt. The thread still
-    // owns that folder, and the retry must prepare it rather than the shared root.
-    const claimed: Array<string> = [];
-    const harness = makeHarness({
-      isGitRepository: () => Effect.succeed(false),
-      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        folderForThread: (input) =>
-          Effect.sync(() => {
-            claimed.push(input.threadId);
-            return input.projectId === projectId
-              ? Option.some("/scratch/folder-partial")
-              : Option.none();
-          }),
-      }),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const input = launchInput({
-        command: "command:launch:scratch-partial",
-        thread: "thread:launch:scratch-partial",
-        message: "Review this",
-        workspace: { type: "worktree", baseRef: "main" },
-      });
-
-      // The accepted create with no message behind it, which is what a failed
-      // dispatch leaves behind.
-      const threadId = ThreadId.make("thread:launch:scratch-partial");
-      yield* threads.dispatch({
-        type: "thread.create",
-        commandId: input.commandId,
-        threadId,
-        projectId,
-        title: input.title,
-        modelSelection,
-        runtimeMode: input.runtimeMode,
-        interactionMode: input.interactionMode,
-        branch: null,
-        worktreePath: "/scratch/folder-partial",
-        createdBy: "user",
-        creationSource: "web",
-      });
-      assert.lengthOf(claimed, 0);
-
-      const retried = yield* launches.launch(input);
-      assert.isTrue(retried.resumed);
-      // The retry claims no second folder; it prepares the one already bound.
-      assert.lengthOf(claimed, 0);
-      assert.equal(retried.projection.thread.worktreePath, "/scratch/folder-partial");
-      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
-      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-partial");
-      assert.equal(harness.createWorktree.mock.calls.length, 0);
-    }).pipe(Effect.provide(harness.layer));
-  }),
-);
-
-it.effect("replays a degraded worktree request without detecting the repository again", () =>
-  Effect.gen(function* () {
-    // The second attempt would fail if it detected again. Its run already recorded
-    // the folder the first attempt claimed, so the replay must not depend on it.
+    // The first detection answers "no VCS here", and every later one fails. A
+    // replay whose run already recorded the folder must not detect again.
     let detections = 0;
+    const claims: Array<string> = [];
     const harness = makeHarness({
       isGitRepository: () =>
         Effect.sync(() => ++detections).pipe(
@@ -1219,31 +1141,76 @@ it.effect("replays a degraded worktree request without detecting the repository 
                 ),
           ),
         ),
-      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        folderForThread: (input) =>
-          Effect.sync(() =>
-            input.projectId === projectId
-              ? Option.some("/scratch/folder-replayed-worktree")
-              : Option.none(),
-          ),
-      }),
+      // Only `projectId` stands in for the Scratch project here.
+      managedFolders: scratchFolders("/scratch/folder-worktree", claims),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const input = launchInput({
-        command: "command:launch:scratch-worktree-replay",
-        thread: "thread:launch:scratch-worktree-replay",
+        command: "command:launch:scratch-worktree",
+        thread: "thread:launch:scratch-worktree",
         message: "Review this",
-        workspace: { type: "worktree", baseRef: "main" },
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
       });
       const launched = yield* launches.launch(input);
-      assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-replayed-worktree");
+      assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-worktree");
+      assert.isNull(launched.projection.thread.branch);
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-worktree");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
 
+      // A replay reuses the folder the accepted run recorded, without detecting.
       const replayed = yield* launches.launch(input);
       assert.isTrue(replayed.resumed);
       assert.equal(detections, 1);
-      assert.equal(replayed.projection.thread.worktreePath, "/scratch/folder-replayed-worktree");
+      assert.deepEqual(claims, [launched.threadId]);
+      assert.equal(replayed.projection.thread.worktreePath, "/scratch/folder-worktree");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("keeps the claimed folder when a retried launch never dispatched its message", () =>
+  Effect.gen(function* () {
+    // A create that was accepted with no message behind it, which is what a failed
+    // message dispatch leaves behind. The thread owns the folder that create
+    // claimed, so the retry prepares it rather than the shared project root.
+    const claims: Array<string> = [];
+    const harness = makeHarness({
+      isGitRepository: () => Effect.succeed(false),
+      managedFolders: scratchFolders("/scratch/folder-partial", claims),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:scratch-partial",
+        thread: "thread:launch:scratch-partial",
+        message: "Review this",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        projectId,
+        title: input.title,
+        modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: null,
+        worktreePath: "/scratch/folder-partial",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.isEmpty(claims);
+
+      const retried = yield* launches.launch(input);
+      assert.isTrue(retried.resumed);
+      // No second folder is claimed; the bound one is prepared.
+      assert.isEmpty(claims);
+      assert.equal(retried.projection.thread.worktreePath, "/scratch/folder-partial");
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-partial");
       assert.equal(harness.createWorktree.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   }),

@@ -743,23 +743,20 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        // Derived from the command id, so a replay of an accepted launch is known
-        // before any detection runs.
+        // Derived from the command id, so a replay is known before anything else runs.
         const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
         const messageWasAlreadyAccepted =
           input.initialMessage === undefined
             ? false
             : Option.isSome(yield* readReceipt(input, messageCommandId));
 
-        // A worktree needs a Git repository. The Scratch project is a folder, not
-        // a checkout, so a worktree request there becomes a root launch, which the
-        // block below answers with a folder of its own. Resolved before the
-        // strategy is recorded on the run, so a retry replays what happened. Only
-        // "no VCS at all" degrades: a non-Git repository keeps its own
-        // unsupported-VCS failure instead of being treated as a shared folder.
-        // An accepted launch already recorded the answer its run will prepare, so
-        // detecting again could only fail a replay or contradict what the thread
-        // bound.
+        // A worktree needs a Git repository. The Scratch project is a folder, so a
+        // worktree request there becomes a root launch, which the block below
+        // answers with a folder of its own. Resolved before the strategy reaches
+        // the run, so a retry replays what happened. Only "no VCS at all" degrades:
+        // a non-Git repository keeps its unsupported-VCS failure rather than
+        // silently sharing the project checkout. A replay detects nothing, since its
+        // run already recorded the answer.
         const requestedStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "worktree" &&
           !messageWasAlreadyAccepted &&
@@ -883,9 +880,9 @@ const make = Effect.gen(function* () {
         // A retried root launch prepares the folder its first attempt bound, so
         // a Scratch thread keeps its own. Other root launches bind no folder.
         const boundWorktreePath = projection.thread.worktreePath;
-        // A replay prepares the workspace its accepted run recorded. A run this
-        // attempt just created only echoes the strategy above, so reading it back
-        // would shadow the bound-folder recovery a partial launch still needs.
+        // A replay prepares what its accepted run recorded. A run this attempt just
+        // created only echoes the strategy above, so reading it back would shadow
+        // the bound-folder recovery a partial launch still needs.
         const recordedStrategy =
           messageWasAlreadyAccepted && runId !== null
             ? projection.runs.find((run) => run.id === runId)?.workspacePreparation
