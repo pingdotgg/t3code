@@ -1142,6 +1142,6 @@ function formatSavedAt(readAt: string): string {
 
 function offlineNotice(environment: EnvironmentUsageStatus): string {
   return environment.savedAt === null
-    ? `${environment.label} is offline, and this browser has no saved usage from it.`
+    ? `${environment.label} is offline, and this browser has no saved usage from it for this range.`
     : `${environment.label} is offline. Its usage is shown as of ${formatSavedAt(environment.savedAt)}, when it last reported.`;
 }

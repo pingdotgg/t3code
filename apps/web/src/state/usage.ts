@@ -27,7 +27,13 @@ import { useCallback, useEffect, useMemo } from "react";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
-import { loadSavedUsage, pickSavedUsage, saveUsage } from "./savedUsage";
+import {
+  loadSavedUsage,
+  onSavedUsageChange,
+  pickSavedUsage,
+  saveUsage,
+  withoutLiveSources,
+} from "./savedUsage";
 import { serverEnvironment } from "./server";
 
 export interface EnvironmentUsageStatus {
@@ -49,6 +55,13 @@ export interface EnvironmentUsageStatus {
 
 /** The read last saved per environment and window, so a read is saved once. */
 const lastSavedRead = new Map<string, string>();
+
+onSavedUsageChange((environmentId) => {
+  appAtomRegistry.refresh(savedUsageAtom(environmentId));
+  for (const key of lastSavedRead.keys()) {
+    if (key.startsWith(`${environmentId}\u0000`)) lastSavedRead.delete(key);
+  }
+});
 
 /** Connection phases in which an environment cannot answer a read. */
 const UNREACHABLE = new Set(["available", "offline", "reconnecting", "error", "unsupported"]);
@@ -151,13 +164,10 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       // Offline, the page keeps what this session read last, or else what
       // this browser saved the last time the environment answered.
       if (summary === null && offline) {
-        const saved = pickSavedUsage(
+        summary = pickSavedUsage(
           Option.getOrElse(AsyncResult.value(get(savedUsageAtom(environmentId))), () => []),
           input,
         );
-        summary = saved?.summary ?? null;
-        readByDay = saved?.readByDay ?? false;
-        window = readByDay && fallbackInput !== null ? fallbackInput : input;
       }
       statuses.push({
         environmentId,
@@ -196,7 +206,9 @@ export interface UsageView {
 }
 
 /**
- * Merges every environment that has answered. `keepBucket` narrows the merge,
+ * Merges every environment that has answered, or that is offline and has
+ * saved usage. A saved read drops the history folders a live environment
+ * reads too. `keepBucket` narrows the merge,
  * for example to one model; source ownership still applies, so the result
  * matches that slice of the full merge. Session counts are per directory and
  * are not narrowed.
@@ -205,8 +217,21 @@ export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
-  const answered: EnvironmentUsage[] = environments.flatMap(({ environmentId, label, summary }) =>
-    summary === null ? [] : [{ environmentId, label, summary }],
+  const live = environments.flatMap((environment) =>
+    environment.summary !== null && environment.savedAt === null ? [environment.summary] : [],
+  );
+  const answered: EnvironmentUsage[] = environments.flatMap(
+    ({ environmentId, label, summary, savedAt }) =>
+      summary === null
+        ? []
+        : [
+            {
+              environmentId,
+              label,
+              // A live read of the same history folder supersedes a saved one.
+              summary: savedAt === null ? summary : withoutLiveSources(summary, live),
+            },
+          ],
   );
   return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
 }
@@ -263,9 +288,7 @@ export function useUsage(
       const key = `${status.environmentId}\u0000${JSON.stringify(status.window)}`;
       if (lastSavedRead.get(key) === status.summary.readAt) continue;
       lastSavedRead.set(key, status.summary.readAt);
-      void saveUsage(status.environmentId, { input: status.window, summary: status.summary }).then(
-        () => appAtomRegistry.refresh(savedUsageAtom(status.environmentId)),
-      );
+      void saveUsage(status.environmentId, { input: status.window, summary: status.summary });
     }
   }, [environments]);
 
