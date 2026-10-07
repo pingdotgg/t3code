@@ -30,7 +30,12 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { dailyFallback, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import {
+  dailyFallback,
+  environmentsNeedingBaseline,
+  useUsage,
+  type EnvironmentUsageStatus,
+} from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUsageContractMismatch } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
@@ -162,12 +167,13 @@ export function UsagePage() {
   // The Change column compares with the same span just before; read it only then.
   const wantsPrevious = !showingLimits && explorerPreferences.columns.includes("change");
   const previous = useUsage(wantsPrevious ? previousWindow(window) : null, selectedEnvironmentIds);
-  // Change compares like for like only when every environment that adds usage
-  // now, after shared folders count once, also answered for the span before.
-  const previousCoversCurrent = merged.contributingEnvironments.every((environmentId) =>
-    previous.selectedEnvironments.some(
-      (entry) => entry.environmentId === environmentId && entry.summary !== null,
-    ),
+  // Change compares like for like only when every environment that counts now,
+  // even with no usage, also answered for the span before.
+  const previousCoversCurrent = environmentsNeedingBaseline(selectedEnvironments).every(
+    (environmentId) =>
+      previous.selectedEnvironments.some(
+        (entry) => entry.environmentId === environmentId && entry.summary !== null,
+      ),
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const selectedEnvironmentIdList = useMemo(

@@ -232,6 +232,33 @@ export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
+  const answered: EnvironmentUsage[] = [...answeredSummaries(environments)].map(
+    ([environment, summary]) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      summary,
+    }),
+  );
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
+}
+
+/**
+ * Environments whose usage a comparison needs from the span before: every one
+ * that answered, except an offline one whose saved usage is all counted from
+ * other environments' reads.
+ */
+export function environmentsNeedingBaseline(
+  environments: readonly EnvironmentUsageStatus[],
+): readonly EnvironmentId[] {
+  return [...answeredSummaries(environments)].flatMap(([environment, summary]) =>
+    environment.savedAt !== null && summary.sources.length === 0 ? [] : [environment.environmentId],
+  );
+}
+
+/** Each answered environment's summary, with saved reads trimmed to the folders they keep. */
+function answeredSummaries(
+  environments: readonly EnvironmentUsageStatus[],
+): Map<EnvironmentUsageStatus, UsageSummary> {
   // Only reads the merge will use claim their history folders.
   const usable = (summary: UsageSummary | null): summary is UsageSummary =>
     summary !== null &&
@@ -246,19 +273,17 @@ export function mergeAnsweredUsage(
       ),
     ),
   );
-  const answered: EnvironmentUsage[] = environments.flatMap(
-    ({ environmentId, label, summary, savedAt }) =>
-      summary === null
-        ? []
-        : [
-            {
-              environmentId,
-              label,
-              summary: savedAt === null ? summary : (saved.get(environmentId) ?? summary),
-            },
-          ],
-  );
-  return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
+  const answered = new Map<EnvironmentUsageStatus, UsageSummary>();
+  for (const environment of environments) {
+    if (environment.summary === null) continue;
+    answered.set(
+      environment,
+      environment.savedAt === null
+        ? environment.summary
+        : (saved.get(environment.environmentId) ?? environment.summary),
+    );
+  }
+  return answered;
 }
 
 /** `input` null reads nothing and reports no environments. */

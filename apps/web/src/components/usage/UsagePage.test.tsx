@@ -15,7 +15,11 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => testState.navigate,
   useCanGoBack: () => testState.canGoBack,
 }));
-vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage, dailyFallback: () => null }));
+vi.mock("../../state/usage", () => ({
+  useUsage: testState.useUsage,
+  dailyFallback: () => null,
+  environmentsNeedingBaseline: () => [],
+}));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",

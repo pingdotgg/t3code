@@ -30,6 +30,7 @@ vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
 vi.mock("../../state/usage", () => ({
   dailyFallback: () => null,
+  environmentsNeedingBaseline: () => [],
   useUsage: () => ({
     merged: mergeUsage([], USAGE_CONTRACT_VERSION),
     environments: [

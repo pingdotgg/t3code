@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   dailyFallback,
   distinctLabels,
+  environmentsNeedingBaseline,
   isRejectedWindow,
   useUsage,
   type EnvironmentUsageStatus,
@@ -181,6 +182,23 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+});
+
+describe("environmentsNeedingBaseline", () => {
+  it("needs every answering environment, except an offline one counted elsewhere", () => {
+    const live = environment("live", 10);
+    const quiet = { ...environment("quiet", 0), offline: true, savedAt: "2026-09-04T11:00:00Z" };
+    // Reads the same folder as "live": its saved usage is counted from there.
+    const copy = {
+      ...environment("copy", 10, "live"),
+      offline: true,
+      savedAt: "2026-09-04T11:00:00Z",
+    };
+    expect(environmentsNeedingBaseline([live, quiet, copy, environment("pending", null)])).toEqual([
+      "live",
+      "quiet",
+    ]);
   });
 });
 
