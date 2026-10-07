@@ -1571,7 +1571,10 @@ export const make = Effect.gen(function* () {
   const workflowApprovalReadError = (cwd: string, cause: unknown) =>
     readError(cwd, "listWorkflowRunsRequiringApproval", cause);
 
-  /** Every open pull request whose head branch carries this name, up to one past the limit. */
+  /**
+   * Every open pull request whose head branch carries this name, up to one past the limit.
+   * `truncated` says some were never read, which is never enough to call a head unique.
+   */
   const listHeadsByBranch = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -1582,7 +1585,7 @@ export const make = Effect.gen(function* () {
       const { owner, name } = parseRepositorySelector(input.repository);
       const countHeads = (pages: ReadonlyArray<{ readonly heads: ReadonlyArray<unknown> }>) =>
         pages.reduce((total, page) => total + page.heads.length, 0);
-      const { pages } = yield* readGraphQlPages(
+      const { pages, truncated } = yield* readGraphQlPages(
         (after) =>
           graphqlRead({
             cwd: input.cwd,
@@ -1598,7 +1601,7 @@ export const make = Effect.gen(function* () {
           until: (pages) => countHeads(pages) > workflowApprovalLimit,
         },
       );
-      return pages.flatMap((page) => page.heads);
+      return { heads: pages.flatMap((page) => page.heads), truncated };
     });
 
   /**
@@ -1653,9 +1656,10 @@ export const make = Effect.gen(function* () {
         [
           listHeadsByBranch(input).pipe(
             Effect.flatMap(
-              (
+              ({
                 heads,
-              ): Effect.Effect<
+                truncated,
+              }): Effect.Effect<
                 GitHubPullRequestHead,
                 GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
               > => {
@@ -1666,7 +1670,7 @@ export const make = Effect.gen(function* () {
                     pullRequest.headRepositoryOwner?.toLowerCase() ===
                       input.headRepositoryOwner.toLowerCase(),
                 );
-                if (heads.length > workflowApprovalLimit) {
+                if (truncated || heads.length > workflowApprovalLimit) {
                   return Effect.fail(
                     new GitHubWorkflowApprovalRefusedError({
                       cwd: input.cwd,

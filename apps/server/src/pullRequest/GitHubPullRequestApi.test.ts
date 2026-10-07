@@ -2618,6 +2618,38 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("refuses workflow approval when the head list stops before its end", () =>
+    Effect.gen(function* () {
+      // GitHub hands the same cursor back, so the second page is never read past. #7 looks
+      // unique on what was read, and an unread page could still hold another head like it.
+      const repeating = heads([7]);
+      repeating.data.repository.pullRequests.pageInfo = {
+        hasNextPage: true,
+        endCursor: "same",
+      } as never;
+      workflowApprovalRoutes(() => crossRepositoryDetail(), repeating, workflowRuns([]));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.listWorkflowRunsRequiringApproval({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          headSha: "abc123",
+          headBranch: "feat/page",
+          headRepositoryOwner: "octocat",
+          isCrossRepository: true,
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "GitHubWorkflowApprovalRefusedError",
+        reason: "head-list-truncated",
+      });
+    }),
+  );
+
   it.effect("refuses workflow approval when GitHub omits the head repository", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
