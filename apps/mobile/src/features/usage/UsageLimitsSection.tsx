@@ -43,8 +43,8 @@ function useBarColor(driver: Driver): string | null {
 
 /**
  * One window as a bar spanning its whole duration: the fill is quota left,
- * the hairline is how much of the window is left, so even spending keeps the
- * fill on the line. Pace sits under the left edge, the countdown under the
+ * the tick is how much of the window is left, so even spending keeps the
+ * fill at the tick. Pace sits under the left edge, the countdown under the
  * right, so a row reads in one glance.
  */
 function WindowRow(props: {
@@ -58,6 +58,41 @@ function WindowRow(props: {
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
+  // The tick sits in a gap cut 3px either side through the bar, so it reads over
+  // any fill; it stays 3px inside the ends so a fresh or spent window keeps its caps.
+  const [width, setWidth] = useState(0);
+  const tickX =
+    timeLeft === null || width === 0
+      ? null
+      : Math.min(Math.max((width * timeLeft) / 100, 3), width - 3);
+  const gapSides: ReadonlyArray<readonly [number, number]> =
+    tickX === null
+      ? []
+      : [
+          [0, tickX - 3],
+          [tickX + 3, width],
+        ];
+  const bar = (
+    <View
+      className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
+      style={width > 0 ? { width } : undefined}
+    >
+      <View
+        className={
+          remaining <= 10
+            ? "h-full rounded-full bg-red-500"
+            : remaining <= 30
+              ? "h-full rounded-full bg-amber-500"
+              : "h-full rounded-full bg-foreground"
+        }
+        style={[
+          { flex: remaining },
+          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
+        ]}
+      />
+      <View style={{ flex: 100 - remaining }} />
+    </View>
+  );
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
@@ -66,27 +101,29 @@ function WindowRow(props: {
           {remaining}% left
         </Text>
       </View>
-      <View className="h-3 justify-center">
-        <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
+      <View
+        className="h-3 justify-center"
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      >
+        {tickX === null ? (
+          bar
+        ) : (
+          <View className="h-1.5">
+            {gapSides.map(([start, end]) => (
+              <View
+                key={start}
+                className="absolute top-0 bottom-0 overflow-hidden"
+                style={{ left: start, width: end - start }}
+              >
+                <View style={{ marginLeft: -start }}>{bar}</View>
+              </View>
+            ))}
+          </View>
+        )}
+        {tickX !== null ? (
           <View
-            className={
-              remaining <= 10
-                ? "h-full rounded-full bg-red-500"
-                : remaining <= 30
-                  ? "h-full rounded-full bg-amber-500"
-                  : "h-full rounded-full bg-foreground"
-            }
-            style={[
-              { flex: remaining },
-              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-            ]}
-          />
-          <View style={{ flex: 100 - remaining }} />
-        </View>
-        {timeLeft !== null ? (
-          <View
-            className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
+            className="absolute top-px bottom-px w-0.5 rounded-full bg-foreground"
+            style={{ left: tickX - 1 }}
           />
         ) : null}
       </View>
