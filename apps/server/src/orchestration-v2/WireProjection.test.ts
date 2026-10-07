@@ -23,6 +23,7 @@ import {
   projectDomainEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
+import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
@@ -200,6 +201,21 @@ describe("orchestration V2 wire projection", () => {
       summary,
       truncated: true,
     });
+  });
+
+  it("keeps an oversized persistent monitor out of pending background work", () => {
+    const item = {
+      ...base,
+      status: "running" as const,
+      completedAt: null,
+      input: { persistent: true, command: "tail -f " + "x".repeat(20_000) },
+    };
+    const projected = projectTurnItemForWire(item);
+    expect(projected.type === "dynamic_tool" ? projected.input : null).toMatchObject({
+      truncated: true,
+      persistent: true,
+    });
+    expect(pendingBackgroundTurnItems({ turnItems: [projected] })).toEqual([]);
   });
 
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {

@@ -677,8 +677,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const rows = Array.from({ length: 120 }, (_, index) => {
         const ordinal = index + 1;
-        const status = ordinal === 1 ? "running" : "completed";
-        const item = {
+        const status = ordinal <= 2 ? "running" : "completed";
+        const base = {
           id: `item:old-background-command:${ordinal}`,
           threadId,
           runId: null,
@@ -693,10 +693,22 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           startedAt: nowIso,
           completedAt: status === "running" ? null : nowIso,
           updatedAt: nowIso,
-          type: "command_execution",
-          input: ordinal === 1 ? "vp run dev" : "command",
-          exitCode: status === "running" ? undefined : 0,
         };
+        // A persistent monitor never counts as pending work, so it is not carried.
+        const item =
+          ordinal === 2
+            ? {
+                ...base,
+                type: "dynamic_tool",
+                toolName: "monitor",
+                input: { persistent: true, command: "tail -f log" },
+              }
+            : {
+                ...base,
+                type: "command_execution",
+                input: ordinal === 1 ? "vp run dev" : "command",
+                exitCode: status === "running" ? undefined : 0,
+              };
         return {
           turn_item_id: item.id,
           thread_id: threadId,
@@ -719,6 +731,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.include(
         recent.projection.turnItems.map((item) => String(item.id)),
         runningId,
+      );
+      assert.notInclude(
+        recent.projection.turnItems.map((item) => String(item.id)),
+        "item:old-background-command:2",
       );
       // The command stays in its own place in history, not atop the recent window.
       assert.notInclude(

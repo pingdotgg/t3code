@@ -70,6 +70,8 @@ function summarizeDynamicValue(value: unknown): unknown {
   return {
     summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, 159).trimEnd()}…`,
     truncated: true,
+    // Pending background work skips persistent monitors by this flag.
+    ...(isPersistentDynamicToolInput(value) ? { persistent: true } : {}),
   };
 }
 
@@ -123,6 +125,15 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
     default:
       return item;
   }
+}
+
+function isPersistentDynamicToolInput(input: unknown): boolean {
+  return (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Reflect.get(input, "persistent") === true
+  );
 }
 
 function hasDynamicValue(value: unknown): boolean {

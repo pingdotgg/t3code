@@ -5171,6 +5171,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               -- this the shell reports Waiting for work no one will finish,
               -- matching the item_count query's exclusion above.
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              -- Persistent monitors are never pending work; skip decoding them.
+              AND NOT (
+                i.type = 'dynamic_tool'
+                AND json_type(i.payload_json, '$.input.persistent') = 'true'
+              )
           `
         : sql<PayloadRow & { readonly thread_id: string }>`
             SELECT i.thread_id, i.payload_json
@@ -5180,6 +5185,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
               AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              AND NOT (
+                i.type = 'dynamic_tool'
+                AND json_type(i.payload_json, '$.input.persistent') = 'true'
+              )
               AND i.thread_id IN ${sql.in(threadIds)}
           `;
 
