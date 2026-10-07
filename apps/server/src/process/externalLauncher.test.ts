@@ -1041,6 +1041,136 @@ for (const { platform, installPath, editor, args } of [
   );
 }
 
+// JetBrains Toolbox names its bundles after the app and the installed version
+// (`IntelliJ IDEA 2026.1.4.app`), so the darwin branch has to list the
+// Applications directories the way the win32 branch does instead of probing
+// exact `<name>.app` paths. The fixtures only use the mocked platform and a
+// temp directory, so this runs on a Windows host too.
+it.effect.each([
+  { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
+  { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
+] as const)(
+  "discovers and launches $editor from a versioned macOS bundle",
+  ({ editor, installPath }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
+      const executable = path.join(home, installPath);
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.chmod(executable, 0o755);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), editor);
+        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, executable);
+      assert.deepEqual(spawned.args, [
+        "--line",
+        "12",
+        "--column",
+        "4",
+        "/workspace with spaces/file.ts",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// An app whose name merely starts with the same letters is a different IDE, and
+// an exact `<name>.app` bundle keeps resolving the way it did before.
+it.effect("matches macOS bundles on the name boundary only", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const unrelatedHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-unrelated-" });
+    const unrelated = path.join(
+      unrelatedHome,
+      "Applications/WebStormHelper.app/Contents/MacOS/webstorm",
+    );
+    yield* fs.makeDirectory(path.dirname(unrelated), { recursive: true });
+    yield* fs.writeFileString(unrelated, "#!/bin/sh\n");
+    yield* fs.chmod(unrelated, 0o755);
+
+    const editorsFor = (home: string) =>
+      Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(
+        Effect.provide(
+          layerTest({ platform: "darwin", env: { HOME: home, PATH: path.join(home, "bin") } }),
+        ),
+      );
+
+    assert.notInclude(yield* editorsFor(unrelatedHome), "webstorm");
+
+    const exactHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-exact-" });
+    const exact = path.join(exactHome, "Applications/WebStorm.app/Contents/MacOS/webstorm");
+    yield* fs.makeDirectory(path.dirname(exact), { recursive: true });
+    yield* fs.writeFileString(exact, "#!/bin/sh\n");
+    yield* fs.chmod(exact, 0o755);
+
+    assert.include(yield* editorsFor(exactHome), "webstorm");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// `Visual Studio Code - Insiders.app` starts with the stable VS Code install
+// name, so a plain prefix match let the stable editor resolve to the Insiders
+// bundle. Insiders has to stay reachable under its own name, stable VS Code has
+// to stay unresolved.
+it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-insiders-" });
+    // The real Insiders bundle ships both `code-insiders` and `code`.
+    const bin = path.join(
+      home,
+      "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin",
+    );
+    yield* fs.makeDirectory(bin, { recursive: true });
+    for (const name of ["code", "code-insiders"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const available = yield* launcher.resolveAvailableEditors();
+      yield* launcher.launchEditor({ editor: "vscode-insiders", cwd: "/workspace/file.ts" });
+      return available;
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { HOME: home, PATH: path.join(home, "empty") },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.notInclude(editors, "vscode");
+    assert.include(editors, "vscode-insiders");
+    assert.equal(spawned?.command, path.join(bin, "code-insiders"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // `agy` is the standalone Antigravity CLI, which installs to ~/.local/bin on
 // macOS and Linux and to its own bin folder on Windows. It is not the IDE.
 for (const { platform, installPath, onPath } of [

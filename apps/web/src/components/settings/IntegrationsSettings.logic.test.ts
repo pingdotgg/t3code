@@ -68,7 +68,37 @@ describe("clearBrowserProfileData", () => {
   });
 });
 
+describe("clearBrowserProfileData with server browsers", () => {
+  it("clears server-hosted profiles without a desktop bridge", async () => {
+    const clear = vi.fn().mockResolvedValue(undefined);
+    await clearBrowserProfileData(null, [environmentId, secondEnvironmentId], "profile-a", {
+      environmentIds: [secondEnvironmentId],
+      clear,
+    });
+    expect(clear).toHaveBeenCalledExactlyOnceWith(secondEnvironmentId, "profile-a");
+  });
+
+  it("clears both copies and fails when the server copy fails", async () => {
+    const bridge = {
+      clearCookies: vi.fn().mockResolvedValue(undefined),
+      clearCache: vi.fn().mockResolvedValue(undefined),
+    };
+    const failure = new Error("server failed");
+    await expect(
+      clearBrowserProfileData(bridge, [environmentId], "profile-a", {
+        environmentIds: [environmentId],
+        clear: vi.fn().mockRejectedValue(failure),
+      }),
+    ).rejects.toBe(failure);
+    expect(bridge.clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
+  });
+});
+
 describe("browserProfileRemovalAvailable", () => {
+  it("accepts a server browser in place of the desktop bridge", () => {
+    expect(browserProfileRemovalAvailable(false, true, 1, 1)).toBe(true);
+  });
+
   it("requires a ready non-empty catalog and desktop bridge", () => {
     expect(browserProfileRemovalAvailable(true, true, 1)).toBe(true);
     expect(browserProfileRemovalAvailable(true, true, 0)).toBe(false);

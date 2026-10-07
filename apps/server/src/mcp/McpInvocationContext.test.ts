@@ -81,7 +81,7 @@ it.effect("refuses thread-owned capabilities to a caller signed in from outside 
     environmentId: EnvironmentId.make("environment-1"),
     requestNamespace: "client:session-1",
     thread: undefined,
-    client: { sessionId: "session-1", label: "Claude Code", runtimeModeCeiling: "auto" },
+    client: { sessionId: "session-1", label: "Claude Code", access: "auto" },
     capabilities: new Set(["preview", "orchestration"]),
     issuedAt: 1,
   };

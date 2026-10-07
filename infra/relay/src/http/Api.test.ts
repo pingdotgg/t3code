@@ -7,6 +7,7 @@ import {
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as Devices from "../agentActivity/Devices.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -30,6 +31,7 @@ import * as Tracer from "effect/Tracer";
 import * as Etag from "effect/http/Etag";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -1193,6 +1195,38 @@ describe("relay request tracing", () => {
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),
+  );
+
+  it.effect("records one server span inside the worker's disabled HTTP tracer", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://relay.test/v1/mobile/devices", { method: "POST" }),
+      );
+
+      // As the worker runtime runs it: its own tracer around ours, turned off.
+      yield* HttpMiddleware.tracer(
+        traceRelayHttpRequestWith(
+          Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+          Layer.empty,
+        ),
+      ).pipe(
+        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => true),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        Effect.withTracer(tracer),
+      );
+      yield* Effect.yieldNow;
+
+      expect(spans.filter((span) => span.kind === "server")).toHaveLength(1);
+      expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
+    }),
   );
 
   it.effect("fails hung requests with a 504 before the client's 10s abort", () =>

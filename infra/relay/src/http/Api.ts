@@ -228,8 +228,12 @@ export const traceRelayHttpRequest = <E, R>(
       Effect.andThen(relayRequestDeadline(httpEffect)),
     );
     if (!isRelayHookPath(request.url)) {
-      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-      return yield* HttpMiddleware.tracer(traced).pipe(Effect.ensuring(Effect.yieldNow));
+      return yield* HttpMiddleware.tracer(traced).pipe(
+        // The worker turns its own request span off; this one is ours.
+        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+        // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
+        Effect.ensuring(Effect.yieldNow),
+      );
     }
     // Hook URLs carry a secret token: the tracer and deadline log see a redacted
     // request, while the route itself still receives the original. A webhook
@@ -253,7 +257,7 @@ export const traceRelayHttpRequest = <E, R>(
       ),
     ).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
-      // The worker disables its own span for hook paths; this one is ours.
+      // The worker turns its own request span off; this one is ours.
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
       Effect.ensuring(Effect.yieldNow),
     );

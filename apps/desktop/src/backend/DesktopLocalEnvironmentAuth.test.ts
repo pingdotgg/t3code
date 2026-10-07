@@ -1,8 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import {
@@ -143,5 +146,92 @@ describe("DesktopLocalEnvironmentAuth", () => {
           currentDesktopBootstrapToken("desktop-secret", DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS * 2 + 1),
         );
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  const tokenResponse = (request: HttpClientRequest.HttpClientRequest) =>
+    HttpClientResponse.fromWeb(
+      request,
+      new Response(
+        JSON.stringify({
+          access_token: "desktop-bearer-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "Bearer",
+          expires_in: 3600,
+          scope: "orchestration:read",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+    list: Effect.succeed([
+      {
+        id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+        label: Effect.succeed("Windows"),
+        currentConfig: Effect.succeedSome(config),
+      },
+    ]),
+  } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+  // Answers the first `failures` exchanges with `failure`, then with a token.
+  const makeExchange = (failures: number, failure: () => Response) =>
+    Effect.gen(function* () {
+      const requestCount = yield* Ref.make(0);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              count <= failures
+                ? HttpClientResponse.fromWeb(request, failure())
+                : tokenResponse(request),
+            ),
+          ),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+      return { auth, requestCount };
+    });
+
+  it.effect("retries a backend that is still starting", () =>
+    Effect.gen(function* () {
+      const { auth, requestCount } = yield* makeExchange(
+        2,
+        () => new Response("", { status: 503 }),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(1));
+
+      assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
+      assert.strictEqual(yield* Ref.get(requestCount), 3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not retry a rejected bootstrap credential", () =>
+    Effect.gen(function* () {
+      const { auth, requestCount } = yield* makeExchange(1, () =>
+        Response.json(
+          {
+            _tag: "EnvironmentAuthInvalidError",
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            traceId: "trace-1",
+          },
+          { status: 401 },
+        ),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(1));
+      const error = yield* Fiber.join(fiber);
+
+      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthSessionBootstrapError");
+      assert.strictEqual(yield* Ref.get(requestCount), 1);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

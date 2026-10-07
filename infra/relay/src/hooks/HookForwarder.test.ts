@@ -1,5 +1,6 @@
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
@@ -615,15 +616,13 @@ describe("HookForwarder", () => {
       });
       const harness = makeHarness();
       const handler = yield* harness.httpEffect;
-      // As the worker runtime runs it: its own tracer around ours, off for hook
-      // paths. This checks the predicate; whether alchemy applies it per event
-      // is only visible on a deployed worker (see worker.ts).
+      // As the worker runtime runs it: its own tracer around ours, turned off
+      // (see worker.ts). Whether alchemy applies the predicate per event is
+      // only visible on a deployed worker.
       yield* HttpMiddleware.tracer(
         traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)),
       ).pipe(
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, (request) =>
-          HookForwarder.isRelayHookPath(request.url),
-        ),
+        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => true),
         Effect.withTracer(tracer),
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,

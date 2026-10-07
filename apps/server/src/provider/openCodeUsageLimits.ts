@@ -1,13 +1,14 @@
 import * as NodeOS from "node:os";
-import * as NodeCrypto from "node:crypto";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Hex from "effect/encoding/Hex";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -96,15 +97,16 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];
+    const crypto = yield* Crypto.Crypto;
+    // Go's usage response has no account ID. An unkeyed hash matches across
+    // environments without a shared secret. It permits offline guesses, but
+    // Go keys are randomly generated.
+    const credentialFingerprint = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(`opencode-go\0${apiKey}`))
+      .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
       ...makeUsageLimits({ checkedAt, windows }),
-      // Go's usage response has no account ID. An unkeyed hash matches across
-      // environments without a shared secret. It permits offline guesses, but
-      // Go keys are randomly generated.
-      credentialFingerprint: NodeCrypto.createHash("sha256")
-        .update("opencode-go\0")
-        .update(apiKey)
-        .digest("hex"),
+      credentialFingerprint,
     };
   }).pipe(
     Effect.timeout("5 seconds"),

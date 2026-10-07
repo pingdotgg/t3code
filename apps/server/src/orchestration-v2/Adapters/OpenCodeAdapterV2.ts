@@ -279,6 +279,8 @@ interface ActiveOpenCodeTurn {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  /** The provider thread the turn started on, which its terminal names. */
+  readonly providerThreadId: OrchestrationV2ProviderTurn["providerThreadId"];
   readonly providerTurnOrdinal: number;
   readonly runOrdinal: number;
   readonly runAttemptId: OrchestrationV2ProviderTurn["runAttemptId"];
@@ -2118,7 +2120,7 @@ export function makeOpenCodeAdapterV2(
               ? {
                   type: "turn.terminal",
                   driver: OPENCODE_PROVIDER,
-                  providerThreadId: state.providerThread.id,
+                  providerThreadId: turn.providerThreadId,
                   providerTurnId: turn.providerTurnId,
                   runOrdinal: turn.runOrdinal,
                   failureItemOrdinal: itemOrdinal(turn, `terminal-failure:${turn.providerTurnId}`),
@@ -2134,7 +2136,7 @@ export function makeOpenCodeAdapterV2(
               : {
                   type: "turn.terminal",
                   driver: OPENCODE_PROVIDER,
-                  providerThreadId: state.providerThread.id,
+                  providerThreadId: turn.providerThreadId,
                   providerTurnId: turn.providerTurnId,
                   runOrdinal: turn.runOrdinal,
                   status,
@@ -2256,6 +2258,7 @@ export function makeOpenCodeAdapterV2(
             modelSelection: state.appThread.modelSelection,
             runtimePolicy: state.parentSubagent.parentTurn.runtimePolicy,
             providerTurnId,
+            providerThreadId: providerTurn.providerThreadId,
             providerTurnOrdinal: providerTurn.ordinal,
             runOrdinal: state.parentSubagent.parentTurn.runOrdinal,
             runAttemptId: null,
@@ -3192,6 +3195,7 @@ export function makeOpenCodeAdapterV2(
                 modelSelection: turnInput.modelSelection,
                 runtimePolicy: turnInput.runtimePolicy,
                 providerTurnId,
+                providerThreadId: turnInput.providerThread.id,
                 providerTurnOrdinal: turnInput.providerTurnOrdinal,
                 runOrdinal: turnInput.runOrdinal,
                 runAttemptId: turnInput.attemptId,

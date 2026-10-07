@@ -10,6 +10,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AbsolutePath, Location, Model, Provider } from "@opencode/client/effect";
 import { assert, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
@@ -21,7 +22,6 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as NodeCrypto from "node:crypto";
 import { describe } from "vite-plus/test";
 
 import * as OpenCode2Client from "./OpenCode2Client.ts";
@@ -36,7 +36,8 @@ const startServer = Effect.fn("OpenCode2ClientLive.startServer")(function* (bina
   const directory = path.join(root, "work");
   yield* fs.makeDirectory(directory);
   // Non-ASCII on purpose: OpenCode decodes Basic credentials as UTF-8.
-  const password = `${Base64Url.encode(NodeCrypto.randomBytes(32))}-pässwörd€`;
+  const crypto = yield* Crypto.Crypto;
+  const password = `${Base64Url.encode(yield* crypto.randomBytes(32))}-pässwörd€`;
   const child = yield* spawner.spawn(
     ChildProcess.make(binary, ["serve", "--hostname=127.0.0.1", "--port=0"], {
       cwd: directory,
