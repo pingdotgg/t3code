@@ -3,8 +3,10 @@
 A plugin is a directory of JavaScript with a `t3-plugin.json` manifest. Each environment runs its own
 plugins: they live on the server's machine and run there, not on the device you manage them from.
 
-Plugins are trusted local code, not a sandbox. An enabled plugin runs as your user account on the
-server's machine, with the same access to its files, programs, and network. Only add code you trust.
+Plugins are trusted local code, not a sandbox. An enabled plugin runs as the OS account that runs the
+T3 Code server, on the server's machine, with that account's access to its files, programs, and
+network. When you manage a remote environment, that is not your account on this device. Only add
+code you trust.
 
 ## Adding a plugin
 
@@ -110,8 +112,8 @@ With the `settings` capability, list up to 32 fields in `settings`. Each has a `
 Settings are saved from an administrative connection with the `plugins.settings.update` request.
 `context.proposed.settings.get(key)` returns the saved value if it still fits the field, else the
 default, else `undefined`. Secrets are write-only for clients: a client learns only whether one is
-saved. T3 Code stores each secret as a plain-text file, readable only by your user account, in the
-server's secrets directory. It is not encrypted.
+saved. T3 Code stores each secret as a plain-text file, readable only by the server's OS account,
+in the server's secrets directory. It is not encrypted.
 
 `context.proposed.storage` keeps JSON values with `get`, `set`, `delete` and `keys`: keys of 1 to
 128 characters, values up to 64 KiB, at most 256 keys and 1 MiB per installation. A write past a
