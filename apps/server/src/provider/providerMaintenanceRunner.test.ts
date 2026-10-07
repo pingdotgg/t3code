@@ -443,7 +443,7 @@ describe("providerMaintenanceRunner", () => {
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("0.0.0"),
           layerMockSpawner(() => ({
-            stdout: "Checking for updates\nDownloading 2.1.293\n\u001b[32m 40%\u001b[0m\r 80%\r",
+            stdout: "Checking for updates\nDownloading 2.1.293\n\u001b[32m 40%\u001b[0m\r 80%",
             exitCode: Deferred.await(exited),
           })),
         ),
@@ -461,6 +461,10 @@ describe("providerMaintenanceRunner", () => {
       "==> Pouring",
     );
     assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(" \t "), null);
+    assert.strictEqual(
+      ProviderMaintenanceRunner.splitOutputLines("x".repeat(5_000), "y").partialLine.length,
+      4_096,
+    );
     assert.strictEqual(ProviderMaintenanceRunner.toProgressLine("x".repeat(300))?.length, 200);
   });
 

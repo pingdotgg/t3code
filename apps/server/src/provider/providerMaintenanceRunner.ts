@@ -45,6 +45,8 @@ const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // installer's output is sampled rather than forwarded line by line.
 const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
 const UPDATE_PROGRESS_MAX_LENGTH = 200;
+// An installer may write for minutes without a line ending; only its tail matters.
+const UPDATE_PARTIAL_LINE_MAX_LENGTH = 4_096;
 
 export interface ProviderMaintenanceCommandResult {
   readonly stdout: string;
@@ -138,7 +140,11 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
             Stream.tap((chunk) => {
               const split = splitOutputLines(partialLine, decoder.decode(chunk, { stream: true }));
               partialLine = split.partialLine;
-              const line = split.lines.map(toProgressLine).findLast((value) => value !== null);
+              // A progress bar that redraws with a leading `\r` keeps its newest
+              // frame unterminated, so that frame is the latest status.
+              const line =
+                toProgressLine(split.partialLine) ??
+                split.lines.map(toProgressLine).findLast((value) => value !== null);
               return line ? Ref.set(pendingProgress, line) : Effect.void;
             }),
           );
@@ -208,7 +214,7 @@ export function splitOutputLines(
   text: string,
 ): { readonly lines: ReadonlyArray<string>; readonly partialLine: string } {
   const parts = (partialLine + text).split(/\r\n|\r|\n/);
-  return { partialLine: parts.pop() ?? "", lines: parts };
+  return { partialLine: (parts.pop() ?? "").slice(-UPDATE_PARTIAL_LINE_MAX_LENGTH), lines: parts };
 }
 
 /** Turn one raw output line into a short status message, or null if it has no text. */
