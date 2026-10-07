@@ -60,29 +60,24 @@ export interface SvelteKitAwsTargetConfig extends SvelteKitTargetConfig {
 /** The entry module name the finishing pass writes (`dist/server/index.mjs`). */
 export const SERVER_ENTRY_NAME = NodePath.join("server", "index.mjs");
 
-const posixify = (str: string): string => str.replace(/\\/g, "/");
-
 /**
- * The generated (unbundled) Lambda entry: kit's `Server` + the route
- * manifest, wrapped with the aws-lambda web adapter. The
- * `@alchemy.run/frontend-frameworks/aws-lambda` import is inlined by the
- * finishing pass's rolldown bundle, so the shipped `dist/server` has no
- * runtime dependency on this package.
+ * The generated (unbundled) Lambda entry: kit's pre-built server instance
+ * (`generateServerInstance` output), wrapped with the aws-lambda web
+ * adapter. The `@alchemy.run/frontend-frameworks/aws-lambda` import is
+ * inlined by the finishing pass's rolldown bundle, so the shipped
+ * `dist/server` has no runtime dependency on this package.
  */
 const generateLambdaEntry = (options: {
   readonly serverImport: string;
-  readonly manifestImport: string;
   readonly streaming: boolean;
 }): string => {
   const wrap = options.streaming
     ? "toLambdaHandler"
     : "toBufferedLambdaHandler";
   return /* js */ `
-import { Server } from ${JSON.stringify(options.serverImport)};
-import { manifest } from ${JSON.stringify(options.manifestImport)};
+import { server } from ${JSON.stringify(options.serverImport)};
 import { ${wrap} } from '@alchemy.run/frontend-frameworks/aws-lambda';
 
-const server = new Server(manifest);
 const initialized = server.init({ env: process.env });
 
 const respond = async (request) => {
@@ -122,29 +117,25 @@ export const makeAwsAdapter = (options: {
 
       // client assets and prerendered pages — uploaded wholesale to S3;
       // the CloudFront edge router serves them by exact match.
-      const assetsDest = dest + builder.config.kit.paths.base;
+      const assetsDest = dest + builder.config.paths.base;
       builder.mkdirp(assetsDest);
       builder.writeClient(assetsDest);
       builder.writePrerendered(assetsDest);
 
-      // manifest module
-      NodeFs.writeFileSync(
-        NodePath.join(tmp, "manifest.js"),
-        `export const manifest = ${builder.generateManifest({
-          relativePath: posixify(
-            NodePath.relative(tmp, builder.getServerDirectory()),
-          ),
-        })};\n\n` +
-          `export const prerendered = new Set(${JSON.stringify(builder.prerendered.paths)});\n`,
-      );
+      // pre-built server instance: kit 3.0 no longer exposes the internal
+      // SSR manifest (`generateManifest` throws), so `generateServerInstance`
+      // writes `export const server = new Server(manifest)` straight to
+      // disk itself instead of returning a manifest string to embed. Lambda
+      // routing is all-or-nothing (S3/CloudFront handle static assets), so
+      // unlike the Cloudflare worker shim there's no route manifest to build.
+      builder.generateServerInstance(NodePath.join(tmp, "server.js"));
 
       // Lambda entry (unbundled; relative imports into `output/server`)
       const workerEntry = NodePath.join(tmp, "lambda.js");
       NodeFs.writeFileSync(
         workerEntry,
         generateLambdaEntry({
-          serverImport: `./${posixify(NodePath.relative(tmp, builder.getServerDirectory()))}/index.js`,
-          manifestImport: "./manifest.js",
+          serverImport: "./server.js",
           streaming: options.streaming ?? true,
         }),
       );
@@ -152,12 +143,19 @@ export const makeAwsAdapter = (options: {
         typeof builder.hasServerInstrumentationFile === "function" &&
         builder.hasServerInstrumentationFile()
       ) {
+        // kit 3.0 requires an explicit initializer module that populates
+        // `$env/dynamic/private` before instrumentation runs; the default
+        // (`process.env`) is correct for the Lambda Node runtime.
+        const initializer = builder.createInstrumentationInitializer({
+          outputDirectory: tmp,
+        });
         builder.instrument({
           entrypoint: workerEntry,
           instrumentation: NodePath.join(
             builder.getServerDirectory(),
             "instrumentation.server.js",
           ),
+          initializer,
         });
       }
 

@@ -49,7 +49,10 @@ test.provider.skipIf(entitled)(
       const bookmarks = yield* zeroTrust.listAccessBookmarks({ accountId });
       expect(Array.isArray(bookmarks.result)).toBe(true);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -106,7 +109,10 @@ test.provider.skipIf(!entitled)(
         );
       expect(afterDestroy?.id ?? undefined).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 // The legacy bookmarks list endpoint is read-only but available on every
@@ -144,5 +150,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );

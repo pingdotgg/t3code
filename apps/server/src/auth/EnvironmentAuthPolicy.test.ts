@@ -7,11 +7,9 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 
-const makeEnvironmentAuthPolicyLayer = (
-  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
-) =>
+const layerEnvironmentAuthPolicy = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   EnvironmentAuthPolicy.layer.pipe(
-    Layer.provide(ServerEnvironment.identityLayer),
+    Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provide(
       Layer.effect(
         ServerConfig.ServerConfig,
@@ -36,13 +34,14 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("desktop-managed-local");
       expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap"]);
+      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
       // Packaged desktop has no devUrl, but still needs the port scope: it
       // scans upward from 3773 for a free port and binds 127.0.0.1, so a second
       // instance shares this one's hostname on a different port.
       expect(descriptor.sessionCookieName).toBe("t3_session_3773");
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "desktop",
           port: 3773,
         }),
@@ -58,7 +57,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       expect(descriptor.sessionCookieName).toBe("t3_session_3774");
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "desktop",
           port: 3774,
         }),
@@ -75,7 +74,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "desktop",
           host: "0.0.0.0",
         }),
@@ -90,10 +89,11 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("loopback-browser");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
       expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "web",
           host: "127.0.0.1",
           port: 3773,
@@ -112,7 +112,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       expect(descriptor.sessionCookieName).toMatch(/^t3_session_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "web",
           host: "0.0.0.0",
         }),
@@ -129,7 +129,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       expect(descriptor.sessionCookieName).toMatch(/^t3_session_5775_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "web",
           host: "0.0.0.0",
           port: 5775,
@@ -148,7 +148,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       expect(descriptor.sessionCookieName).toMatch(/^t3_session_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
+        layerEnvironmentAuthPolicy({
           mode: "web",
           host: "192.168.1.50",
         }),

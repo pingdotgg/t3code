@@ -32,7 +32,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
@@ -182,7 +182,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     runtimePolicy: policy,
   });
   const now = yield* DateTime.now;
-  const startTurn = (text = "hello") =>
+  const startTurn = (
+    text = "hello",
+    startProviderThread: OrchestrationV2ProviderThread = providerThread,
+  ) =>
     runtime.startTurn({
       appThread: {
         id: threadId,
@@ -213,7 +216,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       providerTurnOrdinal: 1,
       attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
       rootNodeId: NodeId.make(`node-opencode-${suffix}`),
-      providerThread,
+      providerThread: startProviderThread,
       message: {
         createdBy: "user",
         creationSource: "web",
@@ -1288,6 +1291,45 @@ describe("OpenCodeAdapterV2", () => {
       assert.isTrue(
         events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
       );
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+  );
+
+  it.effect("ends a turn on the provider thread it started on", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "forked-row",
+        "native-opencode-forked-row",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: "native-opencode-forked-row", time: { created: 1, updated: 1 } },
+            }),
+            summarize: async () => ({ data: true }),
+          },
+        },
+      );
+      // A forked run starts on its own row for the same native session, while
+      // the adapter tracks the session under the id it minted.
+      const forkedRow = {
+        ...harness.providerThread,
+        id: ProviderThreadId.make("provider-thread:opencode-test:forked-run-row"),
+      };
+      yield* harness.startTurn("/compact", forkedRow);
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event): event is Extract<typeof event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(Option.getOrUndefined(terminal)?.providerThreadId, forkedRow.id);
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 

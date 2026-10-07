@@ -1,6 +1,6 @@
 // Measures Client.TopLevelMethods derivation from one type-only top-level group with 500 same-shaped endpoints.
 import { Schema } from "effect"
-import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import type { Group } from "./_grouped-api-types.ts"
 
 Schema.String

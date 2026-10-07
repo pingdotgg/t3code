@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 
-describe("sanitizeLockKey", () => {
+describe("sanitizeLockKey", { tags: ["unit", "local"] }, () => {
   it("leaves conventional keys untouched", () => {
     expect(sanitizeLockKey("default-Cloudflare")).toBe("default-Cloudflare");
     expect(sanitizeLockKey("my_profile.v2-AWS")).toBe("my_profile.v2-AWS");
@@ -79,6 +79,7 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
         );
         expect(result).toBe("ran");
       }),
+    { tags: ["unit", "local"] },
   );
 
   it.effect(
@@ -100,51 +101,58 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
         expect(seen).toEqual({ lock: true, owner: true });
         expect(yield* fs.exists(lockPath)).toBe(false);
       }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("serialises same-key critical sections in-process", () =>
-    Effect.gen(function* () {
-      const order: number[] = [];
-      const critical = (i: number) =>
-        withLock(
-          "lock-test-serialise",
-          Effect.gen(function* () {
-            order.push(i);
-            yield* Effect.sleep("50 millis");
-            order.push(i);
-          }),
+  it.effect(
+    "serialises same-key critical sections in-process",
+    () =>
+      Effect.gen(function* () {
+        const order: number[] = [];
+        const critical = (i: number) =>
+          withLock(
+            "lock-test-serialise",
+            Effect.gen(function* () {
+              order.push(i);
+              yield* Effect.sleep("50 millis");
+              order.push(i);
+            }),
+          );
+        yield* Effect.all([critical(1), critical(2)], {
+          concurrency: "unbounded",
+        });
+        // Each critical section's two entries must be adjacent — no
+        // interleaving between holders.
+        expect(order.slice(0, 2)).toEqual([order[0], order[0]]);
+        expect(order.slice(2)).toEqual([order[2], order[2]]);
+      }),
+    { tags: ["unit", "local"] },
+  );
+
+  it.effect(
+    "allows different-key critical sections to overlap",
+    () =>
+      Effect.gen(function* () {
+        const firstEntered = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const first = yield* withLock(
+          "lock-test-independent-a",
+          Deferred.succeed(firstEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+          ),
+        ).pipe(Effect.forkScoped);
+
+        yield* Deferred.await(firstEntered);
+        const secondRan = yield* withLock(
+          "lock-test-independent-b",
+          Effect.succeed(true),
         );
-      yield* Effect.all([critical(1), critical(2)], {
-        concurrency: "unbounded",
-      });
-      // Each critical section's two entries must be adjacent — no
-      // interleaving between holders.
-      expect(order.slice(0, 2)).toEqual([order[0], order[0]]);
-      expect(order.slice(2)).toEqual([order[2], order[2]]);
-    }),
-  );
+        expect(secondRan).toBe(true);
 
-  it.effect("allows different-key critical sections to overlap", () =>
-    Effect.gen(function* () {
-      const firstEntered = yield* Deferred.make<void>();
-      const releaseFirst = yield* Deferred.make<void>();
-      const first = yield* withLock(
-        "lock-test-independent-a",
-        Deferred.succeed(firstEntered, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseFirst)),
-        ),
-      ).pipe(Effect.forkScoped);
-
-      yield* Deferred.await(firstEntered);
-      const secondRan = yield* withLock(
-        "lock-test-independent-b",
-        Effect.succeed(true),
-      );
-      expect(secondRan).toBe(true);
-
-      yield* Deferred.succeed(releaseFirst, undefined);
-      yield* Fiber.await(first);
-    }),
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.await(first);
+      }),
+    { tags: ["unit", "local"] },
   );
 
   it.effect(
@@ -207,153 +215,180 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
         ).toBe("recovered");
         expect(yield* fs.exists(lockPath)).toBe(false);
       }).pipe(Effect.scoped),
-    { timeout: 10_000 },
+    { tags: ["unit", "local"], timeout: 10_000 },
   );
 
-  it.effect("releases the lock when the critical section fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-release-on-failure";
-      const lockPath = yield* lockPathOf(key);
-      const exit = yield* withLock(key, Effect.fail("boom")).pipe(Effect.exit);
-      assert(Exit.isFailure(exit));
-      expect(String(exit.cause)).toContain("boom");
-      expect(yield* fs.exists(lockPath)).toBe(false);
-    }),
+  it.effect(
+    "releases the lock when the critical section fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-release-on-failure";
+        const lockPath = yield* lockPathOf(key);
+        const exit = yield* withLock(key, Effect.fail("boom")).pipe(
+          Effect.exit,
+        );
+        assert(Exit.isFailure(exit));
+        expect(String(exit.cause)).toContain("boom");
+        expect(yield* fs.exists(lockPath)).toBe(false);
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("releases the lock when the holder is interrupted", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-release-on-interrupt";
-      const lockPath = yield* lockPathOf(key);
-      const entered = yield* Deferred.make<void>();
-      const fiber = yield* withLock(
-        key,
-        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
-      ).pipe(Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* Fiber.interrupt(fiber);
-      expect(yield* fs.exists(lockPath)).toBe(false);
-    }),
+  it.effect(
+    "releases the lock when the holder is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-release-on-interrupt";
+        const lockPath = yield* lockPathOf(key);
+        const entered = yield* Deferred.make<void>();
+        const fiber = yield* withLock(
+          key,
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(fiber);
+        expect(yield* fs.exists(lockPath)).toBe(false);
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("releases the lock when interrupted during acquisition", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-interrupt-acquisition";
-      const lockPath = yield* lockPathOf(key);
-      const created = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      yield* Effect.addFinalizer(() => removeLock(lockPath).pipe(Effect.orDie));
-      const acquisitionFs: FileSystem.FileSystem = {
-        ...fs,
-        makeDirectory: (directory, options) =>
-          fs
-            .makeDirectory(directory, options)
-            .pipe(
-              Effect.andThen(
-                directory === lockPath
-                  ? Deferred.succeed(created, undefined).pipe(
-                      Effect.andThen(Deferred.await(resume)),
-                    )
-                  : Effect.void,
+  it.effect(
+    "releases the lock when interrupted during acquisition",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-interrupt-acquisition";
+        const lockPath = yield* lockPathOf(key);
+        const created = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() =>
+          removeLock(lockPath).pipe(Effect.orDie),
+        );
+        const acquisitionFs: FileSystem.FileSystem = {
+          ...fs,
+          makeDirectory: (directory, options) =>
+            fs
+              .makeDirectory(directory, options)
+              .pipe(
+                Effect.andThen(
+                  directory === lockPath
+                    ? Deferred.succeed(created, undefined).pipe(
+                        Effect.andThen(Deferred.await(resume)),
+                      )
+                    : Effect.void,
+                ),
               ),
-            ),
-      };
-      const holder = yield* withLock(key, Effect.never).pipe(
-        Effect.provideService(FileSystem.FileSystem, acquisitionFs),
-        Effect.forkScoped,
-      );
-      yield* Deferred.await(created);
-      const interrupted = yield* Fiber.interrupt(holder).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* Deferred.succeed(resume, undefined);
-      yield* Fiber.join(interrupted);
-      expect(yield* fs.exists(lockPath)).toBe(false);
-    }).pipe(Effect.scoped),
+        };
+        const holder = yield* withLock(key, Effect.never).pipe(
+          Effect.provideService(FileSystem.FileSystem, acquisitionFs),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(created);
+        const interrupted = yield* Fiber.interrupt(holder).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(interrupted);
+        expect(yield* fs.exists(lockPath)).toBe(false);
+      }).pipe(Effect.scoped),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("dies with a timeout while a live foreign lock is held", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-foreign-holder";
-      const lockPath = yield* lockPathOf(key);
-      yield* plantForeignLock(lockPath);
+  it.effect(
+    "dies with a timeout while a live foreign lock is held",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-foreign-holder";
+        const lockPath = yield* lockPathOf(key);
+        yield* plantForeignLock(lockPath);
 
-      const exit = yield* withLock(key, Effect.void, {
-        timeout: "500 millis",
-      }).pipe(Effect.exit);
-      assert(Exit.isFailure(exit));
-      expect(String(exit.cause)).toMatch(/Timed out waiting/);
-      // A fresh (non-stale) foreign lock must survive our failed attempt.
-      expect(yield* fs.readFileString(`${lockPath}/owner`)).toBe(
-        "foreign-owner",
-      );
-      yield* removeLock(lockPath);
-    }),
+        const exit = yield* withLock(key, Effect.void, {
+          timeout: "500 millis",
+        }).pipe(Effect.exit);
+        assert(Exit.isFailure(exit));
+        expect(String(exit.cause)).toMatch(/Timed out waiting/);
+        // A fresh (non-stale) foreign lock must survive our failed attempt.
+        expect(yield* fs.readFileString(`${lockPath}/owner`)).toBe(
+          "foreign-owner",
+        );
+        yield* removeLock(lockPath);
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("reaps and acquires over a stale lock", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-stale";
-      const lockPath = yield* lockPathOf(key);
-      // A holder that crashed 60s ago: owner file present, mtime past the
-      // 30s stale threshold, nobody refreshing.
-      yield* plantForeignLock(lockPath, { ageMillis: 60_000 });
+  it.effect(
+    "reaps and acquires over a stale lock",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-stale";
+        const lockPath = yield* lockPathOf(key);
+        // A holder that crashed 60s ago: owner file present, mtime past the
+        // 30s stale threshold, nobody refreshing.
+        yield* plantForeignLock(lockPath, { ageMillis: 60_000 });
 
-      const result = yield* withLock(key, Effect.succeed("recovered"), {
-        timeout: "5 seconds",
-      });
-      expect(result).toBe("recovered");
-      expect(yield* fs.exists(lockPath)).toBe(false);
-    }),
+        const result = yield* withLock(key, Effect.succeed("recovered"), {
+          timeout: "5 seconds",
+        });
+        expect(result).toBe("recovered");
+        expect(yield* fs.exists(lockPath)).toBe(false);
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("retries until a foreign lock is released", () =>
-    Effect.gen(function* () {
-      const key = "lock-test-wait-for-release";
-      const lockPath = yield* lockPathOf(key);
-      yield* plantForeignLock(lockPath);
-      yield* removeLock(lockPath).pipe(
-        Effect.delay("300 millis"),
-        Effect.forkScoped,
-      );
-      const result = yield* withLock(key, Effect.succeed("ran"), {
-        timeout: "5 seconds",
-      });
-      expect(result).toBe("ran");
-    }),
+  it.effect(
+    "retries until a foreign lock is released",
+    () =>
+      Effect.gen(function* () {
+        const key = "lock-test-wait-for-release";
+        const lockPath = yield* lockPathOf(key);
+        yield* plantForeignLock(lockPath);
+        yield* removeLock(lockPath).pipe(
+          Effect.delay("300 millis"),
+          Effect.forkScoped,
+        );
+        const result = yield* withLock(key, Effect.succeed("ran"), {
+          timeout: "5 seconds",
+        });
+        expect(result).toBe("ran");
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("does not remove a lock it no longer owns on release", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const key = "lock-test-compromised-release";
-      const lockPath = yield* lockPathOf(key);
-      const release = yield* Deferred.make<void>();
-      const fiber = yield* withLock(key, Deferred.await(release)).pipe(
-        Effect.forkScoped,
-      );
-      yield* fs.exists(lockPath).pipe(
-        Effect.repeat({
-          schedule: Schedule.spaced("25 millis"),
-          until: (exists) => exists,
-          times: 100,
-        }),
-      );
-      // Another process reaped our lock as stale and took it over.
-      yield* fs.writeFileString(`${lockPath}/owner`, "foreign-owner");
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.await(fiber);
-      // Release must leave the usurper's lock in place.
-      expect(yield* fs.readFileString(`${lockPath}/owner`)).toBe(
-        "foreign-owner",
-      );
-      yield* removeLock(lockPath);
-    }),
+  it.effect(
+    "does not remove a lock it no longer owns on release",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const key = "lock-test-compromised-release";
+        const lockPath = yield* lockPathOf(key);
+        const release = yield* Deferred.make<void>();
+        const fiber = yield* withLock(key, Deferred.await(release)).pipe(
+          Effect.forkScoped,
+        );
+        yield* fs.exists(lockPath).pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced("25 millis"),
+            until: (exists) => exists,
+            times: 100,
+          }),
+        );
+        // Another process reaped our lock as stale and took it over.
+        yield* fs.writeFileString(`${lockPath}/owner`, "foreign-owner");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.await(fiber);
+        // Release must leave the usurper's lock in place.
+        expect(yield* fs.readFileString(`${lockPath}/owner`)).toBe(
+          "foreign-owner",
+        );
+        yield* removeLock(lockPath);
+      }),
+    { tags: ["unit", "local"] },
   );
 
   it.effect.skipIf(process.env.FAST)(
@@ -395,7 +430,7 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.await(fiber);
       }),
-    { timeout: 30_000 },
+    { tags: ["unit", "local"], timeout: 30_000 },
   );
   /**
    * A locked operation that never completes used to be entirely invisible:
@@ -420,33 +455,39 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
     };
   };
 
-  it.effect("names the stalled operation on the console", () =>
-    Effect.gen(function* () {
-      const console = captureConsole();
-      yield* console.provide(
-        withLock("stall-notice-key", Effect.sleep("250 millis"), {
-          label: "AWS.read (profile 'probe')",
-          stallInterval: "50 millis",
-        }),
-      );
-      expect(console.messages.length).toBeGreaterThan(0);
-      expect(console.messages[0]).toContain("AWS.read (profile 'probe')");
-      expect(console.messages[0]).toContain("stall-notice-key.lock");
-      yield* removeLock(yield* lockPathOf("stall-notice-key"));
-    }),
+  it.effect(
+    "names the stalled operation on the console",
+    () =>
+      Effect.gen(function* () {
+        const console = captureConsole();
+        yield* console.provide(
+          withLock("stall-notice-key", Effect.sleep("250 millis"), {
+            label: "AWS.read (profile 'probe')",
+            stallInterval: "50 millis",
+          }),
+        );
+        expect(console.messages.length).toBeGreaterThan(0);
+        expect(console.messages[0]).toContain("AWS.read (profile 'probe')");
+        expect(console.messages[0]).toContain("stall-notice-key.lock");
+        yield* removeLock(yield* lockPathOf("stall-notice-key"));
+      }),
+    { tags: ["unit", "local"] },
   );
 
-  it.effect("stays silent when the watchdog is disabled", () =>
-    Effect.gen(function* () {
-      const console = captureConsole();
-      yield* console.provide(
-        withLock("stall-quiet-key", Effect.sleep("250 millis"), {
-          watchdog: false,
-          stallInterval: "50 millis",
-        }),
-      );
-      expect(console.messages).toEqual([]);
-      yield* removeLock(yield* lockPathOf("stall-quiet-key"));
-    }),
+  it.effect(
+    "stays silent when the watchdog is disabled",
+    () =>
+      Effect.gen(function* () {
+        const console = captureConsole();
+        yield* console.provide(
+          withLock("stall-quiet-key", Effect.sleep("250 millis"), {
+            watchdog: false,
+            stallInterval: "50 millis",
+          }),
+        );
+        expect(console.messages).toEqual([]);
+        yield* removeLock(yield* lockPathOf("stall-quiet-key"));
+      }),
+    { tags: ["unit", "local"] },
   );
 });

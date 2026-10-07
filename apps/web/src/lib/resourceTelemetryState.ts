@@ -1,3 +1,5 @@
+import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ResourceTelemetryHistoryInput,
@@ -9,6 +11,7 @@ import { useCallback } from "react";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export interface ResourceTelemetryState {
@@ -27,8 +30,9 @@ export function useResourceTelemetry(
     targetEnvironmentId === undefined
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
+  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   const query = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetry({ environmentId, input: {} }),
   );
@@ -38,6 +42,12 @@ export function useResourceTelemetry(
   const retry = useCallback(async () => {
     if (environmentId === null) {
       throw new Error("No environment is selected.");
+    }
+    if (
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      !readEnvironmentScope(environmentId, AuthDiagnosticsReadScope)
+    ) {
+      throw new Error("This connection cannot restart the resource monitor.");
     }
     const result = await retryCommand({ environmentId, input: {} });
     if (result._tag === "Failure") {
@@ -58,8 +68,9 @@ export function useResourceTelemetryHistory(
     targetEnvironmentId === undefined
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
+  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   return useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetryHistory({ environmentId, input }),
   );

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { AcpRegistrySettings } from "@t3tools/contracts";
+import { AcpRegistrySettings, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -13,15 +13,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
-import * as NodeCrypto from "node:crypto";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
@@ -51,12 +49,13 @@ function settings(input: Partial<AcpRegistrySettings> = {}): AcpRegistrySettings
   });
 }
 
-function resolverLayer(
+function layerResolver(
   execute: Parameters<typeof HttpClient.make>[0],
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
+    ServerSettings.layerTest(),
     Layer.succeed(HostProcessPlatform, "linux"),
     Layer.succeed(HostProcessArchitecture, "x64"),
     Layer.succeed(HostProcessEnvironment, environment),
@@ -209,6 +208,154 @@ describe("AcpRegistrySupport", () => {
     ).toBeUndefined();
   });
 
+  it.effect("resolves a local command on the selected environment without the registry", () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-local-" });
+      const commandPath = `${cacheDir}/dsh`;
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+      const hostEnvironment = { PATH: "/missing-host-bin", INHERITED: "host", OVERRIDE: "host" };
+      const environment = { ...hostEnvironment, PATH: cacheDir, OVERRIDE: "provider" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, hostEnvironment));
+      const localSettings = decodeAcpRegistrySettings({
+        source: "local",
+        commandPath: "dsh",
+        commandArgs: ["--profile", "acp", "", " spaced ", "$(touch injected); $VALUE"],
+      });
+
+      expect(yield* resolver.inspect(localSettings)).toMatchObject({ status: "missing_runner" });
+      expect(yield* resolver.inspect(localSettings, environment)).toEqual({
+        status: "ready",
+        agentId: "dsh",
+        version: null,
+        distribution: "local",
+      });
+      const resolved = yield* resolver.resolve(localSettings, "/workspace", environment);
+      expect(resolved).toEqual({
+        distribution: "local",
+        spawn: {
+          command: commandPath,
+          args: ["--profile", "acp", "", " spaced ", "$(touch injected); $VALUE"],
+          cwd: "/workspace",
+          env: environment,
+          shell: false,
+        },
+      });
+      expect(requests).toEqual([]);
+      expect(yield* fileSystem.exists(`${cacheDir}/tools`)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests.push(request.url);
+          return Effect.die("unexpected registry request for a local provider");
+        }),
+      ),
+    );
+  });
+
+  it.effect("resolves a local executable path and inherits the host environment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-local-path-" });
+      const commandPath = `${cacheDir}/dsh wrapper`;
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+      const environment = { PATH: "/unused", INHERITED: "host" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      const resolved = yield* resolver.resolve(
+        decodeAcpRegistrySettings({ source: "local", commandPath }),
+        "/workspace",
+      );
+
+      expect(resolved.spawn).toEqual({
+        command: commandPath,
+        args: [],
+        cwd: "/workspace",
+        env: environment,
+        shell: false,
+      });
+      expect(resolved.agent).toBeUndefined();
+
+      for (const extension of [".cmd", ".BAT"]) {
+        const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
+        );
+        const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
+        for (const failure of [
+          yield* windowsResolver.inspect(localSettings).pipe(Effect.flip),
+          yield* windowsResolver.resolve(localSettings, "/workspace").pipe(Effect.flip),
+        ]) {
+          expect(failure).toMatchObject({
+            reason: "runner_unavailable",
+            detail: expect.stringContaining("node.exe"),
+          });
+        }
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
+  it.effect("reports missing or non-executable local commands without registry fallback", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-local-missing-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const environment = { PATH: cacheDir };
+      const unconfigured = decodeAcpRegistrySettings({ source: "local" });
+      expect(yield* resolver.inspect(unconfigured, environment)).toEqual({
+        status: "unconfigured",
+      });
+      expect(
+        yield* resolver.resolve(unconfigured, "/workspace", environment).pipe(Effect.flip),
+      ).toMatchObject({ reason: "agent_not_configured" });
+
+      const nonExecutable = `${cacheDir}/non-executable`;
+      yield* fileSystem.writeFileString(nonExecutable, "#!/bin/sh\n");
+      yield* fileSystem.chmod(nonExecutable, 0o644);
+      for (const commandPath of ["dsh", `${cacheDir}/missing`, cacheDir, nonExecutable]) {
+        const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath });
+        expect(yield* resolver.inspect(localSettings, environment)).toEqual({
+          status: "missing_runner",
+          version: null,
+          distribution: "local",
+        });
+        expect(
+          yield* resolver.resolve(localSettings, "/workspace", environment).pipe(Effect.flip),
+        ).toMatchObject({
+          reason: "runner_unavailable",
+          detail: "Local ACP executable is not available on this environment's PATH.",
+        });
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
   it.effect("resolves command overrides while preserving registry args and environment", () => {
     const agent = makeAgent({
       binary: {
@@ -254,7 +401,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -295,7 +442,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -335,7 +482,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -371,7 +518,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -424,7 +571,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -439,7 +586,8 @@ describe("AcpRegistrySupport", () => {
           archive: archiveUrl,
           cmd: "./bin/example-agent",
           args: ["acp"],
-          sha256: NodeCrypto.createHash("sha256").update(binaryBytes).digest("hex"),
+          // SHA-256 of binaryBytes.
+          sha256: "97b29a636d7ddf7bf3567ae4d48c0f2a9b03943fd808b6efbf74f1dd3db131b7",
         },
       },
     });
@@ -468,7 +616,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           const response =
             request.url === registryUrl
@@ -498,7 +646,8 @@ describe("AcpRegistrySupport", () => {
             archive: archiveUrl,
             cmd: "./bin/example-agent",
             args: ["acp"],
-            sha256: NodeCrypto.createHash("sha256").update(binaryBytes).digest("hex"),
+            // SHA-256 of binaryBytes.
+            sha256: "e1eb7c905b91c400af2ec858628aec22866bfda1383b93ceb73ae01d9769fb31",
           },
         },
       });
@@ -556,7 +705,7 @@ describe("AcpRegistrySupport", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          resolverLayer((request) => {
+          layerResolver((request) => {
             requests.push(request.url);
             return Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -619,7 +768,7 @@ describe("AcpRegistrySupport", () => {
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
       Effect.provideService(HostProcessPlatform, "linux"),
       Effect.provideService(HostProcessArchitecture, "x64"),
     );
@@ -674,7 +823,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -715,7 +864,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.yieldNow.pipe(
             Effect.as(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
@@ -752,7 +901,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -794,7 +943,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -829,7 +978,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
@@ -864,7 +1013,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(
               HttpClientResponse.fromWeb(
@@ -908,7 +1057,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -953,7 +1102,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -993,7 +1142,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
           ),
@@ -1029,7 +1178,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1063,7 +1212,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1092,7 +1241,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) => {
+        layerResolver((request) => {
           requests += 1;
           return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused")));
         }),
@@ -1131,7 +1280,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer(
+        layerResolver(
           (request) =>
             Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
           { PATH: "" },
@@ -1181,49 +1330,79 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
         ),
       ),
     );
   });
 
-  it.effect("uninstalls only the T3-managed binary tree and is idempotent", () => {
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-uninstall-",
-      });
-      const agentRoot = `${cacheDir}/tools/example-agent`;
-      const runnerCache = `${cacheDir}/external-npx-cache/example-agent/package.json`;
-      yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/linux-x86_64`, { recursive: true });
-      yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/linux-x86_64/agent`, "binary");
-      yield* fileSystem.makeDirectory(`${cacheDir}/external-npx-cache/example-agent`, {
-        recursive: true,
-      });
-      yield* fileSystem.writeFileString(runnerCache, "{}");
+  it.effect.each([
+    { name: "legacy registry", source: undefined, agentId: "example-agent", referenced: true },
+    { name: "registry", source: "registry", agentId: "example-agent", referenced: true },
+    { name: "padded registry", source: "registry", agentId: " example-agent ", referenced: true },
+    { name: "local command", source: "local", agentId: "example-agent", referenced: false },
+  ] as const)(
+    "checks $name references before uninstalling only managed binaries",
+    ({ source, agentId, referenced }) => {
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-uninstall-",
+        });
+        const agentRoot = `${cacheDir}/tools/example-agent`;
+        const runnerCache = `${cacheDir}/external-npx-cache/example-agent/package.json`;
+        yield* fileSystem.makeDirectory(`${agentRoot}/1.2.3/linux-x86_64`, { recursive: true });
+        yield* fileSystem.writeFileString(`${agentRoot}/1.2.3/linux-x86_64/agent`, "binary");
+        yield* fileSystem.makeDirectory(`${cacheDir}/external-npx-cache/example-agent`, {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(runnerCache, "{}");
 
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      });
-      const first = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
-      const second = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("uninstall-reference");
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Uninstall reference",
+            enabled: true,
+            config: {
+              agentId,
+              commandPath: "/local/agent",
+              ...(source ? { source } : {}),
+            },
+          },
+        });
+        const first = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
+        expect(first).toEqual({ agentId: "example-agent", removed: !referenced });
+        expect(yield* fileSystem.exists(agentRoot)).toBe(referenced);
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId });
+        const second = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
 
-      expect(first).toEqual({ agentId: "example-agent", removed: true });
-      expect(second).toEqual({ agentId: "example-agent", removed: false });
-      expect(yield* fileSystem.exists(agentRoot)).toBe(false);
-      expect(yield* fileSystem.exists(runnerCache)).toBe(true);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        resolverLayer((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused"))),
+        expect(second).toEqual({ agentId: "example-agent", removed: referenced });
+        expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
+          agentId: "example-agent",
+          removed: false,
+        });
+        expect(yield* fileSystem.exists(agentRoot)).toBe(false);
+        expect(yield* fileSystem.exists(runnerCache)).toBe(true);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response("unused"))),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.effect("keeps managed package installs when removing the same agent's binaries", () =>
     Effect.gen(function* () {
@@ -1255,7 +1434,7 @@ describe("AcpRegistrySupport", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(resolverLayer(() => Effect.die("unexpected HTTP request"))),
+      Effect.provide(layerResolver(() => Effect.die("unexpected HTTP request"))),
     ),
   );
 
@@ -1272,8 +1451,6 @@ describe("AcpRegistrySupport", () => {
     return Effect.gen(function* () {
       const downloadStarted = yield* Deferred.make<void>();
       const releaseDownload = yield* Deferred.make<void>();
-      const referenceChecked = yield* Deferred.make<void>();
-      const isReferenced = yield* Ref.make(false);
       return yield* Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -1290,16 +1467,10 @@ describe("AcpRegistrySupport", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(downloadStarted);
         const uninstallFiber = yield* resolver
-          .uninstallManagedBinary(
-            { agentId: agent.id },
-            Deferred.succeed(referenceChecked, undefined).pipe(
-              Effect.andThen(Ref.get(isReferenced)),
-            ),
-          )
+          .uninstallManagedBinary({ agentId: agent.id })
           .pipe(Effect.forkChild({ startImmediately: true }));
 
-        expect(Option.isNone(yield* Deferred.poll(referenceChecked))).toBe(true);
-        yield* Ref.set(isReferenced, true);
+        expect(uninstallFiber.pollUnsafe()).toBeUndefined();
         yield* Deferred.succeed(releaseDownload, undefined);
 
         expect(yield* Fiber.join(prepareFiber)).toMatchObject({ prepared: true });
@@ -1310,17 +1481,35 @@ describe("AcpRegistrySupport", () => {
         const agentRoot = `${cacheDir}/tools/${agent.id}`;
         expect(yield* fileSystem.exists(agentRoot)).toBe(true);
 
-        yield* Ref.set(isReferenced, false);
-        expect(
-          yield* resolver.uninstallManagedBinary({ agentId: agent.id }, Ref.get(isReferenced)),
-        ).toEqual({ agentId: agent.id, removed: true });
-        expect(
-          yield* resolver.uninstallManagedBinary({ agentId: agent.id }, Ref.get(isReferenced)),
-        ).toEqual({ agentId: agent.id, removed: false });
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("registry-reference");
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Registry reference",
+            enabled: true,
+            config: { agentId: agent.id },
+          },
+        });
+        expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toEqual({
+          agentId: agent.id,
+          removed: false,
+        });
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId });
+        expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toEqual({
+          agentId: agent.id,
+          removed: true,
+        });
+        expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toEqual({
+          agentId: agent.id,
+          removed: false,
+        });
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          resolverLayer((request) => {
+          layerResolver((request) => {
             if (request.url === registryUrl) {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
@@ -1375,7 +1564,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -1419,7 +1608,7 @@ describe("AcpRegistrySupport", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
+        layerResolver((request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(
               request,

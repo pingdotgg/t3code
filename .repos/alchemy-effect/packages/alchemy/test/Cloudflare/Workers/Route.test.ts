@@ -124,7 +124,15 @@ test.provider(
       const gone = yield* findRoute(zoneId, PATTERN_DEFAULT);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -188,7 +196,15 @@ test.provider(
       const gone = yield* findRoute(zoneId, PATTERN_UPDATE_V2);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -249,7 +265,15 @@ test.provider(
       const gone = yield* findRoute(zoneId, PATTERN_ADOPT);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 const PATTERN_LIST = `alchemy-route-list.${zoneName}/*`;
@@ -302,7 +326,15 @@ test.provider(
       const gone = yield* findRoute(zoneId, PATTERN_LIST);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 /**

@@ -7,8 +7,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import S3ControlBindingsFunctionLive, {
   S3ControlBindingsFunction,
 } from "./fixtures/bindings-handler.ts";
@@ -81,149 +81,173 @@ const awaitReady = (readinessUrl: string) =>
 
 let baseUrl: string;
 
-describe.sequential("AWS.S3Control bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "S3Control test setup: destroying previous resources",
-      );
-      yield* sharedStack.destroy();
-
-      yield* Effect.logInfo("S3Control test setup: deploying fixture");
-      const attrs = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* S3ControlBindingsFunction;
-        }).pipe(Effect.provide(S3ControlBindingsFunctionLive)),
-      );
-
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
-
-      yield* awaitReady(`${baseUrl}/bindings`);
-    }),
-    { timeout: 240_000 },
-  );
-
-  afterAll(sharedStack.destroy(), { timeout: 240_000 });
-
-  describe("binding registration", () => {
-    test.provider("all nine capabilities initialize in the runtime", (_stack) =>
+describe.sequential(
+  "AWS.S3Control bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "provider:aws:s3control",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
       Effect.gen(function* () {
-        const response = (yield* getJson(baseUrl, "/bindings")) as {
-          bound: string[];
-        };
-        expect(response.bound).toHaveLength(9);
-      }),
-    );
-  });
+        yield* Effect.logInfo(
+          "S3Control test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-  describe("GetAccessPoint", () => {
-    test.provider("reads the access point's live configuration", (_stack) =>
-      Effect.gen(function* () {
-        const live = (yield* getJson(baseUrl, "/access-point")) as {
-          name: string | undefined;
-          bucket: string | undefined;
-          networkOrigin: string | undefined;
-        };
-        expect(live.name).toBeTruthy();
-        expect(live.bucket).toBeTruthy();
-        expect(live.networkOrigin).toBe("Internet");
-      }),
-    );
-  });
+        yield* Effect.logInfo("S3Control test setup: deploying fixture");
+        const attrs = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* S3ControlBindingsFunction;
+          }).pipe(Effect.provide(S3ControlBindingsFunctionLive)),
+        );
 
-  describe("GetAccessPointPolicy", () => {
-    test.provider(
-      "typed NoSuchAccessPointPolicy on a policyless access point",
-      (_stack) =>
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+
+        yield* awaitReady(`${baseUrl}/bindings`);
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 240_000 });
+
+    describe("binding registration", () => {
+      test.provider(
+        "all nine capabilities initialize in the runtime",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson(baseUrl, "/bindings")) as {
+              bound: string[];
+            };
+            expect(response.bound).toHaveLength(9);
+          }),
+      );
+    });
+
+    describe("GetAccessPoint", () => {
+      test.provider("reads the access point's live configuration", (_stack) =>
         Effect.gen(function* () {
-          const result = (yield* getJson(baseUrl, "/policy")) as {
+          const live = (yield* getJson(baseUrl, "/access-point")) as {
+            name: string | undefined;
+            bucket: string | undefined;
+            networkOrigin: string | undefined;
+          };
+          expect(live.name).toBeTruthy();
+          expect(live.bucket).toBeTruthy();
+          expect(live.networkOrigin).toBe("Internet");
+        }),
+      );
+    });
+
+    describe("GetAccessPointPolicy", () => {
+      test.provider(
+        "typed NoSuchAccessPointPolicy on a policyless access point",
+        (_stack) =>
+          Effect.gen(function* () {
+            const result = (yield* getJson(baseUrl, "/policy")) as {
+              hasPolicy: boolean;
+            };
+            expect(result.hasPolicy).toBe(false);
+          }),
+      );
+    });
+
+    describe("GetAccessPointPolicyStatus", () => {
+      test.provider("reports the access point as non-public", (_stack) =>
+        Effect.gen(function* () {
+          const result = (yield* getJson(baseUrl, "/policy-status")) as {
+            isPublic: boolean;
             hasPolicy: boolean;
           };
-          expect(result.hasPolicy).toBe(false);
+          expect(result.isPublic).toBe(false);
         }),
-    );
-  });
+      );
+    });
 
-  describe("GetAccessPointPolicyStatus", () => {
-    test.provider("reports the access point as non-public", (_stack) =>
-      Effect.gen(function* () {
-        const result = (yield* getJson(baseUrl, "/policy-status")) as {
-          isPublic: boolean;
-          hasPolicy: boolean;
-        };
-        expect(result.isPublic).toBe(false);
-      }),
-    );
-  });
-
-  describe("ListAccessPoints", () => {
-    test.provider("finds the fixture access point by bucket", (_stack) =>
-      Effect.gen(function* () {
-        const live = (yield* getJson(baseUrl, "/access-point")) as {
-          name: string | undefined;
-        };
-        const { names } = (yield* getJson(baseUrl, "/access-points")) as {
-          names: string[];
-        };
-        expect(names).toContain(live.name);
-      }),
-    );
-  });
-
-  describe("CreateJob + DescribeJob + UpdateJobPriority + UpdateJobStatus + ListJobs", () => {
-    test.provider(
-      "runs the batch job loop: create suspended, describe, bump priority, cancel, list",
-      (_stack) =>
+    describe("ListAccessPoints", () => {
+      test.provider("finds the fixture access point by bucket", (_stack) =>
         Effect.gen(function* () {
-          const result = (yield* getJson(baseUrl, "/job-lifecycle")) as {
-            ok: boolean;
-            tag?: string;
-            message?: string;
-            jobId: string;
-            settledStatus: string;
-            priorityOutcome: string;
-            cancelOutcome: string;
-            finalStatus: string;
-            listedJobIds: string[];
+          const live = (yield* getJson(baseUrl, "/access-point")) as {
+            name: string | undefined;
           };
-          expect(
-            result.ok,
-            `job flow failed: ${result.tag}: ${result.message}`,
-          ).toBe(true);
-          expect(result.jobId).toBeTruthy();
-          // The job settles into a stable state (Suspended when awaiting
-          // confirmation; Failed/Complete when the generated manifest is
-          // empty).
-          expect([
-            "Suspended",
-            "Failed",
-            "Complete",
-            "Cancelled",
-            "Ready",
-            "Active",
-          ]).toContain(result.settledStatus);
-          // Both bindings round-trip: either the mutation applied, or AWS
-          // refused the transition with the TYPED tag (which also proves the
-          // distilled JobStatusTransitionForbidden patch end-to-end).
-          expect(["updated", "JobStatusTransitionForbidden"]).toContain(
-            result.priorityOutcome,
-          );
-          expect(result.cancelOutcome).toBeTruthy();
-          expect(result.finalStatus).toBeTruthy();
-          expect(result.listedJobIds).toContain(result.jobId);
+          const { names } = (yield* getJson(baseUrl, "/access-points")) as {
+            names: string[];
+          };
+          expect(names).toContain(live.name);
         }),
-      { timeout: 180_000 },
-    );
-  });
-});
+      );
+    });
+
+    describe("CreateJob + DescribeJob + UpdateJobPriority + UpdateJobStatus + ListJobs", () => {
+      test.provider(
+        "runs the batch job loop: create suspended, describe, bump priority, cancel, list",
+        (_stack) =>
+          Effect.gen(function* () {
+            const result = (yield* getJson(baseUrl, "/job-lifecycle")) as {
+              ok: boolean;
+              tag?: string;
+              message?: string;
+              jobId: string;
+              settledStatus: string;
+              priorityOutcome: string;
+              cancelOutcome: string;
+              finalStatus: string;
+              listedJobIds: string[];
+            };
+            expect(
+              result.ok,
+              `job flow failed: ${result.tag}: ${result.message}`,
+            ).toBe(true);
+            expect(result.jobId).toBeTruthy();
+            // The job settles into a stable state (Suspended when awaiting
+            // confirmation; Failed/Complete when the generated manifest is
+            // empty).
+            expect([
+              "Suspended",
+              "Failed",
+              "Complete",
+              "Cancelled",
+              "Ready",
+              "Active",
+            ]).toContain(result.settledStatus);
+            // Both bindings round-trip: either the mutation applied, or AWS
+            // refused the transition with the TYPED tag (which also proves the
+            // distilled JobStatusTransitionForbidden patch end-to-end).
+            expect(["updated", "JobStatusTransitionForbidden"]).toContain(
+              result.priorityOutcome,
+            );
+            expect(result.cancelOutcome).toBeTruthy();
+            expect(result.finalStatus).toBeTruthy();
+            expect(result.listedJobIds).toContain(result.jobId);
+          }),
+        { timeout: 180_000 },
+      );
+    });
+  },
+);
 
 // Multi-Region Access Point provisioning is asynchronous and can consume the
 // entire 240s suite ceiling. Keep this explicitly gated; a hard-killed run
 // must be audited by deterministic physical name before it is retried.
-describe
-  .skipIf(!process.env.AWS_TEST_SLOW)
-  .sequential("AWS.S3Control MRAP route bindings (slow)", () => {
+describe.skipIf(!process.env.AWS_TEST_SLOW).sequential(
+  "AWS.S3Control MRAP route bindings (slow)",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "provider:aws:s3control",
+      "live",
+    ],
+  },
+  () => {
     let mrapBaseUrl: string;
 
     beforeAll(
@@ -278,4 +302,5 @@ describe
         { timeout: 120_000 },
       );
     });
-  });
+  },
+);

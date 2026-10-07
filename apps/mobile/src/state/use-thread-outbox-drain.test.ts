@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { PreparedTurnAttachments } from "../lib/attachmentUpload";
 
 const harness = vi.hoisted(() => ({
+  canOperate: true,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -83,7 +84,7 @@ vi.mock("./entities", () => ({
 }));
 
 vi.mock("./server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
 });
 
@@ -95,8 +96,13 @@ vi.mock("./use-atom-command", () => ({
   useAtomCommand: () => async () => undefined,
 }));
 
+vi.mock("./session", () => ({
+  readEnvironmentScope: () => harness.canOperate,
+  useEnvironmentsWithScope: () => new Set(),
+}));
+
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
     useThreadOutboxMessages: () => ({}),
@@ -203,6 +209,7 @@ function remainingMessages(): ReadonlyArray<QueuedThreadMessage> {
 
 beforeEach(() => {
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
+  harness.canOperate = true;
   harness.draftFile.setDocument({ schemaVersion: 1, drafts: {} });
 });
 
@@ -220,6 +227,27 @@ afterEach(() => {
 });
 
 describe("thread outbox attachment preparation", () => {
+  it("keeps a denied message queued without starting its attachment upload", async () => {
+    const message = queuedMessage({
+      messageId: "denied-queued-message",
+      text: "Keep this queued",
+      fileUri: "file:///documents/keep.pdf",
+    });
+    await harness.manager.enqueue(message);
+    harness.prepareTurnAttachments.mockResolvedValueOnce({
+      status: "ready",
+      attachments: [],
+      draftAttachments: message.attachments,
+      pendingAttachmentIds: [],
+    });
+    harness.canOperate = false;
+    await expect(prepareQueuedMessageAttachments(message)).resolves.toEqual({
+      status: "abandoned",
+    });
+    expect(harness.prepareTurnAttachments).not.toHaveBeenCalled();
+    expect(remainingMessages()).toEqual([message]);
+  });
+
   it("abandons reused uploads when an editor saves changed text during verification", async () => {
     const message = withReusedFileUpload(
       queuedMessage({

@@ -26,8 +26,9 @@ const { marketing = false } = Astro.props;
   <div class="alc-nav__search">
     <Search />
   </div>
-  <a href="/getting-started" class="alc-nav__link">Docs</a>
+  <a href="/getting-started" class="alc-nav__link alc-nav__link--docs">Docs</a>
   <a href="/blog" class="alc-nav__link">Blog</a>
+  <a href="/compare" class="alc-nav__link">Compare</a>
   <a
     href="https://github.com/alchemy-run/alchemy"
     class="alc-nav__link alc-nav__link--icon"
@@ -41,7 +42,7 @@ const { marketing = false } = Astro.props;
     <span class="alc-nav__link-text">GitHub</span>
   </a>
   <a
-    href="https://discord.gg/jwKw8dBJdN"
+    href="/discord"
     class="alc-nav__link alc-nav__link--icon"
     aria-label="Discord"
   >
@@ -106,7 +107,12 @@ const { marketing = false } = Astro.props;
     align-items: center;
     gap: 24px;
   }
+  /* Flex + fixed line-height so the logo centers the same way on marketing
+     pages (body line-height 1.6) and Starlight pages (1.75). */
   .alc-nav__brand {
+    display: flex;
+    align-items: center;
+    line-height: 1;
     text-decoration: none;
   }
   .alc-nav__spacer {
@@ -242,6 +248,17 @@ const { marketing = false } = Astro.props;
   }
   @media (max-width: 480px) {
     .alc-nav { gap: 12px; }
+  }
+  /* On phones, Docs, Blog, Compare and the icons don't all fit. Docs is
+     the one to drop: the hero CTA and the footer both lead there. */
+  @media (max-width: 460px) {
+    .alc-nav { gap: 10px; }
+    .alc-nav__link--docs { display: none; }
+  }
+  @media (max-width: 380px) {
+    .alc-nav { gap: 6px; }
+    /* The wordmark's size is an inline style (Logo's size prop). */
+    .alc-nav__brand :global(.alc-logo__word) { font-size: 19px !important; }
   }
   /*
    * Docs pages render this nav inside Starlight's fixed `<header>`, which

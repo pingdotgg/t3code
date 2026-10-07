@@ -22,6 +22,7 @@ import type { LegacyPipeline } from "../Pipelines/LegacyPipeline.ts";
 import type { Stream as PipelinesStream } from "../Pipelines/Stream.ts";
 import type { Queue } from "../Queues/Queue.ts";
 import type { Bucket } from "../R2/Bucket.ts";
+import type { S3Credentials } from "../R2/S3Credentials.ts";
 import type { Secret } from "../SecretsStore/Secret.ts";
 import type { StreamBinding } from "../Stream/StreamBinding.ts";
 import type { Index as VectorizeIndex } from "../Vectorize/VectorizeIndex.ts";
@@ -91,6 +92,20 @@ export interface SelfServiceWorkerBinding {
 }
 
 /**
+ * Alchemy-only, dev-only binding: R2 S3 credentials for a locally-emulated
+ * (`dev:`) bucket (`Cloudflare.R2.S3Credentials`). The local runtime lowers
+ * it into a text binding holding the credentials JSON for the Worker's local
+ * S3 endpoint (`{worker url}/cdn-cgi/local/r2/s3`) and serves the bucket on
+ * that endpoint. Deployed Workers receive a `secret_text` binding instead —
+ * Cloudflare never sees this type.
+ */
+export interface R2S3CredentialsWorkerBinding {
+  type: "r2_s3_credentials";
+  name: string;
+  bucketName: string;
+}
+
+/**
  * The `queue` metadata binding extended with the alchemy-only `queueId`.
  * The local worker provider uses it to discriminate a locally-emulated
  * queue (`dev:` id → local broker) from an `Alchemy.remote()` queue in dev
@@ -137,7 +152,7 @@ export type ServiceWorkerBinding = Extract<
  */
 export type WireWorkerBinding = Exclude<
   WorkerBinding,
-  SelfUrlWorkerBinding | SelfServiceWorkerBinding
+  SelfUrlWorkerBinding | SelfServiceWorkerBinding | R2S3CredentialsWorkerBinding
 >;
 
 export type WorkerBinding =
@@ -151,7 +166,21 @@ export type WorkerBinding =
   | QueueWorkerBinding
   | ServiceWorkerBinding
   | SelfUrlWorkerBinding
-  | SelfServiceWorkerBinding;
+  | SelfServiceWorkerBinding
+  | R2S3CredentialsWorkerBinding;
+
+/**
+ * Drop dev-only binding sentinels ({@link R2S3CredentialsWorkerBinding})
+ * before a live upload. They are only emitted for Workers running locally,
+ * so a live Worker never carries one; this narrows the type for the wire.
+ */
+export const withoutDevOnlyBindings = <B extends WorkerBinding>(
+  bindings: ReadonlyArray<B>,
+): Array<Exclude<B, R2S3CredentialsWorkerBinding>> =>
+  bindings.filter(
+    (binding): binding is Exclude<B, R2S3CredentialsWorkerBinding> =>
+      binding.type !== "r2_s3_credentials",
+  );
 
 export type WorkerSettingsBinding = Exclude<
   workers.GetScriptScriptAndVersionSettingResponse["bindings"],
@@ -174,6 +203,7 @@ export type WorkerBindingResource =
   // CF resources
   | Assets
   | Bucket
+  | S3Credentials
   | D1Database
   | Namespace
   | Queue

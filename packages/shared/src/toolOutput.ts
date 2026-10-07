@@ -1,4 +1,15 @@
+import {
+  isProviderSendTurnSupportedImageMimeType,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
+
+import {
+  HTML_RENDER_TOOL_NAME,
+  readHtmlRenderReference,
+  type HtmlRenderReference,
+} from "./htmlRender.ts";
+import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
@@ -27,6 +38,7 @@ interface CompactToolOutput {
   taskId?: string;
   scheduledTaskId?: string;
   status?: "rolled_back";
+  htmlRender?: HtmlRenderReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
 }
@@ -110,6 +122,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    const htmlRender = readHtmlRenderReference(data.htmlRender);
+    if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const nestedThreadId = Predicate.isObject(data.thread)
       ? boundedId(data.thread.threadId)
       : undefined;
@@ -153,6 +167,16 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
+/** The page a completed `html_render` tool call published, if this item is one. */
+export function htmlRenderFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): HtmlRenderReference | undefined {
+  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.htmlRender;
+}
+
 /** Some providers report completion even when command output describes a failure. */
 export function toolOutputIndicatesFailure(text: string): boolean {
   return (
@@ -165,4 +189,82 @@ export function toolOutputIndicatesFailure(text: string): boolean {
     /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
     /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)
   );
+}
+
+/** An image a tool returned inline. `data` is base64; a detail read omits it. */
+export interface ToolOutputImage {
+  readonly mimeType: string;
+  readonly data?: string;
+}
+
+/**
+ * Reads one image block in the MCP `{ data, mimeType }` shape or the Anthropic
+ * `{ source: { type: "base64", media_type, data } }` shape Claude stores.
+ * Only raster types are recognized, so the server never serves an agent's SVG
+ * or HTML inline.
+ */
+export function readToolOutputImage(block: unknown): ToolOutputImage | null {
+  if (!Predicate.isObject(block) || block.type !== "image") return null;
+  const source = Predicate.isObject(block.source) ? block.source : undefined;
+  if (source !== undefined && source.type !== "base64") return null;
+  const mimeType = source === undefined ? block.mimeType : source.media_type;
+  const data = source === undefined ? block.data : source.data;
+  if (typeof mimeType !== "string" || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
+    return null;
+  }
+  const image = { mimeType: mimeType.toLowerCase() };
+  return typeof data === "string" ? { ...image, data } : image;
+}
+
+/** Tools return a block, a list of blocks, or an MCP result with a `content` list. */
+function outputBlocks(value: unknown): ReadonlyArray<unknown> {
+  if (Array.isArray(value)) return value;
+  if (Predicate.isObject(value) && Array.isArray(value.content)) return value.content;
+  return [value];
+}
+
+/** A tool returns one screenshot or a few frames; more would only flood the timeline. */
+export const MAX_TOOL_OUTPUT_IMAGES = 8;
+
+/** The largest image a `tool-output-image` asset serves: a provider turn's limit, as base64. */
+export const MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH =
+  Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4;
+
+/**
+ * The blocks `toolOutputImages` reads, by reference. These hold the only image
+ * bytes in a tool output that a `tool-output-image` asset can serve, up to
+ * `MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH`.
+ */
+export function toolOutputImageBlocks(value: unknown): ReadonlyArray<unknown> {
+  const blocks: unknown[] = [];
+  for (const block of outputBlocks(value)) {
+    if (readToolOutputImage(block) === null) continue;
+    blocks.push(block);
+    if (blocks.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return blocks;
+}
+
+/**
+ * The first images in a tool output, in order. The order is the
+ * `tool-output-image` asset index, so servers and clients agree on it.
+ */
+export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage> {
+  return toolOutputImageBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
+}
+
+/**
+ * Replaces each image's bytes with `{ type: "image", mimeType }` and keeps its
+ * position, so detail reads stay small and clients load the bytes as assets.
+ */
+export function omitToolOutputImageData(value: unknown): unknown {
+  const omit = (block: unknown) => {
+    const image = readToolOutputImage(block);
+    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+  };
+  if (Array.isArray(value)) return value.map(omit);
+  if (Predicate.isObject(value) && Array.isArray(value.content)) {
+    return { ...value, content: value.content.map(omit) };
+  }
+  return omit(value);
 }

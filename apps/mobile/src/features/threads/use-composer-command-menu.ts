@@ -9,7 +9,10 @@ import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThread
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
-import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_MAX_RECORDS,
+  PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+} from "@t3tools/contracts";
 import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
@@ -37,6 +40,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
   hasCompleteProviderWorkspaceSnapshot,
+  hasCurrentProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -250,7 +254,9 @@ export function useComposerCommandMenu({
     selectedProviderStatus,
     projectCwd,
   );
-  const workspaceRefreshKeyRef = useRef<string | null>(null);
+  // The last scan this composer asked for. A request inside the TTL is not
+  // repeated, so a client clock ahead of the server's cannot loop rescans.
+  const workspaceRefreshKeyRef = useRef<{ key: string; requestedAt: number } | null>(null);
   const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
     key: string;
     notBefore: number;
@@ -289,17 +295,23 @@ export function useComposerCommandMenu({
   useEffect(() => {
     if (!environmentId || !projectCwd || !selectedProviderInstanceId) return;
     const key = `${environmentId}:${selectedProviderInstanceId}:${projectCwd}`;
-    if (workspaceRefreshKeyRef.current === key) return;
-    if (hasWorkspaceSnapshot) {
-      workspaceRefreshKeyRef.current = key;
+    const now = Date.now();
+    const lastRequest = workspaceRefreshKeyRef.current;
+    if (
+      lastRequest?.key === key &&
+      now - lastRequest.requestedAt < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS
+    )
+      return;
+    if (hasCurrentProviderWorkspaceSnapshot(selectedProviderStatus, projectCwd, now)) {
       setWorkspaceRefreshRetry(null);
       return;
     }
     const retry = workspaceRefreshRetry;
-    if (retry?.key === key && Date.now() < retry.notBefore) return;
-    workspaceRefreshKeyRef.current = key;
+    if (retry?.key === key && now < retry.notBefore) return;
+    const request = { key, requestedAt: now };
+    workspaceRefreshKeyRef.current = request;
     const retryLater = () => {
-      if (workspaceRefreshKeyRef.current !== key) return;
+      if (workspaceRefreshKeyRef.current !== request) return;
       workspaceRefreshKeyRef.current = null;
       setWorkspaceRefreshRetry({
         key,
@@ -318,17 +330,15 @@ export function useComposerCommandMenu({
           ),
           projectCwd,
         );
-      if (!refreshed && workspaceRefreshKeyRef.current === key) {
-        retryLater();
-      }
+      if (!refreshed) retryLater();
     }, retryLater);
   }, [
     draftMessage,
     environmentId,
-    hasWorkspaceSnapshot,
     projectCwd,
     refreshProviders,
     selectedProviderInstanceId,
+    selectedProviderStatus,
     workspaceRefreshRetry,
   ]);
 

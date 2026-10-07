@@ -1,3 +1,160 @@
+## v2.0.0-beta.80
+
+### &nbsp;&nbsp;&nbsp;🚨 Breaking Changes
+
+- **better-auth**:
+  - Support direct upgrades to 1.7.5 &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1732 [<samp>(c9400)</samp>](https://github.com/alchemy-run/alchemy/commit/c9400e4d4)
+- **cloudflare**:
+  - Add durable callbacks with transactional alarms &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1668 [<samp>(258f6)</samp>](https://github.com/alchemy-run/alchemy/commit/258f63b13)
+  - Support resource references in queue subscriptions &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1722 [<samp>(85955)</samp>](https://github.com/alchemy-run/alchemy/commit/85955dbf3)
+
+### &nbsp;&nbsp;&nbsp;🚀 Features
+
+- **acme**:
+  - Add independent certificates and Fly runtime management &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1702 [<samp>(a1a58)</samp>](https://github.com/alchemy-run/alchemy/commit/a1a58ac19)
+- **aws**:
+  - Manage VPC default security group rules &nbsp;-&nbsp; by **Henning Pokriefke** and **sam** in https://github.com/alchemy-run/alchemy/issues/1630 [<samp>(8efa5)</samp>](https://github.com/alchemy-run/alchemy/commit/8efa50a45)
+  - **ec2**: Add Client VPN resources &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1714 [<samp>(fdec4)</samp>](https://github.com/alchemy-run/alchemy/commit/fdec4ccf8)
+  - **rds**: Manage the RDS master secret resource policy &nbsp;-&nbsp; by **Bjorn Pagen** and **sam** in https://github.com/alchemy-run/alchemy/issues/1598 [<samp>(95711)</samp>](https://github.com/alchemy-run/alchemy/commit/9571121c4)
+- **cloudflare**:
+  - Reuse shared container images across deployments &nbsp;-&nbsp; by **Dan van der Merwe** and **sam** in https://github.com/alchemy-run/alchemy/issues/1692 [<samp>(20790)</samp>](https://github.com/alchemy-run/alchemy/commit/20790b3b0)
+  - Default to new module registry and sync upstream runtime &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1663 [<samp>(631ca)</samp>](https://github.com/alchemy-run/alchemy/commit/631ca932c)
+  - Support hibernating WebSocket Effect RPC &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1705 [<samp>(da5df)</samp>](https://github.com/alchemy-run/alchemy/commit/da5df5c79)
+  - Preserve workflow errors and validate socket attachments &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1723 [<samp>(e24fd)</samp>](https://github.com/alchemy-run/alchemy/commit/e24fd61e9)
+  - Load Durable Object SQL migrations at construction &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1736 [<samp>(34637)</samp>](https://github.com/alchemy-run/alchemy/commit/3463790dd)
+  - Support credential-less local development &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1801 [<samp>(98022)</samp>](https://github.com/alchemy-run/alchemy/commit/9802260db)
+  - **access**:
+    - Add McpServer resource &nbsp;-&nbsp; by **Dillion Verma** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1658 [<samp>(1ad29)</samp>](https://github.com/alchemy-run/alchemy/commit/1ad293d85)
+  - **r2**:
+    - Presigned URLs with a local S3 endpoint in dev &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1793 [<samp>(0a3a4)</samp>](https://github.com/alchemy-run/alchemy/commit/0a3a41974)
+  - **workflows**:
+    - Support explicit physical names &nbsp;-&nbsp; by **Odysseas Papadimas** and **sam** in https://github.com/alchemy-run/alchemy/issues/1460 [<samp>(341e6)</samp>](https://github.com/alchemy-run/alchemy/commit/341e6a7fc)
+    - Expose the Workflow's physical name on the binding output &nbsp;-&nbsp; by **Alex** and **sam** in https://github.com/alchemy-run/alchemy/issues/1505 [<samp>(1fd93)</samp>](https://github.com/alchemy-run/alchemy/commit/1fd93e143)
+- **cloudflare-runtime**:
+  - Pass V8 flags to workerd &nbsp;-&nbsp; by **Alex** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1771 [<samp>(4264a)</samp>](https://github.com/alchemy-run/alchemy/commit/4264a1b73)
+  - Restart workerd when it crashes after startup &nbsp;-&nbsp; by **Alex** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1772 [<samp>(de830)</samp>](https://github.com/alchemy-run/alchemy/commit/de83011fa)
+- **core**:
+  - Filter stack reconciliation with include/exclude &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1757 [<samp>(45c9b)</samp>](https://github.com/alchemy-run/alchemy/commit/45c9bb945)
+- **fly**:
+  - Wait for service checks before the next replica &nbsp;-&nbsp; by **Florian Bienefelt** and **sam** in https://github.com/alchemy-run/alchemy/issues/1670 [<samp>(023f9)</samp>](https://github.com/alchemy-run/alchemy/commit/023f96531)
+  - Add blue/green deployments and graceful shutdown &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1706 [<samp>(3b5c9)</samp>](https://github.com/alchemy-run/alchemy/commit/3b5c9e24c)
+  - Support native multi-container Machines &nbsp;-&nbsp; by **Florian Bienefelt** and **sam** in https://github.com/alchemy-run/alchemy/issues/1768 [<samp>(4eae8)</samp>](https://github.com/alchemy-run/alchemy/commit/4eae83e93)
+  - Support blue/green multi-container Machines &nbsp;-&nbsp; by **Florian Bienefelt** and **sam** in https://github.com/alchemy-run/alchemy/issues/1769 [<samp>(1c369)</samp>](https://github.com/alchemy-run/alchemy/commit/1c369afba)
+  - Allocate Flycast private addresses &nbsp;-&nbsp; by **Florian Bienefelt** and **sam** in https://github.com/alchemy-run/alchemy/issues/1749 [<samp>(7214e)</samp>](https://github.com/alchemy-run/alchemy/commit/7214e7b10)
+  - A Service owns its App &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1794 [<samp>(76cde)</samp>](https://github.com/alchemy-run/alchemy/commit/76cde9ad8)
+- **frontend-frameworks**:
+  - Build Cloudflare Octane without an adapter &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1755 [<samp>(1dc1d)</samp>](https://github.com/alchemy-run/alchemy/commit/1dc1d75a0)
+- **gcp**:
+  - Add GCP resource providers, HTTP bindings, and nuke &nbsp;-&nbsp; by **Michael K** in https://github.com/alchemy-run/alchemy/issues/1336 [<samp>(e32ba)</samp>](https://github.com/alchemy-run/alchemy/commit/e32ba7fba)
+- **kubernetes**:
+  - LocalCluster, connection registries, and a docs hub &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1779 [<samp>(a1ef6)</samp>](https://github.com/alchemy-run/alchemy/commit/a1ef6ba2f)
+- **neon**:
+  - Add backend resources, Effect runtimes and websites &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1695 [<samp>(bcd41)</samp>](https://github.com/alchemy-run/alchemy/commit/bcd410418)
+- **pkg**:
+  - Publish affected packages and their dependencies &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1727 [<samp>(16a0a)</samp>](https://github.com/alchemy-run/alchemy/commit/16a0a829b)
+- **planetscale**:
+  - Add `withReplication` on PostgresRole &nbsp;-&nbsp; by **Makisuo** in https://github.com/alchemy-run/alchemy/issues/1777 [<samp>(8a284)</samp>](https://github.com/alchemy-run/alchemy/commit/8a284d039)
+- **prisma**:
+  - Add Effect-native Prisma ORM v8 support &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1198 [<samp>(3b82f)</samp>](https://github.com/alchemy-run/alchemy/commit/3b82f222d)
+- **secrets**:
+  - Stack secret providers with dotenv, Doppler, and Infisical &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1728 [<samp>(0f712)</samp>](https://github.com/alchemy-run/alchemy/commit/0f712f844)
+- **website**:
+  - Add standardized vinext support across providers &nbsp;-&nbsp; by **Ray** and **sam** in https://github.com/alchemy-run/alchemy/issues/1515 [<samp>(c6779)</samp>](https://github.com/alchemy-run/alchemy/commit/c6779e86e)
+  - Landing refresh, PR lifecycle benchmark, in-browser copy editing &nbsp;-&nbsp; by **Michael K** in https://github.com/alchemy-run/alchemy/issues/1797 [<samp>(9fbd6)</samp>](https://github.com/alchemy-run/alchemy/commit/9fbd6a2ba)
+
+### &nbsp;&nbsp;&nbsp;🐞 Bug Fixes
+
+- Honor configured Alchemy runtime directories &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1726 [<samp>(4453c)</samp>](https://github.com/alchemy-run/alchemy/commit/4453c9b50)
+- Expose Stack and Worker declaration metadata &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1490 [<samp>(a42c2)</samp>](https://github.com/alchemy-run/alchemy/commit/a42c2e55a)
+- Upgrade Effect to 2.0.0-rc.117 and type constructors &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1758 [<samp>(1f251)</samp>](https://github.com/alchemy-run/alchemy/commit/1f251fa6a)
+- Catch and remove any/unknown leaks in providers() requirements &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1895 [<samp>(5bd17)</samp>](https://github.com/alchemy-run/alchemy/commit/5bd1711b4)
+- Provider test failures and Effect 4 stable compatibility &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1899 [<samp>(8cbd3)</samp>](https://github.com/alchemy-run/alchemy/commit/8cbd3ff4a)
+- **alchemy**:
+  - Make @effect/vitest an optional peer again &nbsp;-&nbsp; by **Aman Varshney** in https://github.com/alchemy-run/alchemy/issues/1816 [<samp>(e2906)</samp>](https://github.com/alchemy-run/alchemy/commit/e2906a727)
+- **apply**:
+  - Wait for cyclic upstream reconciliation outside cycles &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1921 [<samp>(9eb28)</samp>](https://github.com/alchemy-run/alchemy/commit/9eb28c9ea)
+- **auth**:
+  - Defer provider credentials and fail with CredentialsRequired &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1902 [<samp>(1d13b)</samp>](https://github.com/alchemy-run/alchemy/commit/1d13bddb8)
+- **aws**:
+  - Deploy ECS service after a previous deployment failed &nbsp;-&nbsp; by **Henning Pokriefke** and **sam** in https://github.com/alchemy-run/alchemy/issues/1650 [<samp>(9b642)</samp>](https://github.com/alchemy-run/alchemy/commit/9b6426e93)
+  - Grant exact runtime capability actions &nbsp;-&nbsp; by **Saatvik Arya** and **sam** in https://github.com/alchemy-run/alchemy/issues/1357 [<samp>(e1d26)</samp>](https://github.com/alchemy-run/alchemy/commit/e1d26f85d)
+  - **rds**:
+    - Distinguish pending and blocked instance readiness &nbsp;-&nbsp; by **Bjorn Pagen** and **sam** in https://github.com/alchemy-run/alchemy/issues/1597 [<samp>(6236d)</samp>](https://github.com/alchemy-run/alchemy/commit/6236d078b)
+    - Observe instance security drift and application state &nbsp;-&nbsp; by **Bjorn Pagen** and **sam** in https://github.com/alchemy-run/alchemy/issues/1599 [<samp>(ea601)</samp>](https://github.com/alchemy-run/alchemy/commit/ea60154e5)
+- **aws-sqs**:
+  - Reconcile adoption and queue Standrd/FIFO changes &nbsp;-&nbsp; by **Saatvik Arya** and **sam** [<samp>(1b3d6)</samp>](https://github.com/alchemy-run/alchemy/commit/1b3d60dd1)
+- **cli**:
+  - Simplify entrypoints and generate publish exports &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1707 [<samp>(c2e3b)</samp>](https://github.com/alchemy-run/alchemy/commit/c2e3bad1f)
+  - Accept --adopt on alchemy plan &nbsp;-&nbsp; by **Pedro Toledo** in https://github.com/alchemy-run/alchemy/issues/1811 [<samp>(0b576)</samp>](https://github.com/alchemy-run/alchemy/commit/0b5761721)
+- **cloudflare**:
+  - Support Worker aliases through Rolldown input options &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1700 [<samp>(020de)</samp>](https://github.com/alchemy-run/alchemy/commit/020de393d)
+  - Scope Workflow attempts and batch alarm updates &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1701 [<samp>(04ad9)</samp>](https://github.com/alchemy-run/alchemy/commit/04ad9facc)
+  - Preserve explicit prebuilt Worker compatibility flags &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1725 [<samp>(3281a)</samp>](https://github.com/alchemy-run/alchemy/commit/3281a6e7c)
+  - Preserve version annotations on full deployments &nbsp;-&nbsp; by **Luke O'Malley** in https://github.com/alchemy-run/alchemy/issues/1754 [<samp>(a4a75)</samp>](https://github.com/alchemy-run/alchemy/commit/a4a755878)
+  - Register website dev servers for service bindings &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1798 [<samp>(b2618)</samp>](https://github.com/alchemy-run/alchemy/commit/b261867f1)
+  - Bypass assets for Vite module runner initialization &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1799 [<samp>(d14b4)</samp>](https://github.com/alchemy-run/alchemy/commit/d14b4a485)
+  - Only ignore missing DNS record errors &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1800 [<samp>(36a27)</samp>](https://github.com/alchemy-run/alchemy/commit/36a278d7c)
+  - Preserve asset rules in Workers-for-Platforms uploads &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1802 [<samp>(dc22a)</samp>](https://github.com/alchemy-run/alchemy/commit/dc22aa240)
+  - Expose ref on Container so another stack can reference it &nbsp;-&nbsp; by **Cyberistic** and **sam** in https://github.com/alchemy-run/alchemy/issues/1750 [<samp>(2745d)</samp>](https://github.com/alchemy-run/alchemy/commit/2745d7943)
+  - Prevent partial registry writes from breaking service discovery &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1924 [<samp>(a12d5)</samp>](https://github.com/alchemy-run/alchemy/commit/a12d5b8c7)
+  - **workflows**: Omit step-config keys with no value &nbsp;-&nbsp; by **apostoli** and **sam** in https://github.com/alchemy-run/alchemy/issues/1142 [<samp>(1c28c)</samp>](https://github.com/alchemy-run/alchemy/commit/1c28c06ef)
+- **cloudflare-runtime**:
+  - Prune the module runner callback maps &nbsp;-&nbsp; by **Alex** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1770 [<samp>(318c4)</samp>](https://github.com/alchemy-run/alchemy/commit/318c442ad)
+- **command**:
+  - Gracefully clean up wrapper processes &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1760 [<samp>(d3e71)</samp>](https://github.com/alchemy-run/alchemy/commit/d3e7132e2)
+- **core**:
+  - Reuse pure Action outputs when inputs are unchanged &nbsp;-&nbsp; by **Leonardo E. Dominguez** and **sam** in https://github.com/alchemy-run/alchemy/issues/1379 [<samp>(b7b65)</samp>](https://github.com/alchemy-run/alchemy/commit/b7b656e63)
+  - Plan an update when an Init-captured value changes &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1837 [<samp>(467e1)</samp>](https://github.com/alchemy-run/alchemy/commit/467e1728a)
+- **deps**:
+  - Bump distilled for Fly IP assignment networks &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1784 [<samp>(31400)</samp>](https://github.com/alchemy-run/alchemy/commit/31400f4d6)
+- **effect**:
+  - Move to Effect 4.0.0-rc.118's flattened module layout &nbsp;-&nbsp; by **Rahul Mishra** and **Agustí Fernandez Pardo** in https://github.com/alchemy-run/alchemy/issues/1894 [<samp>(8e062)</samp>](https://github.com/alchemy-run/alchemy/commit/8e06298e2)
+- **engine**:
+  - Clean up interrupted replacement generations &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1704 [<samp>(5edbe)</samp>](https://github.com/alchemy-run/alchemy/commit/5edbe41e3)
+- **fly**:
+  - Transport binding values via RuntimeContext, not host.bind env &nbsp;-&nbsp; by **Michael K** and **sam** in https://github.com/alchemy-run/alchemy/issues/1554 [<samp>(124af)</samp>](https://github.com/alchemy-run/alchemy/commit/124af3d35)
+- **frontend-frameworks**:
+  - Bump sveltekit to 3.0.0-next.27 &nbsp;-&nbsp; by **Cameron McEvenue** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1709 [<samp>(08354)</samp>](https://github.com/alchemy-run/alchemy/commit/08354d70d)
+- **gcp**:
+  - Deployed-host binding tests, GCP.Website, and full-suite fixes &nbsp;-&nbsp; by **Michael K** in https://github.com/alchemy-run/alchemy/issues/1898 [<samp>(e354a)</samp>](https://github.com/alchemy-run/alchemy/commit/e354a4555)
+- **nextjs**:
+  - Use shared built config to serve in node/neon &nbsp;-&nbsp; by **Aman Varshney** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1805 [<samp>(08110)</samp>](https://github.com/alchemy-run/alchemy/commit/081109293)
+- **pkg**:
+  - Support fork previews and PR revision URLs &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1681 [<samp>(d6a6b)</samp>](https://github.com/alchemy-run/alchemy/commit/d6a6be1e8)
+- **prisma**:
+  - Default dev commands to development mode &nbsp;-&nbsp; by **Aman Varshney** in https://github.com/alchemy-run/alchemy/issues/1703 [<samp>(dc750)</samp>](https://github.com/alchemy-run/alchemy/commit/dc75059b0)
+- **railway**:
+  - Apply Service region through multiRegionConfig &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1766 [<samp>(3101a)</samp>](https://github.com/alchemy-run/alchemy/commit/3101aff24)
+- **sveltekit**:
+  - Complete regression test build output &nbsp;-&nbsp; by **BlankParticle** [<samp>(c37b8)</samp>](https://github.com/alchemy-run/alchemy/commit/c37b8c37d)
+  - Load Playwright tsconfig before fixture config &nbsp;-&nbsp; by **BlankParticle** [<samp>(547d2)</samp>](https://github.com/alchemy-run/alchemy/commit/547d2b4ee)
+- **website**:
+  - Make OpenNext config and Node-hosted Octane adapters optional &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1747 [<samp>(7c1c6)</samp>](https://github.com/alchemy-run/alchemy/commit/7c1c6d2e0)
+  - Consolidate generated reference pages &nbsp;-&nbsp; by **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1767 [<samp>(ed12d)</samp>](https://github.com/alchemy-run/alchemy/commit/ed12d29fb)
+  - Organize API reference navigation by service and product &nbsp;-&nbsp; by **Rahul Mishra** in https://github.com/alchemy-run/alchemy/issues/1774 [<samp>(93c70)</samp>](https://github.com/alchemy-run/alchemy/commit/93c70aa0d)
+  - Load frontend-frameworks lazily &nbsp;-&nbsp; by **Aman Varshney** and **BlankParticle** in https://github.com/alchemy-run/alchemy/issues/1815 [<samp>(08f84)</samp>](https://github.com/alchemy-run/alchemy/commit/08f84a57d)
+  - Commit copy-editor virtual module types &nbsp;-&nbsp; by **Michael K** in https://github.com/alchemy-run/alchemy/issues/1824 [<samp>(983a8)</samp>](https://github.com/alchemy-run/alchemy/commit/983a8fbff)
+
+##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com/alchemy-run/alchemy/compare/v2.0.0-beta.79...HEAD)
+
+---
+
+## v2.0.0-beta.79
+
+### &nbsp;&nbsp;&nbsp;🚀 Features
+
+- **prisma**: Add Website framework support &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1683 [<samp>(530a2)</samp>](https://github.com/alchemy-run/alchemy/commit/530a201e4)
+
+### &nbsp;&nbsp;&nbsp;🐞 Bug Fixes
+
+- **cli**: Start Bun with production JSX settings &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1694 [<samp>(eef2a)</samp>](https://github.com/alchemy-run/alchemy/commit/eef2a9123)
+- **cloudflare**: Infer env for external Worker classes &nbsp;-&nbsp; by **sam** in https://github.com/alchemy-run/alchemy/issues/1697 [<samp>(233da)</samp>](https://github.com/alchemy-run/alchemy/commit/233da74ef)
+- **cloudflare-runtime**: Declare mime as a dependency &nbsp;-&nbsp; by **Matthew Aylward** in https://github.com/alchemy-run/alchemy/issues/1690 [<samp>(85991)</samp>](https://github.com/alchemy-run/alchemy/commit/859911c14)
+
+##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com/alchemy-run/alchemy/compare/v2.0.0-beta.78...HEAD)
+
+---
+
 ## v2.0.0-beta.78
 
 ### &nbsp;&nbsp;&nbsp;🚨 Breaking Changes

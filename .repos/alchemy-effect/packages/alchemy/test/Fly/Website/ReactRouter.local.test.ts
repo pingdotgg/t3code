@@ -22,47 +22,55 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("Fly.Website.ReactRouter local", () => {
-  test.provider(
-    "dev runs the framework server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Fly.Website.ReactRouter local",
+  { tags: ["provider:fly", "provider:fly:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs the framework server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-react-router-fly-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-react-router-fly-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Fly.Website.ReactRouter("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Fly.Website.ReactRouter("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.app).toBeUndefined();
-        expect(deployed.site.ip).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.app).toBeUndefined();
+          expect(deployed.site.ip).toBeUndefined();
 
-        const origin = String(url).replace(/\/+$/, "");
-        yield* expectUrlContains(`${origin}/`, "REACT_ROUTER_AWS_PAGE_MARKER", {
-          timeout: "90 seconds",
-          label: "dev home page",
-        });
-        yield* expectUrlContains(
-          `${origin}/api/hello?echo=roundtrip`,
-          "REACT_ROUTER_AWS_API_MARKER",
-          { label: "api route (dev)" },
-        );
+          const origin = String(url).replace(/\/+$/, "");
+          yield* expectUrlContains(
+            `${origin}/`,
+            "REACT_ROUTER_AWS_PAGE_MARKER",
+            {
+              timeout: "90 seconds",
+              label: "dev home page",
+            },
+          );
+          yield* expectUrlContains(
+            `${origin}/api/hello?echo=roundtrip`,
+            "REACT_ROUTER_AWS_API_MARKER",
+            { label: "api route (dev)" },
+          );
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

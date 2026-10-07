@@ -10,7 +10,7 @@ import {
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { projectFaviconUrlAtom } from "../state/assets";
 import {
   countGlyphs,

@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The actions a pull request offers, extracted from the detail panel so smaller surfaces — the
  * thread details panel's pull request row — perform them through the very same code. Two callers
@@ -31,10 +32,10 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
+import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 /** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
 export function usePullRequestDefaultMergeMethodResolver(
@@ -137,9 +138,11 @@ export function usePullRequestActionRunner({
   reference: PullRequestRef | null;
   onSuccess?: (action: PullRequestAction) => void;
   /** Small surfaces resolve repository settings on the click, not for every visible row. */
-  resolveMergeMethod?: () => Promise<PullRequestMergeMethod>;
+  resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
 }) {
-  const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
+    reportFailure: false,
+  });
   const [actionPending, setActionPending] = useState(false);
   const pendingRef = useRef(false);
 
@@ -148,10 +151,13 @@ export function usePullRequestActionRunner({
     pendingRef.current = true;
     setActionPending(true);
     try {
-      const mergeMethod = method ?? (action === "merge" ? await resolveMergeMethod?.() : undefined);
       const result = await runAction({
         environmentId,
-        input: { ...reference, action, ...(mergeMethod ? { mergeMethod } : {}) },
+        input: {
+          ...reference,
+          action,
+          ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
+        },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
@@ -169,6 +175,64 @@ export function usePullRequestActionRunner({
   };
 
   return { actionPending, perform };
+}
+
+/** Queue a close sweep through the same environment lanes as individual actions. */
+export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullRequestEntry) => void) {
+  const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const pending = useRef(new Set<string>());
+  const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const close = useCallback(
+    async (entries: readonly EnvironmentPullRequestEntry[]) => {
+      const batch = entries.filter((entry) => {
+        const key = pullRequestEntryKey(entry);
+        if (entry.state !== "open" || entry.provider !== "github" || pending.current.has(key))
+          return false;
+        pending.current.add(key);
+        return true;
+      });
+      if (batch.length === 0) return;
+      setClosingKeys(new Set(pending.current));
+      let closed = 0;
+      const failures: string[] = [];
+      await Promise.all(
+        batch.map(async (entry) => {
+          try {
+            const result = await runAction({
+              environmentId: entry.environmentId,
+              input: {
+                projectId: entry.projectId,
+                host: entry.host,
+                repository: entry.repository,
+                number: entry.number,
+                action: "close",
+              },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            closed++;
+            onClosed(entry);
+          } catch (failure) {
+            failures.push(
+              `#${entry.number}: ${readableFailure(failure, ACTION_FAILURE_HINTS.close)}`,
+            );
+          } finally {
+            pending.current.delete(pullRequestEntryKey(entry));
+            setClosingKeys(new Set(pending.current));
+          }
+        }),
+      );
+      toastManager.add({
+        type: failures.length > 0 ? "error" : "success",
+        title:
+          failures.length > 0
+            ? `Closed ${closed} of ${batch.length} pull requests`
+            : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+        ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
+      });
+    },
+    [onClosed, runAction],
+  );
+  return { close, closingKeys };
 }
 
 export interface PullRequestThreadTask {

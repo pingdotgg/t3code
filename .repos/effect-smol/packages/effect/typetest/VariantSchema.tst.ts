@@ -1,5 +1,5 @@
 import { type Brand, type DateTime, Schema } from "effect"
-import { Model, VariantSchema } from "effect/unstable/schema"
+import { Model, VariantSchema } from "effect/schema"
 import { describe, expect, it } from "tstyche"
 
 describe("VariantSchema", () => {

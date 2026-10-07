@@ -1,8 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestAction } from "@t3tools/contracts";
-import { Effect } from "effect";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { pullRequestEnvironment, pullRequestStackAtom } from "~/state/pullRequests";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -15,21 +13,35 @@ import {
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
-export interface PullRequestSpeedActionResult {
-  readonly entry: EnvironmentPullRequestEntry;
+type PullRequestSpeedActionEntry = Pick<
+  EnvironmentPullRequestEntry,
+  "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
+> & { readonly stack?: object | undefined };
+
+export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntry> {
+  readonly entry: Entry;
   readonly action: PullRequestAction;
 }
 
 /** No detail or stack reads until a merge is clicked, even on a long list. */
-export function PullRequestSpeedActions({
+export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   visible,
   onActed,
+  closing = false,
+  sweeping = false,
+  onCloseSweepStart,
 }: {
-  entry: EnvironmentPullRequestEntry;
+  entry: Entry;
   visible: boolean;
-  onActed: (result: PullRequestSpeedActionResult) => void;
+  onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;
+  closing?: boolean;
+  sweeping?: boolean;
+  onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
 }) {
+  const canWrite = useAtomValue(
+    pullRequestEnvironment.runAction.permissionAtom(entry.environmentId),
+  );
   const resolveProjectDefault = usePullRequestDefaultMergeMethodResolver(
     entry.environmentId,
     entry.projectId,
@@ -43,33 +55,8 @@ export function PullRequestSpeedActions({
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId: entry.environmentId,
     reference,
-    onSuccess: (action) => onActed({ entry, action }),
-    resolveMergeMethod: async () => {
-      const target = { environmentId: entry.environmentId, input: reference };
-      const detailAtom = pullRequestEnvironment.detail({
-        ...target,
-        input: { ...reference, allowStale: false },
-      });
-      appAtomRegistry.refresh(detailAtom);
-      const detail = await Effect.runPromise(
-        AtomRegistry.getResult(appAtomRegistry, detailAtom, { suspendOnWaiting: true }),
-      );
-      if (
-        detail.state !== "open" ||
-        detail.isDraft ||
-        !detail.capabilities.actions.includes("merge") ||
-        !detail.viewerPermissions.actions.includes("merge")
-      ) {
-        throw new Error("This pull request cannot be merged.");
-      }
-      if (detail.capabilities.stackActions) {
-        const stackAtom = pullRequestStackAtom(target);
-        appAtomRegistry.refresh(stackAtom);
-        const stack = await Effect.runPromise(
-          AtomRegistry.getResult(appAtomRegistry, stackAtom, { suspendOnWaiting: true }),
-        );
-        if (stack !== null) throw new Error("Open this pull request to merge its stack.");
-      }
+    onSuccess: (action) => onActed?.({ entry, action }),
+    resolveMergeMethod: (detail) => {
       const allowed = detail.capabilities.mergeMethods.filter(
         (method) => detail.mergeCapabilities[method],
       );
@@ -89,12 +76,14 @@ export function PullRequestSpeedActions({
       : entry.isDraft
         ? (["close", "ready"] as const)
         : (["close", "merge"] as const);
+  const busy = actionPending || closing || sweeping;
   return (
     <div
       className="shrink-0 items-center gap-1 pr-3"
-      style={{ display: visible || actionPending ? "flex" : "none" }}
+      style={{ display: visible || busy ? "flex" : "none" }}
       role="group"
       aria-label={`Quick actions for pull request #${entry.number}`}
+      data-pull-request-action-pending={actionPending || closing}
     >
       {actions.map((action) => {
         const label = ACTIONS[action].label;
@@ -106,19 +95,26 @@ export function PullRequestSpeedActions({
                 <Button
                   variant={action === "close" ? "destructive-outline" : "outline"}
                   size="xs"
-                  disabled={actionPending || (action === "merge" && entry.stack !== undefined)}
+                  disabled={!canWrite || busy || (action === "merge" && entry.stack !== undefined)}
                   aria-label={`${label} #${entry.number}`}
                   onClick={() => void perform(action)}
+                  onPointerDown={(event) => {
+                    if (action !== "close" || !event.isPrimary || event.button !== 0) return;
+                    event.stopPropagation();
+                    onCloseSweepStart?.(entry, event.nativeEvent);
+                  }}
                 />
               }
             >
-              {actionPending ? <Spinner size="xs" /> : <Icon aria-hidden className="size-3" />}
+              {busy ? <Spinner size="xs" /> : <Icon aria-hidden className="size-3" />}
               {label}
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
                 ? "Open this pull request to merge its stack"
-                : `${label} immediately`}
+                : action === "close" && onCloseSweepStart
+                  ? "Close immediately, or drag across rows to close several"
+                  : `${label} immediately`}
             </TooltipPopup>
           </Tooltip>
         );

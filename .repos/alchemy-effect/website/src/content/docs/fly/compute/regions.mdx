@@ -17,7 +17,7 @@ somewhere else.
 ```typescript
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url, region: "lhr", port: 3000 },
+  { main: import.meta.url, region: "lhr", port: 3000 },
   Effect.gen(function* () {
     return {
       fetch: Effect.succeed(HttpServerResponse.text("hello")),
@@ -26,11 +26,12 @@ export default class Api extends Fly.Service<Api>()(
 ) {}
 ```
 
-`count` extra Machines stay in that same region.
+`count` Machines run in that region.
 
-:::caution[Changing `region` replaces the Service]
-The replica set is created in the new region. The old Machines are
-deleted. A Volume does not move with them.
+:::caution[Changing `region` moves the Machines]
+The Service keeps its App and hostname. Machines are created in the
+new region and the old ones are deleted. A Volume does not move with
+them.
 :::
 
 ## Pin a Machine
@@ -59,18 +60,16 @@ Restore into a new region from a
 [`VolumeSnapshot`](/providers/fly/volumesnapshot) with `snapshotId`
 on the mount.
 
-## Several regions, one App
+## Several regions, one hostname
 
-Put two Services on the same App with different `region` values.
-Each Service is its own file. Fly's Anycast proxy sends a request
-to a nearby Machine that published the service. They share
-`{app}.fly.dev`.
+Pass a list to `region` to run the same Service in several regions
+behind one hostname. `count` Machines run in each region, and Fly's
+Anycast proxy sends each request to the nearest healthy Machine.
 
 ```typescript
-// src/api-iad.ts
-export default class ApiIad extends Fly.Service<ApiIad>()(
-  "ApiIad",
-  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { main: import.meta.url, region: ["iad", "lhr"], count: 2 },
   Effect.gen(function* () {
     return {
       fetch: Effect.succeed(HttpServerResponse.text("hello")),
@@ -79,22 +78,13 @@ export default class ApiIad extends Fly.Service<ApiIad>()(
 ) {}
 ```
 
-Same program, London:
+This runs four Machines: two in `iad` and two in `lhr`. `api.regions`
+is `["iad", "lhr"]`, and `api.url` serves from both.
 
-```typescript
-// src/api-lhr.ts
-export default class ApiLhr extends Fly.Service<ApiLhr>()(
-  "ApiLhr",
-  { app: Site, main: import.meta.url, region: "lhr", port: 3000 },
-  Effect.gen(function* () {
-    return {
-      fetch: Effect.succeed(HttpServerResponse.text("hello")),
-    };
-  }),
-) {}
-```
-
-Yield both in the Stack.
+Adding or removing a region updates the Service in place. Its App and
+hostname stay the same, Machines in regions you keep are left alone,
+and a removed region's Machines are deleted. A Volume from
+`MountVolume` is created in each Machine's own region.
 
 ## Which region is this?
 

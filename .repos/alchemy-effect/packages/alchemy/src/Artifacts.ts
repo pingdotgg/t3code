@@ -139,7 +139,7 @@ export const cached =
     Effect.gen(function* () {
       const artifacts = yield* Artifacts;
       const deferred = yield* Deferred.make<A>();
-      const cached = yield* artifacts.get<A>(id);
+      const cached = yield* artifacts.get<A | Effect.Effect<A>>(id);
       if (cached) {
         if (Effect.isEffect(cached)) {
           return yield* cached;

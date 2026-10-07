@@ -9,11 +9,12 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Hex from "effect/encoding/Hex";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -157,15 +158,18 @@ export class CheckpointServiceV2 extends Context.Service<
   CheckpointServiceV2Shape
 >()("t3/orchestration-v2/CheckpointService/CheckpointServiceV2") {}
 
-export function checkpointRefForScopeOrdinal(input: {
-  readonly scopeId: CheckpointScopeId;
-  readonly ordinalWithinScope: number;
-}): CheckpointRef {
-  const scopeKey = NodeCrypto.createHash("sha256").update(input.scopeId).digest("hex").slice(0, 32);
-  return CheckpointRef.make(
-    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
-  );
-}
+export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdinal")(
+  function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
+    const crypto = yield* Crypto.Crypto;
+    const digest = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(input.scopeId))
+      .pipe(Effect.orDie);
+    const scopeKey = Hex.encode(digest).slice(0, 32);
+    return CheckpointRef.make(
+      `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
+    );
+  },
+);
 
 function checkpointIdForScopeOrdinal(
   idAllocator: IdAllocator.IdAllocatorV2Shape,
@@ -242,11 +246,14 @@ function makeCheckpoint(input: {
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
-  CheckpointStore.CheckpointStore | IdAllocator.IdAllocatorV2
+  CheckpointStore.CheckpointStore | Crypto.Crypto | IdAllocator.IdAllocatorV2
 > = Layer.effect(
   CheckpointServiceV2,
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
+    const crypto = yield* Crypto.Crypto;
+    const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
+      checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
@@ -265,7 +272,7 @@ export const layer: Layer.Layer<
             return;
           }
 
-          const checkpointRef = checkpointRefForScopeOrdinal({
+          const checkpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
@@ -298,7 +305,7 @@ export const layer: Layer.Layer<
         withWorkspaceLock(
           input.scope.cwd,
           Effect.gen(function* () {
-            const checkpointRef = checkpointRefForScopeOrdinal({
+            const checkpointRef = yield* checkpointRefFor({
               scopeId: input.scope.id,
               ordinalWithinScope: input.ordinalWithinScope,
             });
@@ -362,11 +369,11 @@ export const layer: Layer.Layer<
                   ordinalWithinScope: input.ordinalWithinScope - 1,
                 })
               : null;
-          const checkpointRef = checkpointRefForScopeOrdinal({
+          const checkpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = checkpointRefForScopeOrdinal({
+          const previousCheckpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });

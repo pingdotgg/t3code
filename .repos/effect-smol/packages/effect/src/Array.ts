@@ -3720,7 +3720,7 @@ export const getSomes: <T extends Iterable<Option.Option<X>>, X = any>(
  * ```
  *
  * @see {@link getSuccesses} — extract success values
- * @see {@link separate} — split into failures and successes
+ * @see {@link separate} — split into successes and failures
  *
  * @category filtering
  * @since 4.0.0
@@ -3756,7 +3756,7 @@ export const getFailures = <T extends Iterable<Result.Result<any, any>>>(
  * ```
  *
  * @see {@link getFailures} — extract failure values
- * @see {@link separate} — split into failures and successes
+ * @see {@link separate} — split into successes and failures
  *
  * @category filtering
  * @since 4.0.0
@@ -3795,7 +3795,7 @@ export const getSuccesses = <T extends Iterable<Result.Result<any, any>>>(
  * ```
  *
  * @see {@link filter} — keep original elements matching a predicate
- * @see {@link partition} for keeping both failures and successes
+ * @see {@link partition} for keeping both successes and failures
  *
  * @category filtering
  * @since 2.0.0
@@ -3862,16 +3862,16 @@ export const filter: {
 )
 
 /**
- * Splits an iterable using a `Filter` into failures and successes.
+ * Splits an iterable using a `Filter` into successes and failures.
  *
  * **When to use**
  *
  * Use to partition an iterable by evaluating each element with a
- * `Result`-returning filter and keeping both failure and success values.
+ * `Result`-returning filter and keeping both success and failure values.
  *
  * **Details**
  *
- * Returns `[excluded, satisfying]`. The filter receives `(element, index)`.
+ * Returns `[passes, fails]`. The filter receives `(element, index)`.
  *
  * **Example** (Partitioning with a filter)
  *
@@ -3880,7 +3880,7 @@ export const filter: {
  *
  * Array.partition([1, -2, 3], (n, i) =>
  *   n > 0 ? Result.succeed(n + i) : Result.fail(`negative:${n}`)
- * ) // => [["negative:-2"], [1, 5]]
+ * ) // => [[1, 5], ["negative:-2"]]
  * ```
  *
  * @see {@link filter} — keep only matching elements
@@ -3893,42 +3893,42 @@ export const filter: {
 export const partition: {
   <A, Pass, Fail>(
     f: (input: NoInfer<A>, i: number) => Result.Result<Pass, Fail>
-  ): (self: Iterable<A>) => [excluded: Array<Fail>, satisfying: Array<Pass>]
+  ): (self: Iterable<A>) => [passes: Array<Pass>, fails: Array<Fail>]
   <A, Pass, Fail>(
     self: Iterable<A>,
     f: (input: A, i: number) => Result.Result<Pass, Fail>
-  ): [excluded: Array<Fail>, satisfying: Array<Pass>]
+  ): [passes: Array<Pass>, fails: Array<Fail>]
 } = dual(
   2,
   <A, Pass, Fail>(
     self: Iterable<A>,
     f: (input: A, i: number) => Result.Result<Pass, Fail>
-  ): [excluded: Array<Fail>, satisfying: Array<Pass>] => {
-    const excluded: Array<Fail> = []
-    const satisfying: Array<Pass> = []
+  ): [passes: Array<Pass>, fails: Array<Fail>] => {
+    const passes: Array<Pass> = []
+    const fails: Array<Fail> = []
     let i = 0
     for (const a of self) {
       const result = f(a, i++)
       if (Result.isSuccess(result)) {
-        satisfying.push(result.success)
+        passes.push(result.success)
       } else {
-        excluded.push(result.failure)
+        fails.push(result.failure)
       }
     }
-    return [excluded, satisfying]
+    return [passes, fails]
   }
 )
 
 /**
- * Separates an iterable of `Result`s into failure values and success values.
+ * Separates an iterable of `Result`s into success values and failure values.
  *
  * **When to use**
  *
- * Use to split an iterable of `Result` values into failure and success arrays.
+ * Use to split an iterable of `Result` values into success and failure arrays.
  *
  * **Details**
  *
- * Returns `[failures, successes]`. This is equivalent to
+ * Returns `[successes, failures]`. This is equivalent to
  * `partition(identity)`.
  *
  * **Example** (Separating Results)
@@ -3936,7 +3936,7 @@ export const partition: {
  * ```ts import.meta.vitest
  * import { Array, Result } from "effect"
  *
- * Array.separate([Result.succeed(1), Result.fail("error"), Result.succeed(2)]) // => [["error"], [1, 2]]
+ * Array.separate([Result.succeed(1), Result.fail("error"), Result.succeed(2)]) // => [[1, 2], ["error"]]
  * ```
  *
  * @see {@link getFailures} — extract only failures
@@ -3949,8 +3949,8 @@ export const partition: {
 export const separate: <T extends Iterable<Result.Result<any, any>>>(
   self: T
 ) => [
-  failures: Array<Result.Result.Failure<ReadonlyArray.Infer<T>>>,
-  successes: Array<Result.Result.Success<ReadonlyArray.Infer<T>>>
+  successes: Array<Result.Result.Success<ReadonlyArray.Infer<T>>>,
+  failures: Array<Result.Result.Failure<ReadonlyArray.Infer<T>>>
 ] = partition(identity)
 
 /**
@@ -4492,18 +4492,14 @@ export const dedupeWith: {
 } = dual(
   2,
   <A>(self: Iterable<A>, isEquivalent: (self: A, that: A) => boolean): Array<A> => {
-    const input = fromIterable(self)
-    if (isReadonlyArrayNonEmpty(input)) {
-      const out: NonEmptyArray<A> = [headNonEmpty(input)]
-      const rest = tailNonEmpty(input)
-      for (const r of rest) {
-        if (out.every((a) => !isEquivalent(r, a))) {
-          out.push(r)
-        }
+    const out: Array<A> = []
+    next: for (const r of fromIterable(self)) {
+      for (let i = 0; i < out.length; i++) {
+        if (isEquivalent(r, out[i])) continue next
       }
-      return out
+      out.push(r)
     }
-    return []
+    return out
   }
 )
 

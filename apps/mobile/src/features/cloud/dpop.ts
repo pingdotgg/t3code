@@ -2,7 +2,7 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ExpoCrypto from "expo-crypto";
@@ -65,7 +65,7 @@ function toExpoDigestAlgorithm(
   }
 }
 
-export const cryptoLayer = Layer.succeed(
+export const layer = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: ExpoCrypto.getRandomBytes,
@@ -89,7 +89,7 @@ export interface DpopProofKeyPair {
 const DPOP_PROOF_KEY_STORAGE_KEY = "t3code.cloud.dpop-proof-key";
 
 function base64UrlToBytes(value: string): Uint8Array {
-  return Result.getOrThrow(Encoding.decodeBase64Url(value));
+  return Result.getOrThrow(Base64Url.decode(value));
 }
 
 function sha256Digest(
@@ -106,7 +106,7 @@ function base64UrlSha256(
   data: Uint8Array,
   message: string,
 ): Effect.Effect<string, CloudDpopError, Crypto.Crypto> {
-  return sha256Digest(data, message).pipe(Effect.map(Encoding.encodeBase64Url));
+  return sha256Digest(data, message).pipe(Effect.map(Base64Url.encode));
 }
 
 function dpopThumbprintInput(jwk: DpopPublicJwk): string {
@@ -153,8 +153,8 @@ function publicJwkFromUncompressedPublicKey(publicKey: Uint8Array): DpopPublicJw
   return {
     kty: "EC",
     crv: "P-256",
-    x: Encoding.encodeBase64Url(publicKey.slice(1, 33)),
-    y: Encoding.encodeBase64Url(publicKey.slice(33, 65)),
+    x: Base64Url.encode(publicKey.slice(1, 33)),
+    y: Base64Url.encode(publicKey.slice(33, 65)),
   };
 }
 
@@ -162,7 +162,7 @@ function privateJwkFromPrivateKey(
   privateKey: Uint8Array,
   publicJwk: DpopPublicJwk,
 ): DpopPrivateJwk {
-  return { ...publicJwk, d: Encoding.encodeBase64Url(privateKey) };
+  return { ...publicJwk, d: Base64Url.encode(privateKey) };
 }
 
 export function generateDpopProofKeyPair(): Effect.Effect<
@@ -270,7 +270,7 @@ export function createDpopProof(input: {
       alg: "ES256",
       jwk: keyPair.publicJwk,
     }).pipe(
-      Effect.map(Encoding.encodeBase64Url),
+      Effect.map(Base64Url.encode),
       Effect.mapError(cloudDpopError("Could not encode DPoP proof header.")),
     );
     const ath = input.accessToken
@@ -283,7 +283,7 @@ export function createDpopProof(input: {
       iat: Math.floor(nowMs / 1_000),
       ...(ath ? { ath } : {}),
     }).pipe(
-      Effect.map(Encoding.encodeBase64Url),
+      Effect.map(Base64Url.encode),
       Effect.mapError(cloudDpopError("Could not encode DPoP proof payload.")),
     );
     const signatureInputHash = yield* sha256Digest(
@@ -295,7 +295,7 @@ export function createDpopProof(input: {
       catch: cloudDpopError("Could not sign DPoP proof."),
     });
     return {
-      proof: `${header}.${payload}.${Encoding.encodeBase64Url(signature)}`,
+      proof: `${header}.${payload}.${Base64Url.encode(signature)}`,
       thumbprint: keyPair.thumbprint,
     };
   });
