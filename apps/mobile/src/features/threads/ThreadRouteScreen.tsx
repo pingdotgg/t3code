@@ -771,6 +771,17 @@ function ThreadRouteContent(
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
         : undefined,
+    onContinueOn:
+      selectedThread !== null &&
+      selectedThread !== undefined &&
+      routeEnvironmentRuntime?.serverConfig?.environment.capabilities.peerLinks === true &&
+      (selectedThread.handoff === null || selectedThread.handoff.state === "failed")
+        ? () =>
+            navigation.navigate("ThreadHandoff", {
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+            })
+        : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,

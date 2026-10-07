@@ -35,6 +35,11 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../components/threadHandoffMenu", () => ({
+  readThreadHandoffSupported: () => false,
+  readThreadHandoffTargets: async () => [],
+  startThreadHandoff: async () => recordEffect("continue-on"),
+}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),

@@ -27,6 +27,8 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "continue-on"
+  | `continue-on:${string}`
   | "archive"
   | "delete";
 
@@ -99,6 +101,15 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /**
+   * Linked environments the thread can move to, read when the menu opens;
+   * empty or absent hides "Continue on…". `reason` disables one with a hint.
+   */
+  readonly handoffTargets?: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly label: string;
+    readonly reason: string | null;
+  }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -166,6 +177,21 @@ export function buildThreadActionMenuItems(
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },
+        ]
+      : []),
+    ...(state.handoffTargets !== undefined && state.handoffTargets.length > 0
+      ? [
+          {
+            id: "continue-on" as const,
+            label: "Continue on…",
+            icon: "folder-tree",
+            disabled: state.isRunning,
+            children: state.handoffTargets.map((target) => ({
+              id: `continue-on:${target.environmentId}` as const,
+              label: target.reason === null ? target.label : `${target.label} (${target.reason})`,
+              disabled: target.reason !== null,
+            })),
+          },
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
