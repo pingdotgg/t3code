@@ -90,7 +90,9 @@ export function claudeAgentMessage(
 }
 
 /** The wire projection replaces a large tool input with `{ summary, truncated: true }`. */
-function isTransportSummary(record: Record<string, unknown>): boolean {
+function isTransportSummary(
+  record: Record<string, unknown>,
+): record is Record<string, unknown> & { readonly summary: string } {
   return record.truncated === true && typeof record.summary === "string";
 }
 
@@ -105,10 +107,12 @@ export function isClaudeAgentMessageItem(
 ): boolean {
   if (toolName !== "SendMessage") return false;
   const record = asRecord(input);
-  return (
-    (record !== undefined && isTransportSummary(record)) ||
-    claudeAgentMessage(toolName, input) !== undefined
-  );
+  if (record !== undefined && isTransportSummary(record)) {
+    // The summary is the start of the input's JSON, which normally reaches
+    // `message`: an object there is a protocol message, not text.
+    return !/"message":\s*\{/u.test(record.summary);
+  }
+  return claudeAgentMessage(toolName, input) !== undefined;
 }
 
 const CLAUDE_AGENT_ID_PATTERN = /^a[0-9a-f]{16}$/u;

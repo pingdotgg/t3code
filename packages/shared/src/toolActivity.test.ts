@@ -195,6 +195,11 @@ describe("toolActivity", () => {
     expect(isClaudeAgentMessageItem("SendMessage", summarized)).toBe(true);
     // A summarized input carries no readable fields; the full item has them.
     expect(claudeAgentMessage("SendMessage", summarized)).toBeUndefined();
+    const summarizedProtocol = {
+      summary: '{"to":"researcher","message":{"type":"plan_approval_response","feedback":"…',
+      truncated: true,
+    };
+    expect(isClaudeAgentMessageItem("SendMessage", summarizedProtocol)).toBe(false);
     expect(
       isClaudeAgentMessageItem("SendMessage", {
         to: "researcher",
