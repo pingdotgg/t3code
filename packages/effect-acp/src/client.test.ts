@@ -5,12 +5,14 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
@@ -50,6 +52,16 @@ const PermissionRequest = jsonRpcRequest(
 const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ElicitationRequest = jsonRpcRequest("elicitation/create", AcpSchema.CreateElicitationRequest);
 const ElicitationResponse = jsonRpcResponse(AcpSchema.CreateElicitationResponse);
+/** A JSON-RPC error response; only its id and the presence of an error matter here. */
+const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
+/** A response whose cause is a handler's defect, as RpcServer encodes it. */
+const DieResponse = Schema.Struct({
+  id: Schema.String,
+  error: Schema.Struct({
+    _tag: Schema.Literal("Cause"),
+    data: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Die") })]),
+  }),
+});
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
   "_x.ai/session/prompt_complete",
@@ -309,8 +321,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const requestContexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       const ext = yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -431,8 +443,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
         const scope = yield* Scope.make();
-        const acpLayer = AcpClient.layerChildProcess(handle);
-        const context = yield* Layer.buildWithScope(acpLayer, scope);
+        const layerAcp = AcpClient.layerChildProcess(handle);
+        const context = yield* Layer.buildWithScope(layerAcp, scope);
 
         const result = yield* Effect.gen(function* () {
           const acp = yield* AcpClient.AcpClient;
@@ -598,8 +610,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const typedNotifications = yield* Ref.make<Array<unknown>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -679,8 +691,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const successfulHandlers = yield* Ref.make(0);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -1126,6 +1138,117 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           { requestId: "permission-b", method: "session/request_permission" },
         ],
       );
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("answers each request whose handler dies, and keeps reading", () =>
+    Effect.gen(function* () {
+      const errorLogs = yield* Queue.unbounded<string>();
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Error") Queue.offerUnsafe(errorLogs, String([message].flat()[0]));
+      });
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.provide(Logger.layer([logger])),
+      );
+      const bug = () => Effect.die(new Error("handler bug"));
+      yield* acp.handleRequestPermission(bug);
+      yield* acp.handleExtRequest("x/dies", Schema.Unknown, bug);
+      yield* acp.handleExtNotification("x/notification-dies", Schema.Unknown, bug);
+      yield* acp.handleSessionUpdate(bug);
+      const updates = yield* Queue.unbounded<string>();
+      yield* acp.handleSessionUpdate((notification) =>
+        Queue.offer(updates, notification.sessionId).pipe(Effect.asVoid),
+      );
+      yield* acp.handleExtRequest("x/test", Schema.Struct({ hello: Schema.String }), () =>
+        Effect.succeed({ ok: true }),
+      );
+      const send = <E>(line: Effect.Effect<Uint8Array, E>) =>
+        Effect.flatMap(line, (bytes) => Queue.offer(input, bytes));
+      const decodeDie = Schema.decodeEffect(Schema.fromJsonString(DieResponse));
+      // A stopped reader leaves these waiting; fail instead of hanging.
+      const next = <A>(queue: Queue.Dequeue<A>) =>
+        TestClock.withLive(Queue.take(queue).pipe(Effect.timeout("2 seconds")));
+
+      yield* send(
+        encodeJsonl(PermissionRequest, {
+          jsonrpc: "2.0",
+          id: "permission-a",
+          method: "session/request_permission",
+          params: {
+            sessionId: "session-1",
+            title: "Tool",
+            subject: {
+              type: "tool_call" as const,
+              toolCall: { toolCallId: "tool-1", title: "Tool" },
+            },
+            options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+          },
+          headers: [],
+        }),
+      );
+      assert.equal((yield* next(output).pipe(Effect.flatMap(decodeDie))).id, "permission-a");
+
+      yield* send(
+        encodeJsonl(jsonRpcRequest("x/dies", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "ext-a",
+          method: "x/dies",
+          params: {},
+          headers: [],
+        }),
+      );
+      const extDied = yield* next(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ErrorResponse))),
+      );
+      assert.equal(extDied.id, "ext-a");
+
+      yield* send(
+        encodeJsonl(jsonRpcNotification("x/notification-dies", Schema.Unknown), {
+          jsonrpc: "2.0",
+          method: "x/notification-dies",
+          params: {},
+        }),
+      );
+      yield* send(
+        encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+          },
+        }),
+      );
+
+      // The next session handler still ran.
+      assert.equal(yield* next(updates), "session-1");
+
+      // The reader survived all three: a later request is still answered.
+      yield* send(
+        encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: "ext-b",
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      const answered = yield* next(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ExtResponse))),
+      );
+      assert.deepEqual([answered.id, answered.result], ["ext-b", { ok: true }]);
+
+      // Every defect was logged at Error, once.
+      assert.deepEqual((yield* Queue.clear(errorLogs)).toSorted(), [
+        "ACP extension request handler failed for 'x/dies'",
+        "ACP notification handler failed",
+        "ACP notification handler failed",
+        "ACP request handler failed for 'session/request_permission'",
+      ]);
       yield* Scope.close(scope, Exit.void);
     }),
   );

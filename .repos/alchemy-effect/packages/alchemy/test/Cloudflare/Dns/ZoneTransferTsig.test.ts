@@ -97,7 +97,10 @@ test.provider(
       // Re-running destroy is idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (account-scoped collection): deploy a real TSIG,
@@ -127,5 +130,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dns", "live"],
+    timeout: 120_000,
+  },
 );

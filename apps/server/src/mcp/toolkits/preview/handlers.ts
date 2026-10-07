@@ -13,6 +13,7 @@ import {
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
+  type PreviewAutomationSelectResult,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
@@ -28,6 +29,7 @@ import {
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
@@ -188,35 +190,64 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 });
 
 const handlers = {
-  preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
-  preview_open: (input) =>
+  preview_dialog: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationStatus>("dialog", input),
+  ),
+  preview_status: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
+  ),
+  preview_open: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-  preview_navigate: (input) =>
+  ),
+  preview_navigate: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
-  preview_resize: (input) =>
+  ),
+  preview_resize: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
-  preview_set_appearance: (input) =>
+  ),
+  preview_set_appearance: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
-  preview_snapshot: (input) => {
+  ),
+  preview_snapshot: McpToolAccess.readsAsCaller((input) => {
     // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
-  },
-  preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
-  preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
-  preview_press: (input) => invokeTargeted<object>("press", input),
-  preview_scroll: (input) => invokeTargeted<object>("scroll", input),
-  preview_evaluate: ({ tabId, ...input }) =>
+  }),
+  preview_click: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<object>("click", input, input.timeoutMs),
+  ),
+  preview_type: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<object>("type", input, input.timeoutMs),
+  ),
+  preview_hover: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<object>("hover", input, input.timeoutMs),
+  ),
+  preview_select: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationSelectResult>("select", input, input.timeoutMs),
+  ),
+  preview_drag: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<object>("drag", input, input.timeoutMs),
+  ),
+  preview_upload: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<object>("upload", input, input.timeoutMs),
+  ),
+  preview_press: McpToolAccess.actsAsCaller((input) => invokeTargeted<object>("press", input)),
+  preview_scroll: McpToolAccess.actsAsCaller((input) => invokeTargeted<object>("scroll", input)),
+  preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),
       })),
     ),
-  preview_wait_for: (input) => invokeTargeted<object>("waitFor", input, input.timeoutMs),
-  preview_recording_start: (input) =>
+  ),
+  preview_wait_for: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<object>("waitFor", input, input.timeoutMs),
+  ),
+  preview_recording_start: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
-  preview_recording_stop: (input) =>
+  ),
+  preview_recording_stop: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
       const { tabId, ...operationInput } = input;
@@ -229,12 +260,13 @@ const handlers = {
       const artifact = yield* claimPreviewRecording(scope.thread.threadId, response.result);
       return { ...artifact, ...(response.toolIcon ? { toolIcon: response.toolIcon } : {}) };
     }),
-} satisfies Parameters<typeof PreviewToolkit.toLayer>[0];
+  ),
+} satisfies McpToolAccess.Handlers<typeof PreviewToolkit.tools>;
 
 const { preview_snapshot, ...standardHandlers } = handlers;
 
-export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = McpToolAccess.toLayer(PreviewStandardToolkit, standardHandlers);
 
-export const PreviewSnapshotToolkitHandlersLive = PreviewSnapshotToolkit.toLayer({
+export const layerSnapshot = McpToolAccess.toLayer(PreviewSnapshotToolkit, {
   preview_snapshot,
 });

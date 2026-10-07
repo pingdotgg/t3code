@@ -24,6 +24,7 @@ test.provider(
       );
       expect(error._tag).toBe("DBClusterNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:neptune", "live"] },
 );
 
 test.provider(
@@ -37,6 +38,7 @@ test.provider(
       );
       expect(error._tag).toBe("DBInstanceNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:neptune", "live"] },
 );
 
 test.provider(
@@ -50,6 +52,7 @@ test.provider(
       );
       expect(error._tag).toBe("DBSubnetGroupNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:neptune", "live"] },
 );
 
 test.provider(
@@ -64,6 +67,7 @@ test.provider(
       );
       expect(error._tag).toBe("DBParameterGroupNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:neptune", "live"] },
 );
 
 // Resolve two default-for-AZ subnets and the default security group.
@@ -195,5 +199,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertClusterDeleting(cluster.dbClusterIdentifier);
     }),
   // cluster + instance create (~10 min) + delete initiation, one test.
-  { timeout: 1_500_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:neptune", "live"],
+    timeout: 1_500_000,
+  },
 );

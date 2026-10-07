@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -193,6 +193,11 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
       readonly expectedStatus?: "inactive" | "down";
+      /**
+       * Record that cleanup removed a legacy host's tunnel, so status tells the
+       * user to update. Other releases leave hosts that recover on their own.
+       */
+      readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider") {}
@@ -393,6 +398,25 @@ export function isManagedEndpointNotFound(cause: unknown): boolean {
     return true;
   }
   return "cause" in cause && isManagedEndpointNotFound(cause.cause);
+}
+
+/**
+ * Cloudflare refuses to delete a tunnel while a connector is still attached,
+ * either one that has not finished draining or another runtime still serving
+ * the tunnel.
+ */
+export function isManagedEndpointTunnelInUse(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) {
+    return false;
+  }
+  if (
+    "message" in cause &&
+    typeof cause.message === "string" &&
+    cause.message.includes("has active connections")
+  ) {
+    return true;
+  }
+  return "cause" in cause && isManagedEndpointTunnelInUse(cause.cause);
 }
 
 type ManagedEndpointClientError = ManagedEndpointTunnelClientError | ManagedEndpointDnsClientError;
@@ -789,6 +813,19 @@ export const make = Effect.gen(function* () {
       if (claimedGeneration === null) {
         return false;
       }
+      // After a failed delete: succeed if the tunnel is gone, since the delete
+      // then took effect and only its response was lost; otherwise keep the
+      // delete's error.
+      const confirmTunnelGone = (
+        failure: ManagedEndpointDeprovisioningFailed,
+      ): Effect.Effect<void, ManagedEndpointDeprovisioningFailed> =>
+        tunnels.get(tunnelId).pipe(
+          Effect.andThen(Effect.fail(failure)),
+          Effect.catchTags({
+            ManagedEndpointTunnelClientError: (lookupFailure) =>
+              isManagedEndpointNotFound(lookupFailure.cause) ? Effect.void : Effect.fail(failure),
+          }),
+        );
       const deleteTunnel = ignoreNotFound(tunnels.delete(tunnelId)).pipe(
         Effect.mapError(
           (cause) =>
@@ -858,6 +895,7 @@ export const make = Effect.gen(function* () {
                 environmentId: input.environmentId,
                 tunnelId,
                 generation: claimedGeneration,
+                ...(input.markReleased === true ? { markReleased: true } : {}),
               })
               .pipe(
                 Effect.mapError(
@@ -873,8 +911,25 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            yield* deleteTunnel;
-            return true;
+            // A connector still attached means the tunnel is not released. That
+            // is the same answer as losing the claim: the caller keeps its config,
+            // and the reaper deletes the tunnel once it has been down long enough.
+            // A delete whose response is lost (a timeout) may still have
+            // removed the tunnel. Ask Cloudflare before rolling back: if the
+            // tunnel is gone, the delete happened and the claim, including any
+            // released marker, must commit, since no later sweep can find
+            // this tunnel again to retry.
+            return yield* deleteTunnel.pipe(
+              Effect.as(true),
+              Effect.catchIf(
+                (error) => isManagedEndpointTunnelInUse(error.cause),
+                () => Effect.succeed(false),
+              ),
+              Effect.catchTags({
+                ManagedEndpointDeprovisioningFailed: (failure) =>
+                  confirmTunnelGone(failure).pipe(Effect.as(true)),
+              }),
+            );
           }),
         )
         .pipe(
@@ -922,7 +977,7 @@ export const make = Effect.gen(function* () {
           ),
         )
         .pipe(
-          Effect.map(Encoding.encodeHex),
+          Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointProvisioningFailed({

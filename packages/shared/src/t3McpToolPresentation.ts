@@ -38,6 +38,7 @@ export type T3McpToolSummaryAction =
   | "question-list"
   | "question-read"
   | "question-respond"
+  | "secret-request"
   | "worktree-handoff"
   | "worktree-list"
   | "worktree-status"
@@ -58,7 +59,9 @@ export type T3McpToolSummaryAction =
   | "watch-pr"
   | "unwatch-pr"
   | "browser"
-  | "device";
+  | "device"
+  | "html-preview"
+  | "html-render";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -128,6 +131,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Delete", "Deleting", "Requested deletion of", "a scheduled task"],
     "schedule-delete",
   ),
+  request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
@@ -154,6 +158,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_dialog: tool(
+    ["Respond", "Responding", "Responded", "to a preview browser dialog"],
+    "browser",
+    "browser",
+  ),
   preview_snapshot: tool(
     ["Take a snapshot of", "Taking a snapshot of", "Took a snapshot of", "the preview page"],
     "browser",
@@ -171,6 +180,26 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
   ),
   preview_type: tool(["Type", "Typing", "Typed", "in the preview browser"], "browser", "browser"),
+  preview_hover: tool(
+    ["Hover", "Hovering", "Hovered", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_select: tool(
+    ["Choose", "Choosing", "Chose", "an option in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_drag: tool(
+    ["Drag", "Dragging", "Dragged", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_upload: tool(
+    ["Upload", "Uploading", "Uploaded", "files to the preview browser"],
+    "browser",
+    "browser",
+  ),
   preview_scroll: tool(
     ["Scroll", "Scrolling", "Scrolled", "the preview browser"],
     "browser",
@@ -284,6 +313,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "attachment-discard",
   ),
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
+  html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
 };
 
 /**
@@ -324,7 +355,22 @@ function resolveT3McpToolName(value: string): string | null {
 
   const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
   const candidate = prefixed?.groups?.tool ?? label;
-  return Object.hasOwn(T3_MCP_TOOLS, candidate) ? candidate : null;
+  if (Object.hasOwn(T3_MCP_TOOLS, candidate)) return candidate;
+  // OpenCode 2 registers one server per thread, `t3-code-<thread>`, and joins
+  // it to the tool with `_`. Thread ids can hold `_` too, so take the longest
+  // known tool name that ends the label.
+  if (!/^t3-code-/i.test(label)) return null;
+  let longest: string | null = null;
+  for (const tool of Object.keys(T3_MCP_TOOLS)) {
+    if (label.endsWith(`_${tool}`) && tool.length > (longest?.length ?? 0)) longest = tool;
+  }
+  return longest;
+}
+
+/** The bare T3 tool name (`html_render`) for any provider's spelling of it. */
+export function resolveT3McpToolId(toolName: string | null | undefined): string | null {
+  const name = toolName == null ? null : resolveT3McpToolName(toolName);
+  return name !== null && Object.hasOwn(T3_MCP_TOOLS, name) ? name : null;
 }
 
 export function resolveT3McpToolDefinition(

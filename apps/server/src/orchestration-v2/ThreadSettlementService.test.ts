@@ -579,7 +579,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     ),
   });
 
-  const dependencies = Layer.mergeAll(
+  const layerDependencies = Layer.mergeAll(
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
     }),
@@ -648,7 +648,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       number: 42,
       mergedAt: NOW,
     }),
-    layer: ThreadSettlementService.layer.pipe(Layer.provide(dependencies)),
+    layer: ThreadSettlementService.layer.pipe(Layer.provide(layerDependencies)),
   };
 });
 

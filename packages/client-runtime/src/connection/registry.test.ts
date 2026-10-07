@@ -158,6 +158,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
     readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
+    /** Runs before preparing a route; may suspend to hold an attempt in flight. */
+    readonly beforePrepareRoute?: (
+      target: ConnectionTarget,
+    ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
   },
 ) {
@@ -385,6 +389,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         target,
       };
       if (options?.prepareError) return yield* options.prepareError;
+      const heldError = options?.beforePrepareRoute
+        ? yield* options.beforePrepareRoute(target)
+        : undefined;
+      if (heldError !== undefined) return yield* heldError;
       const routeError = options?.prepareRoute?.(target);
       if (routeError !== undefined) return yield* routeError;
       yield* Ref.update(connectedRoutes, (current) => [...current, connectionRouteId(target)]);
@@ -420,7 +428,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       checkRoute(route).pipe(Effect.map((check) => check === "answered")),
   });
 
-  const cacheLayer = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
+  const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
   const layer = EnvironmentRegistry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -436,7 +444,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
         ),
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
-        cacheLayer,
+        layerCache,
         Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
       ),
     ),
@@ -1266,6 +1274,109 @@ describe("EnvironmentRegistry", () => {
         );
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a replaced platform bearer wakes a supervisor blocked on the old one", () =>
+    Effect.gen(function* () {
+      let storedCredentials: Ref.Ref<Map<string, ConnectionCredential>> | undefined;
+      const harness = yield* makeHarness([], [], [], {
+        // Authentication fails while the old bearer is stored, as the server
+        // would answer once that session was revoked.
+        beforePrepareRoute: (target) =>
+          target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
+            ? Effect.succeed(undefined)
+            : Ref.get(storedCredentials).pipe(
+                Effect.map((current) =>
+                  current.get(target.connectionId)?.token === "old-bearer"
+                    ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
+                    : undefined,
+                ),
+              ),
+      });
+      storedCredentials = harness.storedCredentials;
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        yield* registry.reconcilePlatform([registration("old-bearer")]);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "blocked",
+        );
+
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a bearer replaced while an attempt is in flight retries with the new one", () =>
+    Effect.gen(function* () {
+      const attemptStarted = yield* Deferred.make<void>();
+      const releaseFirstAttempt = yield* Deferred.make<void>();
+      const attempts = yield* Ref.make(0);
+      const harness = yield* makeHarness([], [], [], {
+        // The first attempt read the old bearer; it stalls, then fails
+        // authentication after the bearer has already been replaced.
+        beforePrepareRoute: (target) =>
+          target._tag !== "BearerConnectionTarget"
+            ? Effect.succeed(undefined)
+            : Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 1
+                    ? Deferred.succeed(attemptStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseFirstAttempt)),
+                        Effect.as(
+                          new ConnectionBlockedError({
+                            reason: "authentication",
+                            detail: "revoked",
+                          }),
+                        ),
+                      )
+                    : Effect.succeed(undefined),
+                ),
+              ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        yield* registry.reconcilePlatform([registration("old-bearer")]);
+        yield* Deferred.await(attemptStarted).pipe(Effect.timeout("1 second"));
+
+        // A live state subscription, as the UI holds, keeps the runtime in place
+        // so the stalled attempt's failure lands on the same supervisor.
+        yield* registry
+          .stateChanges(BEARER_TARGET.environmentId)
+          .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+        yield* Deferred.succeed(releaseFirstAttempt, undefined);
+
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(yield* Ref.get(attempts)).toBeGreaterThanOrEqual(2);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

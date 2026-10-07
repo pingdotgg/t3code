@@ -1,4 +1,5 @@
 import * as Alchemy from "alchemy";
+import * as Axiom from "alchemy/Axiom";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
@@ -10,34 +11,24 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar";
+import * as Etag from "effect/http/Etag";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiScalar from "effect/http-api/HttpApiScalar";
 
 import { RelayApi } from "@t3tools/contracts/relay";
 
 import {
-  clientApi,
-  dpopClientApi,
-  healthApi,
-  metadataApi,
-  mobileApi,
   RELAY_HTTP_ROUTER_CONFIG,
-  relayClientAuthLayer,
-  relayDpopClientAuthLayer,
-  relayCors,
-  relayDocsRedirectRoute,
-  relayEnvironmentAuthLayer,
-  relayNotFoundRoute,
-  serverApi,
   traceRelayHttpRequestWith,
-  tokenApi,
   withoutCapturedParentSpan,
 } from "./http/Api.ts";
+import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { makeRelayTraceLayer, RelayObservability } from "./observability.ts";
+import { RelayObservability } from "./observability.ts";
+import * as Observability from "./observability.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
 import * as Devices from "./agentActivity/Devices.ts";
@@ -73,8 +64,12 @@ import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as HeldHooks from "./hooks/HeldHooks.ts";
+import * as HookInbox from "./hooks/HookInbox.ts";
+import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 
-const webcryptoLayer = Layer.succeed(
+const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
@@ -87,7 +82,7 @@ const webcryptoLayer = Layer.succeed(
   }),
 );
 
-const httpPlatformNotSupportedLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
+const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
   platform: "web",
   compression: {
     algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
@@ -97,14 +92,14 @@ const httpPlatformNotSupportedLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileWebResponse: () => Effect.die("Relay API does not serve file responses"),
 });
 
-const relayApiLayer = Layer.mergeAll(
-  healthApi,
-  metadataApi,
-  mobileApi,
-  clientApi,
-  tokenApi,
-  dpopClientApi,
-  serverApi,
+const layerRelayApi = Layer.mergeAll(
+  RelayHttpApi.layerHealthApi,
+  RelayHttpApi.layerMetadataApi,
+  RelayHttpApi.layerMobileApi,
+  RelayHttpApi.layerClientApi,
+  RelayHttpApi.layerTokenApi,
+  RelayHttpApi.layerDpopClientApi,
+  RelayHttpApi.layerServerApi,
 );
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
@@ -114,7 +109,7 @@ const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningS
 
 export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
 
-export const ApiLive = Api.make(
+export const layer = Api.make(
   RelayDeploymentConfig.pipe(
     Effect.map(({ relayPublicDomain }) => ({
       main: import.meta.filename,
@@ -139,7 +134,7 @@ export const ApiLive = Api.make(
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
-    const observability = yield* RelayObservability;
+    yield* RelayObservability;
 
     //
     // 2. Create bindings
@@ -164,10 +159,6 @@ export const ApiLive = Api.make(
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
-    const axiomDatasetName = yield* observability.traces.name;
-    const axiomIngestToken = yield* observability.workerIngestToken.token;
-    const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
-
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
@@ -189,6 +180,28 @@ export const ApiLive = Api.make(
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
     const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
+    const legacyManagedEndpointCleanupMode =
+      yield* RelayConfiguration.legacyManagedEndpointCleanupModeConfig;
+    const legacyTunnelGraceMinutes = Option.getOrUndefined(
+      yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
+    );
+    // Keys are endpoint keys or hashes over them, which already differ per
+    // stage, so stages sharing an account cannot collide in these namespaces.
+    const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
+      namespaceId: 1001,
+      simple: {
+        limit: HookForwarder.RELAY_HOOK_RATE_LIMIT.limit,
+        period: HookForwarder.RELAY_HOOK_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const hookEndpointRateLimit = yield* Cloudflare.RateLimit("HOOK_ENDPOINT_RATE_LIMIT", {
+      namespaceId: 1002,
+      simple: {
+        limit: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.limit,
+        period: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const hookInboxes = yield* HookInboxObject.HookInboxObject;
 
     //
     // 3. Runtime layers and app construction
@@ -209,24 +222,47 @@ export const ApiLive = Api.make(
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
         managedEndpointCleanupMode,
+        legacyManagedEndpointCleanupMode,
+        ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
       });
     });
 
-    const relayTraceLayer = Layer.unwrap(
-      Effect.all({
-        tracesDatasetName: axiomDatasetName,
-        tracesEndpoint: axiomTracesEndpoint,
-        ingestToken: axiomIngestToken,
-      }).pipe(Effect.map(makeRelayTraceLayer)),
-    );
+    // Each managed endpoint's held webhook requests live in its own Durable Object.
+    const inboxCall =
+      <A>(operation: HookInbox.HookInboxError["operation"], endpointKey: string) =>
+      (effect: Effect.Effect<A, never, Alchemy.RuntimeContext>) =>
+        effect.pipe(
+          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          Effect.catchCause((cause) =>
+            Effect.fail(
+              new HookInbox.HookInboxError({
+                operation,
+                endpointKey,
+                cause: Cause.squash(cause),
+              }),
+            ),
+          ),
+        );
+    const layerHookInbox = Layer.succeed(HookInbox.HookInbox, {
+      hold: ({ endpointKey, baseUrl, hook }) =>
+        hookInboxes.getByName(endpointKey).hold(hook, baseUrl).pipe(inboxCall("hold", endpointKey)),
+      wake: ({ endpointKey, baseUrl }) =>
+        hookInboxes.getByName(endpointKey).wake(baseUrl).pipe(inboxCall("wake", endpointKey)),
+      clear: ({ endpointKey }) =>
+        hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey)),
+    });
 
-    const runtimeLayer = Layer.empty.pipe(
+    const layerRuntime = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
       Layer.provideMerge(
-        Layer.merge(EnvironmentPublishSignatures.layer, ManagedEndpointReaper.layer),
+        Layer.mergeAll(
+          EnvironmentPublishSignatures.layer,
+          ManagedEndpointReaper.layer,
+          HeldHooks.layer,
+        ),
       ),
       Layer.provideMerge(
         ManagedEndpointProvider.layerCloudflareBindings(
@@ -261,7 +297,7 @@ export const ApiLive = Api.make(
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
-      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer)),
+      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer, layerHookInbox)),
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -279,14 +315,42 @@ export const ApiLive = Api.make(
         ),
       ),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
-      Layer.provideMerge(webcryptoLayer),
+      Layer.provideMerge(layerWebcrypto),
     );
 
-    const appLayer = relayApiLayer.pipe(
-      Layer.provideMerge(relayClientAuthLayer),
-      Layer.provideMerge(relayDpopClientAuthLayer),
-      Layer.provideMerge(relayEnvironmentAuthLayer),
-      Layer.provide(runtimeLayer),
+    // Fails open: a limiter outage must not drop webhooks the environment would accept.
+    const allowWith =
+      (limiter: typeof hookRateLimit) =>
+      (key: string): Effect.Effect<boolean> =>
+        limiter.limit({ key }).pipe(
+          Effect.map((result) => result.success),
+          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          Effect.catch((error) =>
+            Effect.logWarning("Hook rate limiter unavailable", { error: error.message }).pipe(
+              // Visible on the forward span, so an outage that disables limits shows up.
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "relay.hook.rate_limiter_failed_open": true }),
+              ),
+              Effect.as(true),
+            ),
+          ),
+        );
+    const layerHookRateLimiter = Layer.succeed(HookForwarder.HookRateLimiter, {
+      allowHook: allowWith(hookRateLimit),
+      allowEndpoint: allowWith(hookEndpointRateLimit),
+    });
+
+    const layerApp = Layer.merge(
+      layerRelayApi,
+      HookForwarder.layerApi.pipe(
+        Layer.provide(HookForwarder.layer),
+        Layer.provide(layerHookRateLimiter),
+      ),
+    ).pipe(
+      Layer.provideMerge(RelayHttpApi.layerClientAuth),
+      Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
+      Layer.provideMerge(RelayHttpApi.layerEnvironmentAuth),
+      Layer.provide(layerRuntime),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
@@ -307,7 +371,7 @@ export const ApiLive = Api.make(
               Effect.withSpan("relay.apn_delivery_queue.process_message"),
             ),
           ),
-          Effect.provide(runtimeLayer),
+          Effect.provide(layerRuntime),
         ),
     );
 
@@ -324,7 +388,7 @@ export const ApiLive = Api.make(
         stream.pipe(
           Stream.withSpan("relay.fcm_delivery_queue.process_batch"),
           Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
-          Effect.provide(runtimeLayer),
+          Effect.provide(layerRuntime),
         ),
     );
 
@@ -366,25 +430,31 @@ export const ApiLive = Api.make(
         { concurrency: 2, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
-        Effect.provide(Layer.merge(runtimeLayer, relayTraceLayer)),
+        Observability.withSchemaErrorSpanAttributes,
+        Effect.provide(layerRuntime),
       ),
     );
 
     const fetch = Layer.merge(
       Layer.mergeAll(
         HttpApiBuilder.layer(RelayApi, { openapiPath: "/openapi.json" }).pipe(
-          Layer.provide(appLayer),
+          Layer.provide(layerApp),
         ),
         HttpApiScalar.layer(RelayApi, { path: "/docs" }),
-        relayDocsRedirectRoute,
-      ).pipe(Layer.provide([Etag.layerWeak, httpPlatformNotSupportedLayer, relayCors])),
-      relayNotFoundRoute,
+        RelayHttpApi.layerDocsRedirectRoute,
+      ).pipe(
+        Layer.provide([Etag.layerWeak, layerHttpPlatformNotSupported, RelayHttpApi.layerCors]),
+      ),
+      RelayHttpApi.layerNotFoundRoute,
     ).pipe(
       HttpRouter.toHttpEffect,
       Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG),
       withoutCapturedParentSpan,
-      Effect.flatMap((httpEffect) => traceRelayHttpRequestWith(httpEffect, relayTraceLayer)),
+      Effect.map((httpEffect) =>
+        traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(
+          Observability.withSchemaErrorSpanAttributes,
+        ),
+      ),
     );
 
     return { fetch };
@@ -397,9 +467,33 @@ export const ApiLive = Api.make(
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
         Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
+        Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
+        Layer.provideMerge(HookInboxObject.layer),
+        // The worker runtime opens its own HTTP span around ours. Ours carries
+        // the route, header redaction and webhook URL redaction, and drops a
+        // webhook sender's traceparent, so the runtime's span is off for every
+        // request rather than duplicating it. Registered as telemetry:
+        // request-time context is assembled per event, and only these layers
+        // are built into it.
+        Layer.provideMerge(
+          Alchemy.Telemetry.layer(Layer.succeed(HttpMiddleware.TracerDisabledWhen)(() => true)),
+        ),
+        // The Worker's only trace exporter: every event (fetch, queue, cron,
+        // HookInboxObject calls and alarms) exports through it to Axiom.
+        Layer.provideMerge(
+          Layer.unwrap(
+            Effect.map(RelayObservability, (observability) =>
+              Axiom.Telemetry({
+                serviceName: "t3code-relay",
+                token: observability.workerIngestToken,
+                traces: observability.traces,
+              }),
+            ),
+          ),
+        ),
       ),
     ),
   ),
 );
 
-export default ApiLive;
+export default layer;

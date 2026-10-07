@@ -2,12 +2,12 @@ import * as Cloudflare from "@/Cloudflare";
 import { Layer } from "effect";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import { HttpRouter } from "effect/unstable/http";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import { HttpRouter } from "effect/http";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 import { createTask, decodeTask, encodeTask, getTask, Task } from "./api.ts";
 

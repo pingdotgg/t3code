@@ -51,7 +51,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -2730,10 +2730,10 @@ export function makeAcpAdapterV2(
               nativeTaskRef: nativeItemRef,
               prompt: update.prompt,
               title: update.title,
-              model: update.model,
               result: null,
               startedAt: now,
             }),
+            model: update.model?.trim() || existing?.task.model || null,
             status: taskStatus,
             result: update.result ?? existing?.task.result ?? null,
             completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
@@ -2769,7 +2769,7 @@ export function makeAcpAdapterV2(
                 providerInstanceId: context.input.modelSelection.instanceId,
                 modelSelection: {
                   ...context.input.modelSelection,
-                  model: update.model ?? context.input.modelSelection.model,
+                  model: task.model ?? context.input.modelSelection.model,
                 },
                 title: subagentThreadTitle({
                   parentTitle: context.input.appThread.title,

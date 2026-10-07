@@ -67,12 +67,9 @@ const recordRpcStreamMetrics = <E>(
   exit: Exit.Exit<unknown, E>,
 ): Effect.Effect<void, never, never> =>
   Effect.gen(function* () {
-    const endedAt = yield* Clock.currentTimeNanos;
-    const elapsedNanos = endedAt > startedAt ? endedAt - startedAt : 0n;
-
     yield* Metric.update(
       Metric.withAttributes(rpcRequestDuration, metricAttributes({ method })),
-      Duration.nanos(elapsedNanos),
+      Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
     );
     yield* Metric.update(
       Metric.withAttributes(
@@ -111,7 +108,7 @@ export const observeRpcStream = <A, E, R>(
 ): Stream.Stream<A, E, R> => {
   const instrumented = Stream.unwrap(
     Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeNanos;
+      const startedAt = yield* Clock.monotonicTimeNanos;
       return stream.pipe(Stream.onExit((exit) => recordRpcStreamMetrics(method, startedAt, exit)));
     }),
   );
@@ -126,15 +123,12 @@ export const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectErro
 ): Stream.Stream<A, StreamError | EffectError, StreamContext | EffectContext> => {
   const instrumented = Stream.unwrap(
     Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeNanos;
-      const exit = yield* Effect.exit(effect);
-
-      if (Exit.isFailure(exit)) {
-        yield* recordRpcStreamMetrics(method, startedAt, exit);
-        return yield* Effect.failCause(exit.cause);
-      }
-
-      return exit.value.pipe(
+      const startedAt = yield* Clock.monotonicTimeNanos;
+      // onError also runs when the stream is interrupted before it is produced.
+      const stream = yield* effect.pipe(
+        Effect.onError((cause) => recordRpcStreamMetrics(method, startedAt, Exit.failCause(cause))),
+      );
+      return stream.pipe(
         Stream.onExit((streamExit) => recordRpcStreamMetrics(method, startedAt, streamExit)),
       );
     }),

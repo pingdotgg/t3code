@@ -38,7 +38,7 @@ export const RuntimeSubpathExportPlugin = (): rolldown.Plugin => ({
     const subpath =
       modulePath === "index"
         ? component
-        : `${component}/${modulePath.replace(/\/index$/, "")}`;
+        : `${component}/${modulePath.replace(/\.shared$/, "").replace(/\/index$/, "")}`;
     return { id: `${PACKAGE_NAME}/${subpath}`, external: true };
   },
 });

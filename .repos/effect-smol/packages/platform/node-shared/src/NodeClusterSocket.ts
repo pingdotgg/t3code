@@ -8,15 +8,15 @@
  *
  * @since 4.0.0
  */
+import * as Runners from "effect/cluster/Runners"
+import * as ShardingConfig from "effect/cluster/ShardingConfig"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import * as Runners from "effect/unstable/cluster/Runners"
-import * as ShardingConfig from "effect/unstable/cluster/ShardingConfig"
-import * as RpcClient from "effect/unstable/rpc/RpcClient"
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
-import { Socket } from "effect/unstable/socket/Socket"
-import type * as SocketServer from "effect/unstable/socket/SocketServer"
+import * as RpcClient from "effect/rpc/RpcClient"
+import * as RpcSerialization from "effect/rpc/RpcSerialization"
+import { Socket } from "effect/socket/Socket"
+import type * as SocketServer from "effect/socket/SocketServer"
 import * as NodeSocket from "./NodeSocket.ts"
 import * as NodeSocketServer from "./NodeSocketServer.ts"
 

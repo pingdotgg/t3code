@@ -377,7 +377,7 @@ Traces are best for one request. Metrics are best for trends.
 Good metric families to watch:
 
 - `t3_rpc_request_duration`
-- `t3_provider_turn_duration`
+- `t3_provider_turn_duration` (how long the provider adapter takes to start a turn, not the turn's run time)
 - `t3_git_command_duration`
 
 Counters tell you volume and failure rate:
@@ -385,6 +385,25 @@ Counters tell you volume and failure rate:
 - `t3_rpc_requests_total`
 - `t3_provider_turns_total`
 - `t3_git_commands_total`
+
+Webhooks have their own families:
+
+- `t3_webhook_deliveries_total` by `outcome` and `source` (`relay` or `direct`). Beyond what the
+  sender sees, `queue_full` means a task already had its limit of deliveries waiting,
+  `prompt_too_long` means the filled-in prompt passed the provider limit, and `duplicate` means
+  the relay delivered a request this environment had already run.
+- `t3_webhook_runs_total` by `outcome` (`started`, `skipped`, `failed`) for the runs those
+  deliveries start, which happen after the sender has its answer.
+- `t3_webhook_held_delay` for how long requests the relay held waited before arriving.
+
+- `t3_secret_requests_total` by `status` (`saved`, `declined`, `cancelled`, `timed_out`) for secrets
+  agents asked users for, and `t3_secret_refs_consumed_total` by `result` (`used`, `rejected`) for
+  tools redeeming them. Neither ever carries a value.
+
+`ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
+started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
+the relay forwarded, the span also goes to the T3 Connect trace export as a child of the relay's
+span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
 
@@ -533,7 +552,7 @@ const program = doWork().pipe(
 
 ### Runtime Wiring
 
-The server observability layer is assembled in `apps/server/src/observability/Layers/Observability.ts`.
+The server observability layer is assembled in `apps/server/src/observability/Observability.ts`.
 
 It provides:
 
@@ -560,7 +579,7 @@ Local trace file:
 - `T3CODE_TRACE_FILE`: override trace file path
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 

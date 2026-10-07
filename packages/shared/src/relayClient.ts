@@ -8,15 +8,15 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
@@ -316,7 +316,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           }),
       ),
     );
-    if (Encoding.encodeHex(checksum) !== asset.sha256) {
+    if (Hex.encode(checksum) !== asset.sha256) {
       return yield* new RelayClientInstallError({
         reason: "invalid_checksum",
         message: "Downloaded relay client checksum did not match the pinned release.",
@@ -379,15 +379,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
     yield* report("waiting_for_lock");
     yield* acquireInstallLock(lockPath).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        Effect.fail(
-          new RelayClientInstallError({
-            reason: "write_failed",
-            message: "Could not acquire the relay client installation lock.",
-            cause,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.fail(
+            new RelayClientInstallError({
+              reason: "write_failed",
+              message: "Could not acquire the relay client installation lock.",
+              cause,
+            }),
+          ),
+      }),
     );
     return yield* Effect.gen(function* () {
       const afterLock = yield* resolve;

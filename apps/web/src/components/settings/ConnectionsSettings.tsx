@@ -8,7 +8,7 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -48,6 +48,7 @@ import {
   RelayConnectionTarget,
   connectionRoutes,
   connectionStatusText,
+  environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -1526,6 +1527,25 @@ function SavedBackendListRow({
     },
     [copyTraceIdToClipboard],
   );
+  const { copyToClipboard: copyMcpUrl } = useCopyToClipboard<{ url: string }>({
+    target: "MCP URL",
+    onCopy: ({ url }) => {
+      toastManager.add({
+        type: "success",
+        title: "MCP URL copied",
+        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy MCP URL",
+          description: error.message,
+        }),
+      );
+    },
+  });
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const resumingServerUpdate =
@@ -1545,6 +1565,20 @@ function SavedBackendListRow({
   if (discoveredDescriptor !== undefined && discoveredDescriptor !== lastDescriptor) {
     setLastDescriptor(discoveredDescriptor);
   }
+  // Held for the same reason as the descriptor, so Copy MCP URL survives a refresh.
+  const discoveredRelayHttpBaseUrl =
+    relayDiscovery.environments.get(environmentId)?.environment.endpoint.httpBaseUrl;
+  const [lastRelayHttpBaseUrl, setLastRelayHttpBaseUrl] = useState(discoveredRelayHttpBaseUrl);
+  if (
+    discoveredRelayHttpBaseUrl !== undefined &&
+    discoveredRelayHttpBaseUrl !== lastRelayHttpBaseUrl
+  ) {
+    setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
+  }
+  const mcpUrl = environmentMcpUrl({
+    entry: environment.entry,
+    relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
+  });
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
@@ -1711,6 +1745,9 @@ function SavedBackendListRow({
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}
           </MenuItem>
+          {mcpUrl ? (
+            <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
+          ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -1761,6 +1798,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     linkState: primaryCloudLinkState,
     managedTunnelActive,
     publishAgentActivity,
+    holdWebhooksWhileOffline,
     operationError,
     reconcileCloudState,
   } = useCloudLinkController();
@@ -1812,6 +1850,25 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     setIsUpdatingPreference(false);
   };
 
+  const updateHoldWebhooks = async (enabled: boolean) => {
+    setIsUpdatingPreference(true);
+    const ok = await reconcileCloudState({
+      managedTunnel: managedTunnelActive,
+      publish: publishAgentActivity,
+      holdWebhooksWhileOffline: enabled,
+    });
+    if (ok) {
+      toastManager.add({
+        type: "success",
+        title: enabled ? "Webhooks held while offline" : "Webhooks no longer held",
+        description: enabled
+          ? "T3 Connect keeps webhook requests for up to 24 hours while this environment is offline."
+          : "Requests to an offline environment now fail. Anything already held is still delivered.",
+      });
+    }
+    setIsUpdatingPreference(false);
+  };
+
   return (
     <>
       {window.desktopBridge ? (
@@ -1846,6 +1903,21 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           />
         }
       />
+      {managedTunnelActive ? (
+        <SettingsRow
+          title={searchableSetting("hold-webhooks-while-offline").title}
+          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing."
+          control={
+            <CloudLinkSwitch
+              ariaLabel="Hold webhook requests while this environment is offline"
+              checked={holdWebhooksWhileOffline}
+              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+              disabledReason={disabledReason}
+              onCheckedChange={(enabled) => void updateHoldWebhooks(enabled)}
+            />
+          }
+        />
+      ) : null}
     </>
   );
 }

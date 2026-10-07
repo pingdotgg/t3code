@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as MobileStorage from "../../persistence/mobile-storage";
@@ -43,7 +43,7 @@ const connection: SavedRemoteConnection = {
   bearerToken: "local-bearer",
 };
 
-const testLayer = Layer.mergeAll(
+const layerTest = Layer.mergeAll(
   Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
   Layer.succeed(
     HttpClient.HttpClient,
@@ -88,7 +88,7 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: false,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("pushes enabled Live Activity preferences to relay registrations", () =>
@@ -108,7 +108,7 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps local preferences refreshable when signed out", () =>
@@ -124,7 +124,7 @@ describe("liveActivityPreferences", () => {
         liveActivitiesEnabled: false,
       });
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("does not try to re-link managed relay connections without bearer credentials", () => {
@@ -147,7 +147,7 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("restores relay preferences when an environment update fails", () => {
@@ -182,6 +182,6 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 });

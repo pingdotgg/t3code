@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import {
   AuthSessionId,
@@ -353,3 +353,183 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
+
+/**
+ * What an agent signed in through MCP OAuth may do, least to most: only read,
+ * or act on threads that never run above the given runtime mode.
+ */
+export const AuthMcpClientAccess = Schema.Literals([
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
+/** RFC 9728 metadata for an environment's `/mcp` resource. */
+export const AuthMcpProtectedResourceMetadata = Schema.Struct({
+  resource: Schema.String,
+  authorization_servers: Schema.Array(Schema.String),
+  scopes_supported: Schema.Array(AuthEnvironmentScope),
+  bearer_methods_supported: Schema.Array(Schema.Literal("header")),
+  resource_name: Schema.String,
+});
+export type AuthMcpProtectedResourceMetadata = typeof AuthMcpProtectedResourceMetadata.Type;
+
+/** RFC 8414 metadata for the authorization server MCP clients sign in through. */
+export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
+  issuer: Schema.String,
+  authorization_endpoint: Schema.String,
+  token_endpoint: Schema.String,
+  registration_endpoint: Schema.String,
+  response_types_supported: Schema.Array(Schema.Literal("code")),
+  grant_types_supported: Schema.Array(Schema.Literal("authorization_code")),
+  code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
+  token_endpoint_auth_methods_supported: Schema.Array(Schema.Literal("none")),
+  scopes_supported: Schema.Array(AuthEnvironmentScope),
+  authorization_response_iss_parameter_supported: Schema.Boolean,
+});
+export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
+
+/** RFC 7591 client metadata. Fields the server does not use are dropped. */
+export const AuthMcpClientRegistration = Schema.Struct({
+  client_name: Schema.optionalKey(Schema.String),
+  redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
+  token_endpoint_auth_method: Schema.optionalKey(Schema.String),
+});
+export type AuthMcpClientRegistration = typeof AuthMcpClientRegistration.Type;
+
+export const AuthMcpRegisteredClient = Schema.Struct({
+  client_id: Schema.String,
+  client_name: Schema.String,
+  redirect_uris: Schema.Array(Schema.String),
+  grant_types: Schema.Array(Schema.Literal("authorization_code")),
+  response_types: Schema.Array(Schema.Literal("code")),
+  token_endpoint_auth_method: Schema.Literal("none"),
+}).pipe(HttpApiSchema.status(201));
+export type AuthMcpRegisteredClient = typeof AuthMcpRegisteredClient.Type;
+
+/** RFC 7591 §3.2.2 registration error. */
+export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationError>(
+  "AuthMcpRegistrationError",
+)(
+  {
+    error: Schema.Literals(["invalid_client_metadata", "invalid_redirect_uri"]),
+    error_description: Schema.String,
+  },
+  { httpApiStatus: 400 },
+) {
+  override get message(): string {
+    return this.error_description;
+  }
+}
+
+/**
+ * An agent's authorization request, as the approval page received it in its
+ * URL. Every field is checked by the server, so all are optional here.
+ */
+export const AuthMcpAuthorizationRequest = Schema.Struct({
+  response_type: Schema.optionalKey(Schema.String),
+  client_id: Schema.optionalKey(Schema.String),
+  redirect_uri: Schema.optionalKey(Schema.String),
+  code_challenge: Schema.optionalKey(Schema.String),
+  code_challenge_method: Schema.optionalKey(Schema.String),
+  state: Schema.optionalKey(Schema.String),
+  resource: Schema.optionalKey(Schema.String),
+});
+export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
+
+/**
+ * What the approval page needs to show for an MCP OAuth sign-in. The server
+ * has already validated the request; nothing here is trusted by the client
+ * except for display.
+ */
+export const AuthMcpApprovalDetails = Schema.Struct({
+  /** Self-declared by the client, so shown as such. */
+  clientName: Schema.String,
+  /** Where the code goes: always a loopback address on the browser's machine. */
+  redirectHost: Schema.String,
+  environmentHost: Schema.String,
+  /** Present when this browser's session may approve without a pairing code. */
+  csrfToken: Schema.optionalKey(Schema.String),
+  /**
+   * What that session may approve in one click: only access whose scopes it
+   * holds. Anything else still needs a pairing code. Absent with `csrfToken`.
+   */
+  oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+});
+export type AuthMcpApprovalDetails = typeof AuthMcpApprovalDetails.Type;
+
+/**
+ * Where the approval page sends the browser next: back to the agent with a
+ * code, a denial, or a protocol error the agent should receive.
+ */
+export const AuthMcpApprovalRedirect = Schema.Struct({
+  redirectTo: Schema.String,
+});
+export type AuthMcpApprovalRedirect = typeof AuthMcpApprovalRedirect.Type;
+
+export const AuthMcpApprovalDecision = Schema.Union([
+  Schema.TaggedStruct("deny", {}),
+  Schema.TaggedStruct("pairing-code", {
+    access: AuthMcpClientAccess,
+    code: TrimmedNonEmptyString,
+  }),
+  /** One click, for a browser session that may approve (see `csrfToken`). */
+  Schema.TaggedStruct("browser-session", {
+    access: AuthMcpClientAccess,
+    csrfToken: Schema.String,
+  }),
+]);
+export type AuthMcpApprovalDecision = typeof AuthMcpApprovalDecision.Type;
+
+export const AuthMcpApprovalDecisionRequest = Schema.Struct({
+  authorization: AuthMcpAuthorizationRequest,
+  decision: AuthMcpApprovalDecision,
+});
+export type AuthMcpApprovalDecisionRequest = typeof AuthMcpApprovalDecisionRequest.Type;
+
+/** A problem the approval page shows the user without redirecting anywhere. */
+export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalError>()(
+  "AuthMcpApprovalError",
+  { message: Schema.String },
+  { httpApiStatus: 400 },
+) {}
+
+/** RFC 6749 §4.1.3 token request. Every field is checked by the server. */
+export const AuthMcpTokenRequest = Schema.Struct({
+  grant_type: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  redirect_uri: Schema.optionalKey(Schema.String),
+  client_id: Schema.optionalKey(Schema.String),
+  code_verifier: Schema.optionalKey(Schema.String),
+  resource: Schema.optionalKey(Schema.String),
+}).pipe(HttpApiSchema.asFormUrlEncoded());
+export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;
+
+export const AuthMcpTokenResult = Schema.Struct({
+  access_token: Schema.String,
+  token_type: Schema.Literal("Bearer"),
+  expires_in: Schema.Number,
+  scope: Schema.String,
+});
+export type AuthMcpTokenResult = typeof AuthMcpTokenResult.Type;
+
+/** RFC 6749 §5.2 token error. */
+export class AuthMcpTokenError extends Schema.Error<AuthMcpTokenError>("AuthMcpTokenError")(
+  {
+    error: Schema.Literals([
+      "invalid_request",
+      "invalid_client",
+      "invalid_grant",
+      "unsupported_grant_type",
+    ]),
+    error_description: Schema.String,
+  },
+  { httpApiStatus: 400 },
+) {
+  override get message(): string {
+    return this.error_description;
+  }
+}

@@ -43,10 +43,11 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
@@ -354,7 +355,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       port: Number(new URL(hub.origin).port),
       entryPath: hubTool.entryPath,
     }).pipe(
-      Effect.flatMap((json) => fs.writeFileString(hubStatePath(), json)),
+      Effect.flatMap((contents) =>
+        writeFileStringAtomically({ filePath: hubStatePath(), contents }),
+      ),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
       Effect.ignore,
     );
 
