@@ -15,6 +15,19 @@ import {
   AuthBrowserSessionResult,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
+  AuthMcpApprovalDecisionRequest,
+  AuthMcpApprovalDetails,
+  AuthMcpApprovalError,
+  AuthMcpApprovalRedirect,
+  AuthMcpAuthorizationRequest,
+  AuthMcpAuthorizationServerMetadata,
+  AuthMcpClientRegistration,
+  AuthMcpProtectedResourceMetadata,
+  AuthMcpRegisteredClient,
+  AuthMcpRegistrationError,
+  AuthMcpTokenError,
+  AuthMcpTokenRequest,
+  AuthMcpTokenResult,
   AuthPairingCredentialResult,
   AuthPairingLink,
   AuthRevokeClientSessionInput,
@@ -157,6 +170,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   {
     code: Schema.Literal("insufficient_scope"),
     requiredScope: AuthEnvironmentScope,
+    requiredPermission: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
@@ -166,7 +180,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   }
 
   override get message(): string {
-    return `This request needs the ${this.requiredScope} scope, which this client does not have.`;
+    return `This request needs the ${this.requiredPermission ?? this.requiredScope} scope, which this client does not have.`;
   }
 }
 
@@ -514,6 +528,58 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/**
+ * The OAuth authorization server outside agents use to sign in to `/mcp`.
+ * `authorize` is where the agent sends the browser: it answers a redirect to
+ * the web app's approval page, or a plain error page for a request that names
+ * an unverified client or redirect, so the response is not a schema.
+ */
+class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
+  .add(
+    HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
+      success: AuthMcpProtectedResourceMetadata,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("mcpProtectedResource", "/.well-known/oauth-protected-resource/mcp", {
+      success: AuthMcpProtectedResourceMetadata,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("authorizationServer", "/.well-known/oauth-authorization-server", {
+      success: AuthMcpAuthorizationServerMetadata,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("register", "/oauth/mcp/register", {
+      payload: AuthMcpClientRegistration,
+      success: AuthMcpRegisteredClient,
+      error: AuthMcpRegistrationError,
+    }),
+  )
+  .add(HttpApiEndpoint.get("authorize", "/oauth/mcp/authorize"))
+  .add(
+    HttpApiEndpoint.post("approval", "/oauth/mcp/approval", {
+      payload: AuthMcpAuthorizationRequest,
+      success: [AuthMcpApprovalDetails, AuthMcpApprovalRedirect],
+      error: AuthMcpApprovalError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
+      payload: AuthMcpApprovalDecisionRequest,
+      success: AuthMcpApprovalRedirect,
+      error: AuthMcpApprovalError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("token", "/oauth/mcp/token", {
+      payload: AuthMcpTokenRequest,
+      success: AuthMcpTokenResult,
+      error: AuthMcpTokenError,
+    }),
+  ) {}
+
 const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
@@ -684,6 +750,7 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
+  .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)

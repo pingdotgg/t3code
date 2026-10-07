@@ -1,5 +1,5 @@
 import {
-  DUO_POSES,
+  duoFoldState,
   type DuoCommand,
   type DuoControlState,
 } from "@t3tools/client-runtime/device/duo-control";
@@ -8,51 +8,87 @@ import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-/** Physical presets live beside the device. Pinching supplies continuous hinge control. */
+const FOLDS = [
+  { id: "closed", angle: 0 },
+  { id: "half", angle: 90 },
+  { id: "open", angle: 180 },
+] as const;
+const STANDS = [
+  { id: "laptop", label: "Laptop stand" },
+  { id: "tent", label: "Tent stand" },
+] as const;
+
+/**
+ * Fold shapes move only the hinge, so the device opens around whichever edge it
+ * currently rests on: a vertical phone opens as a book into a landscape tablet,
+ * a horizontal one as a laptop into a portrait tablet. Stands are native presets
+ * that also place the device. Pinching supplies continuous hinge control.
+ */
 export function DeviceDuoControls(props: {
   screen: DeviceScreenSize;
   state: DuoControlState;
   enabled: boolean;
   onCommand: (command: DuoCommand) => void;
 }) {
-  const angle = props.screen.hingeAngle;
-  const fold = angle == null ? null : angle === 0 ? "closed" : angle === 180 ? "open" : "book";
-  const selected = (id: (typeof DUO_POSES)[number]["id"]) =>
-    id === "laptop" || id === "tent" ? props.screen.hingePose === id : fold === id;
+  const { screen } = props;
+  const { fold, stand, phoneVertical } = duoFoldState(screen);
+  const foldLabels = {
+    closed: "Closed",
+    half: phoneVertical ? "Book" : "Laptop",
+    open: "Open",
+  };
+  const button = (
+    key: string,
+    label: string,
+    pressed: boolean,
+    onClick: () => void,
+    glyph: React.ReactNode,
+  ) => (
+    <Tooltip key={key}>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon"
+            variant={pressed ? "secondary" : "ghost"}
+            disabled={!props.enabled}
+            aria-label={label}
+            aria-pressed={pressed}
+            data-pressed={pressed ? "" : undefined}
+            onClick={onClick}
+          />
+        }
+      >
+        {glyph}
+      </TooltipTrigger>
+      <TooltipPopup side="left">{label}</TooltipPopup>
+    </Tooltip>
+  );
+  const group =
+    "pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm";
   return (
     <div aria-label="iPhone Duo stands" className="flex flex-col items-center gap-2">
-      {([DUO_POSES.slice(0, 3), DUO_POSES.slice(3)] as const).map((poses, index) => (
-        <div
-          key={poses[0]?.id}
-          role="group"
-          aria-label={index === 0 ? "Fold shape" : "Device stance"}
-          className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm"
-        >
-          {poses.map((pose) => (
-            <Tooltip key={pose.id}>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon"
-                    variant={selected(pose.id) ? "secondary" : "ghost"}
-                    disabled={!props.enabled}
-                    aria-label={`${pose.label} stand`}
-                    aria-pressed={selected(pose.id)}
-                    data-pressed={selected(pose.id) ? "" : undefined}
-                    onClick={() => props.onCommand({ control: "pose", value: pose.id })}
-                  />
-                }
-              >
-                <DeviceDuoGlyph pose={pose.id} />
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                {pose.label}
-                {pose.id === "book" ? " / bookshelf" : ""}
-              </TooltipPopup>
-            </Tooltip>
-          ))}
-        </div>
-      ))}
+      <div role="group" aria-label="Fold shape" className={group}>
+        {FOLDS.map(({ id, angle: value }) =>
+          button(
+            id,
+            foldLabels[id],
+            !stand && fold === id,
+            () => props.onCommand({ control: "angle", value }),
+            <DeviceDuoGlyph pose={id === "half" ? "book" : id} rotated={!phoneVertical} />,
+          ),
+        )}
+      </div>
+      <div role="group" aria-label="Device stance" className={group}>
+        {STANDS.map(({ id, label }) =>
+          button(
+            id,
+            label,
+            screen.hingePose === id,
+            () => props.onCommand({ control: "pose", value: id }),
+            <DeviceDuoGlyph pose={id} />,
+          ),
+        )}
+      </div>
       {props.state.error ? (
         <Tooltip>
           <TooltipTrigger

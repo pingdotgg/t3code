@@ -39,7 +39,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               pullRequestId: 42,
               title: "Add Azure provider",
@@ -97,7 +96,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               pullRequestId: 863,
               title: "Fix Azure link",
@@ -134,7 +132,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 pullRequestId: 7,
@@ -195,7 +192,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               name: "repo",
               webUrl: "https://dev.azure.com/acme/project/_git/repo",
@@ -228,7 +224,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               name: "repo",
               webUrl: "https://dev.azure.com/acme/project/_git/repo",

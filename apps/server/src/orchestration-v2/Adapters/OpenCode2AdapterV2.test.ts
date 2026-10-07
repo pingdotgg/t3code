@@ -3,6 +3,7 @@
  * driven through the real adapter and `@opencode/client` against a replayed
  * HTTP server. Frames reuse the shapes recorded against 2.0.18.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -424,6 +425,25 @@ describe("OpenCode2 adapter", () => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ends a turn on the provider thread it started on", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      // A forked run starts on its own row for the same native session, while
+      // the adapter tracks the session under the id it minted for the fork.
+      const forkedRow = {
+        ...thread,
+        id: ProviderThreadId.make("provider-thread:opencode2-adapter:forked-run-row"),
+      };
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(forkedRow));
+      assert.equal((yield* Fiber.join(terminal))?.providerThreadId, forkedRow.id);
     }).pipe(Effect.scoped),
   );
 
@@ -2766,21 +2786,25 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
-  it("names each thread's MCP server within OpenCode's limits, one name per thread", () => {
-    const project = "thread:project:ce04e4e2-6c29-4ff0-a1d7-b089dd63e258";
-    const ids = [
-      `${project}:d3b2d715-c4a1-4b63-bb65-1634c3a3a8c4`,
-      `${project}:d3b2d715-c4a1-4b63-bb65-1634c3a3a8c5`,
-      "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Around1",
-      "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Around2",
-    ];
-    const names = ids.map(t3McpServerName);
-    for (const name of names) assert.match(name, /^t3-code-[A-Za-z0-9_-]{1,56}$/);
-    assert.equal(new Set(names).size, ids.length);
-    assert.deepEqual(ids.map(t3McpServerName), names);
-    // A name that already fits stays readable.
-    assert.equal(t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
-  });
+  it.effect("names each thread's MCP server within OpenCode's limits, one name per thread", () =>
+    Effect.gen(function* () {
+      const project = "thread:project:ce04e4e2-6c29-4ff0-a1d7-b089dd63e258";
+      const ids = [
+        `${project}:d3b2d715-c4a1-4b63-bb65-1634c3a3a8c4`,
+        `${project}:d3b2d715-c4a1-4b63-bb65-1634c3a3a8c5`,
+        "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Around1",
+        "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Around2",
+      ];
+      const names = yield* Effect.forEach(ids, t3McpServerName);
+      for (const name of names) assert.match(name, /^t3-code-[A-Za-z0-9_-]{1,56}$/);
+      assert.equal(new Set(names).size, ids.length);
+      assert.deepEqual(yield* Effect.forEach(ids, t3McpServerName), names);
+      // A digested name is the one the synchronous node:crypto version produced.
+      assert.equal(names[0], "t3-code-63abb5df2b188bdd");
+      // A name that already fits stays readable.
+      assert.equal(yield* t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
 
   it.effect("reads user and assistant text from the session's message list", () =>
     Effect.gen(function* () {

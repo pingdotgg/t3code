@@ -1,6 +1,10 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { environmentSession } from "../../state/session";
+import { serverEnvironment } from "../../state/server";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
@@ -491,8 +495,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
-  const t3ProjectFileQuery = useEnvironmentQuery(
+  const fileAccessSession = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? environmentSession.sessionStateAtom(selectedProject.environmentId)
+      : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(selectedProject?.environmentId ?? null);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const fileAccessPending =
+    selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
+  const t3ProjectFileQuery = useEnvironmentQuery(
+    canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
@@ -533,7 +552,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const defaultWorkspaceModeSettled =
     selectedProjectDraft.workspaceSelection?.mode !== undefined ||
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    !t3ProjectFileQuery.isPending;
+    (!t3ProjectFileQuery.isPending && !fileAccessPending);
   const workspaceMode = canChooseWorkspace
     ? (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode)
     : "local";
@@ -549,8 +568,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           scopedProjectKey(selectedProject.environmentId, selectedProject.id)
         ] ?? null)
       : null;
-  const configuredBaseRef = selectedEnvironmentServerConfig
-    ? projectSettings.settings.defaultWorktreeBaseRef
+  const liveServerSettings = useAtomValue(
+    serverEnvironment.liveSettingsValueAtom(selectedProject?.environmentId ?? null),
+  );
+  const configuredBaseRef = liveServerSettings
+    ? resolveProjectSettings(liveServerSettings, selectedProject?.id ?? null).settings
+        .defaultWorktreeBaseRef
     : undefined;
   const rememberedBranch =
     configuredBaseRef && typeof configuredBaseRef === "object" ? lastWorktreeBaseBranch : null;
@@ -1115,7 +1138,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     const preferredBranch = resolveDefaultWorktreeBaseRef({
       configuredRef: configuredBaseRef,
       rememberedRef: rememberedRef?.name ?? null,
-      refs: baseBranchesQuery.data?.refs ?? null,
+      refs: baseBranchesQuery.error ? [] : (baseBranchesQuery.data?.refs ?? null),
       currentBranch: currentCheckoutBranchName,
     });
     if (preferredBranch) {
@@ -1131,6 +1154,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
   }, [
     baseBranchesQuery.data,
+    baseBranchesQuery.error,
     preferencesLoaded,
     rememberedBranchPending,
     rememberedRef,

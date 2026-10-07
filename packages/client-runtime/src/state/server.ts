@@ -598,6 +598,7 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
+  options?: { readonly allowCached?: boolean },
 ): ServerConfig | null {
   if (
     projection?.source === "live" &&
@@ -606,7 +607,7 @@ export function resolveServerConfigValue(
   ) {
     return projection.config;
   }
-  return initialConfig ?? projection?.config ?? null;
+  return initialConfig ?? (options?.allowCached === false ? null : (projection?.config ?? null));
 }
 
 export function createServerEnvironmentAtoms<R, E>(
@@ -914,6 +915,20 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  // Cached settings can render immediately, but must not initialize a draft's defaults.
+  const liveSettingsValueAtom = Atom.family((environmentId: EnvironmentId | null) =>
+    Atom.make((get) => {
+      if (environmentId === null) return null;
+      const projection = Option.getOrNull(
+        AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
+      );
+      return (
+        resolveServerConfigValue(projection, get(options.initialConfigValueAtom(environmentId)), {
+          allowCached: false,
+        })?.settings ?? null
+      );
+    }).pipe(Atom.withLabel(`environment-data:server:live-settings:${environmentId}`)),
+  );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -985,6 +1000,7 @@ export function createServerEnvironmentAtoms<R, E>(
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
+    liveSettingsValueAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",

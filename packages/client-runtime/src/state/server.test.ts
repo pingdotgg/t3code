@@ -762,6 +762,32 @@ describe("server state projection", () => {
     ).toBe(live);
   });
 
+  it("does not initialize worktree defaults from cached settings before the session loads", () => {
+    const cached = {
+      ...CONFIG,
+      settings: { ...CONFIG.settings, defaultWorktreeBaseRef: null },
+    };
+    const initial = {
+      ...CONFIG,
+      settings: { ...CONFIG.settings, defaultWorktreeBaseRef: "dev" },
+    };
+    const projection = {
+      config: cached,
+      latestEvent: snapshotEvent(cached),
+      source: "cache" as const,
+    };
+
+    // Cache remains useful for display, but must not freeze a draft's default.
+    expect(resolveServerConfigValue(projection, null)).toBe(cached);
+    expect(resolveServerConfigValue(projection, null, { allowCached: false })).toBeNull();
+    expect(resolveServerConfigValue(projection, initial, { allowCached: false })).toBe(initial);
+    expect(
+      resolveServerConfigValue({ ...projection, config: initial, source: "live" }, null, {
+        allowCached: false,
+      }),
+    ).toBe(initial);
+  });
+
   it.effect("throttles server configuration writes and flushes the latest on teardown", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
