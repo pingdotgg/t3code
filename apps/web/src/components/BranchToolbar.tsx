@@ -1,3 +1,6 @@
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { readLocalApi } from "../localApi";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -10,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   type Ref,
+  type MouseEvent as ReactMouseEvent,
   memo,
   useImperativeHandle,
   useCallback,
@@ -41,6 +45,11 @@ import {
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import { ComposerControl } from "./chat/ComposerControl";
 import {
   Menu,
@@ -93,7 +102,44 @@ interface BranchToolbarProps {
   contextStripVisible?: boolean;
 }
 
-interface MobileRunContextSelectorProps {
+function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
+  const api = readLocalApi();
+  if (!api) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void api.contextMenu
+    .show([{ id: "copy-path", label: "Copy full path", icon: "copy" }], {
+      x: event.clientX,
+      y: event.clientY,
+    })
+    .then((action) => {
+      if (action !== "copy-path") return;
+      void writeTextToClipboard(workspacePath, "workspace path").then(
+        (didCopy) => {
+          if (didCopy) {
+            toastManager.add({
+              type: "success",
+              title: "Path copied",
+              description: workspacePath,
+            });
+          }
+        },
+        (error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to copy path",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        },
+      );
+    });
+}
+
+interface RunContextSelectorProps {
+  displayMode?: "toolbar" | "panel";
+  workspaceRoot?: string;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
@@ -112,7 +158,9 @@ interface MobileRunContextSelectorProps {
   onUsePreviousWorktree: () => void;
 }
 
-const MobileRunContextSelector = memo(function MobileRunContextSelector({
+const RunContextSelector = memo(function RunContextSelector({
+  displayMode = "toolbar",
+  workspaceRoot,
   forceNewWorktree,
   autoEnvironmentLabel,
   onAutoEnvironment,
@@ -129,7 +177,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
-}: MobileRunContextSelectorProps) {
+}: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
@@ -148,13 +196,35 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       : effectiveEnvMode === "worktree"
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
-  const isLocked = envLocked || envModeLocked;
+  const isPanel = displayMode === "panel";
+  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  const workspacePath =
+    forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
+      ? null
+      : (activeWorktreePath ?? workspaceRoot);
+  const handleContextMenu = (event: ReactMouseEvent) => {
+    if (isPanel && workspacePath) {
+      showWorkspaceContextMenu(event, workspacePath);
+    }
+  };
   const workspaceIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <WorkspaceIcon className={cn("size-3 shrink-0", showEnvironmentIndicator && "mx-0!")} />
+        <WorkspaceIcon
+          className={
+            isPanel
+              ? THREAD_DETAILS_PANEL_ICON_CLASS
+              : cn("size-3 shrink-0", showEnvironmentIndicator && "mx-0!")
+          }
+        />
       </TooltipTrigger>
-      <TooltipPopup>{workspaceLabel}</TooltipPopup>
+      <TooltipPopup>
+        {isPanel
+          ? forceNewWorktree
+            ? "Each model starts in its own worktree."
+            : (workspacePath ?? workspaceLabel)
+          : workspaceLabel}
+      </TooltipPopup>
     </Tooltip>
   );
   const icon = showEnvironmentIndicator ? (
@@ -164,11 +234,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
           {autoEnvironmentLabel ? (
-            <ScaleIcon className="size-3 shrink-0 mx-0!" aria-hidden="true" />
+            <ScaleIcon
+              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+              aria-hidden="true"
+            />
           ) : (
             <EnvironmentMachineIcon
               kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0 mx-0!"
+              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
             />
           )}
         </TooltipTrigger>
@@ -182,7 +255,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   const triggerContent = (
     <>
       {icon}
-      <ComposerContextLabel>
+      <ComposerContextLabel displayMode={displayMode}>
         {autoEnvironmentLabel ??
           (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
       </ComposerContextLabel>
@@ -192,7 +265,13 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   if (isLocked) {
     return (
       <span
-        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
+        className={cn(
+          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6",
+          isPanel && "max-w-full",
+          isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+        )}
+        onContextMenu={handleContextMenu}
+        aria-label={isPanel ? "Run context" : undefined}
         data-composer-context-control
       >
         {triggerContent}
@@ -203,8 +282,17 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={<ComposerControl size="xs" />}
-        className="min-w-0 max-w-[48%] flex-initial justify-start"
+        render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
+        className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
+        onContextMenu={handleContextMenu}
+        onMouseDownCapture={
+          isPanel
+            ? (event) => {
+                if (event.button !== 0 || event.ctrlKey) event.stopPropagation();
+              }
+            : undefined
+        }
+        aria-label={isPanel ? "Run context" : undefined}
         data-composer-context-control
         data-composer-shortcut={[
           showEnvironmentPicker && !envLocked ? "composer.host" : "",
@@ -212,13 +300,19 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         ].join(" ")}
       >
         {triggerContent}
-        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+        {!isPanel ? <ChevronDownIcon className="size-3 shrink-0 opacity-50" /> : null}
       </MenuTrigger>
       <MenuPopup
         align="start"
-        side="top"
-        className={previousWorktreeLabel ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
-        {...composerFloatingLayerProps}
+        side={isPanel ? "bottom" : "top"}
+        className={
+          isPanel
+            ? "w-(--anchor-width)"
+            : previousWorktreeLabel
+              ? "w-[min(21rem,calc(100vw-2rem))]"
+              : undefined
+        }
+        {...(!isPanel ? composerFloatingLayerProps : {})}
       >
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
@@ -618,13 +712,25 @@ export const BranchToolbar = memo(function BranchToolbar({
     return (
       <div className="flex w-full flex-col" data-thread-panel-run-context>
         {panelSection !== "branch" ? (
-          <BranchToolbarEnvModeSelector
+          <RunContextSelector
             displayMode="panel"
-            envLocked={envModeLocked}
+            workspaceRoot={activeProject.workspaceRoot}
+            forceNewWorktree={forceNewWorktree}
+            autoEnvironmentLabel={autoEnvironmentLabel}
+            onAutoEnvironment={onAutoEnvironment}
+            envLocked={envLocked}
+            envModeLocked={envModeLocked}
+            environmentId={environmentId}
+            availableEnvironments={availableEnvironments}
+            showEnvironmentPicker={showEnvironmentPicker}
+            showEnvironmentIndicator={activeEnvironmentOption !== null}
+            onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
-            workspaceRoot={activeProject.workspaceRoot}
             onEnvModeChange={onEnvModeChange}
+            previousWorktreeLabel={previousWorktreeLabel}
+            previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
+            onUsePreviousWorktree={onUsePreviousWorktree}
           />
         ) : null}
         {panelSection !== "workspace" ? (
@@ -662,7 +768,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     >
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
-          <MobileRunContextSelector
+          <RunContextSelector
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
