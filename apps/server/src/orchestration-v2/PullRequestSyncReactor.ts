@@ -385,7 +385,7 @@ export const make = Effect.gen(function* () {
       },
       // As wide as one batched summary read, so the sweep's reads on a host arrive together and
       // GitHub answers them in one request rather than one `gh pr view` apiece.
-      { concurrency: 50, discard: true },
+      { concurrency: 25, discard: true },
     );
     // A host failure such as a signed-out CLI fails every due pull request the same way, so a
     // sweep reports one line per reason rather than one per pull request.

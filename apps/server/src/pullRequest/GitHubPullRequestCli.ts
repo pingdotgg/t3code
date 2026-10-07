@@ -410,12 +410,6 @@ export interface GitHubPullRequestStat {
 const STAT_ALIASES_PER_REQUEST = 25;
 const STAT_REQUEST_CONCURRENCY = 4;
 /**
- * Summaries per aliased read. GitHub prices fifty at one point and seventy-five at two, and the
- * background sync that asks for them in bulk waits on no one, so it takes the slower ~2.2s read
- * of fifty over two reads of twenty-five.
- */
-const SUMMARY_ALIASES_PER_REQUEST = 50;
-/**
  * How long a summary read waits for company. The background sync asks for every linked pull
  * request at once, and each read reaches the resolver after its own cache check, so a batch
  * needs a moment longer than one scheduler tick to gather them.
@@ -1760,7 +1754,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * Summaries asked for together, on one host under one credential, share aliased GraphQL reads
-   * of fifty: the background sync reads every linked pull request each minute, and one
+   * of twenty-five: the background sync reads every linked pull request each minute, and one
    * `gh pr view` apiece is most of what it spends. Whatever the batch cannot answer — a selector
    * GraphQL cannot address, a pull request GitHub returned nothing for — is read on its own.
    */
@@ -1834,7 +1828,7 @@ export const make = Effect.gen(function* () {
     },
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
-    RequestResolver.batchN(SUMMARY_ALIASES_PER_REQUEST),
+    RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
   const getPullRequestSummary: GitHubPullRequestCli["Service"]["getPullRequestSummary"] = (input) =>
     Effect.request(new PullRequestSummaryRead(input), summaryResolver);
