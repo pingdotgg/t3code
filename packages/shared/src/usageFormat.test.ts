@@ -8,6 +8,7 @@ import {
   formatPercent,
   formatRelativeHourShort,
   makeWindow,
+  resolutionForWindow,
 } from "./usageFormat.ts";
 
 describe("formatPercent", () => {
@@ -89,6 +90,15 @@ describe("hourly usage formatting", () => {
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+  });
+
+  it("spans the whole week when a 7-day window is hourly", () => {
+    const window = makeWindow(7, new Date("2026-08-11T12:37:42.123Z"), resolutionForWindow(7));
+
+    expect(window.resolution).toBe("hour");
+    expect(window.sinceTime).toBe("2026-08-04T12:37:00.000Z");
+    expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+    expect(resolutionForWindow(30)).toBe("day");
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {

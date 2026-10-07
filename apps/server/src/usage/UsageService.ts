@@ -87,7 +87,7 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
  * last write lands just before local midnight on the window's first day.
  */
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
-const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_HOURLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
@@ -789,7 +789,7 @@ export const make = Effect.gen(function* () {
       if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
+          detail: "Hourly usage window must be greater than zero and at most 7 days",
         });
       }
       hourlyWindow = { sinceTimeMs, untilTimeMs };
