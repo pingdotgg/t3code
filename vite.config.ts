@@ -194,10 +194,12 @@ export default defineConfig({
         },
       },
       {
-        // These clients are session display metadata and an Expo update adapter.
+        // These clients are session metadata, device streams, and an Expo update adapter.
         files: [
           "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
+          "apps/web/src/components/device/DevicePhoneViewport.tsx",
+          "apps/web/src/components/device/DeviceDuoViewport.tsx",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },
