@@ -3,8 +3,9 @@ import { useNavigation } from "@react-navigation/native";
 import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
 import {
   AuthFilesystemReadScope,
-  type AuthSessionState,
   type EnvironmentId,
+  sessionGrantsScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
 import * as Option from "effect/Option";
@@ -21,11 +22,8 @@ import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 
 /** An explicit action may ask the server while its grant is still unresolved. */
-function allowsHostMedia(session: Pick<AuthSessionState, "authenticated" | "scopes"> | null) {
-  return (
-    session === null ||
-    (session.authenticated && session.scopes?.includes(AuthFilesystemReadScope) === true)
-  );
+function allowsHostMedia(session: SessionGrantInput | null) {
+  return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
 
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {

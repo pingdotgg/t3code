@@ -98,3 +98,18 @@ it("reacts to grant revocation, failure, and regrant without a connection list c
   expect(appAtomRegistry.get(observed)).toEqual(new Set([secondary]));
   expect(changes).not.toHaveLength(0);
 });
+
+it("uses exact new-server permissions and keeps old-server grants usable", () => {
+  // A legacy representation must never override an explicitly narrowed grant.
+  appAtomRegistry.set(source(primary), AsyncResult.success({ ...session(true), permissions: [] }));
+  expect(useEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(false);
+  expect(readEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(false);
+  appAtomRegistry.set(
+    source(primary),
+    AsyncResult.success({ ...session(false), permissions: [AuthOrchestrationOperateScope] }),
+  );
+  expect(useEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(true);
+  expect(readEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(true);
+  appAtomRegistry.set(source(primary), AsyncResult.success(session(true)));
+  expect(useEnvironmentScope(primary, AuthOrchestrationOperateScope)).toBe(true);
+});

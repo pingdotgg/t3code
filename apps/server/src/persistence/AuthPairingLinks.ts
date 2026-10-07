@@ -172,13 +172,13 @@ export const make = Effect.gen(function* () {
             proof_key_thumbprint IS NULL
             OR proof_key_thumbprint = ${proofKeyThumbprint}
           )
-          AND NOT EXISTS (
+          AND (${requestedScopes === undefined} OR EXISTS (
             SELECT 1
             FROM json_each(${JSON.stringify(requestedScopes ?? [])}) AS requested
-            WHERE requested.value NOT IN (
+            WHERE requested.value IN (
               SELECT value FROM json_each(auth_pairing_links.scopes)
             )
-          )
+          ))
         RETURNING
           id AS "id",
           credential AS "credential",

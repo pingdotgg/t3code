@@ -24,6 +24,7 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AcpRegistryOperationError,
   CommandId,
+  authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
@@ -561,7 +562,7 @@ function toAuthAccessStreamEvent(
         version: 1,
         revision,
         type: "pairingLinkUpserted",
-        payload: change.pairingLink,
+        payload: { ...change.pairingLink, ...authScopeResponse(change.pairingLink.scopes) },
       };
     case "pairingLinkRemoved":
       return {
@@ -577,6 +578,7 @@ function toAuthAccessStreamEvent(
         type: "clientUpserted",
         payload: {
           ...change.clientSession,
+          ...authScopeResponse(change.clientSession.scopes),
           current: change.clientSession.sessionId === currentSessionId,
         },
       };

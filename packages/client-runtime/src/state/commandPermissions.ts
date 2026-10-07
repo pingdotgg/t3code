@@ -1,5 +1,7 @@
 import {
   clientRpcRequiredScopes,
+  sessionGrantsScope,
+  authScopeRequiredResponse,
   EnvironmentAuthorizationError,
   type EnvironmentId,
   type AuthSessionState,
@@ -10,10 +12,6 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentSessionAtoms } from "./session.ts";
-
-function grants(session: AuthSessionState, scope: AuthEnvironmentScope) {
-  return session.authenticated && session.scopes?.includes(scope) === true;
-}
 
 /** UI availability and dispatch use the same target session and method policy. */
 function makeCommandPermissions<R, E>(
@@ -33,7 +31,7 @@ function makeCommandPermissions<R, E>(
         return (
           result._tag !== "Failure" &&
           session !== null &&
-          scopes.every((scope) => grants(session, scope))
+          scopes.every((scope) => sessionGrantsScope(session, scope))
         );
       }),
     ),
@@ -59,12 +57,12 @@ function makeCommandPermissions<R, E>(
             Effect.catch(() => Effect.succeed(Option.none<AuthSessionState>())),
           );
           const missing = scopes.find(
-            (scope) => Option.isNone(session) || !grants(session.value, scope),
+            (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
           );
           if (missing !== undefined)
             return yield* Effect.fail(
               new EnvironmentAuthorizationError({
-                requiredScope: missing,
+                ...authScopeRequiredResponse(missing),
                 message: `This connection requires ${missing}.`,
               }),
             );
