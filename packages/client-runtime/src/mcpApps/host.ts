@@ -310,6 +310,10 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           return;
         }
         const text = texts.join("\n").trim();
+        if (text === "") {
+          fail(id, -32602, "ui/message needs non-empty text.");
+          return;
+        }
         answer(id, () => options.sendMessage(text).then(() => ({})));
         return;
       }
@@ -386,6 +390,8 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (initialized) return;
         initialized = true;
         sendToolCall();
+        // The theme or size may have changed since the initialize response.
+        hostHandle.updateHostContext();
         return;
       }
       case "ui/notifications/size-changed": {
@@ -415,7 +421,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
     settle();
   };
 
-  return {
+  const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
       if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
@@ -479,6 +485,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       disposed = true;
     },
   };
+  return hostHandle;
 }
 
 const MAX_DOWNLOAD_NAME = 200;

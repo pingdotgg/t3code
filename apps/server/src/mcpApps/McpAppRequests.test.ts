@@ -29,6 +29,14 @@ const providerThreadId = ProviderThreadId.make("provider-thread-app");
 const providerSessionId = ProviderSessionId.make("provider-session-app");
 const forkId = ThreadId.make("thread-fork");
 const unrelatedId = ThreadId.make("thread-unrelated");
+// A chain of forks deeper than any fixed walk limit: deep-70 → … → deep-1 → app.
+const deepForkId = (depth: number) => ThreadId.make(`thread-deep-${depth}`);
+const deepParent = (id: ThreadId): ThreadId | null => {
+  const match = /^thread-deep-(\d+)$/.exec(id);
+  if (match === null) return null;
+  const depth = Number(match[1]);
+  return depth === 1 ? threadId : deepForkId(depth - 1);
+};
 
 const appItem = (output: unknown): OrchestrationV2TurnItem => ({
   id: itemId,
@@ -86,13 +94,19 @@ function makeLayer(input: {
               // A fork of the app's thread, and an unrelated thread.
               thread: {
                 lineage:
-                  id === forkId
+                  deepParent(id) !== null
                     ? {
-                        parentThreadId: threadId,
+                        parentThreadId: deepParent(id),
                         relationshipToParent: "fork",
                         rootThreadId: threadId,
                       }
-                    : { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+                    : id === forkId
+                      ? {
+                          parentThreadId: threadId,
+                          relationshipToParent: "fork",
+                          rootThreadId: threadId,
+                        }
+                      : { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
               },
               providerThreads: [
                 { id: providerThreadId, providerSessionId } as OrchestrationV2ProviderThread,
@@ -235,6 +249,14 @@ describe("McpAppRequests", () => {
         ),
         "not-an-app",
       );
+      // However many forks deep, a descendant still counts.
+      yield* requests.updateModelContext({
+        threadId,
+        itemId,
+        conversationThreadId: deepForkId(70),
+        content,
+      });
+      assert.isTrue(storedContext.has(`${deepForkId(70)}/${itemId}`));
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
   );
 

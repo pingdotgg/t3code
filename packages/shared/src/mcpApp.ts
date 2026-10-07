@@ -25,6 +25,9 @@ export const MCP_APP_MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_DOMAINS = 32;
 const MAX_DOMAIN_LENGTH = 256;
 const MAX_NAME_LENGTH = 256;
+// A `ui://` URI can carry a path and query; the compact wire budget still
+// bounds the whole reference.
+const MAX_RESOURCE_URI_LENGTH = 4096;
 
 /** `_meta.ui.csp` on a UI resource: origins the app needs, by kind. */
 export interface McpAppCsp {
@@ -114,7 +117,10 @@ export function readMcpAppReference(value: unknown): McpAppReference | undefined
   const attachmentId = boundedName(value.attachmentId);
   const server = boundedName(value.server);
   const tool = boundedName(value.tool);
-  const resourceUri = boundedName(value.resourceUri);
+  const resourceUri =
+    typeof value.resourceUri === "string" && value.resourceUri.length <= MAX_RESOURCE_URI_LENGTH
+      ? value.resourceUri
+      : undefined;
   if (
     attachmentId === undefined ||
     server === undefined ||

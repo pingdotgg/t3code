@@ -179,9 +179,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     ancestorId: ThreadId,
   ) {
+    // Walks fork links until the chain ends; a thread seen twice means a
+    // corrupt cycle, which proves nothing.
+    const seen = new Set<ThreadId>();
     let current: ThreadId | null = threadId;
-    for (let depth = 0; current !== null && depth < 64; depth++) {
+    while (current !== null && !seen.has(current)) {
       if (current === ancestorId) return true;
+      seen.add(current);
       const records: { readonly thread: OrchestrationV2AppThread } = yield* threadManagement
         .getThreadRecords(current, [])
         .pipe(Effect.mapError((cause) => fail(threadId, "request-failed", cause)));

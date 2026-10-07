@@ -11,7 +11,12 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CommandId, MessageId } from "@t3tools/contracts";
-import { mcpAppAllowAttribute, mcpAppFileName, type McpAppReference } from "@t3tools/shared/mcpApp";
+import {
+  mcpAppAllowAttribute,
+  mcpAppFileName,
+  mcpAppReferencesEqual,
+  type McpAppReference,
+} from "@t3tools/shared/mcpApp";
 import * as Predicate from "effect/Predicate";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
@@ -61,12 +66,13 @@ function outerDocument(src: string, allow: string, secret: string) {
     value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html,body{margin:0;height:100%;background:transparent}iframe{border:0;display:block;width:100%;height:100%}</style></head>
-<body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${attribute(allow)}" src="${attribute(src)}"></iframe>
+<body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${attribute(allow)}"></iframe>
 <script>(function(){var frame=document.getElementById("app"),secret=${JSON.stringify(secret)},loads=0,live=true;
 var send=function(m){window.ReactNativeWebView.postMessage(JSON.stringify({secret:secret,message:m}));};
 frame.addEventListener("load",function(){loads+=1;if(loads>1&&live){live=false;send({t3:"navigated"});}});
 window.addEventListener("message",function(e){if(live&&e.source===frame.contentWindow)send(e.data);});
-window.__t3McpAppReceive=function(m){live&&frame.contentWindow&&frame.contentWindow.postMessage(m,"*");};})();</script></body></html>`;
+window.__t3McpAppReceive=function(m){live&&frame.contentWindow&&frame.contentWindow.postMessage(m,"*");};
+frame.src=${JSON.stringify(src).replace(/</g, "\\u003c")};})();</script></body></html>`;
 }
 
 const commandFailure = (result: {
@@ -120,7 +126,10 @@ export function ThreadMcpApp(props: {
   /** Full screen only: the screen's height, which the app is told it fills. */
   readonly height?: number;
 }) {
-  const { app } = props;
+  // One reference per app: a new object with the same content (a refetch, a
+  // rerender) must not rebuild the host of a document that is already live.
+  const [app, setApp] = useState(props.app);
+  if (!mcpAppReferencesEqual(app, props.app)) setApp(props.app);
   const fullscreen = props.displayMode === "fullscreen";
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -566,6 +575,10 @@ export function ThreadMcpApp(props: {
           }
           setSupportMultipleWindows={false}
           onLoadEnd={() => setLoaded(true)}
+          // The outer page is inline HTML, so these report a broken view, not
+          // an app page; the row shows the failure instead of a blank box.
+          onError={() => setCrashed(true)}
+          onHttpError={() => setCrashed(true)}
           onMessage={(event: WebViewMessageEvent) => {
             let envelope: unknown;
             try {
@@ -588,7 +601,7 @@ export function ThreadMcpApp(props: {
           <Text className="text-sm text-foreground-muted">Unable to load the {app.server} app</Text>
         </View>
       ) : null}
-      {uri !== null && !loaded ? (
+      {uri !== null && !loaded && !crashed && !navigatedAway ? (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <ActivityIndicator />
         </View>

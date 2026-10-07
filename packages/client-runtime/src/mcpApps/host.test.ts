@@ -168,9 +168,17 @@ describe("makeMcpAppHost", () => {
       method: "ui/message",
       params: { role: "user", content: [{ type: "image", data: "x" }] },
     });
+    host.receive({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "ui/message",
+      params: { role: "user", content: { type: "text", text: "   " } },
+    });
     await flush();
     expect(messages).toEqual(["one", "two"]);
     expect(sent.find((m) => m.id === 3)?.error).toMatchObject({ code: -32602 });
+    // Blank text would ask to send an empty message.
+    expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
   });
 
   it("sends only changed context fields, and nothing before initialization", () => {
@@ -193,6 +201,18 @@ describe("makeMcpAppHost", () => {
     ]);
     host.updateHostContext();
     expect(sent).toHaveLength(1);
+  });
+
+  it("catches the app up on context that changed while it was initializing", () => {
+    const { host, sent, setTheme } = setup();
+    host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
+    setTheme("light");
+    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+    expect(sent.at(-1)).toEqual({
+      jsonrpc: "2.0",
+      method: "ui/notifications/host-context-changed",
+      params: { theme: "light", styles: context("light").styles },
+    });
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {

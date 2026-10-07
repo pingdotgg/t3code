@@ -22,7 +22,7 @@ import { Minimize2Icon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
-import { useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
@@ -43,6 +43,8 @@ const commandFailure = (result: {
 };
 
 /** Full screen shows the box in the top layer, which needs the Popover API. */
+/** A cached asset URL with less life than this is minted afresh first. */
+const MIN_URL_LIFE_MS = 5 * 60_000;
 const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
@@ -120,9 +122,29 @@ export function McpAppFrame(props: {
     [app],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
-  // The frame keeps its first URL: a re-minted one would reload the app.
+  const refreshAsset = useAssetUrlRefresh(props.environmentId, resource);
+  // The frame keeps its first URL: a re-minted one would reload the app. A
+  // cached URL near expiry is minted afresh first, since a frame cannot
+  // report a failed load. At most one mint per document, so a skewed clock
+  // cannot mint on every update.
   const [src, setSrc] = useState<string | null>(null);
-  if (src === null && asset._tag === "Success") setSrc(asset.url);
+  const [mintFailed, setMintFailed] = useState(false);
+  const minting = useRef(false);
+  const cachedUrl = asset._tag === "Success" ? asset.url : null;
+  const cachedExpiresAt = asset._tag === "Success" ? asset.expiresAt : 0;
+  useEffect(() => {
+    if (src !== null || cachedUrl === null || minting.current) return;
+    if (cachedExpiresAt - Date.now() > MIN_URL_LIFE_MS) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Adopts the cached URL once it is known to last.
+      setSrc(cachedUrl);
+      return;
+    }
+    minting.current = true;
+    void refreshAsset().then(
+      (url) => (url === null ? setMintFailed(true) : setSrc(url)),
+      () => setMintFailed(true),
+    );
+  }, [src, cachedUrl, cachedExpiresAt, refreshAsset]);
 
   // The wire timeline omits tool input and output; the app needs both.
   const detail = useTurnItemDetail({
@@ -279,9 +301,15 @@ export function McpAppFrame(props: {
     };
     // Approvals render in the page, beneath the top layer a full-screen app
     // occupies, so the app returns inline before T3 asks.
-    const ask = (message: string) => {
+    const ask = async (message: string) => {
       flushSync(() => setDisplayMode("inline"));
-      return requestConfirmDialog(message);
+      const approved = await requestConfirmDialog(message);
+      // No dialog host is mounted, so nobody was asked; say so rather than
+      // reporting that the user declined.
+      if (approved === undefined) {
+        throw new McpAppHostRefusal("T3 could not ask for approval here.");
+      }
+      return approved;
     };
     const target = () => frameRef.current?.contentWindow ?? null;
     const scope = () => {
@@ -447,9 +475,10 @@ export function McpAppFrame(props: {
           size="xs"
           variant="ghost"
           onClick={() => {
-            // The first URL's token may have expired; the asset query keeps
-            // a refreshed one for the new document.
-            if (asset._tag === "Success") setSrc(asset.url);
+            // The first URL's token may have expired: the new document
+            // takes a fresh one, minted again if it is near expiry.
+            minting.current = false;
+            setSrc(null);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
           }}
@@ -510,7 +539,7 @@ export function McpAppFrame(props: {
             className={cn("block w-full border-0", fullscreen ? "min-h-0 flex-1" : "h-full")}
             style={{ colorScheme: theme.appearance }}
           />
-        ) : asset._tag === "Failure" ? (
+        ) : asset._tag === "Failure" || mintFailed ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
             Unable to load the {app.server} app
           </p>

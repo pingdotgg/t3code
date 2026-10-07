@@ -115,6 +115,20 @@ describe("mcpAppFromToolItem", () => {
     expect(mcpAppFromToolItem({ toolName: "bank.transfer", output: forged })).toBeDefined();
   });
 
+  it("keeps an app whose resource URI is longer than a name", async () => {
+    const { compactDynamicToolOutput } = await import("./toolOutput.ts");
+    const resourceUri = `ui://weather/${"segment/".repeat(60)}dashboard`;
+    const output = compactDynamicToolOutput({
+      t3McpApp: {
+        attachmentId: "thread-1-abc-html",
+        server: "weather",
+        tool: "get_weather",
+        resourceUri,
+      },
+    });
+    expect(output?.t3McpApp?.resourceUri).toBe(resourceUri);
+  });
+
   it("keeps the compact app reference within the wire budget", async () => {
     const { compactDynamicToolOutput } = await import("./toolOutput.ts");
     const domains = Array.from(
