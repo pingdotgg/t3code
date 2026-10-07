@@ -169,7 +169,13 @@ export const runPluginHostChild = (): void => {
   };
 
   const receive = (line: string) => {
-    const message = JSON.parse(line) as PluginHostMessage;
+    let message: PluginHostMessage;
+    try {
+      message = JSON.parse(line) as PluginHostMessage;
+    } catch {
+      // A corrupt stream ends the child the same way an oversized line does.
+      process.exit(1);
+    }
     switch (message._tag) {
       case "Activate":
         void activate(message);

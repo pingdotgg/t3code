@@ -510,6 +510,31 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
       }),
     );
 
+    it.effect("fails results with no JSON form without stopping the plugin", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        const { registration } = yield* preparePlugin("test.unserializable");
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const pid = pidOf(yield* supervisor.invoke(pluginId, "ping", null));
+
+        for (const handler of ["functionResult", "symbolResult", "undefinedJsonResult"]) {
+          const error = yield* supervisor.invoke(pluginId, handler, null).pipe(Effect.flip);
+          expect(error._tag).toBe("PluginCallFailedError");
+          expect(error.message).toBe(`Plugin ${pluginId} failed "${handler}": Result is not JSON.`);
+        }
+        // The serializer's own error is cut to the 2000 characters the server accepts.
+        const thrown = yield* supervisor
+          .invoke(pluginId, "throwingJsonResult", null)
+          .pipe(Effect.flip);
+        expect(thrown._tag).toBe("PluginCallFailedError");
+        const prefix = `Plugin ${pluginId} failed "throwingJsonResult": `;
+        expect(thrown.message.startsWith(`${prefix}Result is not JSON: xxx`)).toBe(true);
+        expect(thrown.message.length).toBe(prefix.length + 2000);
+        expect(pidOf(yield* supervisor.invoke(pluginId, "ping", null))).toBe(pid);
+      }),
+    );
+
     it.effect("keeps one plugin's crash away from another", () =>
       Effect.gen(function* () {
         const supervisor = yield* makeSupervisor();

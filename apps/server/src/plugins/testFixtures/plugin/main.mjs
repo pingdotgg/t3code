@@ -55,6 +55,15 @@ export function activate(context) {
     for (;;) hog.push(Array.from({ length: 100_000 }, Math.random));
   });
   handle("bigResult", (input) => "x".repeat(input.bytes));
+  // Results with no JSON form, which the child must answer with a failure.
+  handle("functionResult", () => () => {});
+  handle("symbolResult", () => Symbol("result"));
+  handle("undefinedJsonResult", () => ({ toJSON: () => undefined }));
+  handle("throwingJsonResult", () => ({
+    toJSON() {
+      throw new Error("x".repeat(3000));
+    },
+  }));
   handle("malformed", () => {
     NodeFS.writeSync(IPC_FD, "{not json}\n");
     return new Promise(() => {});
