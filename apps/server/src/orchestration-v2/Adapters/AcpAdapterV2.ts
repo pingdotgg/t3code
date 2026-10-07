@@ -68,13 +68,12 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
-  decideToolCallUpdateEmission,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
-  toolCallProgressLength,
+  toolCallVisibleOutputChanged,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
   type AcpSessionModeState,
@@ -1164,11 +1163,8 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
-  /** Streamed tool updates held back from persistence; see `decideToolCallUpdateEmission`. */
-  readonly toolEmissions: Map<
-    string,
-    { readonly lastEmittedDetailLength: number | undefined; readonly skippedSinceEmit: number }
-  >;
+  /** Streamed tool updates skipped since the last persisted one; see `shouldPersistToolUpdate`. */
+  readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
@@ -1467,11 +1463,13 @@ interface SnapshotMessageState {
   loadingIndex: number;
 }
 
+const TOOL_UPDATE_PERSIST_EVERY = 10;
+
 /**
  * Some agents stream a tool's arguments (a file write's diff, `rawInput`) and
- * resend the whole call each time. Persist those with #7279's V1 rule. Output
- * the user watches live (command stdout, monitor ticks) and the agent's own
- * completed/failed always persist, even when a flavor normalizes the status.
+ * resend the whole call each time. Persist every 10th of those. Status, title,
+ * and output the user watches live always persist, as does the agent's own
+ * completed/failed when a flavor normalizes it to a non-terminal status.
  */
 function shouldPersistToolUpdate(
   context: ActiveAcpTurn,
@@ -1480,25 +1478,17 @@ function shouldPersistToolUpdate(
   next: AcpToolCallState,
   reportedStatus: AcpToolCallState["status"],
 ): boolean {
-  const emission = context.toolEmissions.get(key);
-  const progressLength = toolCallProgressLength(next);
-  const decision =
+  const skipped = context.toolUpdatesSkipped.get(key) ?? 0;
+  const persist =
     reportedStatus === "completed" ||
     reportedStatus === "failed" ||
-    emission === undefined ||
-    progressLength !== emission.lastEmittedDetailLength
-      ? { emit: true, skippedSinceEmit: 0 }
-      : decideToolCallUpdateEmission({
-          previous,
-          next,
-          lastEmittedDetailLength: emission.lastEmittedDetailLength,
-          skippedSinceEmit: emission.skippedSinceEmit,
-        });
-  context.toolEmissions.set(key, {
-    lastEmittedDetailLength: decision.emit ? progressLength : emission?.lastEmittedDetailLength,
-    skippedSinceEmit: decision.skippedSinceEmit,
-  });
-  return decision.emit;
+    previous === undefined ||
+    previous.status !== next.status ||
+    previous.title !== next.title ||
+    toolCallVisibleOutputChanged(previous, next) ||
+    skipped + 1 >= TOOL_UPDATE_PERSIST_EVERY;
+  context.toolUpdatesSkipped.set(key, persist ? 0 : skipped + 1);
+  return persist;
 }
 
 export function makeAcpAdapterV2(
@@ -7010,7 +7000,7 @@ export function makeAcpAdapterV2(
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
-              toolEmissions: new Map(),
+              toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),

@@ -1083,6 +1083,15 @@ describe("AcpAdapterV2", () => {
                     },
                     ...streamedWrite("root-write"),
                     ...streamedWrite("child-write", "child-a"),
+                    // Same-length output replacements are still live output.
+                    ...Array.from({ length: 5 }, (_, index) => ({
+                      sessionUpdate: "tool_call_update" as const,
+                      toolCallId: "ticker",
+                      title: "Watch ticks",
+                      kind: "execute" as const,
+                      status: "in_progress" as const,
+                      rawOutput: `tick ${index + 1}`,
+                    })),
                     {
                       sessionUpdate: "tool_call_update",
                       toolCallId: "child-a",
@@ -1139,10 +1148,17 @@ describe("AcpAdapterV2", () => {
       ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
       for (const toolCallId of ["root-write", "child-write"]) {
         const writes = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith(toolCallId));
-        assert.isAtLeast(writes.length, 2, toolCallId);
+        assert.isAtLeast(writes.length, chunks / 10, toolCallId);
         assert.isAtMost(writes.length, chunks / 5, toolCallId);
         assert.equal(writes.at(-1)?.status, "completed", toolCallId);
         assert.include(JSON.stringify(writes.at(-1)), "END_OF_FILE", toolCallId);
+      }
+      const ticks = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith("ticker"));
+      for (let tick = 1; tick <= 5; tick++) {
+        assert.isTrue(
+          ticks.some((item) => JSON.stringify(item).includes(`tick ${tick}`)),
+          `tick ${tick} must persist`,
+        );
       }
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
