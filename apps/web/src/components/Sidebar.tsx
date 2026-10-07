@@ -1821,7 +1821,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               hover so the tail stays scannable when you're hunting. */}
             <span
               className={cn(
-                "shrink-0 transition-opacity",
+                "flex shrink-0 items-center transition-opacity",
                 (!props.isActive || variantAction === "unsettle") &&
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
