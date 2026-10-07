@@ -41,6 +41,10 @@ export function DeviceDuoControls(props: {
   // Stands rotate the device. Folding out of one returns it to how it was held before.
   const [standVertical, setStandVertical] = useState(settledVertical);
   const phoneVertical = stand ? standVertical : settledVertical;
+  // Folding out of a stand sends the rotation back, then the fold, and only one command can
+  // wait. Hold the fold buttons until a stand, or anything queued on one, has landed; the
+  // rotation must also be read in the frame of the display the stand settles on.
+  const foldWaits = props.state.pending && (stand || props.state.requested?.control === "pose");
   const foldLabels = {
     closed: "Closed",
     half: phoneVertical ? "Book" : "Laptop",
@@ -52,6 +56,7 @@ export function DeviceDuoControls(props: {
     pressed: boolean,
     onClick: () => void,
     glyph: React.ReactNode,
+    waits = false,
   ) => (
     <Tooltip key={key}>
       <TooltipTrigger
@@ -59,7 +64,7 @@ export function DeviceDuoControls(props: {
           <Button
             size="icon"
             variant={pressed ? "secondary" : "ghost"}
-            disabled={!props.enabled}
+            disabled={!props.enabled || waits}
             aria-label={label}
             aria-pressed={pressed}
             data-pressed={pressed ? "" : undefined}
@@ -91,6 +96,7 @@ export function DeviceDuoControls(props: {
               props.onCommand({ control: "angle", value });
             },
             <DeviceDuoGlyph pose={id === "half" ? "book" : id} rotated={!phoneVertical} />,
+            foldWaits,
           ),
         )}
       </div>
