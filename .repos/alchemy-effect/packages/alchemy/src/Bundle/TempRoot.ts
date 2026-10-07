@@ -28,13 +28,13 @@ export const resolveMainPath = Effect.fn(function* (main: string) {
 });
 
 /**
- * Creates a unique bundle staging directory under the nearest package-local
- * `.alchemy/tmp` root. Each invocation gets its own directory (via a random
+ * Creates a unique bundle staging directory under the configured runtime directory's
+ * `tmp` root. Each invocation gets its own directory (via a random
  * nonce) so concurrent bundle operations for the same resource never collide.
  * Stale directories from previous crashed runs are cleaned up best-effort.
  */
 export const createTempBundleDir = (
-  entry: string,
+  _entry: string,
   dotAlchemy: string,
   id: string,
 ) =>
@@ -43,7 +43,7 @@ export const createTempBundleDir = (
     const path = yield* Path.Path;
     const stack = yield* Stack;
     const stage = yield* Stage;
-    const tempRoot = yield* findBundleTempRoot(entry, dotAlchemy);
+    const tempRoot = path.join(dotAlchemy, "tmp");
     yield* fs.makeDirectory(tempRoot, { recursive: true });
 
     const nonce = crypto.randomUUID().slice(0, 8);
@@ -60,7 +60,7 @@ export const createTempBundleDir = (
  * unnecessary file churn between builds.
  */
 export const getStableContextDir = (
-  entry: string,
+  _entry: string,
   dotAlchemy: string,
   id: string,
 ) =>
@@ -69,7 +69,7 @@ export const getStableContextDir = (
     const path = yield* Path.Path;
     const stack = yield* Stack;
     const stage = yield* Stage;
-    const tempRoot = yield* findBundleTempRoot(entry, dotAlchemy);
+    const tempRoot = path.join(dotAlchemy, "tmp");
     const bundleId = `${stack.name}-${stage}-${id}`;
     const tempDir = path.join(tempRoot, bundleId);
 
@@ -85,28 +85,6 @@ export const cleanupBundleTempDir = (tempDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
-  });
-
-const findBundleTempRoot = (entry: string, dotAlchemy: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    let current = path.dirname(entry);
-    while (true) {
-      // `node_modules` acts as the package/workspace anchor for temp bundles.
-      if (yield* fs.exists(path.join(current, "node_modules"))) {
-        return path.join(current, path.basename(dotAlchemy), "tmp");
-      }
-
-      const parent = path.dirname(current);
-      if (parent === current) {
-        break;
-      }
-      current = parent;
-    }
-
-    return path.join(path.dirname(entry), path.basename(dotAlchemy), "tmp");
   });
 
 export const findCwdForBundle = Effect.fn(function* (entry: string) {

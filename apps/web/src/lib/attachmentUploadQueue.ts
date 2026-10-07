@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type ChatAttachment,
   type EnvironmentId,
@@ -12,6 +13,8 @@ import {
   type PersistedAttachmentVerification,
 } from "@t3tools/client-runtime/state/attachments";
 import { create } from "zustand";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 
 import {
   DraftId,
@@ -21,9 +24,10 @@ import {
   type ComposerThreadTarget,
 } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentCatalog } from "../connection/catalog";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
-import { readPreparedConnection } from "../state/session";
+import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentUploadState";
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
@@ -58,8 +62,10 @@ interface UploadJob {
   attachmentId: string | null;
   cancelled: boolean;
   abort: (() => void) | null;
+  stopWatchingConnection: () => void;
 }
 
+// Failed jobs retain their source and connection subscription until retry or release.
 const jobsByImageId = new Map<string, UploadJob>();
 const queue: UploadJob[] = [];
 const activeUploadsByEnvironment = new Map<EnvironmentId, number>();
@@ -133,6 +139,7 @@ function stampDraftFileUpload(job: UploadJob, attachmentId: string): void {
 }
 
 function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string): void {
+  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
   deletePendingAttachmentUpload({
     registry: appAtomRegistry,
     remove: attachmentEnvironment.remove,
@@ -174,6 +181,15 @@ function uploadBytes(input: {
 }
 
 async function runUpload(job: UploadJob): Promise<void> {
+  if (!readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)) {
+    setUploadState(job.image.id, {
+      status: "failed",
+      environmentId: job.environmentId,
+      reason: "This connection cannot upload attachments.",
+      ...(job.previous ? { previous: job.previous } : {}),
+    });
+    return;
+  }
   if (job.persistedAttachmentId) {
     const verification = await verifyPersistedAttachmentUpload({
       registry: appAtomRegistry,
@@ -255,6 +271,15 @@ async function runUpload(job: UploadJob): Promise<void> {
   }
 
   let lastStep = -1;
+  if (!readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)) {
+    setUploadState(job.image.id, {
+      status: "failed",
+      environmentId: job.environmentId,
+      reason: "This connection cannot upload attachments.",
+      ...(job.previous ? { previous: job.previous } : {}),
+    });
+    return;
+  }
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
     createUploadUrl: attachmentEnvironment.createUploadUrl,
@@ -267,6 +292,12 @@ async function runUpload(job: UploadJob): Promise<void> {
       sizeBytes: file.size,
     },
     resolveUploadUrl: (relativeUrl) => {
+      if (
+        job.cancelled ||
+        !readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)
+      ) {
+        return null;
+      }
       const connection = readPreparedConnection(job.environmentId);
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
@@ -290,7 +321,7 @@ async function runUpload(job: UploadJob): Promise<void> {
         },
       }),
     onMinted: (attachmentId) => {
-      if (job.cancelled) {
+      if (job.cancelled && readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)) {
         return "cancel";
       }
       job.attachmentId = attachmentId;
@@ -323,7 +354,9 @@ async function runUpload(job: UploadJob): Promise<void> {
       result.step === "mint"
         ? "Upload could not start"
         : result.step === "resolve-url"
-          ? "Not connected"
+          ? readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)
+            ? "Not connected"
+            : "This connection cannot upload attachments."
           : result.error instanceof Error
             ? result.error.message
             : "Upload failed",
@@ -358,7 +391,11 @@ function pumpUploads(): void {
         }
       })
       .finally(() => {
-        if (jobsByImageId.get(job.image.id) === job) {
+        if (
+          jobsByImageId.get(job.image.id) === job &&
+          readAttachmentUpload(job.image.id)?.status !== "failed"
+        ) {
+          job.stopWatchingConnection();
           jobsByImageId.delete(job.image.id);
         }
         const remaining = (activeUploadsByEnvironment.get(job.environmentId) ?? 1) - 1;
@@ -379,6 +416,7 @@ export function startAttachmentUpload(input: {
   /** Draft that owns the file; lets a background completion persist its ids. */
   readonly draftTarget?: ComposerThreadTarget;
 }): void {
+  if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) return;
   const existingJob = jobsByImageId.get(input.image.id);
   if (existingJob?.environmentId === input.environmentId) {
     return;
@@ -427,9 +465,34 @@ export function startAttachmentUpload(input: {
     attachmentId: null,
     cancelled: false,
     abort: null,
+    stopWatchingConnection: () => {},
   };
 
   jobsByImageId.set(input.image.id, job);
+  const connectionAtom = environmentCatalog.stateAtom(job.environmentId);
+  const isConnected = () =>
+    Option.exists(
+      AsyncResult.value(appAtomRegistry.get(connectionAtom)),
+      (state) => state.phase === "connected",
+    );
+  let wasConnected = isConnected();
+  job.stopWatchingConnection = appAtomRegistry.subscribe(connectionAtom, () => {
+    const connected = isConnected();
+    const reconnected = connected && !wasConnected;
+    wasConnected = connected;
+    if (!reconnected) return;
+    // The HTTP failure can arrive after the socket has already reconnected.
+    // Wait for that attempt, then retry only if this job still owns the file.
+    void job.settled.then(() => {
+      if (
+        jobsByImageId.get(job.image.id) === job &&
+        readAttachmentUpload(job.image.id)?.status === "failed" &&
+        isConnected()
+      ) {
+        retryAttachmentUpload(input);
+      }
+    });
+  });
   queue.push(job);
   setUploadState(input.image.id, {
     status: "uploading",
@@ -451,6 +514,7 @@ function cancelAttachmentUpload(imageId: string): void {
     return;
   }
   job.cancelled = true;
+  job.stopWatchingConnection();
   jobsByImageId.delete(imageId);
   const queuedIndex = queue.indexOf(job);
   if (queuedIndex !== -1) {
@@ -510,6 +574,7 @@ export function retryAttachmentUpload(input: {
   readonly image: ComposerImageAttachment | ComposerFileAttachment;
   readonly draftTarget?: ComposerThreadTarget;
 }): void {
+  if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) return;
   const previous = readAttachmentUpload(input.image.id);
   cancelAttachmentUpload(input.image.id);
   // A failed state's `attachmentId` is always one this queue minted, so this

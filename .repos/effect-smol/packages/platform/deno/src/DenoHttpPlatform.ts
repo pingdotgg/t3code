@@ -15,10 +15,10 @@ import * as NodeHttpCompression from "@effect/platform-node-shared/NodeHttpCompr
 import { contentType } from "@std/media-types"
 import { extname } from "@std/path"
 import { ByteSliceStream } from "@std/streams"
+import * as Etag from "effect/http/Etag"
+import * as Platform from "effect/http/HttpPlatform"
+import * as Response from "effect/http/HttpServerResponse"
 import * as Layer from "effect/Layer"
-import * as Etag from "effect/unstable/http/Etag"
-import * as Platform from "effect/unstable/http/HttpPlatform"
-import * as Response from "effect/unstable/http/HttpServerResponse"
 import * as DenoFileSystem from "./DenoFileSystem.ts"
 
 // gzip and deflate use the native CompressionStream, which does not expose a
@@ -44,7 +44,7 @@ export const make = Platform.make({
   compression,
   fileResponse(path, status, statusText, headers, start, end, contentLength) {
     let body: ReadableStream<Uint8Array>
-    if (contentLength === 0) {
+    if (contentLength === BigInt(0)) {
       body = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.close()
@@ -55,7 +55,7 @@ export const make = Platform.make({
       file.seekSync(start, Deno.SeekMode.Start)
       body = end === undefined
         ? file.readable
-        : file.readable.pipeThrough(new ByteSliceStream(0, contentLength - 1))
+        : file.readable.pipeThrough(new ByteSliceStream(0, end - start - 1))
     }
     return Response.raw(body, {
       headers: {
@@ -68,11 +68,11 @@ export const make = Platform.make({
     })
   },
   fileWebResponse(file, status, statusText, headers, options) {
-    const offset = Number(options?.offset ?? 0)
+    const offset = options?.offset ?? 0
     const available = Math.max(0, file.size - offset)
     const contentLength = options?.bytesToRead === undefined
       ? available
-      : Math.min(available, Math.max(0, Number(options.bytesToRead)))
+      : Math.min(available, Math.max(0, options.bytesToRead))
     let body: typeof file | ReadableStream<Uint8Array> = file
     if (contentLength === 0) {
       body = new ReadableStream<Uint8Array>({
@@ -88,7 +88,8 @@ export const make = Platform.make({
     return Response.raw(body, {
       headers: {
         ...headers,
-        "content-type": file.type,
+        "content-type": headers["content-type"] ??
+          (file.type === "" ? contentType(extname(file.name)) ?? "application/octet-stream" : file.type),
         "content-length": contentLength.toString()
       },
       status,

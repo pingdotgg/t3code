@@ -19,7 +19,6 @@ import * as csr from "./internal/graphCsr.ts"
 import * as MutableHashMap from "./MutableHashMap.ts"
 import * as Option from "./Option.ts"
 import type { Pipeable } from "./Pipeable.ts"
-import { hasProperty } from "./Predicate.ts"
 import type { Covariant, Invariant } from "./Types.ts"
 
 const TypeId = internal.TypeId
@@ -148,22 +147,6 @@ export interface Snapshot<out N, out E, out T extends Kind> {
 }
 
 /**
- * Common public protocol for graph values.
- *
- * **Details**
- *
- * Contains only the runtime marker and shared protocols. Graph storage is kept
- * internal; use module functions such as `nodes`, `edges`, `getNode`, and
- * `getEdge` to inspect graph contents.
- *
- * @category protocols
- * @since 3.18.0
- */
-export interface Proto<out N, out E> extends Iterable<readonly [NodeIndex, N]>, Equal.Equal, Pipeable, Inspectable {
-  readonly [TypeId]: Graph.Variance<N, E>
-}
-
-/**
  * Immutable graph interface.
  *
  * **When to use**
@@ -181,7 +164,10 @@ export interface Proto<out N, out E> extends Iterable<readonly [NodeIndex, N]>, 
  * @category models
  * @since 3.18.0
  */
-export interface Graph<out N, out E, T extends Kind = "directed"> extends Proto<N, E> {
+export interface Graph<out N, out E, T extends Kind = "directed">
+  extends Iterable<readonly [NodeIndex, N]>, Equal.Equal, Pipeable, Inspectable
+{
+  readonly [TypeId]: Graph.Variance<N, E>
   readonly type: T
   readonly mutable: false
 }
@@ -415,9 +401,9 @@ const withMutationGuard = <N, E, T extends Kind, A>(
  * @category guards
  * @since 4.0.0
  */
-export const isGraph = <N = unknown, E = unknown, T extends Kind = Kind, U = never>(
+export const isGraph: <N = unknown, E = unknown, T extends Kind = Kind, U = never>(
   u: U | Graph<N, E, T> | MutableGraph<N, E, T>
-): u is Graph<N, E, T> | MutableGraph<N, E, T> => hasProperty(u, TypeId)
+) => u is Graph<N, E, T> | MutableGraph<N, E, T> = internal.isGraph
 
 /**
  * Reconstructs an immutable graph from its indexed active structure.
@@ -777,7 +763,7 @@ const mutateScoped = <N, E, T extends Kind>(
  *
  * **When to use**
  *
- * Use for the usual immutable update workflow when several node or edge
+ * Use when several node or edge
  * mutations should be applied together.
  *
  * **Details**
@@ -874,9 +860,10 @@ class EdgeIdentity<NI, EI> implements Equal.Equal {
 
   [Hash.symbol](): number {
     const hash = Hash.hash(this.identity)
-    return this.type === "directed"
-      ? Hash.combine(Hash.hash(this.target))(Hash.combine(Hash.hash(this.source))(hash))
-      : Hash.optimize(hash ^ (Hash.hash(this.source) + Hash.hash(this.target)))
+    if (this.type === "directed") {
+      return Hash.optimize(Hash.combine(Hash.combine(hash, Hash.hash(this.source)), Hash.hash(this.target)))
+    }
+    return Hash.optimize(Hash.combine(hash, internal.endpointsHash(this.source, this.target)))
   }
 }
 
@@ -3031,6 +3018,8 @@ export const edgeCount = <N, E, T extends Kind = "directed">(
 /**
  * Returns the indices of all edges incident to a node.
  *
+ * **Details**
+ *
  * Each edge is returned once in graph edge order, including self-loops.
  * Throws a `GraphError` when the node does not exist.
  *
@@ -3093,6 +3082,8 @@ export const incidentEdges: {
 /**
  * Returns the indices of outgoing edges for a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges and self-loops are returned separately in adjacency order.
  * Throws a `GraphError` for an undirected graph or missing node.
  *
@@ -3124,6 +3115,8 @@ export const outgoingEdges: {
 /**
  * Returns the indices of incoming edges for a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges and self-loops are returned separately in reverse-adjacency
  * order. Throws a `GraphError` for an undirected graph or missing node.
  *
@@ -3154,6 +3147,8 @@ export const incomingEdges: {
 
 /**
  * Returns all edge indices connecting the supplied nodes.
+ *
+ * **Details**
  *
  * Directed graphs only include edges from `source` to `target`; undirected
  * graphs include either stored orientation. Parallel edges are retained.
@@ -3202,6 +3197,8 @@ export const edgesBetween: {
 /**
  * Returns the degree of a node in an undirected graph.
  *
+ * **Details**
+ *
  * Parallel edges count separately and a self-loop contributes two. Throws a
  * `GraphError` for a directed graph or missing node.
  *
@@ -3230,6 +3227,8 @@ export const degree: {
 /**
  * Returns the out-degree of a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges count separately and a self-loop contributes one. Throws a
  * `GraphError` for an undirected graph or missing node.
  *
@@ -3257,6 +3256,8 @@ export const outDegree: {
 
 /**
  * Returns the in-degree of a node in a directed graph.
+ *
+ * **Details**
  *
  * Parallel edges count separately and a self-loop contributes one. Throws a
  * `GraphError` for an undirected graph or missing node.
@@ -3336,7 +3337,24 @@ const getUniqueDirectedNeighbors = <N, E>(
   graph: Graph<N, E, "directed"> | MutableGraph<N, E, "directed">,
   nodeIndex: NodeIndex,
   direction: Direction
-): Array<NodeIndex> => Array.from(new Set(getDirectedNeighbors(graph, nodeIndex, direction)))
+): Array<NodeIndex> => {
+  const neighbors = getDirectedNeighbors(graph, nodeIndex, direction)
+  if (neighbors.length > ScanDegreeLimit) {
+    return Array.from(new Set(neighbors))
+  }
+  // getDirectedNeighbors returns a fresh array, so duplicates are compacted in place
+  let length = 0
+  for (let i = 0; i < neighbors.length; i++) {
+    const neighbor = neighbors[i]
+    let j = 0
+    while (j < length && neighbors[j] !== neighbor) j++
+    if (j === length) neighbors[length++] = neighbor
+  }
+  neighbors.length = length
+  return neighbors
+}
+
+const ScanDegreeLimit = 32
 
 /**
  * Returns the neighboring node indices for a node.
@@ -4662,20 +4680,15 @@ export interface ReachabilityConfig {
 const getUnweightedDistances = <N, E, T extends Kind>(
   graph: Graph<N, E, T> | MutableGraph<N, E, T>,
   source: NodeIndex,
-  direction: TraversalDirection,
-  target?: NodeIndex
+  direction: TraversalDirection
 ): Map<NodeIndex, number> => {
   const impl = internal.toImpl(graph)
   if (!impl.nodes.has(source)) {
     throw missingNode(source)
   }
-  if (target !== undefined && !impl.nodes.has(target)) {
-    throw missingNode(target)
-  }
 
   const cache = csr.get(graph)
   const sourceNode = csr.getNodeIndex(cache, source)!
-  const targetNode = target === undefined ? undefined : csr.getNodeIndex(cache, target)!
   const adjacencies = csr.getAdjacencies(cache, graph.type === "undirected" ? "outgoing" : direction)
   const compactDistances = new Int32Array(cache.nodeIds.length)
   compactDistances.fill(-1)
@@ -4685,23 +4698,20 @@ const getUnweightedDistances = <N, E, T extends Kind>(
   let tail = 0
   queue[tail++] = sourceNode
 
-  while (head < tail) {
-    const current = queue[head++]
-    if (current === targetNode) {
-      break
-    }
-    const visit = (adjacency: csr.Adjacency) => {
-      for (let i = adjacency.rowOffsets[current]; i < adjacency.rowOffsets[current + 1]; i++) {
-        const neighbor = adjacency.columnIndices[i]
-        if (compactDistances[neighbor] === -1) {
-          compactDistances[neighbor] = compactDistances[current] + 1
-          queue[tail++] = neighbor
-        }
+  const visit = (adjacency: csr.Adjacency, current: number) => {
+    for (let i = adjacency.rowOffsets[current]; i < adjacency.rowOffsets[current + 1]; i++) {
+      const neighbor = adjacency.columnIndices[i]
+      if (compactDistances[neighbor] === -1) {
+        compactDistances[neighbor] = compactDistances[current] + 1
+        queue[tail++] = neighbor
       }
     }
-    visit(adjacencies.primary)
+  }
+  while (head < tail) {
+    const current = queue[head++]
+    visit(adjacencies.primary, current)
     if (adjacencies.secondary !== undefined) {
-      visit(adjacencies.secondary)
+      visit(adjacencies.secondary, current)
     }
   }
 
@@ -5905,8 +5915,7 @@ export const minimumSpanningForest: {
     compactByNode.set(index, nodes.length)
     nodes.push({ index, data })
   }
-  const weightedEdges: Array<{ readonly index: EdgeIndex; readonly weight: number; readonly order: number }> = []
-  let order = 0
+  const weightedEdges: Array<{ readonly index: EdgeIndex; readonly weight: number }> = []
   withMutationGuard(graph, () => {
     for (const [index, edge] of impl.edges) {
       const weight = cost(edge.data)
@@ -5914,12 +5923,11 @@ export const minimumSpanningForest: {
         throw new GraphError({ message: "Minimum spanning forest does not support NaN or -Infinity edge weights" })
       }
       if (weight !== Infinity) {
-        weightedEdges.push({ index, weight, order })
+        weightedEdges.push({ index, weight })
       }
-      order++
     }
   })
-  weightedEdges.sort((self, that) => self.weight - that.weight || self.order - that.order)
+  weightedEdges.sort((self, that) => self.weight - that.weight)
 
   const parents = new Uint32Array(nodes.length)
   const ranks = new Uint8Array(nodes.length)
@@ -6754,7 +6762,7 @@ export const astar: {
   }
 
   const getHeuristic = (nodeData: N): number => {
-    const value = withMutationGuard(graph, () => config.heuristic(nodeData, targetNodeData))
+    const value = config.heuristic(nodeData, targetNodeData)
     if (!Number.isFinite(value)) {
       throw new GraphError({ message: "A* algorithm requires finite heuristic values" })
     }
@@ -6772,42 +6780,44 @@ export const astar: {
   const visited = new Uint8Array(cache.nodeIds.length)
   const openSet = denseMinHeapMake(cache.nodeIds.length)
   let sequence = 0
-  denseMinHeapPush(openSet, source, getHeuristic(sourceNodeData), sequence++)
+  withMutationGuard(graph, () => {
+    denseMinHeapPush(openSet, source, getHeuristic(sourceNodeData), sequence++)
 
-  while (openSet.size > 0) {
-    denseMinHeapPop(openSet)
-    const current = openSet.poppedNode
-    if (visited[current] !== 0) {
-      continue
-    }
-    visited[current] = 1
-    if (current === target) {
-      break
-    }
-
-    const currentScore = scores[current]
-    for (let i: number = outgoing.rowOffsets[current]; i < outgoing.rowOffsets[current + 1]; i++) {
-      const neighbor = outgoing.columnIndices[i]
-      if (visited[neighbor] !== 0) {
+    while (openSet.size > 0) {
+      denseMinHeapPop(openSet)
+      const current = openSet.poppedNode
+      if (visited[current] !== 0) {
         continue
       }
-      const edge = outgoing.edgeIndices[i]
-      const tentativeScore = currentScore + edgeWeights[edge]
-      if (edgeWeights[edge] !== Infinity && !Number.isFinite(tentativeScore)) {
-        throw new GraphError({ message: "A* distance calculation exceeded the finite number range" })
+      visited[current] = 1
+      if (current === target) {
+        break
       }
-      if (tentativeScore < scores[neighbor]) {
-        scores[neighbor] = tentativeScore
-        previousNode[neighbor] = current
-        previousEdge[neighbor] = edge
-        const priority = tentativeScore + getHeuristic(cache.nodeData[neighbor] as N)
-        if (!Number.isFinite(priority)) {
-          throw new GraphError({ message: "A* priority calculation exceeded the finite number range" })
+
+      const currentScore = scores[current]
+      for (let i: number = outgoing.rowOffsets[current]; i < outgoing.rowOffsets[current + 1]; i++) {
+        const neighbor = outgoing.columnIndices[i]
+        if (visited[neighbor] !== 0) {
+          continue
         }
-        denseMinHeapPush(openSet, neighbor, priority, sequence++)
+        const edge = outgoing.edgeIndices[i]
+        const tentativeScore = currentScore + edgeWeights[edge]
+        if (edgeWeights[edge] !== Infinity && !Number.isFinite(tentativeScore)) {
+          throw new GraphError({ message: "A* distance calculation exceeded the finite number range" })
+        }
+        if (tentativeScore < scores[neighbor]) {
+          scores[neighbor] = tentativeScore
+          previousNode[neighbor] = current
+          previousEdge[neighbor] = edge
+          const priority = tentativeScore + getHeuristic(cache.nodeData[neighbor] as N)
+          if (!Number.isFinite(priority)) {
+            throw new GraphError({ message: "A* priority calculation exceeded the finite number range" })
+          }
+          denseMinHeapPush(openSet, neighbor, priority, sequence++)
+        }
       }
     }
-  }
+  })
 
   if (scores[target] === Infinity) {
     return Option.none()
@@ -6927,7 +6937,7 @@ export const bellmanFord: {
   const edges = csr.getEdges(cache)
   const edgeIds = csr.getEdgeIds(cache)
   const edgeCache = csr.getEdgeEndpoints(cache)
-  const outgoing = csr.getOutgoing(cache)
+  const outgoing = csr.getOutgoingWithEdges(cache)
   const source = csr.getNodeIndex(cache, config.source)!
   const target = csr.getNodeIndex(cache, config.target)!
   const weights = new Float64Array(edges.length)
@@ -7020,7 +7030,9 @@ export const bellmanFord: {
     while (head < tail) {
       const node = queue[head++]
       for (let i = outgoing.rowOffsets[node]; i < outgoing.rowOffsets[node + 1]; i++) {
-        markAffected(outgoing.columnIndices[i])
+        if (weights[outgoing.edgeIndices[i]] !== Infinity) {
+          markAffected(outgoing.columnIndices[i])
+        }
       }
     }
   }
@@ -7339,18 +7351,12 @@ export const allShortestPaths: {
           throw new GraphError({ message: "All shortest paths distance calculation exceeded the finite number range" })
         }
         const known = distances[neighbor]
-        const predecessor = { node: currentNode, edge }
         if (nextDistance < known) {
           distances[neighbor] = nextDistance
-          previous[neighbor] = [predecessor]
+          previous[neighbor] = [{ node: currentNode, edge }]
           denseMinHeapPush(queue, neighbor, nextDistance, sequence++)
         } else if (nextDistance === known && nextDistance !== Infinity) {
-          const predecessors = previous[neighbor]
-          if (predecessors === undefined) {
-            previous[neighbor] = [predecessor]
-          } else {
-            predecessors.push(predecessor)
-          }
+          ;(previous[neighbor] ??= []).push({ node: currentNode, edge })
         }
       }
     }

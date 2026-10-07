@@ -2,12 +2,7 @@
  * @since 4.0.0
  */
 
-// @barrel: Auto-generated exports. Do not edit manually.
-
-/**
- * @since 4.0.0
- */
-export * as Mime from "./Mime.ts"
+// @barrel(Node*.ts): Auto-generated exports. Do not edit manually.
 
 /**
  * @since 4.0.0
@@ -75,6 +70,7 @@ export * as NodeMultipartParser from "./NodeMultipartParser.ts"
 export * as NodePath from "./NodePath.ts"
 
 /**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as NodeRedis from "./NodeRedis.ts"
@@ -128,8 +124,3 @@ export * as NodeWorker from "./NodeWorker.ts"
  * @since 4.0.0
  */
 export * as NodeWorkerRunner from "./NodeWorkerRunner.ts"
-
-/**
- * @since 4.0.0
- */
-export * as Undici from "./Undici.ts"

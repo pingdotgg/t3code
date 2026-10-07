@@ -5,8 +5,9 @@ description: Managed Upstash Redis. Bind Fly.ReadRedis / WriteRedis / ReadWriteR
 
 [`Fly.Redis`](/providers/fly/redis) is managed Upstash Redis in a
 Fly org. Bind [`ReadWriteRedis`](/providers/fly/readwriteredis) on a
-[Service](/fly/compute/services). Alchemy writes `REDIS_URL` as an
-App secret and the runtime client uses it internally. Redis is not
+[Service](/fly/compute/services). The runtime client reads the bound
+resource's redacted `url` Output. Alchemy also attaches the add-on and
+writes `REDIS_URL` as an App secret for compatibility. Redis is not
 reachable from CI — drive it over HTTP.
 
 ## Create Redis
@@ -48,16 +49,16 @@ because the name cannot exist twice.
 ## Bind from a Service
 
 Yield `Fly.ReadWriteRedis` (or `ReadRedis` / `WriteRedis`) in
-Service init. Provide the matching `*Http` layer.
+the Service's constructor. Provide the matching `*Http` layer.
 
 ```typescript
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const Cache = Fly.Redis("Cache");
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url, port: 3000 },
+  { main: import.meta.url, port: 3000 },
   Effect.gen(function* () {
     const cache = yield* Fly.ReadWriteRedis(Cache);
     return {

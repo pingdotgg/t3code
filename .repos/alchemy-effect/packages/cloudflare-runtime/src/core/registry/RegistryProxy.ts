@@ -2,8 +2,8 @@ import { loadInternalWorker } from "../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import * as NodeCrypto from "node:crypto";
 const RegistryProxyWorker = {
   worker: () =>
@@ -13,6 +13,7 @@ const RegistryProxyWorker = {
 };
 import {
   defaultDurableObjectUniqueKey,
+  DEFAULT_COMPATIBILITY_DATE,
   SERVICE_USER_WORKER,
 } from "../internal/constants.ts";
 import { formatInternalWorkerModules } from "../internal/internal-modules.ts";
@@ -87,7 +88,7 @@ export const RegistryProxyLive = Layer.effect(
             const service: WorkerdConfig.Service = {
               name: SERVICE_REGISTRY_PROXY,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 compatibilityFlags: ["service_binding_extra_handlers"],
                 modules: yield* registry
                   .read(subscribed)
@@ -167,17 +168,32 @@ export const RegistryProxyLive = Layer.effect(
                       detail: { proxyPort },
                     });
                   }
-                  yield* registry.subscribe(subscribed).pipe(
-                    Stream.runForEach((targets) =>
-                      http.post(`http://127.0.0.1:${proxyPort}/`, {
+                  // A replacement process starts with the original module
+                  // snapshot. Restore current targets before announcing it as
+                  // ready, then subscribe afresh for subsequent changes.
+                  const update = (targets: ResolvedTargetMap) =>
+                    HttpClient.filterStatusOk(http)
+                      .post(`http://127.0.0.1:${proxyPort}/`, {
                         body: HttpBody.jsonUnsafe(targets),
-                      }),
-                    ),
-                    Effect.forkScoped,
-                  );
+                      })
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new SystemError({
+                              subtag: "RegistryProxyUpdate",
+                              message:
+                                "Failed to update the registry proxy targets.",
+                              cause,
+                            }),
+                        ),
+                      );
+                  yield* registry.read(subscribed).pipe(Effect.flatMap(update));
+                  yield* registry
+                    .subscribe(subscribed)
+                    .pipe(Stream.runForEach(update), Effect.forkScoped);
                 }),
               ],
-              { concurrency: "unbounded" },
+              { concurrency: "unbounded", discard: true },
             ),
           api: {
             publish: (entry) =>

@@ -64,7 +64,7 @@ providers: Layer.mergeAll(Cloudflare.providers(), Stripe.providers()),
 ```
 
 Credentials resolve through the same `AuthProviders` registry as
-`alchemy deploy`, so tests pick up `alchemy login` profiles or
+`alchemy deploy`, so tests pick up stored profiles or
 the env-var auth methods registered by each provider.
 
 ### `state`
@@ -102,7 +102,8 @@ the same way the CLI does.
 ### `stage`
 
 Default stage for `deploy(Stack)` / `destroy(Stack)`. Defaults to
-`"test"`. Override per file, or per call:
+`test_$USER` (e.g. `test_sam`) so two people running the same suite
+against one account don't collide. Override per file, or per call:
 
 ```typescript
 Test.make({ providers, stage: "ci-pr-42" });
@@ -260,7 +261,7 @@ On Vitest, `test.only` is supported but `test.todo` is a stub
 it directly:
 
 ```typescript
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 test(
   "health check",
@@ -273,7 +274,7 @@ test(
 ```
 
 The implementation comes from
-`effect/unstable/http/FetchHttpClient` — same client the CLI
+`effect/http/FetchHttpClient` — same client the CLI
 uses. For a full PUT/GET round-trip against a deployed stack,
 see [Testing a Stack → Drive the live URL](/testing/testing-a-stack).
 

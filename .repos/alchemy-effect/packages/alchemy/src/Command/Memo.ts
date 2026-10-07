@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { dotAlchemyDirectory } from "../AlchemyContext.ts";
+import { isPathWithin } from "../Util/isPathWithin.ts";
 import type { PlatformError } from "effect/PlatformError";
-import fg from "fast-glob";
+import { convertPathToPattern, glob } from "tinyglobby";
 import { gitignoreRulesToGlobs } from "../Util/gitignore-rules-to-globs.ts";
 import { initialCwd } from "../Util/Node.ts";
 import { sha256, sha256Object } from "../Util/sha256.ts";
@@ -62,6 +64,8 @@ interface ResolvedMemoOptions {
 const Memo = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeBase = process.cwd();
+  const dotAlchemy = yield* dotAlchemyDirectory;
 
   const findUp = Effect.fn(function* (
     cwd: string,
@@ -109,11 +113,9 @@ const Memo = Effect.gen(function* () {
     const resolvedCwd = path.resolve(initialCwd, cwd ?? ".");
     return {
       cwd: resolvedCwd,
-      // Rewrite absolute include patterns to cwd-relative ones: fast-glob
-      // silently drops an absolute pattern's matches when the same call also
-      // contains relative patterns, and relative patterns keep the matched
-      // keys (and therefore the memo hash) free of machine-specific path
-      // prefixes.
+      // Normalize absolute include patterns to cwd-relative ones so matched
+      // keys (and therefore the memo hash) stay free of machine-specific
+      // path prefixes.
       include: (options.include ?? ["**/*"]).map((pattern) =>
         path.isAbsolute(pattern)
           ? path.relative(resolvedCwd, pattern).replaceAll("\\", "/")
@@ -132,13 +134,23 @@ const Memo = Effect.gen(function* () {
   const listFiles = Effect.fn(function* (
     options: ResolvedMemoOptions,
   ): Effect.fn.Return<string[], PlatformError> {
+    // Explicitly hashing a generated artifact still hashes its contents.
+    const excludeRuntime = !isPathWithin(dotAlchemy, options.cwd, runtimeBase);
     const [files, lockfile] = yield* Effect.all(
       [
         Effect.promise(() =>
-          fg.glob(options.include, {
+          glob(options.include, {
             cwd: options.cwd,
-            ignore: options.exclude,
+            ignore: [
+              ...options.exclude,
+              ...(excludeRuntime
+                ? [
+                    `${convertPathToPattern(path.resolve(runtimeBase, dotAlchemy))}/**`,
+                  ]
+                : []),
+            ],
             onlyFiles: true,
+            expandDirectories: false,
             dot: true,
           }),
         ),
@@ -165,6 +177,15 @@ const Memo = Effect.gen(function* () {
     // cwd-relative (like the lockfile above) so `hashFiles` resolves them
     // correctly and machine-specific path prefixes never leak into the hash.
     return files
+      .filter(
+        (file) =>
+          !excludeRuntime ||
+          !isPathWithin(
+            dotAlchemy,
+            path.resolve(options.cwd, file),
+            runtimeBase,
+          ),
+      )
       .map((file) =>
         path.isAbsolute(file) ? path.relative(options.cwd, file) : file,
       )

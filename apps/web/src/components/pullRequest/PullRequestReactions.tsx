@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   PullRequestReaction,
@@ -9,7 +10,6 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
@@ -58,7 +58,9 @@ export function PullRequestReactionBar({
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
   }>({ signature: "", values: EMPTY_PENDING });
-  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, { reportFailure: false });
+  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
+    reportFailure: false,
+  });
 
   const signature = reactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
@@ -134,7 +136,7 @@ export function PullRequestReactionBar({
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>
-          <PopoverPopup align="start" className="w-auto" side="top" viewportClassName="py-2">
+          <PopoverPopup align="start" side="top" padding="compact">
             <div className="flex items-center gap-0.5">
               {PULL_REQUEST_REACTION_ORDER.map((content) => {
                 const reacted =

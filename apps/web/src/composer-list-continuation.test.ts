@@ -48,6 +48,12 @@ describe("composer list continuation", () => {
     expect(listContinuationForEnter("1. foo", 1)).toBeNull();
   });
 
+  it("refuses to split a supplementary currency skill chip", () => {
+    const value = "1. 𑿝review go";
+    const cursor = value.indexOf(" go") - 1;
+    expect(listContinuationForEnter(value, cursor)).toBeNull();
+  });
+
   it("refuses to split an inline chip", () => {
     const value = "1. @README.md go";
     const cursor = value.indexOf("README") + 2;

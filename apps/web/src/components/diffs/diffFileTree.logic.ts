@@ -23,11 +23,22 @@ function toGitStatus(file: FileDiffMetadata): GitStatus {
   }
 }
 
-/** Maps parsed diff files to tree entries, keeping the diff's own order. */
+/**
+ * Maps parsed diff files to tree entries, keeping the diff's own order. A path
+ * appears once: a type change (regular file to symlink) is a deletion plus an
+ * addition of the same path, and the tree shows the surviving file as modified.
+ */
 export function diffFileTreeEntries(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<DiffFileTreeEntry> {
-  return files.map((file) => ({ path: resolveFileDiffPath(file), status: toGitStatus(file) }));
+  const statusByPath = new Map<string, GitStatus>();
+  for (const file of files) {
+    const path = resolveFileDiffPath(file);
+    const status = toGitStatus(file);
+    const previous = statusByPath.get(path);
+    statusByPath.set(path, previous === undefined || previous === status ? status : "modified");
+  }
+  return [...statusByPath].map(([path, status]) => ({ path, status }));
 }
 
 /**

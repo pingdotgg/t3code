@@ -13,7 +13,7 @@ import { parsePullRequestReference } from "~/pullRequestReference";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -208,7 +208,7 @@ function LinkPullRequestDialog({
             this environment has a project for.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-3">
+        <DialogPanel>
           <Input
             ref={inputRef}
             placeholder="Pull request URL or #42"

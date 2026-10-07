@@ -1,12 +1,12 @@
 ---
 title: Services
-description: An Effect program running in a Fly Machine. Scale it with count.
+description: An Effect program running in Fly Machines in its own Fly App. Scale it with count.
 ---
 
 A [`Service`](/providers/fly/service) is an Effect program running
-in a Fly.io [Machine](/fly/compute/machines). Set `count` to scale
-it up or down. Several Services share one
-[App](/fly/compute/apps).
+in Fly.io [Machines](/fly/compute/machines) inside its own Fly App.
+It gets its own `{name}.fly.dev` hostname, addresses, logs, and
+metrics. Set `count` to scale it up or down.
 
 ## Declare a Service
 
@@ -17,39 +17,36 @@ program that runs on it.
 // src/api.ts
 import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
-import { Site } from "./app.ts";
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url },
+  { main: import.meta.url },
   Effect.gen(function* () {
     return {};
   }),
 ) {}
 ```
 
-`app` is the parent [App](/fly/compute/apps). Pass the declaration
-directly, yielded or module-scope. Changing `app` replaces the
-Service.
+The Service creates its Fly App. Deleting the Service deletes that
+App.
 
 `main: import.meta.url` is the bundle entrypoint. Alchemy bundles
 this file with Rolldown, builds a Docker image (default
-`oven/bun:1`), and pushes it to
+`node:26-slim`), and pushes it to
 `registry.fly.io/{app}:{id}-{hash}`.
 
 ## Serve HTTP with `fetch`
 
-Return `fetch` from the init Effect to boot an HTTP server.
+Return `fetch` from the constructor Effect to boot an HTTP server.
 
 ```diff lang="typescript"
 import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Site } from "./app.ts";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url },
+  { main: import.meta.url },
   Effect.gen(function* () {
 -    return {};
 +    return {
@@ -64,13 +61,16 @@ Omit `fetch` for a [background service](#background-services).
 ## Pin a region
 
 Fly Machines live in a [region](/fly/compute/regions). The default
-is `iad`. Changing `region` replaces the Service.
+is `iad`. Pass a list, such as `region: ["iad", "lhr"]`, to run
+`count` Machines in each region behind one hostname; see
+[Several regions, one hostname](/fly/compute/regions#several-regions-one-hostname).
+Changing `region` updates the Service in place.
 
 ```diff lang="typescript"
 export default class Api extends Fly.Service<Api>()(
   "Api",
--  { app: Site, main: import.meta.url },
-+  { app: Site, main: import.meta.url, region: "iad" },
+-  { main: import.meta.url },
++  { main: import.meta.url, region: "iad" },
 ```
 
 ## Set the port
@@ -81,16 +81,15 @@ Alchemy writes it to `PORT`. Default `3000`.
 ```diff lang="typescript"
 export default class Api extends Fly.Service<Api>()(
   "Api",
--  { app: Site, main: import.meta.url, region: "iad" },
-+  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+-  { main: import.meta.url, region: "iad" },
++  { main: import.meta.url, region: "iad", port: 3000 },
 ```
 
 ## The public URL
 
-Yield the Service in the Stack. `api.url` is
-`https://{appName}.fly.dev`. Alchemy does not create this hostname.
-It is the parent [App](/fly/compute/apps)'s fly.dev name. The
-Service does not get its own URL.
+A Service is public by default. Alchemy allocates a shared IPv4 and
+an IPv6 on its App (both free), and `api.url` is
+`https://{appName}.fly.dev`.
 
 ```typescript
 export default Alchemy.Stack(
@@ -103,86 +102,256 @@ export default Alchemy.Stack(
 );
 ```
 
-`url` is `undefined` when you pass `services: []`.
+`url` is `undefined` when you pass `services: []` (nothing is
+published).
 
-:::note[One fly.dev hostname per App]
-Every published Service on the App shares `{appName}.fly.dev`. Put
-one public Service on an App. Use `services: []` for workers.
+## Every published port
+
+`url` is one endpoint. A Service that publishes several ports has one
+endpoint per port at the same hostname. `endpoints` lists them with
+the port, handlers, and a URL when the port speaks HTTP. Ports that
+only redirect to HTTPS are left out.
+
+```typescript
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    services: [
+      {
+        internalPort: 3000,
+        ports: [
+          { port: 80, handlers: ["http"], forceHttps: true },
+          { port: 443, handlers: ["tls", "http"] },
+        ],
+      },
+      { internalPort: 9000, ports: [{ port: 8443, handlers: ["tls", "http"] }] },
+      { internalPort: 7000, ports: [{ port: 7000 }] },
+    ],
+  },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+`api.url` is `https://{appName}.fly.dev`. `api.endpoints` has three
+entries: 443 and 8443 with `https://` URLs, and 7000 with no URL,
+because raw TCP has no HTTP address.
+
+:::note[Plain HTTP on other ports needs IPv6]
+The free shared IPv4 serves TLS on any port but plain HTTP only on
+port 80. A plain-HTTP port such as 8080 answers over IPv6 only.
 :::
+
+## A stable hostname
+
+`name` names the Service's App, so it is the `{name}.fly.dev`
+hostname. App names are globally unique across Fly. Omit `name` and
+Alchemy generates one from the stack, stage, and logical ID.
+
+```diff lang="typescript"
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+-  { main: import.meta.url, region: "iad", port: 3000 },
++  { main: import.meta.url, name: "my-api", region: "iad", port: 3000 },
+```
+
+Changing `name` replaces the Service. Fly cannot rename an App, so
+Alchemy creates the Service under the new name, then deletes the old
+App.
+
+## Private Services
+
+`public: false` keeps a Service off the internet. It gets only a
+free [Flycast](/fly/networking#private-services-with-flycast) address
+and publishes plain HTTP on port 80, because Fly issues no
+certificate for `.flycast`. `url` is `undefined`.
+
+```typescript
+// src/users.ts
+export default class Users extends Fly.Service<Users>()(
+  "Users",
+  { main: import.meta.url, public: false },
+  Effect.gen(function* () {
+    return {
+      list: () => Effect.succeed([{ id: "u1", name: "Ada" }]),
+    };
+  }),
+) {}
+```
+
+Other Services call it by [binding it](#call-one-service-from-another).
+Turning `public` on or off updates the Service in place; its App and
+hostname stay the same.
+
+## The private URL
+
+`privateUrl` is where bound callers reach a Service over Fly's private
+network:
+
+- A private Service: `http://{appName}.flycast` (plain HTTP on 80).
+- A public Service: `http://{appName}.flycast:7780`. Its default ports
+  are an HTTPS redirect (80) and HTTPS (443), so Alchemy publishes an
+  extra plain-HTTP port for bound callers, `bindingPort`.
+
+`bindingPort` defaults to `7780`. It answers only requests that arrive
+over Fly's private network. Change it when it collides with another
+port, for example another Service's `bindingPort` in a
+[shared App](#group-services-in-one-app):
+
+```diff lang="typescript"
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+-  { main: import.meta.url, port: 3000 },
++  { main: import.meta.url, port: 3000, bindingPort: 7781 },
+```
+
+A Service that already publishes a plain-HTTP port uses that port
+instead. `privateUrl` is `undefined` when the Service publishes
+nothing (`services: []`).
+
+## Restrict a Service to the stack's network
+
+Fly's default private network spans the organization, so every App
+in the org can resolve a private Service. `network` puts the Service's
+App on its own private network instead. Only Apps on the same network
+can resolve its `privateUrl`.
+`Fly.stackNetwork` yields a network name unique to the stack and
+stage; yield it inside Effect-valued props:
+
+```typescript
+export default class Users extends Fly.Service<Users>()(
+  "Users",
+  Effect.gen(function* () {
+    return {
+      main: import.meta.url,
+      public: false,
+      network: yield* Fly.stackNetwork,
+    };
+  }),
+  /* ... */
+) {}
+```
+
+Give every Service in the stack the same `network`. Changing it
+replaces the Service, and it cannot be combined with `app`.
+[Connect Services](/fly/compute/connecting-services) walks through a
+private backend behind a public gateway.
+
+## Call one Service from another
+
+Bind a Service with `Fly.bindService` in the caller's program. The
+client has the methods the target returns (everything besides `fetch`
+and `run`), typed from its program:
+
+```typescript
+// src/gateway.ts
+import Users from "./users.ts";
+
+export default class Gateway extends Fly.Service<Gateway>()(
+  "Gateway",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const users = yield* Fly.bindService(Users);
+    return {
+      fetch: Effect.gen(function* () {
+        return yield* HttpServerResponse.json(yield* users.list());
+      }).pipe(Effect.orDie),
+    };
+  }),
+) {}
+```
+
+Binding makes `Gateway` deploy after `Users` and hands it the address
+and caller token of `Users`. Only Services that bind `Users` receive
+its token, so only they can call its methods. The caller must be on
+the same network as the target; otherwise its deploy fails with
+`Fly.ServiceUnreachable`.
+
+`users.fetch(HttpClientRequest.get("/path"))` sends a request to the
+target's `fetch` routes. `Fly.bindEndpoint(Users, { port: 9000 })`
+binds one other published port and returns its `host`, `port`, `url`,
+and an HTTP `client`.
+
+[Connect Services](/fly/compute/connecting-services) walks through
+several Services on a stack network, the security model, streaming
+methods, `bindEndpoint`, and two Services that bind each other.
 
 ## Fly's proxy is the load balancer
 
 There is no LoadBalancer resource. Fly runs an Anycast proxy at the
 edge. Unless you override `services`, Alchemy publishes HTTP 80 and
-HTTPS 443 on that proxy and points them at `port` inside each
-Machine.
+HTTPS 443 on that proxy (plain HTTP 80 for a private Service) and
+points them at `port` inside each Machine.
 
 A request to `https://{appName}.fly.dev` lands on Fly's edge. Fly
 terminates TLS on 443, picks one started Machine that published this
 service, and forwards to `port` where `fetch` runs.
 
-## An address so it answers
-
-`{app}.fly.dev` does not answer over IPv4 until the App has an
-[`IpAssignment`](/fly/networking). Allocate a shared Anycast IPv4
-on the same App and yield it next to the Service.
-
-```typescript
-export const PublicIp = Fly.IpAssignment("Shared", {
-  app: Site,
-  type: "shared_v4",
-});
-```
-
-```diff lang="typescript"
-Effect.gen(function* () {
-  const api = yield* Api;
-+  const ip = yield* PublicIp;
-  return { url: api.url, ip: ip.ip };
-}),
-```
-
 ## Scale with `count`
 
-`count` is how many Machines to keep running. Default `1`. They all
-publish the same proxy service, so they all sit behind
-`{app}.fly.dev`. Fly's proxy picks one Machine per request. Each
-replica gets its own Volume from every [`MountVolume`](/fly/data/volumes)
-binding.
+`count` is how many Machines to provision. Default `1`. They all
+publish the same proxy service behind `{app}.fly.dev`. Fly's proxy
+picks an available Machine per request. With `autostop: "stop"` or
+`"suspend"`, some provisioned replicas can be idle; `count` is not a
+promise that every process is continuously running. Use `autostart`
+and `minMachinesRunning` for Fly's wake-up and minimum-capacity behavior.
+See [idle capacity during replacement](/fly/compute/deployments#keep-idle-capacity-with-stop-or-suspend).
+
+Each replica gets its own Volume from every
+[`MountVolume`](/fly/data/volumes) binding. Volume-backed Services use
+rolling updates; blue/green does not clone or share those volumes.
 
 ```diff lang="typescript"
 export default class Api extends Fly.Service<Api>()(
   "Api",
--  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
-+  { app: Site, main: import.meta.url, region: "iad", count: 3, port: 3000 },
+-  { main: import.meta.url, region: "iad", port: 3000 },
++  { main: import.meta.url, region: "iad", count: 3, port: 3000 },
 ```
 
 ## What a deploy does
 
 Docker must be running.
 
-Alchemy bundles `main` with Rolldown. If the hash matches the last
-deploy, it skips build and push. Otherwise it builds `linux/amd64`
-from `image` (default `oven/bun:1`) and pushes to
-`registry.fly.io/{app}:{id}-{hash}`. Then it creates or updates
-`count` Machines and waits until they are `started`.
+Alchemy creates the Service's App and its addresses if they are
+missing, then bundles `main` with Rolldown. If the hash matches the
+last deploy, it skips build and push. Otherwise it builds
+`linux/amd64` from `image` (default `node:26-slim`) and pushes to
+`registry.fly.io/{app}:{id}-{hash}`. With the default rolling policy,
+it creates or updates replicas sequentially. For each Machine it starts,
+reconcile waits for configured readiness checks before proceeding.
 
-Changed code is a new image and an in-place Machine update.
-Unchanged code is a no-op.
+By default, changed code produces a new image and an in-place Machine update.
+Unchanged desired inputs are a no-op. Opt into `deploy: { strategy: "bluegreen" }` to
+[prepare healthy replacements before retiring the old generation](/fly/compute/deployments).
+Keep one Service declaration. Alchemy manages both generations and uses the
+old Machine's shutdown policy when retiring it. The guide explains readiness,
+traffic overlap, Effect finalizers, idle capacity, and recovery. Raw images and
+external servers must handle their own shutdown.
 
-Override the base image with `image` (must still run bun). Pass
+Override the base image with `image` (must still run Node). Pass
 `services: []` for a process that should not be published.
 
-:::note[Deploy waits for `started`, not `/health`]
-Alchemy waits until the Machine is `started`. It does not poll
-`/health`. Omitting that route does not fail the deploy.
+:::note[Deploy waits for Fly service checks]
+If a Machine has service checks (the default TCP check, or your HTTP
+checks), reconcile waits until Fly reports them `passing` before it
+moves on to the next replica. `started` only means the VM booted.
+The default readiness budget is 60 seconds; set `deploy.healthTimeout`
+for a longer bounded wait. If checks do not pass, deployment fails with
+`Fly.ReplicaChecksNotPassing`, including the last observed check
+results, and later replicas remain unchanged. Earlier updates are
+not automatically rolled back.
+
+Omitting `/health` does not fail the deploy unless you configured an
+HTTP check on that path. A single replica still updates in place and
+can be unavailable during deployment; this is not blue/green deployment.
 :::
 
 ## Config
 
-Yield `Config` in init. Alchemy reads the value from the env of
-whoever deploys and writes it onto the Machine. Do not pass
-`env: { ... }` on a Service.
+Yield `Config` in the constructor. Alchemy reads the value from the env of
+whoever deploys and writes it onto the Machine.
 
 ```typescript
 import * as Config from "effect/Config";
@@ -190,9 +359,9 @@ import * as Redacted from "effect/Redacted";
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url, port: 3000 },
+  { main: import.meta.url, port: 3000 },
   Effect.gen(function* () {
-    const apiKey = yield* Config.redacted("API_KEY");
+    const apiKey = yield* Config.Redacted("API_KEY");
 
     return {
       fetch: Effect.gen(function* () {
@@ -204,48 +373,69 @@ export default class Api extends Fly.Service<Api>()(
 ) {}
 ```
 
-`Config.redacted("API_KEY")` is `Redacted<string>`. Unwrap with
+`Config.Redacted("API_KEY")` is `Redacted<string>`. Unwrap with
 `Redacted.value` only where you need the raw string.
 
 Alchemy also injects `PORT` (when `port` is set) and stack metadata.
-For a secret Fly should own and inject into every Machine on the
-App, use [`Fly.Secret`](/fly/data/secrets).
+For a secret Fly should own and inject into every Machine on an App,
+use [`Fly.Secret`](/fly/data/secrets) and run the Service in that App
+([Group Services in one App](#group-services-in-one-app)).
+
+Service-bound secret preparation establishes a required version floor for
+replacement Machines, not a snapshot of the App vault. Standalone secrets,
+other Services, and runtime writers are not serialized by Machine leases.
+An out-of-band secret update alone does not guarantee a new rollout; use
+an explicit desired-input change when rotation requires replacement.
+See [rotating secrets with your application](/fly/compute/deployments#rotate-secrets-with-your-application).
 
 ## Background services
 
-Omit `port` and `fetch`. Pass `services: []` so Fly does not
-publish a proxy. Use `ServerHost.run` for a long-running loop:
+Omit `fetch` and pass `services: []` so Fly does not publish a proxy.
+Return a `run` Effect for a long-running loop:
 
 ```typescript
 // src/worker.ts
 import * as Fly from "alchemy/Fly";
-import { ServerHost } from "alchemy/Server";
 import * as Effect from "effect/Effect";
-import { Site } from "./app.ts";
 
 export default class Worker extends Fly.Service<Worker>()(
   "Worker",
-  { app: Site, main: import.meta.url, region: "iad", services: [] },
-  Effect.gen(function* () {
-    const host = yield* ServerHost;
-
-    yield* host.run(
-      Effect.gen(function* () {
-        return yield* Effect.never;
-      }).pipe(Effect.orDie),
-    );
-  }),
+  { main: import.meta.url, region: "iad", services: [] },
+  Effect.succeed({ run: Effect.never }),
 ) {}
 ```
 
-If the process exits, Fly restarts it.
+`Effect.never` above only keeps the example alive. Acquire queue connections
+and start real consumers inside `run`, not during the outer initialization
+Effect that also participates in planning. You can return both `fetch` and
+`run` for mixed HTTP and background work.
 
-## Multiple Services, one App
+For blue/green, a private worker also needs a named readiness check and a real
+server to answer it. A `run`-only program does not create a readiness endpoint.
+Cordoning controls proxy traffic, not job acquisition; both generations can
+consume work before promotion.
 
-Each Service has its own Machines, image, env, and lifecycle. Point
-several at the same `app`.
+With blue/green or explicit `shutdown`, the managed bootstrap initiates runtime
+cleanup on SIGTERM/SIGINT while HTTP requests and shared dependencies remain
+alive. The application owns its stop-acquisition barrier and bounded job drain.
+Use ordinary finalizers and a separately owned work scope for jobs that must
+survive worker-loop interruption; no new public shutdown hook is required.
+See the [queue worker cleanup example](/fly/compute/deployments#close-your-queue-worker-on-shutdown).
+
+Fly's restart policy controls what happens when the process exits. Suspension
+is not ordinary process shutdown, so it is not a promise that finalizers run.
+
+## Group Services in one App
+
+Pass `app` to run a Service inside an existing
+[`Fly.App`](/fly/compute/apps) instead of its own. The Services share
+the App's hostname, addresses, and secrets. Each Service still has its
+own Machines, image, env, and lifecycle. Changing `app`, or adding or
+removing it, replaces the Service.
 
 ```typescript
+export const Site = Fly.App("Site");
+
 class Api extends Fly.Service<Api>()(
   "Api",
   { app: Site, main: import.meta.url, port: 3000 },
@@ -255,27 +445,88 @@ class Api extends Fly.Service<Api>()(
 class Worker extends Fly.Service<Worker>()(
   "Worker",
   { app: Site, main: import.meta.url, services: [] },
-  /* mounts a disk, writes files */
+  /* background loop */
 ) {}
 ```
 
-A Volume attaches to one Machine. `MountVolume` with `count: 3`
-creates three disks.
+Group Services when they need something that attaches to a `Fly.App`:
+
+- a [`Fly.Secret`](/fly/data/secrets) or `SecretKey` shared by several
+  Services
+- a custom domain via [`Fly.Certificate`](/fly/networking#use-your-own-hostname)
+- Fly-native control of the App (`fly` CLI, dashboard settings)
+
+Alchemy manages no public addresses for a Service in a shared App.
+Allocate an [`IpAssignment`](/fly/networking#addresses-for-a-shared-app)
+on the App. `url` and `endpoints` follow each Service's own ports, so
+Services in one App tell themselves apart by port: an API on 443 has
+`url` `https://{appName}.fly.dev`, and an admin UI on 8443 has
+`https://{appName}.fly.dev:8443`. `public` and `network` do not apply
+(combining them with `app` fails with `Fly.InvalidServiceProps`).
+
+### Ports in a shared App
+
+Fly's proxy routes an App's traffic by port only, so each Service in
+the App needs its own ports. When two Services publish the same port
+and protocol, the App fails with `Fly.ServicePortConflict` before any
+Machine is created: at plan time when the App already exists,
+otherwise when the App is reconciled. Each Service's deploy also checks
+the Machines already running in the App, including ones created
+outside the stack.
+
+```typescript
+class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, port: 3000 },
+  /* HTTPS on 443 */
+) {}
+
+class Admin extends Fly.Service<Admin>()(
+  "Admin",
+  {
+    app: Site,
+    main: import.meta.url,
+    port: 3000,
+    bindingPort: 7781,
+    services: [
+      { protocol: "tcp", internalPort: 3000, ports: [{ port: 8443, handlers: ["tls", "http"] }] },
+    ],
+  },
+  /* HTTPS on 8443 */
+) {}
+```
+
+The count includes `bindingPort`: two Services in one App need
+distinct `bindingPort`s. A background Service with `services: []`
+publishes nothing and never conflicts.
+
+### Bind a Service in a shared App
+
+A Service in a shared App is bindable too. Its deploy adds a Flycast
+address to the App, and its `privateUrl` is
+`http://{appName}.flycast` on its own plain-HTTP port or its
+`bindingPort`. Callers must be on the App's network. A Service in a
+shared App cannot be part of a
+[binding cycle](/fly/compute/connecting-services#two-services-that-bind-each-other);
+only Services that own their App can bind each other.
 
 ## Logs
 
-Machine logs live in the Fly dashboard and `fly logs`. `alchemy
-logs` / `alchemy tail` don't support Fly Services yet.
+Machine logs live in the Fly dashboard and `fly logs -a {appName}`.
+`alchemy logs` (including `--tail`) doesn't support Fly Services yet.
 
 ## Where next
 
-The [tutorial](/fly/tutorial/part-2) builds a Service step by step.
+The [tutorial](/fly/tutorial/part-1) builds a Service step by step.
+[Connect Services](/fly/compute/connecting-services) binds several
+Services to each other on a private network.
+[Networking](/fly/networking) covers public and private Services.
 [Sprites](/fly/compute/sprites) are org-scoped sandboxes that
-hibernate — no parent App, no Docker image.
+hibernate — no App, no Docker image.
 [Regions](/fly/compute/regions) lists codes and how Volumes follow.
 [Volumes](/fly/data/volumes) covers `MountVolume`.
 [Postgres](/fly/data/postgres) binds with `ConnectPostgres`.
 [Redis](/fly/data/redis) binds with `ReadWriteRedis`.
 [Tigris](/fly/data/tigris) binds with `PutObject` / `GetObject`.
-[Secrets](/fly/data/secrets) covers `Config.redacted` and `Fly.Secret`.
+[Secrets](/fly/data/secrets) covers `Config.Redacted` and `Fly.Secret`.
 The [`Service` reference](/providers/fly/service) lists every prop.

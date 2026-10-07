@@ -20,9 +20,9 @@ import type * as Scope from "effect/Scope";
 import { initialCwd } from "../Util/Node.ts";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 import { isNonInteractive } from "../Util/interactive.ts";
 import {
   makeCommandRedactor,
@@ -311,36 +311,46 @@ export const CommandExecutorLive = () =>
       const spawn = (props: CommandProps) =>
         parseCommand(props).pipe(
           Effect.flatMap(({ bin, args }) =>
-            spawner.spawn(
-              ChildProcess.make(bin, args, {
-                // Anchored: a live `process.cwd()` read can race a
-                // concurrent tool's transient chdir (see Util/Node.ts).
-                cwd: path.resolve(initialCwd, props.cwd ?? "."),
-                shell: props.shell ?? false,
-                env: Object.fromEntries(
-                  Object.entries(props.env ?? {})
-                    .filter(
-                      (
-                        entry,
-                      ): entry is [
-                        string,
-                        string | Redacted.Redacted<string>,
-                      ] => entry[1] !== undefined,
-                    )
-                    .map(([k, v]) => [
-                      k,
-                      Redacted.isRedacted(v) ? Redacted.value(v) : v,
-                    ]),
-                ),
-                extendEnv: true,
-                stdin: isNonInteractive() ? "ignore" : "inherit",
-                stdout: "pipe",
-                stderr: "pipe",
-                // The Effect process runtime creates a detached process group
-                // by default on POSIX. Preserve that default so timeouts and
-                // scoped interruption can terminate every descendant.
-                killSignal: "SIGKILL",
-              }),
+            Effect.acquireRelease(
+              spawner.spawn(
+                ChildProcess.make(bin, args, {
+                  // Anchored: a live `process.cwd()` read can race a
+                  // concurrent tool's transient chdir (see Util/Node.ts).
+                  cwd: path.resolve(initialCwd, props.cwd ?? "."),
+                  shell: props.shell ?? false,
+                  env: Object.fromEntries(
+                    Object.entries(props.env ?? {})
+                      .filter(
+                        (
+                          entry,
+                        ): entry is [
+                          string,
+                          string | Redacted.Redacted<string>,
+                        ] => entry[1] !== undefined,
+                      )
+                      .map(([k, v]) => [
+                        k,
+                        Redacted.isRedacted(v) ? Redacted.value(v) : v,
+                      ]),
+                  ),
+                  extendEnv: true,
+                  stdin: isNonInteractive() ? "ignore" : "inherit",
+                  stdout: "pipe",
+                  stderr: "pipe",
+                  // The Effect process runtime creates a detached process group
+                  // by default on POSIX. Preserve that default so timeouts and
+                  // scoped interruption can terminate every descendant.
+                  // Preserve hard cleanup when the leader exits with an error.
+                  killSignal: "SIGKILL",
+                }),
+              ),
+              (child) =>
+                child
+                  .kill({
+                    killSignal: "SIGTERM",
+                    forceKillAfter: TERMINATION_GRACE_PERIOD,
+                  })
+                  .pipe(Effect.ignore),
             ),
           ),
           Effect.map((child) =>
@@ -385,8 +395,16 @@ export const CommandExecutorLive = () =>
             const execution = Effect.all(
               {
                 exitCode: child.exitCode,
-                stdout: collect(child.stdout, session.note, redactor),
-                stderr: collect(child.stderr, session.note, redactor),
+                stdout: collect(
+                  child.stdout,
+                  (line) => session.note(line, { kind: "output" }),
+                  redactor,
+                ),
+                stderr: collect(
+                  child.stderr,
+                  (line) => session.note(line, { kind: "output" }),
+                  redactor,
+                ),
               },
               { concurrency: "unbounded" },
             ).pipe(mapError(props));

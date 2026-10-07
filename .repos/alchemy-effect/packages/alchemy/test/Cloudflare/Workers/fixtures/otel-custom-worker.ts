@@ -3,9 +3,9 @@ import * as Telemetry from "@/Telemetry.ts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as Otlp from "effect/unstable/observability/Otlp";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Otlp from "effect/observability/Otlp";
 
 /**
  * Effect-native Worker exercising the *custom exporter* telemetry path:
@@ -21,7 +21,7 @@ export default class OtelCustomWorker extends Cloudflare.Worker<OtelCustomWorker
     env: {
       // Config key must equal the env key — the props re-execute inside
       // the deployed isolate and re-read the Config from the bound var.
-      COLLECTOR_URL: Config.string("COLLECTOR_URL"),
+      COLLECTOR_URL: Config.String("COLLECTOR_URL"),
     },
   },
   Effect.gen(function* () {
@@ -43,7 +43,7 @@ export default class OtelCustomWorker extends Cloudflare.Worker<OtelCustomWorker
       Telemetry.layer(
         Layer.unwrap(
           Effect.gen(function* () {
-            const baseUrl = yield* Config.string("COLLECTOR_URL");
+            const baseUrl = yield* Config.String("COLLECTOR_URL");
             return Otlp.layerJson({
               baseUrl,
               resource: { serviceName: "otel-custom-test" },

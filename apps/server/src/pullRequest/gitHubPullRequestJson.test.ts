@@ -2,43 +2,72 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildReviewSubmissionJson,
+  buildPullRequestSummariesGraphQlQuery,
+  buildPullRequestWatchFingerprintsGraphQlQuery,
+  decodePullRequestSummariesJson,
+  decodePullRequestWatchFingerprintsJson,
+  buildReviewSubmission,
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
-  buildReviewerRequestJson,
-  decodeBaseComparisonJson,
+  buildReviewerRequest,
+  buildSetFilesViewedGraphQlMutation,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
+  decodePullRequestFilesViewedJson,
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
-  decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
-  decodeWorkflowRunApprovalsJson,
+  decodeWorkflowRunsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
+/**
+ * Rows as a repository's own GraphQL list answers them. Entries may use flat shapes for brevity:
+ * `reviewRequests` and `latestReviews` as arrays, and `checks` as the rollup state.
+ */
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
-  return JSON.stringify(
-    entries.map((entry) => ({
-      number: 1,
-      title: "Add the pull requests page",
-      url: "https://github.com/pingdotgg/t3code/pull/1",
-      headRefName: "feat/page",
-      baseRefName: "main",
-      createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-02T00:00:00Z",
-      ...entry,
-    })),
-  );
+  return JSON.stringify({
+    data: {
+      repository: {
+        pullRequests: {
+          pageInfo: { hasNextPage: false },
+          nodes: entries.map(({ reviewRequests, latestReviews, checks, ...entry }) => ({
+            number: 1,
+            title: "Add the pull requests page",
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+            headRefName: "feat/page",
+            baseRefName: "main",
+            createdAt: "2026-07-01T00:00:00Z",
+            updatedAt: "2026-07-02T00:00:00Z",
+            ...(reviewRequests === undefined
+              ? {}
+              : {
+                  reviewRequests: {
+                    nodes: (reviewRequests as ReadonlyArray<unknown>).map((requestedReviewer) => ({
+                      requestedReviewer,
+                    })),
+                  },
+                }),
+            ...(latestReviews === undefined ? {} : { latestReviews: { nodes: latestReviews } }),
+            ...(checks === undefined
+              ? {}
+              : { commits: { nodes: [{ commit: { statusCheckRollup: { state: checks } } }] } }),
+            ...entry,
+          })),
+        },
+      },
+    },
+  });
 }
 
 function expectSuccess<A>(result: Result.Result<A, unknown>): A {
@@ -96,31 +125,49 @@ describe("pull request list decoding", () => {
     ]);
   });
 
-  it("rolls the head commit's checks up to the one word a row has space for", () => {
+  it("takes the verdict from the latest reviews when GitHub summarizes none, as for a bot's approval", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
         listJson([
-          // A failure outranks a run still going, and a completed run has to be read through its
-          // conclusion rather than its status.
           {
-            statusCheckRollup: [
-              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-              { name: "build", status: "IN_PROGRESS" },
-              { name: "test", status: "COMPLETED", conclusion: "FAILURE" },
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "macroscopeapp" }, state: "APPROVED" }],
+          },
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [
+              { author: { login: "octocat" }, state: "APPROVED" },
+              { author: { login: "hubot" }, state: "CHANGES_REQUESTED" },
             ],
           },
           {
-            statusCheckRollup: [
-              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-              { name: "build", status: "QUEUED" },
-            ],
+            reviewDecision: "APPROVED",
+            latestReviews: [{ author: { login: "hubot" }, state: "CHANGES_REQUESTED" }],
           },
-          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }] },
-          // A commit status reports one `state` and no `status` at all.
-          { statusCheckRollup: [{ context: "ci/legacy", state: "ERROR" }] },
-          // Neither a pass, a failure nor a wait is no verdict rather than a green tick.
-          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SKIPPED" }] },
-          { statusCheckRollup: [] },
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "octocat" }, state: "COMMENTED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual([
+      "approved",
+      "changes-requested",
+      "approved",
+      null,
+    ]);
+  });
+
+  it("rolls the head commit's rollup up to the one word a row has space for", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          { checks: "FAILURE" },
+          { checks: "PENDING" },
+          { checks: "SUCCESS" },
+          { checks: "ERROR" },
+          { checks: "EXPECTED" },
           {},
         ]),
       ),
@@ -130,15 +177,15 @@ describe("pull request list decoding", () => {
       "pending",
       "passing",
       "failing",
-      null,
-      null,
+      "pending",
       null,
     ]);
   });
 
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
-    const raw = `[${listJson([{}]).slice(1, -1)},{"number":"not-a-number"}]`;
-    const batch = expectSuccess(decodePullRequestListJson(raw));
+    const batch = expectSuccess(
+      decodePullRequestListJson(listJson([{}, { number: "not-a-number" }])),
+    );
     expect(batch.items).toHaveLength(1);
     expect(batch.rawCount).toBe(2);
   });
@@ -231,6 +278,43 @@ describe("pull request detail decoding", () => {
     ],
   });
 
+  /** The same conversation as the GraphQL activity query answers it. */
+  const activityJson = (raw: Record<string, unknown>) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            comments: { nodes: raw["comments"] ?? [] },
+            reviews: { nodes: raw["reviews"] ?? [] },
+            commits: {
+              nodes: ((raw["commits"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
+                ({ authors, ...commit }) => ({
+                  commit: {
+                    ...commit,
+                    authors: {
+                      nodes: ((authors ?? []) as ReadonlyArray<Record<string, unknown>>).map(
+                        ({ login, ...author }) => ({
+                          ...author,
+                          ...(login === undefined ? {} : { user: { login } }),
+                        }),
+                      ),
+                    },
+                  },
+                }),
+              ),
+            },
+          },
+        },
+      },
+    });
+  const activity = (raw: Record<string, unknown>) =>
+    Result.map(decodePullRequestActivityJson(activityJson(raw)), (page) => ({
+      comments: page.remarks.toSorted((left, right) =>
+        left.createdAt.localeCompare(right.createdAt),
+      ),
+      commits: page.commits ?? [],
+    }));
+
   it("maps check-run status and commit-status state onto one vocabulary", () => {
     const detail = expectSuccess(decodePullRequestDetailJson(detailJson));
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
@@ -238,6 +322,25 @@ describe("pull request detail decoding", () => {
       ["test", "failure"],
       ["ci/legacy", "success"],
     ]);
+  });
+
+  it("keeps what branch protection requires, and asks for it on github.com only", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "test", status: "IN_PROGRESS", isRequired: true },
+            { __typename: "StatusContext", context: "bot", state: "PENDING", isRequired: false },
+            { __typename: "StatusContext", context: "legacy", state: "SUCCESS" },
+          ],
+        }),
+      ),
+    );
+    expect(detail.checks.map((check) => check.required)).toEqual([true, false, undefined]);
+    expect(pullRequestCoreGraphQlQuery("github.com")).toContain("isRequired");
+    expect(pullRequestCoreGraphQlQuery("github.example.com")).not.toContain("isRequired");
   });
 
   it("keeps a workflow waiting for approval out of the passing state", () => {
@@ -266,13 +369,15 @@ describe("pull request detail decoding", () => {
   it("decodes workflow runs that can be approved", () => {
     expect(
       expectSuccess(
-        decodeWorkflowRunApprovalsJson(
-          JSON.stringify([
-            { databaseId: 10, workflowName: "contributor tests", url: "https://example.com/10" },
-            { databaseId: 11, workflowName: null, url: null },
-          ]),
+        decodeWorkflowRunsJson(
+          JSON.stringify({
+            workflow_runs: [
+              { id: 10, name: "contributor tests", html_url: "https://example.com/10" },
+              { id: 11, name: null, html_url: null },
+            ],
+          }),
         ),
-      ),
+      ).runs,
     ).toEqual([
       { id: 10, name: "contributor tests", url: "https://example.com/10" },
       { id: 11, name: "Workflow run 11", url: null },
@@ -331,14 +436,14 @@ describe("pull request detail decoding", () => {
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
-    const detail = expectSuccess(decodePullRequestActivityJson(detailJson));
+    const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     // r2 approved without writing anything, which is still the event worth seeing.
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
   });
 
   it("keeps every attributed commit author, including an unlinked signature", () => {
-    const detail = expectSuccess(decodePullRequestActivityJson(detailJson));
+    const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.commits[0]?.authors).toEqual([
       { login: "octocat", name: "Octo Cat", avatarUrl: null },
       { login: "Pair Author", name: "Pair Author", avatarUrl: null },
@@ -348,22 +453,20 @@ describe("pull request detail decoding", () => {
   it("drops the bodyless review GitHub opens to hold line comments", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
-      decodePullRequestActivityJson(
-        JSON.stringify({
-          ...raw,
-          reviews: [
-            // What a reviewer leaving inline comments produces: a container with a state but
-            // nothing to read. Its comments come from the review threads instead.
-            { id: "r4", body: "", state: "COMMENTED", submittedAt: "2026-07-07T00:00:00Z" },
-            {
-              id: "r5",
-              body: "Looks good.",
-              state: "COMMENTED",
-              submittedAt: "2026-07-08T00:00:00Z",
-            },
-          ],
-        }),
-      ),
+      activity({
+        ...raw,
+        reviews: [
+          // What a reviewer leaving inline comments produces: a container with a state but
+          // nothing to read. Its comments come from the review threads instead.
+          { id: "r4", body: "", state: "COMMENTED", submittedAt: "2026-07-07T00:00:00Z" },
+          {
+            id: "r5",
+            body: "Looks good.",
+            state: "COMMENTED",
+            submittedAt: "2026-07-08T00:00:00Z",
+          },
+        ],
+      }),
     );
 
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r5"]);
@@ -374,12 +477,10 @@ describe("pull request detail decoding", () => {
     (state) => {
       const raw = JSON.parse(detailJson) as Record<string, unknown>;
       const detail = expectSuccess(
-        decodePullRequestActivityJson(
-          JSON.stringify({
-            ...raw,
-            reviews: [{ id: "r6", body: "", state, submittedAt: "2026-07-07T00:00:00Z" }],
-          }),
-        ),
+        activity({
+          ...raw,
+          reviews: [{ id: "r6", body: "", state, submittedAt: "2026-07-07T00:00:00Z" }],
+        }),
       );
 
       expect(detail.comments.map((comment) => comment.id)).toContain("r6");
@@ -389,12 +490,10 @@ describe("pull request detail decoding", () => {
   it("drops a review that carries neither a body nor a state", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
-      decodePullRequestActivityJson(
-        JSON.stringify({
-          ...raw,
-          reviews: [{ id: "r3", body: "  ", submittedAt: "2026-07-07T00:00:00Z" }],
-        }),
-      ),
+      activity({
+        ...raw,
+        reviews: [{ id: "r3", body: "  ", submittedAt: "2026-07-07T00:00:00Z" }],
+      }),
     );
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1"]);
   });
@@ -808,31 +907,38 @@ describe("reaction decoding", () => {
 describe("repository access decoding", () => {
   const repositoryJson = (viewerPermission?: string | null) =>
     JSON.stringify({
-      mergeCommitAllowed: true,
-      squashMergeAllowed: false,
-      rebaseMergeAllowed: true,
-      ...(viewerPermission === undefined ? {} : { viewerPermission }),
+      data: {
+        repository: {
+          pullRequest: null,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...(viewerPermission === undefined ? {} : { viewerPermission }),
+        },
+      },
     });
 
-  it("reads the three settings gh reports", () => {
+  it("reads merge settings with viewer permissions", () => {
     expect(
-      expectSuccess(decodeRepositoryAccessJson(repositoryJson("ADMIN"))).mergeCapabilities,
+      expectSuccess(decodeViewerPermissionsJson(repositoryJson("ADMIN"))).mergeCapabilities,
     ).toEqual({ merge: true, squash: false, rebase: true });
   });
 
   it("fails rather than defaulting open when a setting is missing", () => {
-    const decoded = decodeRepositoryAccessJson(JSON.stringify({ mergeCommitAllowed: true }));
+    const decoded = decodeViewerPermissionsJson(
+      JSON.stringify({ data: { repository: { pullRequest: null, mergeCommitAllowed: true } } }),
+    );
     expect(Result.isSuccess(decoded)).toBe(false);
   });
 
   it("counts the roles that can push as write, and the ones that cannot as read", () => {
     for (const permission of ["ADMIN", "MAINTAIN", "WRITE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         true,
       );
     }
     for (const permission of ["TRIAGE", "READ", "NONE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         false,
       );
     }
@@ -841,14 +947,23 @@ describe("repository access decoding", () => {
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
     // The one place an unknown answer is not granted: a Merge button a reader cannot use wastes
     // the press, where a missing one still leaves the pull request open on its host.
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson())).canWrite).toBe(false);
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(null))).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson())).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(null))).canWrite).toBe(false);
   });
 });
 
 describe("viewer permission decoding", () => {
   const viewerJson = (repository: Record<string, unknown>) =>
-    JSON.stringify({ data: { repository } });
+    JSON.stringify({
+      data: {
+        repository: {
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...repository,
+        },
+      },
+    });
 
   it("reads the repository's role and the pull request's own viewer fields together", () => {
     expect(
@@ -860,7 +975,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canTriage: false, canUpdate: true, didAuthor: true });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: true,
+      didAuthor: true,
+    });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -873,7 +994,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canTriage: false, canUpdate: false, didAuthor: false });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: false,
+      didAuthor: false,
+    });
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -881,6 +1008,7 @@ describe("viewer permission decoding", () => {
     // answer grants it and lets the host refuse; authorship is a fact about who wrote the change,
     // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
       canWrite: false,
       canTriage: false,
       canUpdate: true,
@@ -1011,7 +1139,13 @@ describe("review thread decoding", () => {
             path: "src/a.ts",
             line: 42,
             diffSide: "LEFT",
-            comments: { totalCount: 2, nodes: [comment("c1", "first"), comment("c2", "second")] },
+            comments: {
+              totalCount: 2,
+              nodes: [
+                { ...comment("c1", "first"), lastEditedAt: "2026-07-02T00:00:00Z" },
+                comment("c2", "second"),
+              ],
+            },
           },
         ]),
       ),
@@ -1030,6 +1164,7 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "first",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: "2026-07-02T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
             reactions: [],
           },
@@ -1038,12 +1173,16 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "second",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: null,
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
             reactions: [],
           },
         ],
       },
     ]);
+    expect(
+      reviewThreadConversation(reviewThreads.threads.map((entry) => entry.thread))[0]?.editedAt,
+    ).toBe("2026-07-02T00:00:00Z");
   });
 
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
@@ -1090,6 +1229,27 @@ describe("review thread decoding", () => {
     const threads = decoded.threads.map((entry) => entry.thread);
     expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
     expect(threads).toHaveLength(1);
+  });
+
+  it("reads edit times for issue comments and reviews without using reaction updates", () => {
+    const editedAt = "2026-10-02T12:06:00Z";
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([], {
+          comments: {
+            nodes: [
+              { id: "edited", lastEditedAt: editedAt },
+              { id: "reaction-only", lastEditedAt: null, updatedAt: editedAt },
+            ],
+          },
+          reviews: { nodes: [{ id: "review", lastEditedAt: editedAt }] },
+        }),
+      ),
+    );
+    expect([...result.editedAtById]).toEqual([
+      ["edited", editedAt],
+      ["review", editedAt],
+    ]);
   });
 
   it("puts an issue comment's and a review's reactions in reactionsById, and the pull request's own in reactions", () => {
@@ -1304,18 +1464,16 @@ describe("reviewer candidate decoding", () => {
 describe("reviewer request payload", () => {
   it("sends people and teams in the two lists GitHub keeps them in", () => {
     expect(
-      JSON.parse(
-        buildReviewerRequestJson([
-          { id: "octocat", kind: "user" },
-          { id: "reviewers", kind: "team" },
-          { id: "hubot", kind: "user" },
-        ]),
-      ),
+      buildReviewerRequest([
+        { id: "octocat", kind: "user" },
+        { id: "reviewers", kind: "team" },
+        { id: "hubot", kind: "user" },
+      ]),
     ).toEqual({ reviewers: ["octocat", "hubot"], team_reviewers: ["reviewers"] });
   });
 
   it("sends both lists even where one of them is empty, which is what GitHub reads", () => {
-    expect(JSON.parse(buildReviewerRequestJson([{ id: "octocat", kind: "user" }]))).toEqual({
+    expect(buildReviewerRequest([{ id: "octocat", kind: "user" }])).toEqual({
       reviewers: ["octocat"],
       team_reviewers: [],
     });
@@ -1324,24 +1482,22 @@ describe("reviewer request payload", () => {
 
 describe("review submission payload", () => {
   it("sends the verdict, the summary and every line comment in one body", () => {
-    const payload = JSON.parse(
-      buildReviewSubmissionJson({
-        verdict: "request-changes",
-        body: "Two things.",
-        comments: [
-          {
-            path: "src/a.ts",
-            position: { kind: "added", newLine: 12 },
-            body: "rename this",
-          },
-          {
-            path: "src/b.ts",
-            position: { kind: "deleted", oldLine: 3 },
-            body: "why remove?",
-          },
-        ],
-      }),
-    ) as Record<string, unknown>;
+    const payload = buildReviewSubmission({
+      verdict: "request-changes",
+      body: "Two things.",
+      comments: [
+        {
+          path: "src/a.ts",
+          position: { kind: "added", newLine: 12 },
+          body: "rename this",
+        },
+        {
+          path: "src/b.ts",
+          position: { kind: "deleted", oldLine: 3 },
+          body: "why remove?",
+        },
+      ],
+    });
     expect(payload).toEqual({
       event: "REQUEST_CHANGES",
       body: "Two things.",
@@ -1353,13 +1509,66 @@ describe("review submission payload", () => {
   });
 
   it("sends an approval with no words and no comments", () => {
-    expect(
-      JSON.parse(buildReviewSubmissionJson({ verdict: "approve", body: "", comments: [] })),
-    ).toEqual({ event: "APPROVE", body: "", comments: [] });
+    expect(buildReviewSubmission({ verdict: "approve", body: "", comments: [] })).toEqual({
+      event: "APPROVE",
+      body: "",
+      comments: [],
+    });
   });
 });
 
 describe("decodePullRequestFilesJson", () => {
+  it("quotes literal backslashes without interpreting them as escapes", () => {
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          {
+            filename: String.raw`src\notes.ts`,
+            status: "modified",
+            patch: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
+        String.raw`--- "a/src\\notes.ts"`,
+        String.raw`+++ "b/src\\notes.ts"`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves spaces and literal backslashes in both rename paths", () => {
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          {
+            previous_filename: String.raw` old\name.ts `,
+            filename: String.raw` new\name.ts `,
+            status: "renamed",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        String.raw`rename from " old\\name.ts "`,
+        String.raw`rename to " new\\name.ts "`,
+        String.raw`--- "a/ old\\name.ts "`,
+        String.raw`+++ "b/ new\\name.ts "`,
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("assembles a unified patch the files API does not return", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(
@@ -1486,45 +1695,97 @@ describe("decodePullRequestFilesJson", () => {
   });
 });
 
-describe("how far a branch trails its base", () => {
-  const comparison = (pullRequest: unknown) =>
-    JSON.stringify({ data: { repository: { pullRequest } } });
+describe("decodePullRequestFilesViewedJson", () => {
+  const page = (
+    nodes: ReadonlyArray<unknown>,
+    pageInfo: { hasNextPage: boolean; endCursor: string | null },
+  ) =>
+    JSON.stringify({
+      data: { repository: { pullRequest: { files: { pageInfo, nodes } } } },
+    });
 
-  it("reads the commit count and whether this viewer may move the branch", () => {
-    const decoded = expectSuccess(
-      decodeBaseComparisonJson(
-        comparison({ viewerCanUpdateBranch: true, baseRef: { compare: { behindBy: 12 } } }),
+  it("reads each file's state and where the next page carries on", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page(
+        [
+          { path: "src/a.ts", viewerViewedState: "VIEWED" },
+          { path: "src/b.ts", viewerViewedState: "UNVIEWED" },
+          { path: "src/c.ts", viewerViewedState: "DISMISSED" },
+        ],
+        { hasNextPage: true, endCursor: "cursor-2" },
       ),
     );
-    expect(decoded).toEqual({ behindBy: 12, viewerCanUpdate: true });
-  });
-
-  it("reads a current branch as nothing to do", () => {
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(
-          comparison({ viewerCanUpdateBranch: false, baseRef: { compare: { behindBy: 0 } } }),
-        ),
-      ),
-    ).toEqual({ behindBy: 0, viewerCanUpdate: false });
-  });
-
-  it("answers unknown where the head could not be compared", () => {
-    // A pull request from a fork whose repository is gone, which GitHub answers with a null
-    // comparison beside a perfectly good pull request.
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(comparison({ viewerCanUpdateBranch: true, baseRef: null })),
-      ).behindBy,
-    ).toBeNull();
-    expect(expectSuccess(decodeBaseComparisonJson(comparison(null)))).toEqual({
-      behindBy: null,
-      viewerCanUpdate: false,
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "unviewed" },
+        { path: "src/c.ts", state: "dismissed" },
+      ],
+      nextCursor: "cursor-2",
     });
   });
 
-  it("refuses a body that is not the answer to this question", () => {
-    expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  it("treats a state it has never heard of as unread rather than failing the page", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page([{ path: "src/a.ts", viewerViewedState: "SOMETHING_NEW" }], {
+        hasNextPage: false,
+        endCursor: null,
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [{ path: "src/a.ts", state: "unviewed" }],
+      nextCursor: null,
+    });
+  });
+
+  it("answers empty for a pull request the host has nothing to say about", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      JSON.stringify({ data: { repository: { pullRequest: null } } }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({ files: [], nextCursor: null });
+  });
+});
+
+describe("buildSetFilesViewedGraphQlMutation", () => {
+  it("asks for nothing when nothing was pressed", () => {
+    expect(buildSetFilesViewedGraphQlMutation([])).toBeNull();
+  });
+
+  it("clears and restores in one document, each file under its own alias", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: "src/a.ts", viewed: true },
+      { path: "src/b.ts", viewed: false },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).toContain(
+      "mutation($pullRequestId: ID!, $path0: String!, $path1: String!)",
+    );
+    expect(mutation.query).toContain(
+      "f0: markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path0 })",
+    );
+    expect(mutation.query).toContain(
+      "f1: unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path1 })",
+    );
+    expect(mutation.variables).toEqual({ path0: "src/a.ts", path1: "src/b.ts" });
+  });
+
+  it("keeps a path out of the document, so one cannot be read as part of it", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: '") { __typename } evil: markFileAsViewed(input: { path: "x', viewed: true },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).not.toContain("evil");
+    expect(mutation.variables.path0).toBe(
+      '") { __typename } evil: markFileAsViewed(input: { path: "x',
+    );
   });
 });
 
@@ -1664,5 +1925,172 @@ describe("pull request stack membership batches", () => {
     expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
       "pullRequest(number: 8)",
     );
+  });
+});
+
+describe("batched pull request summaries", () => {
+  it("refuses a repository GraphQL cannot address, rather than writing it into the document", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: 'acme/web") { x } #', number: 1 }]),
+    ).toBeNull();
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 0 }]),
+    ).toBeNull();
+    expect(buildPullRequestSummariesGraphQlQuery([])).toBeNull();
+  });
+
+  it("files each answer by its alias and skips what GitHub or the decoder could not give", () => {
+    const decoded = decodePullRequestSummariesJson(
+      JSON.stringify({
+        data: {
+          s0: {
+            pullRequest: {
+              number: 7,
+              title: "Merged",
+              url: "https://github.com/acme/web/pull/7",
+              author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
+              headRefName: "feat/seven",
+              baseRefName: "main",
+              state: "MERGED",
+              mergedAt: "2026-08-24T00:00:00Z",
+              closedAt: "2026-08-24T00:00:00Z",
+              updatedAt: "2026-08-24T00:00:00Z",
+              commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+            },
+          },
+          s1: { pullRequest: null },
+          s2: { pullRequest: { number: 9 } },
+          rateLimit: { cost: 1 },
+        },
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect([...decoded.success.keys()]).toEqual([0]);
+    expect(decoded.success.get(0)).toMatchObject({
+      number: 7,
+      state: "merged",
+      mergedAt: "2026-08-24T00:00:00Z",
+      author: { login: "renovate", isBot: true },
+      checksState: "failing",
+      mergeability: "unknown",
+      additions: 0,
+    });
+    // The document did not ask about stacks, so the summary does not claim an answer.
+    expect(decoded.success.get(0)).not.toHaveProperty("stack");
+  });
+
+  it("reads stack membership only where the document asked for it", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true),
+    ).toContain("stack { number size baseRefName } stackEntry { position }");
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }]),
+    ).not.toContain("stack {");
+    const pullRequest = (number: number, stack: Record<string, unknown>) => ({
+      pullRequest: {
+        number,
+        title: "Stacked",
+        url: `https://github.com/acme/web/pull/${number}`,
+        headRefName: `feat/${number}`,
+        baseRefName: "main",
+        state: "OPEN",
+        updatedAt: "2026-08-24T00:00:00Z",
+        ...stack,
+      },
+    });
+    const decoded = expectSuccess(
+      decodePullRequestSummariesJson(
+        JSON.stringify({
+          data: {
+            s0: pullRequest(7, { stack: null, stackEntry: null }),
+            s1: pullRequest(8, {
+              stack: { number: 3, size: 2, baseRefName: "main" },
+              stackEntry: { position: 2 },
+            }),
+          },
+        }),
+      ),
+    );
+    expect(decoded.get(0)?.stack).toBeNull();
+    expect(decoded.get(1)?.stack).toEqual({ number: 3, size: 2, base: "main", position: 2 });
+  });
+});
+
+describe("pull request watch fingerprints", () => {
+  it("asks for every pull request in one aliased read, and refuses an unsafe selector", () => {
+    const query = buildPullRequestWatchFingerprintsGraphQlQuery([
+      { repository: "pingdotgg/t3code", number: 7 },
+      { repository: "pingdotgg/lakebed", number: 8 },
+    ]);
+    expect(query).toContain(
+      'w0: repository(owner: "pingdotgg", name: "t3code") { pullRequest(number: 7)',
+    );
+    expect(query).toContain(
+      'w1: repository(owner: "pingdotgg", name: "lakebed") { pullRequest(number: 8)',
+    );
+    expect(
+      buildPullRequestWatchFingerprintsGraphQlQuery([{ repository: 'evil") { x', number: 1 }]),
+    ).toBeNull();
+  });
+
+  it("moves status with checks and remarks with comments, each without the other", () => {
+    const pullRequest = (input: {
+      readonly running: number;
+      readonly failed: number;
+      readonly commentEditedAt: string | null;
+      readonly reviews: number;
+    }) => ({
+      state: "OPEN",
+      mergeable: "MERGEABLE",
+      headRefOid: "abc123",
+      comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
+      reviews: { totalCount: input.reviews, nodes: [] },
+      reviewThreads: { totalCount: 0 },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                contexts: {
+                  checkRunCountsByState: [
+                    { state: "IN_PROGRESS", count: input.running },
+                    { state: "FAILURE", count: input.failed },
+                    { state: "SUCCESS", count: 0 },
+                  ],
+                  statusContextCountsByState: null,
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const decode = (...pullRequests: ReadonlyArray<object | null>) => {
+      const decoded = decodePullRequestWatchFingerprintsJson(
+        JSON.stringify({
+          data: Object.fromEntries(
+            pullRequests.map((value, index) => [`w${index}`, { pullRequest: value }]),
+          ),
+        }),
+      );
+      if (!Result.isSuccess(decoded)) throw new Error("fingerprints did not decode");
+      return decoded.success;
+    };
+    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
+    const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
+      decode(pullRequest(input)).get(0)!;
+    const before = fingerprint(base);
+    const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
+    const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
+    const replied = fingerprint({ ...base, reviews: 2 });
+
+    expect(checkFinished.status).not.toBe(before.status);
+    expect(checkFinished.remarks).toBe(before.remarks);
+    expect(summaryEdited.remarks).not.toBe(before.remarks);
+    expect(summaryEdited.status).toBe(before.status);
+    expect(replied.remarks).not.toBe(before.remarks);
+    // A pull request GitHub had no answer for is left for a full read.
+    expect(decode(null, pullRequest(base)).has(0)).toBe(false);
   });
 });

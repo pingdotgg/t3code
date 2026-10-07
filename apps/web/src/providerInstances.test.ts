@@ -8,8 +8,8 @@ import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
+  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
-  resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
 
 function provider(input: {
@@ -21,10 +21,14 @@ function provider(input: {
   accentColor?: string;
   status?: ServerProvider["status"];
   models?: ServerProvider["models"];
+  supportsTextGeneration?: boolean;
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
     driver: input.provider,
+    ...(input.supportsTextGeneration === undefined
+      ? {}
+      : { supportsTextGeneration: input.supportsTextGeneration }),
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     enabled: input.enabled ?? true,
@@ -68,6 +72,46 @@ describe("isProviderInstancePickerReady", () => {
     ]);
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+});
+
+describe("resolveProviderCatalogAvailability", () => {
+  const [entry] = deriveProviderInstanceEntries([
+    provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+  ]);
+
+  it("keeps the initial reactive config state distinct from an empty catalogue", () => {
+    expect(
+      resolveProviderCatalogAvailability({
+        catalogLoaded: false,
+        entries: [],
+        selectedEntry: undefined,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveProviderCatalogAvailability({
+        catalogLoaded: true,
+        entries: [],
+        selectedEntry: undefined,
+      }),
+    ).toBe("unconfigured");
+  });
+
+  it("distinguishes a selected provider from configured but unusable providers", () => {
+    expect(
+      resolveProviderCatalogAvailability({
+        catalogLoaded: true,
+        entries: entry ? [entry] : [],
+        selectedEntry: entry,
+      }),
+    ).toBe("ready");
+    expect(
+      resolveProviderCatalogAvailability({
+        catalogLoaded: true,
+        entries: entry ? [entry] : [],
+        selectedEntry: undefined,
+      }),
+    ).toBe("unavailable");
   });
 });
 
@@ -207,6 +251,37 @@ describe("deriveProviderInstanceEntries", () => {
 });
 
 describe("deriveProviderEntriesByEnvironment", () => {
+  it("resolves registry branding from each environment's settings", () => {
+    const instanceId = "custom-acp";
+    const snapshot = provider({ provider: ProviderDriverKind.make("acpRegistry"), instanceId });
+    const byEnvironment = deriveProviderEntriesByEnvironment(
+      ["devin", "other-agent"].map(
+        (agentId) =>
+          [
+            agentId,
+            [snapshot],
+            {
+              providers: {} as never,
+              providerInstances: {
+                [instanceId]: {
+                  driver: ProviderDriverKind.make("acpRegistry"),
+                  enabled: true,
+                  config: { agentId, registryIconUrl: `https://example.com/${agentId}.svg` },
+                },
+              },
+            },
+          ] as const,
+      ),
+    );
+    expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryAgentId).toBe("devin");
+    expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryIconUrl).toBe(
+      "https://example.com/devin.svg",
+    );
+    expect(byEnvironment.get("other-agent")?.get(instanceId)?.acpRegistryAgentId).toBe(
+      "other-agent",
+    );
+  });
+
   it("keeps same-id default instances distinct per environment", () => {
     const byEnvironment = deriveProviderEntriesByEnvironment([
       [
@@ -359,44 +434,6 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
-  });
-});
-
-describe("resolveProviderDriverKindForInstanceSelection", () => {
-  it("maps custom provider instance ids back to their driver kind", () => {
-    const providers = [
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claude_openrouter",
-        displayName: "Claude OpenRouter",
-      }),
-    ];
-    const entries = deriveProviderInstanceEntries(providers);
-
-    expect(
-      resolveProviderDriverKindForInstanceSelection(
-        entries,
-        providers,
-        ProviderInstanceId.make("claude_openrouter"),
-      ),
-    ).toBe("claudeAgent");
-  });
-
-  it("does not guess a provider kind when the instance selection is unknown", () => {
-    const providers = [
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex", enabled: false }),
-      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
-    ];
-    const entries = deriveProviderInstanceEntries(providers);
-
-    expect(
-      resolveProviderDriverKindForInstanceSelection(
-        entries,
-        providers,
-        ProviderInstanceId.make("removed_instance"),
-      ),
-    ).toBeUndefined();
   });
 });
 
@@ -578,5 +615,58 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("provider icon metadata", () => {
+  it("clears stale registry branding when an instance switches to a local command", () => {
+    const instanceId = ProviderInstanceId.make("custom-acp");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
+    const snapshots = deriveProviderInstanceEntries([
+      { ...provider({ provider: driver, instanceId }), iconUrl },
+    ]);
+    const registryConfig = { agentId: "swe-agent", registryIconUrl: iconUrl };
+    const brandedEntries = applyProviderInstanceSettings(snapshots, {
+      providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
+      providers: {} as never,
+    });
+    expect(brandedEntries[0]?.acpRegistryAgentId).toBe("swe-agent");
+    expect(brandedEntries[0]?.acpRegistryIconUrl).toBe(iconUrl);
+
+    const [localEntry] = applyProviderInstanceSettings(brandedEntries, {
+      providerInstances: {
+        [instanceId]: {
+          driver,
+          enabled: false,
+          config: { ...registryConfig, source: "local", commandPath: "dsh" },
+        },
+      },
+      providers: {} as never,
+    });
+    expect(localEntry?.acpRegistryAgentId).toBeUndefined();
+    expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
+    expect(localEntry?.enabled).toBe(false);
+    expect(localEntry?.snapshot).toBe(snapshots[0]?.snapshot);
+
+    const [restoredEntry] = applyProviderInstanceSettings(localEntry ? [localEntry] : [], {
+      providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
+      providers: {} as never,
+    });
+    expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
+    expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(restoredEntry?.enabled).toBe(true);
+  });
+
+  it("retains server-published registry icons without local settings", () => {
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({ provider: ProviderDriverKind.make("acpRegistry"), instanceId: "swe-remote" }),
+        iconUrl,
+      },
+    ]);
+    expect(entry?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(entry?.driverKind).toBe("acpRegistry");
   });
 });

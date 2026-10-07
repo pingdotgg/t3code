@@ -7,13 +7,13 @@
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { Config, Context, Effect, ExecutionPlan, Layer, Schema, Stream } from "effect"
-import { AiError, LanguageModel, Model, type Response } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { AiError, LanguageModel, Model, type Response } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 import { LaunchPlan } from "./fixtures/domain/LaunchPlan.ts"
 
 // You can use Config to create ai clients
 const AnthropicClientLayer = AnthropicClient.layerConfig({
-  apiKey: Config.redacted("ANTHROPIC_API_KEY")
+  apiKey: Config.Redacted("ANTHROPIC_API_KEY")
 }).pipe(
   // Providers typically require an HttpClient, but you can choose which one to
   // use.
@@ -21,7 +21,7 @@ const AnthropicClientLayer = AnthropicClient.layerConfig({
 )
 
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(
   Layer.provide(FetchHttpClient.layer)
 )

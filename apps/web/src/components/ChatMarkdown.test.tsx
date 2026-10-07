@@ -1,4 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
+// @vitest-environment jsdom
+
+import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -36,10 +38,19 @@ vi.mock("./ui/tooltip", async () => {
 });
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("../state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../state/session")>()),
-  usePreparedConnection: () => ({ _tag: "Loading" }),
-}));
+vi.mock("../state/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/session")>();
+  const { AuthStandardClientScopes } = await import("@t3tools/contracts");
+  const grantedScopes = new Set<AuthEnvironmentScope>(AuthStandardClientScopes);
+  const hasScope = (environmentId: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+    environmentId !== null && grantedScopes.has(scope);
+  return {
+    ...actual,
+    useEnvironmentScope: hasScope,
+    readEnvironmentScope: hasScope,
+    usePreparedConnection: () => ({ _tag: "Loading" }),
+  };
+});
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
@@ -55,6 +66,7 @@ vi.mock("../editorPreferences", () => ({
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
+  resolvePullRequestPreviewTarget: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
@@ -71,6 +83,82 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown bare anchor placeholders", () => {
+  it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
+    "preserves unmatched %s without linking later blocks",
+    (token) => {
+      const text = `- **"From ${token}"** appears in the header.\n\n- **Tests:** cover inheritance.\n\nThe deferred move continues on B.\n\nSee <a href="https://example.com">the link</a>.`;
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />),
+        "text/html",
+      );
+
+      expect(document.querySelector("strong")?.textContent).toBe(`"From ${token}"`);
+      expect([...document.querySelectorAll("a")].map((link) => link.textContent)).toEqual([
+        "the link",
+      ]);
+      expect(document.querySelectorAll("li")).toHaveLength(2);
+      expect(
+        [...document.querySelectorAll("p")].map((paragraph) => paragraph.textContent),
+      ).toContain("The deferred move continues on B.");
+    },
+  );
+
+  it.each(["</a>  ", "<div>more</div>\n</a>"])(
+    "preserves a paired anchor closing in the raw block %s",
+    (closing) => {
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(
+          <ChatMarkdown cwd="/tmp/project" text={`See <a>label\n\n${closing}\n\nfinish`} />,
+        ),
+        "text/html",
+      );
+      expect(document.querySelector("p")?.textContent).toBe("See label");
+    },
+  );
+
+  it("preserves a paired anchor after comment-looking raw text", () => {
+    const document = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <ChatMarkdown cwd="/tmp/project" text="See <a>label<script><!-- </script> --></a>" />,
+      ),
+      "text/html",
+    );
+    expect(document.querySelector("p")?.textContent).toBe("See label -->");
+  });
+
+  it.each(["<!-- </a> -->", '<div title="</a>">more</div>', '<script>"</a>"</script>'])(
+    "ignores apparent closing anchors inside %s",
+    (html) => {
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(
+          <ChatMarkdown cwd="/tmp/project" text={`Before <A>.\n\n${html}\n\nAfter.`} />,
+        ),
+        "text/html",
+      );
+      expect(document.querySelector("p")?.textContent).toBe("Before <A>.");
+      expect(document.querySelectorAll("a")).toHaveLength(0);
+    },
+  );
+
+  it("preserves paired HTML anchors, details, markdown links, and inline code", () => {
+    const text =
+      'Bare <a>label</a>, <a id="section"></a>, `<A>`, and [docs](https://example.com).\n\n<details><summary>More</summary>Details</details>';
+    const document = new DOMParser().parseFromString(
+      renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />),
+      "text/html",
+    );
+
+    expect([...document.querySelectorAll("a")].map((link) => link.textContent)).toEqual([
+      "label",
+      "",
+      "docs",
+    ]);
+    expect(document.querySelector("code")?.textContent).toBe("<A>");
+    expect(document.querySelector("[data-markdown-details]")?.textContent).toContain("More");
+  });
+});
 
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
@@ -178,6 +266,75 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("runs only a complete single-line shell block after a click", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onRunShellCommand = vi.fn();
+    let renderer: ReactTestRenderer | undefined;
+    const message = (text: string, isStreaming = false) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        isStreaming={isStreaming}
+        onRunShellCommand={onRunShellCommand}
+      />
+    );
+    try {
+      await act(async () => {
+        renderer = create(message("```bash\necho hello\n```", true));
+      });
+      const mounted = renderer!;
+      expect(
+        mounted.root
+          .findAllByType(Button)
+          .some((button) => button.props["aria-label"] === "Run in terminal"),
+      ).toBe(false);
+
+      await act(async () => {
+        mounted.update(message("```bash\necho hello\n```"));
+      });
+      await act(async () => {
+        codeButton(mounted, "Run in terminal").onClick?.({} as never);
+      });
+      expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+
+      for (const text of [
+        "~~~bash\necho tilde\n~~~",
+        "> ```bash\n> echo quote\n> ```",
+        "````bash\necho four\n````",
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(codeButton(mounted, "Run in terminal")).toBeDefined();
+      }
+
+      for (const text of [
+        "```bash\necho one\necho two\n```",
+        "```typescript\necho hello\n```",
+        "```bash\n\n```",
+        "```bash\necho hello\n\n```",
+        "```bash\necho hello\\\n```",
+        "```bash\necho safe \u202e#\n```",
+        "```bash\necho incomplete",
+        "~~~bash\necho incomplete",
+        "````bash\necho incomplete\n```",
+        '<pre><code class="language-bash">echo html</code></pre>',
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(
+          mounted.root
+            .findAllByType(Button)
+            .some((button) => button.props["aria-label"] === "Run in terminal"),
+        ).toBe(false);
+      }
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not retokenize completed lines when streaming finishes", async () => {
     const highlighter = await getSyntaxHighlighterPromise("typescript");
     const highlight = vi.spyOn(highlighter, "codeToHast");
@@ -638,7 +795,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html).not.toContain("::artifact-template");
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).toContain('data-artifact-kind="document"');
     expect(html).toContain('data-markdown-copy="Hello World (Document template)\n\n"');
     expect(html).toContain('data-skill-name="artifact-template-hello-world"');
@@ -653,7 +810,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       <ChatMarkdown cwd="/tmp/project" text={ARTIFACT_TEMPLATE_DIRECTIVE} />,
     );
 
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).not.toContain("Use template");
   });
 
@@ -665,7 +822,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     for (const text of [malformed, unfinished]) {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -677,7 +834,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
 
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -690,7 +847,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html.match(/::artifact-template/g)).toHaveLength(2);
-    expect(html).not.toContain("chat-markdown-artifact-template");
+    expect(html).not.toContain("data-chat-markdown-artifact-template");
   });
 });
 
@@ -791,6 +948,23 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).toContain('href="C:/Users/shawn/project/src/main.ts"');
     expect(html).toContain("chat-markdown-file-link");
   });
+
+  it.each([true, false])(
+    "keeps backslashes CommonMark would read as escapes with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={String.raw`[settings](C:\Users\shawn\.claude\settings.json)`}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain('href="C:/Users/shawn/.claude/settings.json"');
+    },
+  );
 
   it.each([true, false])(
     "distinguishes same-named backslash paths with parseRawHtml=%s",

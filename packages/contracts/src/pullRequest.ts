@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   IsoDateTime,
@@ -152,6 +152,8 @@ export const PullRequestCheck = Schema.Struct({
   status: PullRequestCheckStatus,
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
+  /** The base branch requires this check to merge. Absent where the host does not say. */
+  required: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
@@ -201,6 +203,7 @@ export const PullRequestComment = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   body: Schema.String,
   createdAt: IsoDateTime,
+  editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
@@ -226,6 +229,7 @@ export const PullRequestThreadComment = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   body: Schema.String,
   createdAt: IsoDateTime,
+  editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
@@ -372,6 +376,14 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
 /**
+ * Who remembers which files a reader has cleared. `host` is the host's own record, so the marks
+ * are the ones its web UI shows and a review can be carried on from either side. `environment` is
+ * this server's record, for a host that keeps none anything outside one browser can read.
+ */
+export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
+export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
+
+/**
  * What a provider can actually do, so a surface can hide what is missing rather than offer an
  * action that would fail. Every provider fills this in for itself; nothing is assumed.
  *
@@ -407,6 +419,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * Where the reader's own marks are kept, or absent where they are kept nowhere and the
+   * checkbox is not offered at all. Optional for the same reason as `reactions`.
+   */
+  viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**
@@ -512,6 +529,8 @@ export const PullRequestListEntry = Schema.Struct({
   deletions: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
   /** Absent where the host does not summarise its reviews, which is every host but GitHub. */
@@ -690,6 +709,20 @@ export const PullRequestLinkedThreadsResult = Schema.Struct({
 });
 export type PullRequestLinkedThreadsResult = typeof PullRequestLinkedThreadsResult.Type;
 
+/** The complete hover card, without checks, permissions, or branch comparisons. */
+export const PullRequestPreview = Schema.Struct({
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  author: Schema.NullOr(PullRequestActor),
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type PullRequestPreview = typeof PullRequestPreview.Type;
+
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
  * status check never loads permissions, repository settings, checks, or base comparison data.
@@ -709,6 +742,8 @@ export const PullRequestSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
@@ -716,6 +751,8 @@ export const PullRequestSummary = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
+  stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 
@@ -784,6 +821,8 @@ export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
  */
 export const PullRequestInvalidateInput = Schema.Struct({
   reference: Schema.optional(PullRequestRef),
+  /** Refresh review progress across routed environments without discarding the patch. */
+  filesViewedOnly: Schema.optional(Schema.Boolean),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
@@ -809,9 +848,13 @@ export const PullRequestDetail = Schema.Struct({
   changedFiles: NonNegativeInt,
   headBranch: TrimmedNonEmptyString,
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The head commit, where the host reports it with the detail. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   baseBranch: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
@@ -846,6 +889,12 @@ export const PullRequestDetail = Schema.Struct({
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
+export const PullRequestChecks = Schema.Struct({
+  state: PullRequestState,
+  checks: Schema.Array(PullRequestCheck),
+});
+export type PullRequestChecks = typeof PullRequestChecks.Type;
+
 /**
  * The slower, conversation-shaped half of a change request. It is read independently from the
  * core detail so a host with a deeply paginated review history cannot hold the title, body,
@@ -869,6 +918,8 @@ export const PullRequestActivity = Schema.Struct({
    * however long it is.
    */
   commentsTruncated: Schema.Boolean,
+  /** Whether the thread listing itself is incomplete, apart from pages within a thread. */
+  reviewThreadsTruncated: Schema.optional(Schema.Boolean),
   reviewThreads: Schema.Array(PullRequestReviewThread),
   commits: Schema.Array(PullRequestCommit),
   /**
@@ -952,6 +1003,66 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
   newContents: Schema.String,
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
+
+/**
+ * Bounded because a path arrives from a client rather than from the host: one element of a write
+ * batch could otherwise carry a megabyte into a SQL statement or a GraphQL field.
+ */
+const MAX_FILE_PATH_LENGTH = 4096;
+/**
+ * Not trimmed: a leading or trailing space is a legal part of a file's name, and the mark is
+ * keyed by the name the host gave, so trimming files it under a name nothing else uses.
+ */
+const FilePath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(MAX_FILE_PATH_LENGTH));
+
+/**
+ * Where one file of a change request stands with the person reading it. `dismissed` is the file
+ * that was cleared and has since been pushed to, which is worth telling a reader apart from
+ * `unviewed`: this file and not the other forty is the one that moved.
+ */
+export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
+export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
+
+export const PullRequestFileViewed = Schema.Struct({
+  path: FilePath,
+  state: PullRequestFileViewedState,
+});
+export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
+
+/**
+ * Which files of a change request the reader has cleared. Its own read rather than a field on the
+ * patch: a patch changes when somebody pushes and is cached by the minute, this changes on every
+ * press, so one read would have to be wrong for the other to be right.
+ */
+export const PullRequestFilesViewedResult = Schema.Struct({
+  /** Only the files the host reported a state for. A file missing from this list is unviewed. */
+  files: Schema.Array(PullRequestFileViewed),
+  /** The host had more files than were read, so the count is short and says so. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
+
+/**
+ * How many presses one write carries. Every element is a statement of its own inside one
+ * transaction here, or a field of its own in one GraphQL document on GitHub. Matched to what a
+ * read of the marks carries, so a client cannot write more of them than it can ever read back.
+ */
+const MAX_FILES_VIEWED_PRESSES = 500;
+
+/**
+ * Files to clear, or to put back. Several at once because a reader working down a diff ticks
+ * boxes far faster than a host answers, so a burst is gathered into one request.
+ */
+export const PullRequestSetFilesViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  files: Schema.Array(
+    Schema.Struct({
+      path: FilePath,
+      viewed: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
+});
+export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
 
 export const PullRequestStackHead = Schema.Struct({
   number: PositiveInt,
@@ -1153,16 +1264,17 @@ export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.T
 
 /**
  * What each host needs before it can be read, so a failure names the fix rather than the
- * symptom. Bitbucket is credentials on the server rather than a signed-in CLI, which is why
- * these are whole sentences instead of a tool name to interpolate.
+ * symptom. The reason names keep their `cli-` prefix for wire compatibility; for GitHub and
+ * Bitbucket they mean "no credential" and "a refused credential", not a missing tool.
  */
 const PROVIDER_REQUIREMENT: Partial<
   Record<SourceControlProviderKind, { readonly missing: string; readonly unauthenticated: string }>
 > = {
   github: {
     missing:
-      "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
-    unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+    unauthenticated:
+      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
   },
   forgejo: {
     missing:
@@ -1182,9 +1294,9 @@ const PROVIDER_REQUIREMENT: Partial<
   },
   bitbucket: {
     missing:
-      "Bitbucket needs API credentials on the server. Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+      "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
     unauthenticated:
-      "Bitbucket rejected the configured credentials. Check T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
+      "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
   },
 };
 
@@ -1300,6 +1412,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
+    reason: Schema.optional(Schema.Literal("not-found")),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },

@@ -176,7 +176,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -221,7 +229,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -252,7 +268,7 @@ test.provider(
       // leaves behind when `certificate` was Output-valued: `creating`, no
       // attributes, and the certificate lost in the round-trip (#736).
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -297,7 +313,15 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -352,5 +376,13 @@ test.provider(
       Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
       logLevel,
     ),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

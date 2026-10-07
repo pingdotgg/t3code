@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { assertExitFailure, assertFailure, assertTrue } from "@effect/vitest/utils"
 import { Cause, Data, Deferred, pipe, Ref } from "effect"
+import * as Arr from "effect/Array"
 import * as Channel from "effect/Channel"
 import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
@@ -10,8 +11,27 @@ import * as Filter from "effect/Filter"
 import * as Latch from "effect/Latch"
 import * as Queue from "effect/Queue"
 import * as Result from "effect/Result"
+import * as Schedule from "effect/Schedule"
+import * as Scheduler from "effect/Scheduler"
+import * as Stream from "effect/Stream"
 
 describe("Channel", () => {
+  describe("repetition", () => {
+    for (const kind of ["repeat", "forever"] as const) {
+      const repeated = (source: Channel.Channel<Arr.NonEmptyArray<number>>) =>
+        kind === "repeat" ? Channel.repeat(source, Schedule.forever) : Channel.forever(source)
+
+      it.effect(kind + " work per repetition does not grow", () =>
+        Effect.gen(function*() {
+          const stream = Stream.fromChannel(repeated(Channel.succeed(Arr.make(1))))
+          const ops = (n: number) => countOps(stream.pipe(Stream.take(n), Stream.runDrain))
+          const small = yield* ops(1_000)
+          const large = yield* ops(2_000)
+          assert.isBelow(large / small, 2.5)
+        }))
+    }
+  })
+
   describe("constructors", () => {
     it.effect("empty", () =>
       Effect.gen(function*() {
@@ -103,6 +123,21 @@ describe("Channel", () => {
         assert.deepStrictEqual(result, [[0, 1, 1], [2, 3]])
       }))
 
+    it.effect("fromIteratorArray - normalizes the chunk size", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, -1, 0.5, 1.9], (chunkSize) =>
+          Channel.fromIteratorArray(() =>
+            [1, 2, 3][Symbol.iterator](), chunkSize).pipe(
+              Channel.runCollect
+            ))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1], [2], [3]]
+        ])
+      }))
+
     it.effect("fromIterable", () =>
       Effect.gen(function*() {
         const set = new Set([1, 1, 2, 3])
@@ -117,6 +152,17 @@ describe("Channel", () => {
         const resultChunked = yield* Channel.runCollect(Channel.fromIterableArray(numbers, 4))
         assert.deepStrictEqual(result, [[1, 2, 3, 4, 5]])
         assert.deepStrictEqual(resultChunked, [[1, 2, 3, 4], [5]])
+      }))
+
+    it.effect("fromIterableArray - normalizes the chunk size", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, 0, 2.9], (chunkSize) =>
+          Channel.runCollect(Channel.fromIterableArray([1, 2, 3], chunkSize)))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1, 2], [3]]
+        ])
       }))
 
     it.effect("fromReadableStream", () =>
@@ -194,6 +240,16 @@ describe("Channel", () => {
   })
 
   describe("destructors", () => {
+    it.effect("runDrain returns the done value after emitted elements", () =>
+      Effect.gen(function*() {
+        const result = yield* Channel.fromArray([1]).pipe(
+          Channel.concat(Channel.end("done")),
+          Channel.runDrain
+        )
+
+        assert.strictEqual(result, "done")
+      }))
+
     it.effect("mkUint8Array", () =>
       Effect.gen(function*() {
         const bytes = yield* Channel.fromArray(
@@ -460,6 +516,22 @@ describe("Channel", () => {
       readonly message: string
     }> {}
 
+    it.effect("catchDefect", () =>
+      Effect.gen(function*() {
+        const defect = new Error("boom")
+        const recovered = yield* Channel.fromEffect(Effect.die(defect)).pipe(
+          Channel.catchDefect((caught) => Channel.succeed(caught)),
+          Channel.runCollect
+        )
+        const failed = yield* Channel.fail("failure").pipe(
+          Channel.catchDefect(() => Channel.succeed("recovered")),
+          Channel.runCollect,
+          Effect.exit
+        )
+        assert.deepStrictEqual(recovered, [defect])
+        assertExitFailure(failed, Cause.fail("failure"))
+      }))
+
     it.effect("catchIf with refinement", () =>
       Effect.gen(function*() {
         const exit = yield* (Channel.fail(new ValidationError({ field: "email" })) as Channel.Channel<
@@ -629,3 +701,18 @@ describe("Channel", () => {
       }))
   })
 })
+
+// The scheduler is asked whether to yield once for each fiber run-loop operation.
+const countOps = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<number, E> =>
+  Effect.suspend(() => {
+    let ops = 0
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: "sync",
+      makeDispatcher: () => new Scheduler.MixedScheduler("sync").makeDispatcher(),
+      shouldYield: () => {
+        ops++
+        return false
+      }
+    }
+    return Effect.map(Effect.provideService(effect, Scheduler.Scheduler, scheduler), () => ops)
+  })

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { isResolved } from "../../Diff.ts";
 import * as ProviderLayer from "../../Local/ProviderLayer.ts";
@@ -23,9 +23,10 @@ import {
 import { hashImports, readSqlFile } from "../../SQL/SqlFile.ts";
 import { recordsEqual } from "../../Util/equal.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { localAccountId } from "../LocalAccount.ts";
 import {
   generateLocalId,
-  LOCAL_ENTRY_URL,
+  LOCAL_PROVIDERS_URL,
   localRuntimeServices,
 } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
@@ -593,7 +594,7 @@ export const ProviderLive = () =>
 export const ProviderLocal = () =>
   RpcProvider.effect(
     Database,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       // The local runtime services (workerd `Runtime`, binding plugins) and
       // the HTTP client are resolved once at layer build and closed over —
@@ -606,7 +607,7 @@ export const ProviderLocal = () =>
       return {
         stables: ["accountId"],
         diff: Effect.fn(function* ({ news = {}, output }) {
-          const { accountId } = yield* yield* CloudflareEnvironment;
+          const accountId = yield* localAccountId;
           if (!output?.databaseId) return { action: "update" } as const;
           if (!isResolved(news)) return undefined;
           if (output.accountId !== accountId) {
@@ -633,7 +634,7 @@ export const ProviderLocal = () =>
           return output ?? undefined;
         }),
         reconcile: Effect.fn(function* ({ id, news = {}, output }) {
-          const { accountId } = yield* yield* CloudflareEnvironment;
+          const accountId = yield* localAccountId;
           const databaseId = output?.databaseId ?? generateLocalId();
 
           // Sync migrations — the shared pipeline, driven through the
@@ -706,7 +707,7 @@ export const DatabaseProvider = () =>
     // The local provider's reconcile boots an ephemeral workerd gateway to
     // apply migrations, so it needs the shared local runtime layer. Under
     // `alchemy dev` the provider is an RPC stub (this gated layer is empty
-    // and unused) and the sidecar entry (`../Local.ts`) supplies the real
+    // and unused) and the provider group (`../Local.ts`) supplies the real
     // runtime; without the proxy the provider builds in-process and this
     // layer is real.
     local: () => ProviderLocal().pipe(Layer.provide(localRuntimeServices())),

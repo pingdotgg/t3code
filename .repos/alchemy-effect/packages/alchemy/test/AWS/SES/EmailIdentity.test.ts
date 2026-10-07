@@ -101,7 +101,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertIdentityDeleted(TEST_DOMAIN_B);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -126,7 +126,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertIdentityDeleted(TEST_EMAIL);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -172,7 +172,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertIdentityDeleted(identity.emailIdentity);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // The DKIM-signing and feedback-forwarding toggles apply to any identity, so
@@ -232,7 +232,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertIdentityDeleted(identity.emailIdentity);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // A custom MAIL FROM domain must be a subdomain of a real identity with MX and
@@ -281,5 +281,5 @@ test.provider.skipIf(!MAIL_FROM_DOMAIN || !MAIL_FROM_IDENTITY)(
       yield* stack.destroy();
       yield* assertIdentityDeleted(identity.emailIdentity);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

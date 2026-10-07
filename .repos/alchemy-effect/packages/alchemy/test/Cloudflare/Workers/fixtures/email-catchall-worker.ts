@@ -1,9 +1,9 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-const ZoneConfig = Config.string("CLOUDFLARE_TEST_DNS_ZONE_NAME").pipe(
+const ZoneConfig = Config.String("CLOUDFLARE_TEST_DNS_ZONE_NAME").pipe(
   Config.withDefault("alchemy-test-2.us"),
 );
 

@@ -12,10 +12,10 @@
 import * as NodeHttpCompression from "@effect/platform-node-shared/NodeHttpCompression"
 import type * as Effect from "effect/Effect"
 import type { FileSystem } from "effect/FileSystem"
+import * as Etag from "effect/http/Etag"
+import * as Platform from "effect/http/HttpPlatform"
+import * as Response from "effect/http/HttpServerResponse"
 import * as Layer from "effect/Layer"
-import * as Etag from "effect/unstable/http/Etag"
-import * as Platform from "effect/unstable/http/HttpPlatform"
-import * as Response from "effect/unstable/http/HttpServerResponse"
 import * as BunFileSystem from "./BunFileSystem.ts"
 
 // Bun's CompressionStream supports an extended format set covering brotli and
@@ -36,16 +36,20 @@ const make: Effect.Effect<
 > = Platform.make({
   platform: "bun",
   compression,
-  fileResponse(path, status, statusText, headers, start, end, _contentLength) {
+  fileResponse(path, status, statusText, headers, start, end, contentLength) {
     let file = Bun.file(path)
     if (start > 0 || end !== undefined) {
       file = file.slice(start, end)
     }
-    return Response.raw(file, { headers, status, statusText })
+    return Response.raw(file, {
+      headers: { ...headers, "content-length": contentLength.toString() },
+      status,
+      statusText
+    })
   },
   fileWebResponse(file, status, statusText, headers, options) {
-    const start = Number(options?.offset ?? 0)
-    const end = options?.bytesToRead !== undefined ? start + Number(options.bytesToRead) : undefined
+    const start = options?.offset ?? 0
+    const end = options?.bytesToRead !== undefined ? start + options.bytesToRead : undefined
     const body = start > 0 || end !== undefined
       ? (file as File).slice(start, end, file.type)
       : file

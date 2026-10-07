@@ -16,9 +16,9 @@
  *   per-request auth headers.
  * - **identity** (optional) — provision workload identity for a namespace +
  *   service account and translate host bindings into cloud credentials
- *   (EKS Pod Identity; Azure Workload Identity would slot in here).
+ *   (EKS Pod Identity, GKE Workload Identity Federation).
  * - **registry** (optional) — build/mirror container images into a managed
- *   registry the cluster can pull from (ECR on EKS).
+ *   registry the cluster can pull from (ECR on EKS, Artifact Registry on GKE).
  * - **bootstrap** (optional) — platform-specific generated container
  *   entries for Effect-native workloads (e.g. wiring the AWS credential
  *   chain for Pod Identity).
@@ -107,8 +107,17 @@ export type IdentityState = {
 /**
  * Image-registry state persisted on a workload's attributes, keyed by
  * adapter kind (AWS registers `"aws-ecr"` with the repository name/URI).
+ * The built-in `"registry"` entry records images pushed to a connection's
+ * {@link Connection.registry}.
  */
-export interface RegistryStateRegistry {}
+export interface RegistryStateRegistry {
+  registry: {
+    /** The registry `server` the image was pushed to. */
+    server: string;
+    /** The repository the image was pushed to (`<server>/<name>`). */
+    repository: string;
+  };
+}
 
 /** The discriminated registry-state union across all registered adapters. */
 export type RegistryState = {
@@ -119,7 +128,7 @@ export type RegistryState = {
 
 /**
  * Cloud-specific workload identity options, extended via module
- * augmentation (AWS adds `managedPolicyArns`).
+ * augmentation (AWS adds `managedPolicyArns`, GCP `gcpServiceAccount`).
  */
 export interface WorkloadIdentityOptions {}
 
@@ -127,7 +136,7 @@ export interface WorkloadIdentityOptions {}
  * The binding contract of `Kubernetes.Deployment` / `Kubernetes.Job`
  * hosts. The core contract is environment variables; cloud providers
  * augment it with their credential-grant channels (AWS adds
- * `policyStatements`), which the matching {@link ClusterAdapterService}'s
+ * `policyStatements`, GCP adds `iam`), which the matching {@link ClusterAdapterService}'s
  * identity adapter materializes at deploy time.
  */
 export interface WorkloadBindingContract {
@@ -164,11 +173,10 @@ export interface WorkloadImageSource {
   main?: string;
   handler?: string;
   /**
-   * Bundler configuration for `main`: rolldown `input`/`output` overrides
-   * plus pure-annotation options (`pure`). `effect`, `@effect/*`,
-   * `alchemy`, `@alchemy.run/*`, and `@distilled.cloud/*` are annotated as
-   * pure by default so unused code from those packages is tree-shaken; list
-   * additional packages via `pure.packages`, or disable with `pure: false`.
+   * Bundler configuration for `main`. Unused code is tree-shaken.
+   * `effect`, alchemy, and `@distilled.cloud` are marked pure so unused
+   * parts prune more aggressively. List extra packages with
+   * `pure.packages`, or disable with `pure: false`.
    */
   build?: Bundle.BundleConfig;
   context?: string;
@@ -279,7 +287,7 @@ export interface ClusterAdapterService {
   readonly connect: (
     connection: Connection,
   ) => Effect.Effect<ClusterTransport, ClusterNotFoundError | Error>;
-  /** Workload identity provisioning (Pod Identity on EKS). */
+  /** Workload identity provisioning (Pod Identity on EKS, Workload Identity Federation on GKE). */
   readonly identity?: {
     readonly reconcile: (
       options: WorkloadIdentityReconcileOptions,
@@ -288,7 +296,7 @@ export interface ClusterAdapterService {
       options: WorkloadIdentityDeleteOptions,
     ) => Effect.Effect<void, any, AdapterLifecycleServices>;
   };
-  /** Managed container-image registry (ECR on EKS). */
+  /** Managed container-image registry (ECR on EKS, Artifact Registry on GKE). */
   readonly registry?: {
     readonly resolve: (
       options: ImageRegistryResolveOptions,

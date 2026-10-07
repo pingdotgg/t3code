@@ -161,7 +161,15 @@ test.provider(
       yield* assertStateMachineDeleted(machine.stateMachineArn);
       yield* assertRoleDeleted(machine.roleName!);
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:stepfunctions",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -206,7 +214,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertStateMachineDeleted(standard.stateMachineArn);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:stepfunctions", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -236,5 +247,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertStateMachineDeleted(machine.stateMachineArn);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:stepfunctions", "live"],
+    timeout: 120_000,
+  },
 );

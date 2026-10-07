@@ -5,7 +5,7 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import WebSocket from "ws";
 import WebSocketTestFunctionLive, { WebSocketTestFunction } from "./ws-handler";
 
@@ -159,5 +159,13 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apigatewayv2",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

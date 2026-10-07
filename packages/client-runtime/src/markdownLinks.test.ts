@@ -3,11 +3,35 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
   parseFileUrlHref,
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
+
+describe("isMarkdownFileLinkLabel", () => {
+  it.each([
+    ["validates the input", "/repo/src/example.ts:12", false],
+    ["read src/example.ts", "/repo/src/example.ts:12", false],
+    ["example.ts?why this matters", "/repo/src/example.ts", false],
+    ["example.ts", "/repo/src/example.ts:12", true],
+    ["example.ts:12", "/repo/src/example.ts:12", true],
+    ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
+    ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
+    ["example.ts:12", "/repo/src/example.ts", false],
+    ["src/example.ts:12", "/repo/src/example.ts:12", true],
+    ["./src/example.ts", "/repo/src/example.ts", true],
+    ["/repo/src/example.ts", "/repo/src/example.ts", true],
+    ["src/", "/home/me/project/src/", true],
+    ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
+    ["file name.ts", "file:///repo/file%20name.ts", true],
+    ["", "/repo/src/example.ts", true],
+  ])("classifies %s for %s", (label, href, expected) => {
+    expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
+  });
+});
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([
@@ -22,6 +46,15 @@ describe("inlineCodeFilePathCandidate", () => {
     ["127.0.0.1:3000", null],
     ["example.com/index.html", null],
     ["example.pl/index.html", null],
+    ["z-ai/glm-5.3", null],
+    ["z-ai/glm-5.3:12", null],
+    ["python/3.12", null],
+    ["Qwen/Qwen2.5-Coder", null],
+    ["meta-llama/Llama-3.1-8B", null],
+    ["share/man/ls.1", "share/man/ls.1"],
+    ["usr/lib/libfoo.so.1", "usr/lib/libfoo.so.1"],
+    ["vendor/jquery-3.6.0.min.js", "vendor/jquery-3.6.0.min.js"],
+    ["./models/glm-5.3", "./models/glm-5.3"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -146,6 +179,11 @@ describe("fileBasename", () => {
 
 describe("workspaceRelativeFilePath", () => {
   it.each([
+    ["/repo/project", "/repo/project", "."],
+    ["/repo/project/", "/repo/project/", "."],
+    ["/", "/", "."],
+    ["C:/USERS/mike/project", "c:/users/MIKE/project", "."],
+    ["C:/", "c:/", "."],
     ["/repo/project/src/main.ts", "/repo/project", "src/main.ts"],
     ["/repo/project/src/main.ts", "/repo/project/", "src/main.ts"],
     ["C:\\Users\\mike\\t3code\\apps\\web\\a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],

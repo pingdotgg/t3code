@@ -1,11 +1,5 @@
-import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  MousePointer2Icon,
-  PaintbrushIcon,
-  PlusIcon,
-  XIcon,
-} from "lucide-react";
+import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide";
 import {
   useCallback,
   useEffect,
@@ -36,6 +30,7 @@ import {
 } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -947,11 +942,7 @@ export function ThemeEditorPanel({
     // A locked mode stays hoverable so the tooltip can say why it is off;
     // a real disabled attribute would swallow the pointer events.
     const button = (
-      <Toggle
-        aria-disabled={lockReason !== null}
-        value={appearance}
-        className={lockReason !== null ? "opacity-50" : undefined}
-      >
+      <Toggle aria-disabled={lockReason !== null} value={appearance}>
         {appearance === "light" ? "Light" : "Dark"}
       </Toggle>
     );
@@ -1225,7 +1216,7 @@ export function ThemeEditorPanel({
           variant="ghost"
           onClick={() => setIsMinimized(!isMinimized)}
         >
-          {isMinimized ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          <MorphIcon icon={isMinimized ? ChevronUp : ChevronDown} />
         </Button>
         <Button
           aria-label="Close the theme editor"

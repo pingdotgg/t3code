@@ -9,26 +9,26 @@
  *
  * @since 4.0.0
  */
+import * as K8sHttpClient from "effect/cluster/K8sHttpClient"
+import * as MessageStorage from "effect/cluster/MessageStorage"
+import * as RunnerHealth from "effect/cluster/RunnerHealth"
+import * as Runners from "effect/cluster/Runners"
+import * as RunnerStorage from "effect/cluster/RunnerStorage"
+import type { Sharding } from "effect/cluster/Sharding"
+import * as ShardingConfig from "effect/cluster/ShardingConfig"
+import * as SocketRunner from "effect/cluster/SocketRunner"
+import * as SqlMessageStorage from "effect/cluster/SqlMessageStorage"
+import * as SqlRunnerStorage from "effect/cluster/SqlRunnerStorage"
 import type * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import * as K8sHttpClient from "effect/unstable/cluster/K8sHttpClient"
-import * as MessageStorage from "effect/unstable/cluster/MessageStorage"
-import * as RunnerHealth from "effect/unstable/cluster/RunnerHealth"
-import * as Runners from "effect/unstable/cluster/Runners"
-import * as RunnerStorage from "effect/unstable/cluster/RunnerStorage"
-import type { Sharding } from "effect/unstable/cluster/Sharding"
-import * as ShardingConfig from "effect/unstable/cluster/ShardingConfig"
-import * as SocketRunner from "effect/unstable/cluster/SocketRunner"
-import * as SqlMessageStorage from "effect/unstable/cluster/SqlMessageStorage"
-import * as SqlRunnerStorage from "effect/unstable/cluster/SqlRunnerStorage"
-import * as RpcClient from "effect/unstable/rpc/RpcClient"
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
-import { Socket } from "effect/unstable/socket/Socket"
-import type * as SocketServer from "effect/unstable/socket/SocketServer"
-import type { SqlClient } from "effect/unstable/sql/SqlClient"
+import * as RpcClient from "effect/rpc/RpcClient"
+import * as RpcSerialization from "effect/rpc/RpcSerialization"
+import { Socket } from "effect/socket/Socket"
+import type * as SocketServer from "effect/socket/SocketServer"
+import type { SqlClient } from "effect/sql/SqlClient"
 import * as DenoCrypto from "./DenoCrypto.ts"
 import * as DenoFileSystem from "./DenoFileSystem.ts"
 import * as DenoHttpClient from "./DenoHttpClient.ts"
@@ -66,7 +66,7 @@ export const layerClientProtocol: Layer.Layer<
 )
 
 /**
- * Provides the native Deno socket server used by cluster runners, listening on
+ * Provides the socket server used by cluster runners, listening on
  * `ShardingConfig.runnerListenAddress` or `runnerAddress`.
  *
  * @category layers
@@ -83,7 +83,7 @@ export const layerSocketServer: Layer.Layer<
     return yield* Effect.die("layerSocketServer: ShardingConfig.runnerListenAddress is None")
   }
   return DenoSocketServer.layer({
-    hostname: listenAddress.value.host,
+    host: listenAddress.value.host,
     port: listenAddress.value.port
   })
 }).pipe(Layer.unwrap)
@@ -100,7 +100,7 @@ export const layer = <
   const Storage extends "local" | "sql" | "byo" = never
 >(
   options?: {
-    readonly serialization?: "msgpack" | "ndjson" | undefined
+    readonly serialization?: "binary" | "ndjson" | undefined
     readonly serializationMaxBufferSize?: number | "unbounded" | undefined
     readonly clientOnly?: ClientOnly | undefined
     readonly storage?: Storage | undefined
@@ -161,7 +161,9 @@ export const layer = <
     Layer.provide(
       options?.serialization === "ndjson"
         ? RpcSerialization.layerNdjsonWith({ maxBufferSize: options?.serializationMaxBufferSize })
-        : RpcSerialization.layerMsgPackWith({ maxBufferSize: options?.serializationMaxBufferSize })
+        : RpcSerialization.layerSchemaBinary({
+          maxFrameSize: options?.serializationMaxBufferSize
+        })
     )
   ) as any
 }

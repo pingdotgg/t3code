@@ -6,8 +6,8 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { LAMBDA_MARKER } from "./lambda/marker.ts";
 
 /**
@@ -75,7 +75,7 @@ export default class ApiFunction extends Lambda.Function<ApiFunction>()(
         const url = new URL(request.originalUrl);
 
         if (url.pathname === "/") {
-          const variable = yield* Config.string("LAMBDA_VARIABLE");
+          const variable = yield* Config.String("LAMBDA_VARIABLE");
           return yield* HttpServerResponse.json({
             marker: LAMBDA_MARKER,
             variable,

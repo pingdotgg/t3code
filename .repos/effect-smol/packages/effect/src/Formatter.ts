@@ -57,6 +57,7 @@ export interface Formatter<in Value, out Format = string> {
  * - Handles `BigInt`, `Symbol`, `Set`, `Map`, `Date`, `RegExp`, and class
  *   instances that `JSON.stringify` cannot represent.
  * - Circular references are shown as `"[Circular]"` instead of throwing.
+ * - Failures while inspecting a value are rendered as diagnostic placeholders instead of throwing.
  * - Primitives: stringified naturally (`null`, `undefined`, `123`, `true`).
  *   Strings are JSON-quoted.
  * - Objects with a custom `toString` (not `Object.prototype.toString`):
@@ -127,6 +128,15 @@ export function format(input: unknown, options?: {
   }
 
   function recur(v: unknown, d = 0): string {
+    try {
+      return recurUnsafe(v, d)
+    } catch {
+      if ((typeof v === "object" && v !== null) || typeof v === "function") ancestors.delete(v)
+      return "[inspection threw]"
+    }
+  }
+
+  function recurUnsafe(v: unknown, d = 0): string {
     if (typeof v === "string") return JSON.stringify(v)
 
     if (
@@ -159,17 +169,17 @@ export function format(input: unknown, options?: {
         v["toString"] !== Array.prototype.toString
       ) {
         const s = safeToString(v)
-        output = v instanceof Error && v.cause ? `${s} (cause: ${recur(v.cause, d)})` : s
+        output = v instanceof Error && v.cause !== undefined ? `${s} (cause: ${recur(v.cause, d)})` : s
       } else if (Symbol.iterator in v) {
         output = `${v.constructor.name}(${recur(Array.from(v as any), d)})`
       } else {
         const keys = ownKeys(v)
         if (!gap || keys.length <= 1) {
-          const body = `{${keys.map((k) => `${formatPropertyKey(k)}:${recur((v as any)[k], d)}`).join(",")}}`
+          const body = `{${keys.map((k) => `${formatPropertyKey(k)}:${recur(safeGet(v, k), d)}`).join(",")}}`
           output = wrap(v, body)
         } else {
           const body = `{\n${
-            keys.map((k) => `${ind(d + 1)}${formatPropertyKey(k)}: ${recur((v as any)[k], d + 1)}`).join(",\n")
+            keys.map((k) => `${ind(d + 1)}${formatPropertyKey(k)}: ${recur(safeGet(v, k), d + 1)}`).join(",\n")
           }\n${ind(d)}}`
           output = wrap(v, body)
         }
@@ -225,6 +235,14 @@ function safeToString(input: any): string {
   }
 }
 
+function safeGet(input: object, key: PropertyKey): unknown {
+  try {
+    return (input as any)[key]
+  } catch {
+    return "[property access threw]"
+  }
+}
+
 /**
  * Stringifies a value to JSON safely, silently dropping circular references.
  *
@@ -240,8 +258,10 @@ function safeToString(input: any): string {
  * object ancestry. Circular references are replaced with `undefined`, which
  * omits them from object output. `Redactable` values are automatically redacted
  * before serialization. `BigInt` values are stringified with an `n` suffix.
- * Values not supported by JSON otherwise follow standard `JSON.stringify`
- * behavior. The `space` parameter controls indentation and defaults to `0`.
+ * `Error` instances without a `toJSON` property include their enumerable
+ * properties plus `name` and `message`. Errors with `toJSON` keep their custom
+ * representation. Other values follow standard `JSON.stringify` behavior. The
+ * `space` parameter controls indentation and defaults to `0`.
  *
  * **Gotchas**
  *
@@ -298,6 +318,9 @@ export function formatJson(input: unknown, options?: {
       if (typeof redacted !== "object" || redacted === null) {
         return redacted
       }
+      const current = redacted instanceof Error && !Predicate.hasProperty(redacted, "toJSON")
+        ? { ...redacted, name: redacted.name, message: redacted.message }
+        : redacted
       while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
         ancestors.pop()
       }
@@ -305,7 +328,10 @@ export function formatJson(input: unknown, options?: {
         return undefined // circular reference
       }
       ancestors.push(redacted)
-      return redacted
+      if (current !== redacted) {
+        ancestors.push(current)
+      }
+      return current
     },
     options?.space
   ) ?? "null"

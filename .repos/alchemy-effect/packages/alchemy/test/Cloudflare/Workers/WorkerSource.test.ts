@@ -27,6 +27,7 @@ const invalidModule = new URL(
 const ctx = (props: WorkerProps): SourceContext =>
   makeSourceContext({
     id: "TestWorker",
+    fqn: "TestWorker",
     workerName: "stack-testworker-dev-abc123",
     props,
     compatibility: { date: "2024-01-01", flags: [] },
@@ -49,116 +50,127 @@ const provide = <A, E>(
     Effect.scoped,
   );
 
-describe("resolveSource", () => {
-  it.effect("maps props.script to the inline-script source", () =>
-    provide(
-      Effect.gen(function* () {
-        const script = "export default { fetch: () => new Response('hi') };";
-        const props: WorkerProps = { script };
-        const source = yield* resolveSource(props);
-        expect(source.ownsAssets).toBe(false);
-        const slots = yield* source.hash(ctx(props), undefined);
-        expect(slots.bundle).toBe(
-          crypto.createHash("sha256").update(script).digest("hex"),
-        );
-        const out = yield* source.build(ctx(props));
-        expect(out.bundle?.files[0].path).toBe("main.js");
-        expect(out.bundle?.hash).toBe(slots.bundle);
-        expect(out.assets).toBeUndefined();
-      }),
-    ),
-  );
-
-  it.effect("maps props.vite to the asset-owning vite source", () =>
-    provide(
-      Effect.gen(function* () {
-        const source = yield* resolveSource({ vite: { rootDir: "." } });
-        expect(source.ownsAssets).toBe(true);
-      }),
-    ),
-  );
-
-  it.effect("loads an external provider from a source descriptor", () =>
-    provide(
-      Effect.gen(function* () {
-        const props: WorkerProps = {
-          source: {
-            provider: providerModule,
-            devMode: "bundle",
-            options: { marker: "abc-123" },
-          },
-        };
-        const source = yield* resolveSource(props);
-        const out = yield* source.build(ctx(props));
-        expect(String(out.bundle?.files[0].content)).toContain("abc-123");
-        const slots = yield* source.hash(ctx(props), undefined);
-        expect(slots.bundle).toBe(out.bundle?.hash);
-      }),
-    ),
-  );
-
-  it.effect(
-    "fails with SourceProviderError naming the package when the module cannot be imported",
-    () =>
+describe(
+  "resolveSource",
+  {
+    tags: [
+      "unit",
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "local",
+    ],
+  },
+  () => {
+    it.effect("maps props.script to the inline-script source", () =>
       provide(
         Effect.gen(function* () {
-          const result = yield* Effect.result(
-            resolveSource({
-              source: {
-                provider: "@alchemy.run/does-not-exist-fixture",
-                devMode: "bundle",
-              },
-            }),
+          const script = "export default { fetch: () => new Response('hi') };";
+          const props: WorkerProps = { script };
+          const source = yield* resolveSource(props);
+          expect(source.ownsAssets).toBe(false);
+          const slots = yield* source.hash(ctx(props), undefined);
+          expect(slots.bundle).toBe(
+            crypto.createHash("sha256").update(script).digest("hex"),
           );
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") {
-            expect(result.failure).toBeInstanceOf(SourceProviderError);
-            expect((result.failure as SourceProviderError).message).toContain(
-              "@alchemy.run/does-not-exist-fixture",
-            );
-          }
+          const out = yield* source.build(ctx(props));
+          expect(out.bundle?.files[0].path).toBe("main.js");
+          expect(out.bundle?.hash).toBe(slots.bundle);
+          expect(out.assets).toBeUndefined();
         }),
       ),
-  );
+    );
 
-  it.effect(
-    "fails with SourceProviderError when the module's default export lacks make()",
-    () =>
+    it.effect("maps props.vite to the asset-owning vite source", () =>
       provide(
         Effect.gen(function* () {
-          const result = yield* Effect.result(
-            resolveSource({
-              source: { provider: invalidModule, devMode: "bundle" },
-            }),
-          );
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") {
-            expect(result.failure).toBeInstanceOf(SourceProviderError);
-            expect((result.failure as SourceProviderError).message).toContain(
-              "WorkerSourceModule",
-            );
-          }
+          const source = yield* resolveSource({ vite: { rootDir: "." } });
+          expect(source.ownsAssets).toBe(true);
         }),
       ),
-  );
+    );
 
-  it.effect("rejects source combined with main/script/vite", () =>
-    provide(
-      Effect.gen(function* () {
-        const result = yield* Effect.result(
-          resolveSource({
-            source: { provider: providerModule, devMode: "bundle" },
-            main: "./worker.ts",
+    it.effect("loads an external provider from a source descriptor", () =>
+      provide(
+        Effect.gen(function* () {
+          const props: WorkerProps = {
+            source: {
+              provider: providerModule,
+              devMode: "bundle",
+              options: { marker: "abc-123" },
+            },
+          };
+          const source = yield* resolveSource(props);
+          const out = yield* source.build(ctx(props));
+          expect(String(out.bundle?.files[0].content)).toContain("abc-123");
+          const slots = yield* source.hash(ctx(props), undefined);
+          expect(slots.bundle).toBe(out.bundle?.hash);
+        }),
+      ),
+    );
+
+    it.effect(
+      "fails with SourceProviderError naming the package when the module cannot be imported",
+      () =>
+        provide(
+          Effect.gen(function* () {
+            const result = yield* Effect.result(
+              resolveSource({
+                source: {
+                  provider: "@alchemy.run/does-not-exist-fixture",
+                  devMode: "bundle",
+                },
+              }),
+            );
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure") {
+              expect(result.failure).toBeInstanceOf(SourceProviderError);
+              expect((result.failure as SourceProviderError).message).toContain(
+                "@alchemy.run/does-not-exist-fixture",
+              );
+            }
           }),
-        );
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
-          expect(result.failure).toBeInstanceOf(SourceProviderError);
-          expect((result.failure as SourceProviderError).message).toContain(
-            '"main"',
+        ),
+    );
+
+    it.effect(
+      "fails with SourceProviderError when the module's default export lacks make()",
+      () =>
+        provide(
+          Effect.gen(function* () {
+            const result = yield* Effect.result(
+              resolveSource({
+                source: { provider: invalidModule, devMode: "bundle" },
+              }),
+            );
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure") {
+              expect(result.failure).toBeInstanceOf(SourceProviderError);
+              expect((result.failure as SourceProviderError).message).toContain(
+                "WorkerSourceModule",
+              );
+            }
+          }),
+        ),
+    );
+
+    it.effect("rejects source combined with main/script/vite", () =>
+      provide(
+        Effect.gen(function* () {
+          const result = yield* Effect.result(
+            resolveSource({
+              source: { provider: providerModule, devMode: "bundle" },
+              main: "./worker.ts",
+            }),
           );
-        }
-      }),
-    ),
-  );
-});
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure).toBeInstanceOf(SourceProviderError);
+            expect((result.failure as SourceProviderError).message).toContain(
+              '"main"',
+            );
+          }
+        }),
+      ),
+    );
+  },
+);

@@ -24,6 +24,34 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("changes a cleanup rule without replacing the machine's other rules", () => {
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
+    });
+    expect(
+      applyServerSettingsPatch(enabled, {
+        storageCleanup: { worktreeAfterDays: null },
+      }).storageCleanup,
+    ).toEqual({
+      worktreeAfterDays: null,
+      worktreeOnMerge: true,
+      worktreeOnDelete: false,
+      worktreeUnchanged: false,
+      browserArtifactsAfterDays: null,
+      logsAfterDays: 30,
+    });
+  });
+  it("replaces GitHub host choices so a cleared account pin does not survive", () => {
+    const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      github: { hosts: { "github.com": { account: "work", enabled: true } } },
+    });
+    expect(pinned.github.hosts).toEqual({ "github.com": { account: "work", enabled: true } });
+    expect(
+      applyServerSettingsPatch(pinned, {
+        github: { hosts: { "github.com": { enabled: false } } },
+      }).github.hosts,
+    ).toEqual({ "github.com": { enabled: false } });
+  });
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });
@@ -207,14 +235,18 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{}")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
     expect(
       parsePersistedServerObservabilitySettings(
-        JSON.stringify({ observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "" } }),
+        JSON.stringify({
+          observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "", otlpLogsUrl: "   " },
+        }),
       ),
     ).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -225,12 +257,14 @@ describe("serverSettings helpers", () => {
           observability: {
             otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
             otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+            otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
           },
         }),
       ),
     ).toEqual({
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      otlpLogsUrl: "http://localhost:4318/v1/logs",
     });
   });
 
@@ -238,6 +272,7 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -437,6 +472,41 @@ describe("serverSettings helpers", () => {
     } satisfies ServerProvider;
 
     expect(resolveSourceControlWriterModelSelection(settings, [unavailableProvider])).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("falls back from a writer provider that cannot generate application text", () => {
+    const instanceId = ProviderInstanceId.make("acp_writer");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "default");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const incapableProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("acpRegistry"),
+      supportsTextGeneration: false,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(resolveSourceControlWriterModelSelection(settings, [incapableProvider])).toBe(
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
@@ -734,5 +804,18 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+});
+
+describe("worktreesDirectory", () => {
+  it("remembers previous custom locations so their worktrees stay managed", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { worktreesDirectory: "/a" });
+    expect(first.previousWorktreesDirectories).toEqual([]);
+    const second = applyServerSettingsPatch(first, { worktreesDirectory: "/b" });
+    expect(second.previousWorktreesDirectories).toEqual(["/a"]);
+    const reset = applyServerSettingsPatch(second, { worktreesDirectory: "" });
+    expect(reset.previousWorktreesDirectories).toEqual(["/a", "/b"]);
+    const back = applyServerSettingsPatch(reset, { worktreesDirectory: "/a" });
+    expect(back.previousWorktreesDirectories).toEqual(["/b"]);
   });
 });

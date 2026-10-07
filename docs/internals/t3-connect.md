@@ -4,6 +4,30 @@ T3 Connect uses Clerk for cloud identity. The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
+The one exception is automation webhooks: the relay forwards
+`/v1/hooks/:environmentId/:hookId/:token` to the environment's tunnel so
+senders get a stable URL. It keeps bodies and tokens out of its traces and
+leaves token and signature verification to the environment
+([forwarder](../../infra/relay/src/hooks/HookForwarder.ts)).
+
+By default the forwarder stores nothing. An environment can opt in to having
+the relay hold requests while it is offline
+(`hold_webhooks_while_offline` on its link). Only then does the relay store the
+raw request, including the hook token in the path, in a Durable Object for
+that environment, with SQLite storage. The object pushes held requests back
+through the tunnel from its alarm, oldest first, and backs off while the
+environment stays away. When the tunnel reconnects, the environment asks the
+relay to deliver right away. Requests are deleted once the environment
+answers, after 24 hours, or when no user has the environment linked. The relay
+still never checks the token; delivery goes through the same environment route.
+Every forward carries `x-t3-relay-delivery-id`, so a request that reached the
+environment before a timeout and is delivered again later runs once
+([inbox object](../../infra/relay/src/hooks/HookInboxObject.ts)).
+
+A Durable Object, not Postgres or Queues, because held requests are write-once,
+read-once bodies of up to 1 MiB that need per-environment order, caps, and
+retry timing. Queues cap messages at 128 KB and cannot hold one environment's
+requests back while it is away.
 
 Clerk, deployment, and native authentication setup live in the
 [Connect setup runbook](../operations/connect-setup.md).
@@ -24,7 +48,7 @@ mint responses also bind the credential to the client proof key. The relay
 verifies those bindings before returning a credential. This prevents a different
 process behind the tunnel from impersonating the linked environment. The checks
 meet in the
-[environment cloud handlers](../../apps/server/src/cloud/http.ts) and
+[environment link service](../../apps/server/src/cloud/CloudLink.ts) and
 [relay connector](../../infra/relay/src/environments/EnvironmentConnector.ts).
 
 The relay holds the signing authority for mint requests. DPoP protects an honest
@@ -56,7 +80,7 @@ Two cases must retain the tunnel across shutdown. A link installed through a
 client has no startup provisioning path and depends on its stored connector
 token. An update handoff immediately starts a replacement server, and replacing
 the tunnel would add routing propagation delay to every update. These exceptions
-belong to [shutdown handling](../../apps/server/src/cloud/http.ts).
+belong to [shutdown handling](../../apps/server/src/cloud/CloudLink.ts).
 
 Release and unlink claim the allocation generation before deleting external
 resources. A delayed cleanup must not delete a tunnel reused by a concurrent
@@ -64,6 +88,47 @@ restart or relink. Unlink commits authorization revocation before external
 teardown, because a database failure must leave the active link usable. Failed
 teardown retains enough state to retry. See the
 [managed endpoint lifecycle](../../infra/relay/src/environments/ManagedEndpointProvider.ts).
+
+## Idle tunnels are reclaimed and recovered
+
+Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
+that sleeps with a linked environment leaves a paid tunnel behind. The relay's
+five-minute maintenance job can reclaim those tunnels. `RELAY_TUNNEL_CLEANUP_MODE`
+selects `off`, `dry-run`, or `enabled`, with `off` as the default. The mode is
+read at deploy time, so changing it means a relay deploy, not a variable flip.
+A candidate is a same-stage tunnel that Cloudflare reports down for at least
+five minutes, or one that never connected and is at least an hour old. The
+longer grace for never-connected tunnels covers a pairing still in progress.
+
+Cleanup deletes only tunnels whose host has registered recovery. Allocations
+without recovery registration belong to hosts that cannot replace a deleted
+tunnel and are left alone. Allocations with no recorded tunnel ID, or a
+different tunnel ID, are skipped because a provision may own them. A tunnel with
+no allocation row at all is counted as `skippedOrphan` and never deleted: there
+is no row to lock, so a relink that adopts it by name could race the delete.
+Clear those by hand. Each sweep is bounded: at most ten list requests, 100 deletions, a
+two-minute deadline, and an early stop on a Cloudflare rate limit. Each sweep
+starts one budget further along the candidate list, so a block of deletes that
+keep failing cannot starve the tunnels listed after them. See the
+[reaper](../../infra/relay/src/environments/ManagedEndpointReaper.ts).
+
+A host registers recovery at startup by sending its tunnel ID and loopback
+origin with a short-lived signature from the environment key. Registration
+touches Cloudflare only when the local host or port changed, and once per
+existing allocation on the first registration after the upgrade because the
+stored origin is empty. First registrations are jittered so an auto-update wave
+does not hit the relay at once. The host stores a confirmed-origin marker with
+the connector config, and a later boot starts the connector before registration
+only when that marker matches the current config and port. If registration
+cannot reach the relay for ten minutes, the host starts its stored config anyway
+and keeps registering in the background until it can reconcile the origin.
+If the connector exits, or `cloudflared` reports repeated tunnel
+rejections, the host asks the relay for a replacement, at most once every two
+minutes. The relay
+provisions under the same allocation, so the hostname and DNS record survive
+and clients keep their bindings. Every mutation on an allocation bumps its
+`generation`, and deletion locks the row at the generation it claimed, so a
+host that reconnects mid-sweep wins.
 
 ## OAuth traps
 

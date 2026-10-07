@@ -134,7 +134,7 @@ test.provider(
       // State resolves to an Effect that initializes and yields the concrete
       // state-store service.
       const state = yield* yield* State;
-      const stage = "test";
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -251,7 +251,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 const numberedVersions = Effect.fn(function* (functionName: string) {

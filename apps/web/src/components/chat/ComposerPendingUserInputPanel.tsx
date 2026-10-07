@@ -1,4 +1,4 @@
-import { type ApprovalRequestId } from "@t3tools/contracts";
+import { type RuntimeRequestId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -12,16 +12,18 @@ import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
-  respondingRequestIds: ApprovalRequestId[];
+  disabled?: boolean;
+  respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
-  onDismiss: (requestId: ApprovalRequestId) => void;
+  onDismiss: (requestId: RuntimeRequestId) => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
   pendingUserInputs,
+  disabled = false,
   respondingRequestIds,
   answers,
   questionIndex,
@@ -37,6 +39,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
       prompt={activePrompt}
+      disabled={disabled}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
@@ -49,6 +52,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
+  disabled,
   isResponding,
   answers,
   questionIndex,
@@ -57,13 +61,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss,
 }: {
   prompt: PendingUserInput;
+  disabled: boolean;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
-  onDismiss: (requestId: ApprovalRequestId) => void;
+  onDismiss: (requestId: RuntimeRequestId) => void;
 }) {
+  // Message-mode requests remain answerable after their provider turn ends.
+  const canRespond = prompt.responseCapability !== "not_resumable";
+  const responseDisabled = disabled || isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -84,6 +92,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   useEffect(() => {
     onAdvanceRef.current = onAdvance;
   }, [onAdvance]);
+
+  useEffect(() => {
+    if (disabled && autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  }, [disabled]);
 
   useEffect(() => {
     if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
@@ -117,6 +132,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   const handleOptionSelection = useCallback(
     (questionId: string, optionValue: string) => {
+      if (disabled || isResponding) return;
       if (activeQuestion?.multiSelect) {
         onToggleOption(questionId, optionValue);
         return;
@@ -131,7 +147,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         onAdvanceRef.current();
       }, 200);
     },
-    [activeQuestion, onToggleOption],
+    [activeQuestion, disabled, isResponding, onToggleOption],
   );
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
@@ -139,7 +155,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
   // out, since the numbers they refer to are not on screen.
   useEffect(() => {
-    if (!activeQuestion || isResponding || isCollapsed) return;
+    if (!activeQuestion || responseDisabled || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -163,7 +179,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, isResponding]);
+  }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -198,7 +214,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
           {prompt.questions.length > 1 ? (
-            <span className="text-[10px] font-medium text-muted-foreground tabular-nums">
+            <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
             </span>
           ) : null}
@@ -228,66 +244,68 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Actions>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ComposerBanner.Body className="pe-1 pb-1">
-          <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
-          {activeQuestion.multiSelect ? (
-            <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
-          ) : null}
-          <div className="mt-2 space-y-0.5">
-            {activeQuestion.options.map((option, index) => {
-              const optionValue = option.value ?? option.label;
-              const isOptimisticallySelected =
-                optimisticSingleSelect?.questionId === activeQuestion.id &&
-                optimisticSingleSelect.optionValue === optionValue;
-              const isSelected =
-                isOptimisticallySelected ||
-                (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
-              const shortcutKey = index < 9 ? index + 1 : null;
-              const className = cn(
-                "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
-                isSelected
-                  ? "bg-muted/55 text-foreground"
-                  : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                isResponding && "opacity-50 cursor-not-allowed",
-                !isResponding && "cursor-pointer",
-              );
-              const content = (
-                <>
-                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                    <span className="text-sm font-medium">{option.label}</span>
-                    {option.description && option.description !== option.label ? (
-                      <span className="text-secondary-label text-[11px]">{option.description}</span>
+        <ComposerBanner.Scroll>
+          <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
+            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            {activeQuestion.multiSelect ? (
+              <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+            ) : null}
+            <div className="mt-2 space-y-0.5">
+              {activeQuestion.options.map((option, index) => {
+                const optionValue = option.value ?? option.label;
+                const isOptimisticallySelected =
+                  optimisticSingleSelect?.questionId === activeQuestion.id &&
+                  optimisticSingleSelect.optionValue === optionValue;
+                const isSelected =
+                  isOptimisticallySelected ||
+                  (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
+                const shortcutKey = index < 9 ? index + 1 : null;
+                const className = cn(
+                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
+                  isSelected
+                    ? "bg-muted/55 text-foreground"
+                    : "bg-transparent text-foreground/85 hover:bg-muted/30",
+                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                  !disabled && !isResponding && "cursor-pointer",
+                );
+                const content = (
+                  <>
+                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      <span className="text-sm font-medium">{option.label}</span>
+                      {option.description && option.description !== option.label ? (
+                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                      ) : null}
+                    </div>
+                    {isSelected ? (
+                      <CheckIcon className="size-3.5 shrink-0 text-primary" />
+                    ) : shortcutKey !== null ? (
+                      <kbd
+                        className={cn(
+                          "flex size-5 shrink-0 items-center justify-center text-3xs font-medium text-muted-foreground tabular-nums",
+                        )}
+                      >
+                        {shortcutKey}
+                      </kbd>
                     ) : null}
-                  </div>
-                  {isSelected ? (
-                    <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                  ) : shortcutKey !== null ? (
-                    <kbd
-                      className={cn(
-                        "flex size-5 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground tabular-nums",
-                      )}
-                    >
-                      {shortcutKey}
-                    </kbd>
-                  ) : null}
-                </>
-              );
-              return (
-                <button
-                  key={`${activeQuestion.id}:${optionValue}`}
-                  type="button"
-                  disabled={isResponding}
-                  onClick={() => {
-                    handleOptionSelection(activeQuestion.id, optionValue);
-                  }}
-                  className={className}
-                >
-                  {content}
-                </button>
-              );
-            })}
-          </div>
-        </ComposerBanner.Body>
+                  </>
+                );
+                return (
+                  <button
+                    key={`${activeQuestion.id}:${optionValue}`}
+                    type="button"
+                    disabled={disabled || isResponding}
+                    onClick={() => {
+                      handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    className={className}
+                  >
+                    {content}
+                  </button>
+                );
+              })}
+            </div>
+          </ComposerBanner.Body>
+        </ComposerBanner.Scroll>
       </CollapsiblePanel>
     </Collapsible>
   );

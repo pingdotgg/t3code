@@ -56,6 +56,7 @@ const clientSettings: ClientSettings = {
   planModeEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
+  persistComposerContextStrip: true,
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
@@ -65,6 +66,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
+  sidebarWorkingShelfEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},
@@ -76,8 +78,8 @@ const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(Clien
 const decodeRecordJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-function makeLayer(baseDir: string) {
-  const environmentLayer = DesktopEnvironment.layer({
+function layer(baseDir: string) {
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -94,7 +96,7 @@ function makeLayer(baseDir: string) {
   );
 
   return DesktopClientSettings.layer.pipe(
-    Layer.provideMerge(environmentLayer),
+    Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -107,7 +109,7 @@ const withClientSettings = <A, E, R>(
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-client-settings-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir)));
+    return yield* effect.pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
@@ -147,58 +149,84 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  for (const failure of [
+  it.effect("saves through a symlinked client settings file without replacing the link", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const dotfiles = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-client-settings-dotfiles-",
+        });
+        const linkedSettingsPath = `${dotfiles}/client-settings.json`;
+        yield* fileSystem.writeFileString(linkedSettingsPath, "{}\n");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.symlink(linkedSettingsPath, environment.clientSettingsPath);
+
+        yield* settings.set(clientSettings);
+
+        assert.equal(
+          yield* fileSystem.readLink(environment.clientSettingsPath),
+          linkedSettingsPath,
+        );
+        assert.deepEqual(
+          yield* decodeClientSettingsJson(yield* fileSystem.readFileString(linkedSettingsPath)),
+          clientSettings,
+        );
+      }),
+    ),
+  );
+
+  it.effect.each([
     { label: "permission", reason: "PermissionDenied" },
     { label: "I/O", reason: "Unknown" },
-  ] as const) {
-    it.effect(`preserves saved preferences across ${failure.label} read failures and retries`, () =>
-      withClientSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* DesktopClientSettings.DesktopClientSettings;
-          const savedSettings = {
-            ...clientSettings,
-            onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
-          };
-          yield* settings.set(savedSettings);
-          const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
-          const cause = PlatformError.systemError({
-            _tag: failure.reason,
-            module: "FileSystem",
-            method: "readFileString",
-            pathOrDescriptor: environment.clientSettingsPath,
-          });
-          let failRead = true;
-          const retryableSettings = yield* DesktopClientSettings.make.pipe(
-            Effect.provideService(
-              FileSystem.FileSystem,
-              FileSystem.FileSystem.of({
-                ...fileSystem,
-                readFileString: (path) =>
-                  Effect.suspend(() =>
-                    failRead ? Effect.fail(cause) : fileSystem.readFileString(path),
-                  ),
-              }),
-            ),
-          );
+  ] as const)("preserves saved preferences across $label read failures and retries", (failure) =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const savedSettings = {
+          ...clientSettings,
+          onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
+        };
+        yield* settings.set(savedSettings);
+        const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
+        const cause = PlatformError.systemError({
+          _tag: failure.reason,
+          module: "FileSystem",
+          method: "readFileString",
+          pathOrDescriptor: environment.clientSettingsPath,
+        });
+        let failRead = true;
+        const retryableSettings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path) =>
+                Effect.suspend(() =>
+                  failRead ? Effect.fail(cause) : fileSystem.readFileString(path),
+                ),
+            }),
+          ),
+        );
 
-          const error = yield* retryableSettings.get.pipe(Effect.flip);
-          assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
-          assert.equal(error.operation, "read-file");
-          assert.equal(error.path, environment.clientSettingsPath);
-          assert.strictEqual(error.cause, cause);
-          assert.equal(
-            yield* fileSystem.readFileString(environment.clientSettingsPath),
-            savedContents,
-          );
+        const error = yield* retryableSettings.get.pipe(Effect.flip);
+        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+        assert.equal(error.operation, "read-file");
+        assert.equal(error.path, environment.clientSettingsPath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          yield* fileSystem.readFileString(environment.clientSettingsPath),
+          savedContents,
+        );
 
-          failRead = false;
-          assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
-        }),
-      ),
-    );
-  }
+        failRead = false;
+        assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
+      }),
+    ),
+  );
 
   it.effect("reports the failed client settings write operation and path", () =>
     withClientSettings(
@@ -286,31 +314,29 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  for (const document of [
+  it.effect.each([
     { label: "malformed JSON", contents: "{not-json" },
     { label: "invalid direct settings", contents: '{"fontSizeCode":"large"}' },
     { label: "invalid legacy settings", contents: '{"settings":{"fontSizeCode":"large"}}' },
-  ]) {
-    it.effect(`reports ${document.label} without treating the settings file as absent`, () =>
-      withClientSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* DesktopClientSettings.DesktopClientSettings;
-          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-          yield* fileSystem.writeFileString(environment.clientSettingsPath, document.contents);
+  ])("reports $label without treating the settings file as absent", (document) =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, document.contents);
 
-          const error = yield* settings.get.pipe(Effect.flip);
-          assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
-          assert.equal(error.operation, "decode-document");
-          assert.equal(error.path, environment.clientSettingsPath);
-          assert.instanceOf(error.cause, Schema.SchemaError);
-          assert.equal(
-            yield* fileSystem.readFileString(environment.clientSettingsPath),
-            document.contents,
-          );
-        }),
-      ),
-    );
-  }
+        const error = yield* settings.get.pipe(Effect.flip);
+        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+        assert.equal(error.operation, "decode-document");
+        assert.equal(error.path, environment.clientSettingsPath);
+        assert.instanceOf(error.cause, Schema.SchemaError);
+        assert.equal(
+          yield* fileSystem.readFileString(environment.clientSettingsPath),
+          document.contents,
+        );
+      }),
+    ),
+  );
 });

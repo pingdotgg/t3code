@@ -13,10 +13,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-describe("Diff", () => {
+describe("Diff", { tags: ["unit", "local"] }, () => {
   describe("havePropsChanged with Redacted values", () => {
     // Config values yielded in a Worker's init phase (e.g.
-    // `yield* Config.string("MY_VARIABLE")`) land in `props.env`
+    // `yield* Config.String("MY_VARIABLE")`) land in `props.env`
     // as `Redacted<string>`. Before unwrapping, every Redacted serialized
     // to the constant mask `"<redacted>"`, so a changed secret was
     // invisible to the diff and the Worker never redeployed.

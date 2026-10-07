@@ -9,20 +9,16 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import {
-  CheckCircle2Icon,
-  CircleIcon,
-  HammerIcon,
-  MessageSquareIcon,
-  PencilIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
+import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
@@ -219,11 +215,10 @@ export function ReviewThreadCard({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {thread.isResolved ? (
-          <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-500" />
-        ) : (
-          <CircleIcon className="size-3.5" />
-        )}
+        <MorphIcon
+          className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
+          icon={thread.isResolved ? CircleCheck : Circle}
+        />
         <button
           type="button"
           className="hover:text-foreground"
@@ -265,7 +260,7 @@ export function ReviewThreadCard({
             {comments.map((comment) => (
               <article key={comment.id} className="group min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <PullRequestActorLabel actor={comment.author} className="text-foreground" />
+                  <PullRequestActorLabel actor={comment.author} />
                   <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
                   <PullRequestReactionBar
                     className="ml-auto justify-end"
@@ -297,15 +292,10 @@ export function ReviewThreadCard({
                       environmentId={environmentId}
                     />
                     {canEditComment(comment) ? (
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                      <PullRequestEditButton
                         aria-label="Edit comment"
                         onClick={() => setEditingId(comment.id)}
-                      >
-                        <PencilIcon className="size-3" />
-                      </Button>
+                      />
                     ) : null}
                   </div>
                 )}
@@ -317,7 +307,6 @@ export function ReviewThreadCard({
               <Button
                 size="xs"
                 variant="ghost"
-                className="px-1"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -357,12 +346,7 @@ export function ReviewThreadCard({
                 </div>
               </div>
             ) : (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="mt-2 px-1"
-                onClick={() => setReplying(true)}
-              >
+              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply
               </Button>
             )

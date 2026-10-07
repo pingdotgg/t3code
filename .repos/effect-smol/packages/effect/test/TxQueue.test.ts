@@ -315,6 +315,22 @@ describe("TxQueue", () => {
         assert.strictEqual(size, 2)
       })))
 
+    it.effect("takeN and takeBetween normalize element counts before waiting", () =>
+      Effect.tx(Effect.gen(function*() {
+        const takeNQueue = yield* TxQueue.unbounded<number>()
+        yield* TxQueue.offer(takeNQueue, 1)
+        assert.deepStrictEqual(yield* TxQueue.takeN(takeNQueue, 1.9), [1])
+
+        const takeBetweenQueue = yield* TxQueue.unbounded<number>()
+        yield* TxQueue.offer(takeBetweenQueue, 1)
+        assert.deepStrictEqual(yield* TxQueue.takeBetween(takeBetweenQueue, 1.9, 2.9), [1])
+
+        const invalidQueue = yield* TxQueue.unbounded<number>()
+        yield* TxQueue.offer(invalidQueue, 1)
+        assert.deepStrictEqual(yield* TxQueue.takeN(invalidQueue, Number.NaN), [])
+        assert.deepStrictEqual(yield* TxQueue.takeAll(invalidQueue), [1])
+      })))
+
     it.effect("takeN with queue completion gets available items", () =>
       Effect.tx(Effect.gen(function*() {
         const queue = yield* TxQueue.bounded<number>(10)
@@ -577,16 +593,16 @@ describe("TxQueue", () => {
         assert.strictEqual(size, 3)
       })))
 
-    it.effect("isEmpty works correctly", () =>
+    it.effect("isEmpty and isNonEmpty reflect queue contents", () =>
       Effect.tx(Effect.gen(function*() {
         const queue = yield* TxQueue.bounded<number>(10)
 
-        const empty1 = yield* TxQueue.isEmpty(queue)
-        assert.strictEqual(empty1, true)
+        assert.strictEqual(yield* TxQueue.isEmpty(queue), true)
+        assert.strictEqual(yield* TxQueue.isNonEmpty(queue), false)
 
         yield* TxQueue.offer(queue, 1)
-        const empty2 = yield* TxQueue.isEmpty(queue)
-        assert.strictEqual(empty2, false)
+        assert.strictEqual(yield* TxQueue.isEmpty(queue), false)
+        assert.strictEqual(yield* TxQueue.isNonEmpty(queue), true)
       })))
 
     it.effect("isFull works correctly for bounded queue", () =>

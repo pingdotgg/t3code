@@ -5,9 +5,9 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import Stack from "./fixtures/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -161,7 +161,7 @@ const exercise = (base: string) =>
  *   native `cf.D1Database` via `InferEnv`) and used from a plain async fetch.
  *
  * The stack lives in `fixtures/stack.ts` so it can also be inspected directly,
- * e.g. `alchemy tail --stage test ./test/Cloudflare/D1/fixtures/stack.ts`.
+ * e.g. `alchemy logs --tail --stage test --config ./test/Cloudflare/D1/fixtures/stack.ts`.
  */
 const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
@@ -175,7 +175,15 @@ test(
     const out = yield* stack;
     yield* exercise(out.effectWorkerUrl);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );
 
 // ── async-worker ── D1 declared on `env`, native `env.DB` used from async fetch.
@@ -185,5 +193,13 @@ test(
     const out = yield* stack;
     yield* exercise(out.asyncWorkerUrl);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );

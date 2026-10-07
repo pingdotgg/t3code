@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as S from "effect/Schema";
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpClientRequest } from "effect/http";
 
 import * as AI from "alchemy/AI";
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -24,7 +24,7 @@ export const EvalLive = Layer.effect(
       vm
         .load({
           mainModule: "index.js",
-          compatibilityDate: "2026-01-28",
+          compatibilityDate: "2026-08-31",
           modules: {
             "code.js": code,
             "index.js": dedent`

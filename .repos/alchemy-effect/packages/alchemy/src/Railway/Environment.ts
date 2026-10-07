@@ -1,11 +1,11 @@
+import { Query } from "@distilled.cloud/core/query";
 import type { Config } from "@distilled.cloud/railway";
-import { Credentials } from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
+import { Credentials, GraphQLLive, Railway } from "@distilled.cloud/railway";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 export class RailwayWorkspaceNotFound extends Data.TaggedError(
   "Railway.WorkspaceNotFound",
@@ -50,22 +50,39 @@ export class RailwayEnvironment extends Context.Service<
  * Workspace/team tokens reject `me` with {@link RailwayForbidden}
  * (`Not Authorized`); fall back to `apiToken.workspaces[0]`.
  */
+const meWorkspaces = Query.fn(() => {
+  const me = Railway.me();
+  return {
+    workspace: { id: me.workspace.id, name: me.workspace.name },
+    workspaces: me.workspaces.pipe(
+      Query.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+    ),
+  };
+});
+
+const tokenWorkspaces = Query.fn(() =>
+  Railway.apiToken().workspaces.pipe(
+    Query.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+  ),
+);
+
 export const resolveWorkspace = Effect.fn(function* () {
-  const fromMe = yield* railway.me({}).pipe(
-    Effect.map((me) => me.workspace ?? me.workspaces[0]),
+  const fromMe = yield* meWorkspaces().pipe(
+    Effect.map((me) =>
+      me.workspace.id !== null ? me.workspace : me.workspaces[0],
+    ),
     Effect.catchTag(["RailwayForbidden", "RailwayUnauthenticated"], () =>
       Effect.succeed(undefined),
     ),
   );
-  if (fromMe !== undefined && fromMe.id.length > 0) {
+  if (fromMe?.id != null && fromMe.id.length > 0) {
     return {
       id: fromMe.id,
-      name: fromMe.name,
+      name: fromMe.name ?? "",
     } satisfies RailwayWorkspace;
   }
 
-  const token = yield* railway.apiToken({});
-  const workspace = token.workspaces[0];
+  const workspace = (yield* tokenWorkspaces())[0];
   if (workspace === undefined || workspace.id.length === 0) {
     return yield* new RailwayWorkspaceNotFound({
       message:
@@ -104,6 +121,7 @@ export const fromCredentials = () =>
           resolveWorkspaceId().pipe(
             Effect.provide(
               Layer.mergeAll(
+                GraphQLLive,
                 Layer.succeed(Credentials, creds),
                 Layer.succeed(HttpClient.HttpClient, http),
               ),

@@ -6,7 +6,7 @@ T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
-- traces and metrics can also be exported over OTLP to a real backend like Grafana LGTM
+- traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
@@ -22,8 +22,15 @@ Logs are human-facing:
 - format: `Logger.consolePretty()`
 - normal local persistence: none
 - SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- remote export: OTLP only, when configured
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
+
+Configuring a logs endpoint takes over that job. The server then exports log records, which cover
+every message instead of only the ones inside an active span and carry the trace and span ids so
+they still line up with the trace. `Logger.tracerLogger` is dropped in that mode, so the same
+message is not exported twice and the trace file stops carrying log messages. stdout output and
+SSH-managed launch persistence stay unchanged either way.
 
 ### Traces
 
@@ -55,6 +62,21 @@ far in the future for the environment server's allowed window. It can point to
 a date or time problem on either device, but it can also result from a delayed
 request.
 
+#### Summarize the trace file
+
+`t3 trace summary` reads the trace file and its rotated backups directly, so it works while the
+server is stalled or stopped. It prints counts, rates, and latency percentiles per span name. Use
+it to measure background work or to compare two builds.
+
+```bash
+t3 trace summary --since 30m --limit 40
+```
+
+It reads `T3CODE_TRACE_FILE` if set, else `<home>/userdata/logs/server.trace.ndjson` for
+`--base-dir` or `T3CODE_HOME`, plus the `T3CODE_TRACE_MAX_FILES` rotated backups. For a dev run or
+a copied file, set `T3CODE_TRACE_FILE`. `--since 30m` keeps spans that ended in the last 30
+minutes. The rate is per minute between the first and last span end.
+
 ### Metrics
 
 Metrics are not written to a local file.
@@ -64,6 +86,38 @@ Metrics are not written to a local file.
 - current definitions: `apps/server/src/observability/Metrics.ts`
 
 If OTLP is not configured, metrics still exist in-process, but you will not have a local artifact to inspect.
+
+### Event Loop Stalls
+
+`apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
+the loop stalled for more than 2 s since the previous sample, it records a root
+`server.eventLoop.stall` span with a warning. The span has trace level `Warn`, so it stays when
+`T3CODE_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Diagnostics unless OTLP logs are
+on. The span time is when the sample ran, not when the stall happened.
+
+Some delay is not recorded:
+
+- `delayMaxMs` is the longest stall, and can undercount it by up to 1 s. The 2 s threshold applies to
+  this value, so a stall over 3 s is normally recorded, and a shorter one can be missed. A stall
+  that ends just as a sample runs can be missed too.
+- Time the computer spends asleep reads as delay on macOS and Windows. So a sample only counts when
+  the loop was busy, not waiting for events, for at least `delayMaxMs`. Busy time covers the whole
+  window, so a short sleep in an otherwise busy window can still record a false stall. The span then
+  shows CPU time far below `delayMaxMs`.
+- The first sample after launch is skipped. Startup work such as migrations and projection bootstrap
+  can block the loop for seconds on a large database.
+
+CPU times and page faults cover the whole process over the whole window since the previous sample.
+The window is nominally 30 s, but a long stall delays the sample and makes the window longer. Other
+work in the window can hide a wait, so only CPU time far below `delayMaxMs` proves the thread was
+waiting. Read CPU together with page faults:
+
+- High `cpuSystemMs` with many page faults means memory pressure. Major faults are reads from disk or swap.
+  On macOS, reads from compressed memory are minor faults plus system CPU.
+- High `cpuUserMs` with few page faults means JavaScript work or garbage collection.
+- Low CPU with few major page faults points at synchronous disk I/O, such as SQLite reads or trace
+  file writes.
+- Many `involuntaryContextSwitches` mean other processes were competing for the CPU.
 
 ### Related Artifacts
 
@@ -121,7 +175,8 @@ Default Grafana login:
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
 export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export T3CODE_OTLP_SERVICE_NAME=t3-local
+export T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development
 ```
 
 Optional:
@@ -160,7 +215,7 @@ macOS app bundle example:
 ```bash
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
+T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
 "/Applications/T3 Code.app/Contents/MacOS/T3 Code"
 ```
 
@@ -169,7 +224,7 @@ Direct binary example:
 ```bash
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
+T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
 ./path/to/your/desktop-app-binary
 ```
 
@@ -263,11 +318,11 @@ jq -r 'select(.traceId == "TRACE_ID_HERE") | [
 Filter orchestration commands:
 
 ```bash
-jq -c 'select(.attributes["orchestration.command_type"] != null) | {
+jq -c 'select(.attributes["orchestration_v2.command_type"] != null) | {
   name,
   durationMs,
-  commandType: .attributes["orchestration.command_type"],
-  aggregateKind: .attributes["orchestration.aggregate_kind"]
+  commandType: .attributes["orchestration_v2.command_type"],
+  threadId: .attributes["orchestration_v2.thread_id"]
 }' "$TRACE_FILE"
 ```
 
@@ -301,14 +356,16 @@ Recommended flow in Grafana:
 2. Pick the `Tempo` data source.
 3. Set the time range to something recent like `Last 15 minutes`.
 4. Start broad. Do not begin with a very narrow query.
-5. Look for spans from your configured service name, then narrow by span name or attributes.
+5. Look for spans from the `t3code-server` or `t3code-desktop` service, then narrow by span name or
+   attributes.
 
 Good first searches:
 
-- service name such as `t3-local`, `t3-dev`, or `t3-desktop`
+- service name `t3code-server` or `t3code-desktop`, plus a resource attribute such as
+  `deployment.environment.name`
 - span names like `sendTurn` or a Git operation such as `GitVcsDriver.statusDetails.status`
 - Git spans whose `git.operation` attribute identifies the operation
-- orchestration spans with attributes like `orchestration.command_type`
+- orchestration spans with attributes like `orchestration_v2.command_type`
 
 Once you know traces are arriving, narrower TraceQL queries for names such as `sendTurn` or Git
 operation names become useful.
@@ -320,17 +377,33 @@ Traces are best for one request. Metrics are best for trends.
 Good metric families to watch:
 
 - `t3_rpc_request_duration`
-- `t3_orchestration_command_duration`
-- `t3_orchestration_command_ack_duration`
-- `t3_provider_turn_duration`
+- `t3_provider_turn_duration` (how long the provider adapter takes to start a turn, not the turn's run time)
 - `t3_git_command_duration`
 
 Counters tell you volume and failure rate:
 
 - `t3_rpc_requests_total`
-- `t3_orchestration_commands_total`
 - `t3_provider_turns_total`
 - `t3_git_commands_total`
+
+Webhooks have their own families:
+
+- `t3_webhook_deliveries_total` by `outcome` and `source` (`relay` or `direct`). Beyond what the
+  sender sees, `queue_full` means a task already had its limit of deliveries waiting,
+  `prompt_too_long` means the filled-in prompt passed the provider limit, and `duplicate` means
+  the relay delivered a request this environment had already run.
+- `t3_webhook_runs_total` by `outcome` (`started`, `skipped`, `failed`) for the runs those
+  deliveries start, which happen after the sender has its answer.
+- `t3_webhook_held_delay` for how long requests the relay held waited before arriving.
+
+- `t3_secret_requests_total` by `status` (`saved`, `declined`, `cancelled`, `timed_out`) for secrets
+  agents asked users for, and `t3_secret_refs_consumed_total` by `result` (`used`, `rejected`) for
+  tools redeeming them. Neither ever carries a value.
+
+`ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
+started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
+the relay forwarded, the span also goes to the T3 Connect trace export as a child of the relay's
+span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
 
@@ -343,21 +416,6 @@ Use traces when the question is:
 - "what happened in this specific request?"
 - "which child span caused this one slow interaction?"
 - "what logs were emitted inside the failing flow?"
-
-### What The New Ack Metric Means
-
-`t3_orchestration_command_ack_duration` measures:
-
-- start: command dispatch enters the orchestration engine
-- end: the first committed domain event for that command is published by the server
-
-That is a server-side acknowledgment metric. It does not measure:
-
-- websocket transit to the browser
-- client receipt
-- React render time
-
-If you need those later, add client-side instrumentation or a dedicated server fanout metric.
 
 ## Common Workflows
 
@@ -374,12 +432,6 @@ If you need those later, add client-side instrumentation or a dedicated server f
 1. Search for slow top-level spans in the trace file or Tempo.
 2. Check child spans for sqlite, git, provider, or terminal work.
 3. Look at the matching duration metrics to see whether the slowness is systemic.
-
-### "Did this command take too long to acknowledge?"
-
-1. Check `t3_orchestration_command_ack_duration` by `commandType`.
-2. If it is high, inspect the corresponding orchestration trace.
-3. Look at child spans for projection, sqlite, provider, or git work.
 
 ### "Are git hooks causing latency?"
 
@@ -500,7 +552,7 @@ const program = doWork().pipe(
 
 ### Runtime Wiring
 
-The server observability layer is assembled in `apps/server/src/observability/Layers/Observability.ts`.
+The server observability layer is assembled in `apps/server/src/observability/Observability.ts`.
 
 It provides:
 
@@ -509,7 +561,16 @@ It provides:
 - local NDJSON tracer
 - optional OTLP trace exporter
 - optional OTLP metrics exporter
+- optional OTLP log exporter
 - Effect trace-level and timing refs
+
+The desktop main process is a second producer, assembled in
+`apps/desktop/src/app/DesktopObservability.ts`. It reads the same `T3CODE_OTLP_*` names and the same
+Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
+window and menu handling, backend supervision, and updates. It reports as service
+`t3code-desktop`, so a collector shows it alongside the backend rather than mixed into it. It
+exports traces and logs only; the main process records no metrics, so the metrics endpoint applies
+to the backend alone.
 
 ### Env Vars
 
@@ -518,7 +579,7 @@ Local trace file:
 - `T3CODE_TRACE_FILE`: override trace file path
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
@@ -526,32 +587,103 @@ OTLP export:
 
 - `T3CODE_OTLP_TRACES_URL`: OTLP trace endpoint
 - `T3CODE_OTLP_METRICS_URL`: OTLP metric endpoint
+- `T3CODE_OTLP_LOGS_URL`: OTLP log endpoint
 - `T3CODE_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `T3CODE_OTLP_SERVICE_NAME`: service name, default `t3-server`
-- `T3CODE_OTLP_HEADERS`: extra headers for both exporters, same format as
+- `T3CODE_OTLP_HEADERS`: extra headers for all three exporters, same format as
   `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
 - `T3CODE_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
-If the OTLP URLs are unset, local tracing still works and metrics stay in-process only.
+The server and the desktop app also read the standard
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic `OTEL_EXPORTER_OTLP_ENDPOINT` (with
+`/v1/traces`, `/v1/metrics`, or `/v1/logs` appended), for a collector expecting those instead. A
+non-blank `T3CODE_OTLP_*_URL` wins over either, and a per-signal endpoint wins over the generic one
+for its signal. A blank value counts as unset. A signal with an OTEL endpoint takes its headers from
+`OTEL_EXPORTER_OTLP_HEADERS` and its protocol from `OTEL_EXPORTER_OTLP_PROTOCOL` (default
+`http/protobuf`, read case-insensitively), and a per-signal
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_HEADERS` or `_PROTOCOL` wins over the generic one for its
+signal. `T3CODE_OTLP_HEADERS` and `T3CODE_OTLP_PROTOCOL` never apply to it. An endpoint that is not
+an `http` or `https` URL, a protocol other than `http/protobuf` or `http/json` such as `grpc`, or
+headers that are not `key=value` pairs with percent-encoded values turn that signal's export off
+with a startup warning, rather than sending it to the Settings endpoint.
+
+Service names are fixed: `t3code-server` for the backend and `t3code-desktop` for the desktop main
+process, both in `service.namespace` `t3code`. `OTEL_SERVICE_NAME` and a `service.name` or
+`service.namespace` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell installations apart with other
+resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+
+If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
+on stdout only.
+
+### The Kill Switch
+
+`T3CODE_OTEL_SDK_DISABLED` and `OTEL_SDK_DISABLED` turn off every OTLP export in both the server and
+the desktop main process, overriding any endpoint from the environment or Settings. Local trace
+files and stdout logs are unaffected.
+
+`T3CODE_OTEL_SDK_DISABLED` wins when set, so `T3CODE_OTEL_SDK_DISABLED=false` re-enables export on a
+machine that sets `OTEL_SDK_DISABLED` for everything else. It accepts the usual boolean spellings
+(`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`, `y`/`n`). `OTEL_SDK_DISABLED` follows the
+OpenTelemetry specification and only `true` disables export, so `OTEL_SDK_DISABLED=1` does not.
+Values are case-insensitive and trimmed. An unrecognized value is ignored with a startup warning.
+
+`OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, or `OTEL_LOGS_EXPORTER` set to `none` turns off
+just that signal, overriding an OTEL endpoint and the Settings endpoint. A `T3CODE_OTLP_*_URL` still
+wins for its signal. `otlp` is the default, and any other exporter name, such as `console` or
+`prometheus`, is ignored with a startup warning.
 
 ### What Is Instrumented Today
 
 Current high-value span and metric boundaries include:
 
-- Effect RPC websocket request spans from `effect/rpc`
-- RPC request metrics in `apps/server/src/observability/RpcInstrumentation.ts`
+- WebSocket RPC request spans (`ws.rpc.<method>`) and metrics in
+  `apps/server/src/observability/RpcInstrumentation.ts`
 - startup phases
 - orchestration command processing
-- orchestration command acknowledgment latency
 - provider session and turn operations
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution
+- event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints
 
 - logs outside spans are not persisted in the trace file; SSH-managed launch stdout/stderr is still
   captured in its launcher log
 - metrics are not snapshotted locally
-- the old `serverLogPath` still exists in config for compatibility, but the trace file is the primary
-  structured persisted artifact
+
+## Heap Snapshots
+
+To see what a long-running server holds in memory, send it `SIGUSR2`. The server writes a V8 heap
+snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs
+on macOS and Linux. Windows has no `SIGUSR2`.
+
+Send the signal to the server pid in `server-runtime.json`, which sits in the server's state dir
+next to the `logs` dir. For a dev server or a `--home-dir` launch, use that server's state dir from
+[Traces](#traces). Do not send it to the desktop app or the service launcher: a process without the
+handler exits on `SIGUSR2`. After a crash the file can keep a stale pid that now belongs to a
+different process, so check the pid first.
+
+```bash
+pid="$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
+ps -p "$pid" -o command=
+```
+
+If `ps` shows the T3 Code server, send the signal:
+
+```bash
+kill -USR2 "$pid"
+```
+
+The file is `<logsDir>/server-<pid>-<timestamp>.heapsnapshot`, next to `server.trace.ndjson`. To
+open it, use the Memory tab in Chrome DevTools and select Load.
+
+Before you take one:
+
+- The server stops while it writes the file. For a large heap this can take a minute or more.
+  Connected clients can reconnect during the pause, and an event loop monitor, if the server has
+  one, records the pause as a stall. Send the signal once. A second signal sent during a write
+  takes another snapshot after the first one finishes.
+- The write needs about as much free memory as the heap uses. On a machine that is already
+  swapping, it can make the problem worse or crash the server.
+- The file contains everything in server memory, including tokens, secrets, and thread content. Do
+  not share it publicly. Delete it when you are done, because storage cleanup does not remove it.

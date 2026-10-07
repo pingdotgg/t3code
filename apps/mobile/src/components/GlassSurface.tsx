@@ -2,15 +2,16 @@ import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { ReactNode, Ref } from "react";
 import {
   Platform,
-  useColorScheme,
   View,
   type ColorValue,
+  type ViewInstance,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { GlassBackdrop } from "./GlassBackdrop";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
@@ -20,7 +21,7 @@ const ThemedGlassView = withUniwind(GlassView, {
 });
 
 interface GlassSurfaceProps extends ViewProps {
-  readonly ref?: Ref<View>;
+  readonly ref?: Ref<ViewInstance>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
@@ -45,7 +46,8 @@ export function GlassSurface({
   style,
   ...props
 }: GlassSurfaceProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
   const hasShadow = chrome !== "none" && Platform.OS !== "android";
   const surfaceStyle: ViewStyle = {

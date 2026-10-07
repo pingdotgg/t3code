@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -417,7 +417,7 @@ WantedBy=multi-user.target
     volumes: Array<{ volumeId: number; path: string }>;
   }) {
     for (const { volumeId, path } of input.volumes) {
-      let volume = yield* Services.volumes.getVolume({ id: volumeId }).pipe(
+      let volume = yield* Hetzner.volumes.getVolume({ id: volumeId }).pipe(
         Effect.map(({ volume }) => volume),
         Effect.retry({
           while: hetznerTransient,
@@ -433,7 +433,7 @@ WantedBy=multi-user.target
 
       if (volume.server !== input.serverId) {
         if (volume.server !== null) {
-          yield* Services.volumeActions.detachVolume({ id: volumeId }).pipe(
+          yield* Hetzner.volumeActions.detachVolume({ id: volumeId }).pipe(
             Effect.tap(({ action }) =>
               waitForAction(action).pipe(
                 Effect.catchTag("ActionTimeout", () => Effect.void),
@@ -445,7 +445,7 @@ WantedBy=multi-user.target
             ),
           );
         }
-        yield* Services.volumeActions
+        yield* Hetzner.volumeActions
           .attachVolume({
             id: volumeId,
             server: input.serverId,
@@ -474,7 +474,7 @@ WantedBy=multi-user.target
               () => Effect.void,
             ),
           );
-        volume = yield* Services.volumes.getVolume({ id: volumeId }).pipe(
+        volume = yield* Hetzner.volumes.getVolume({ id: volumeId }).pipe(
           Effect.flatMap(({ volume }) =>
             volume.server === input.serverId
               ? Effect.succeed(volume)
@@ -494,7 +494,7 @@ WantedBy=multi-user.target
           Effect.catchIf(
             (e) => e._tag === "AttachPending",
             () =>
-              Services.volumes.getVolume({ id: volumeId }).pipe(
+              Hetzner.volumes.getVolume({ id: volumeId }).pipe(
                 Effect.map(({ volume }) => volume),
                 Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
               ),
@@ -572,13 +572,23 @@ WantedBy=multi-user.target
         `set -uo pipefail`,
         `export HOME=/root`,
         `mkdir -p ${JSON.stringify(appDir)}`,
-        `if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v ca-certificates >/dev/null 2>&1; then`,
-        `  apt-get update`,
-        `  DEBIAN_FRONTEND=noninteractive apt-get install -y curl unzip ca-certificates`,
+        // A fresh server's cloud-init bootstrap (`ALCHEMY_BOOTSTRAP` in
+        // `Server.ts`) installs these same packages and holds the dpkg lock
+        // while it runs; let it finish instead of racing it.
+        `if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait >/dev/null 2>&1 || true; fi`,
+        `if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then`,
+        `  apt-get -o DPkg::Lock::Timeout=300 update`,
+        `  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y curl unzip ca-certificates`,
         `fi`,
+        `for tool in curl unzip; do`,
+        `  if ! command -v "$tool" >/dev/null 2>&1; then`,
+        `    echo "$tool install failed" >&2`,
+        `    exit 1`,
+        `  fi`,
+        `done`,
         `if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(".")[0])<26)'; then`,
         `  for attempt in 1 2 3 4 5; do`,
-        `    curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs && break`,
+        `    curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y nodejs && break`,
         `    sleep 5`,
         `  done`,
         `fi`,

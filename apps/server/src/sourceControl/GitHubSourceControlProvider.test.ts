@@ -3,9 +3,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
@@ -24,38 +26,26 @@ const processResult = (
   stderrTruncated: false,
 });
 
-function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
+function makeProvider(
+  github: Partial<GitHubCli.GitHubCli["Service"]>,
+  api: Partial<GitHubApi.GitHubApi["Service"]> = {},
+) {
   return GitHubSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
+    Effect.provide(
+      Layer.merge(Layer.mock(GitHubCli.GitHubCli)(github), Layer.mock(GitHubApi.GitHubApi)(api)),
+    ),
   );
 }
 
-it.effect("uses the enterprise quota for a current-repository default branch read", () =>
-  Effect.gen(function* () {
-    const provider = yield* GitHubSourceControlProvider.make.pipe(
-      Effect.provide(GitHubCli.layer),
-      Effect.provideService(VcsProcess.VcsProcess, {
-        run: (input) =>
-          Effect.sync(() => {
-            if (input.args[1] !== "rate_limit") return processResult("main");
-            assert.strictEqual(input.args[3], "enterprise.test");
-            return processResult(
-              '{"data":{"rateLimit":{"cost":1,"limit":5000,"remaining":5000,"resetAt":"2099-01-01T00:00:00Z"}}}',
-            );
-          }),
-      }),
-    );
-    const branch = yield* provider.getDefaultBranch({
-      cwd: "/enterprise-repo",
-      context: {
-        provider: { kind: "github", name: "GitHub Enterprise", baseUrl: "https://enterprise.test" },
-        remoteName: "origin",
-        remoteUrl: "https://enterprise.test/acme/web.git",
-      },
-    });
-    assert.strictEqual(branch, "main");
-  }),
-);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const restResponse = (body: string): GitHubApi.GitHubRestResponse => ({
+  status: 200,
+  headers: {},
+  body,
+  truncated: false,
+  invalidUtf8: false,
+});
 
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
@@ -138,50 +128,47 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
   }),
 );
 
-it.effect("uses gh json listing for non-open change request state queries", () =>
+it.effect("lists change request history through the batched head lookup", () =>
   Effect.gen(function* () {
-    let executeArgs: ReadonlyArray<string> = [];
+    let lookup: Parameters<GitHubCli.GitHubCli["Service"]["listPullRequestsByHead"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
-      execute: (input) => {
-        executeArgs = input.args;
-        return Effect.succeed(
-          processResult(
-            JSON.stringify([
-              {
-                number: 7,
-                title: "Merged work",
-                url: "https://github.com/pingdotgg/t3code/pull/7",
-                baseRefName: "main",
-                headRefName: "feature/merged",
-                state: "merged",
-                mergedAt: "2026-01-01T00:00:00Z",
-                updatedAt: "2026-01-02T00:00:00.000Z",
-              },
-            ]),
-          ),
-        );
+      listPullRequestsByHead: (input) => {
+        lookup = input;
+        return Effect.succeed([
+          {
+            number: 7,
+            title: "Merged work",
+            url: "https://enterprise.test/acme/web/pull/7",
+            baseRefName: "main",
+            headRefName: "feature/merged",
+            state: "merged",
+            mergedAt: "2026-01-01T00:00:00Z",
+            updatedAt: Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
+          },
+        ]);
       },
     });
 
     const changeRequests = yield* provider.listChangeRequests({
       cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "GitHub Enterprise", baseUrl: "https://enterprise.test" },
+        remoteName: "origin",
+        remoteUrl: "https://enterprise.test/acme/web.git",
+      },
       headSelector: "feature/merged",
       state: "all",
       limit: 10,
     });
 
-    assert.deepStrictEqual(executeArgs, [
-      "pr",
-      "list",
-      "--head",
-      "feature/merged",
-      "--state",
-      "all",
-      "--limit",
-      "10",
-      "--json",
-      "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-    ]);
+    assert.deepStrictEqual(lookup, {
+      cwd: "/repo",
+      headSelector: "feature/merged",
+      state: "all",
+      limit: 10,
+      rateLimitHost: "enterprise.test",
+    });
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
     assert.strictEqual(changeRequests[0]?.mergedAt, "2026-01-01T00:00:00Z");
@@ -189,23 +176,6 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       changeRequests[0]?.updatedAt,
       Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
     );
-  }),
-);
-
-it.effect("treats empty non-open change request listing output as no results", () =>
-  Effect.gen(function* () {
-    const provider = yield* makeProvider({
-      execute: () => Effect.succeed(processResult("")),
-    });
-
-    const changeRequests = yield* provider.listChangeRequests({
-      cwd: "/repo",
-      headSelector: "feature/empty",
-      state: "all",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(changeRequests, []);
   }),
 );
 
@@ -359,6 +329,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         authenticated: true,
         active: true,
         error: null,
+        environmentVariable: null,
       },
       {
         host: "github.com",
@@ -366,6 +337,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         authenticated: false,
         active: false,
         error: null,
+        environmentVariable: null,
       },
       {
         host: "github.example.test",
@@ -373,6 +345,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         authenticated: true,
         active: false,
         error: null,
+        environmentVariable: null,
       },
     ],
   );
@@ -428,30 +401,24 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
   );
 });
 
-for (const kind of ["pull", "issues"]) {
-  it.effect(`resolves ${kind} subjects on the linked host without using the checkout`, () =>
+it.effect.each(["pull", "issues"])(
+  "resolves %s subjects on the linked host without using the checkout",
+  (kind) =>
     Effect.gen(function* () {
-      const provider = yield* makeProvider({
-        execute: (input) => {
-          assert.deepStrictEqual(input.args, [
-            "api",
-            "--hostname",
-            "github.com",
-            "repos/owner/repo/issues/42",
-            "--jq",
-            "{title, body}",
-          ]);
-          assert.strictEqual(input.maxOutputBytes, 32_000);
-          assert.strictEqual(input.timeoutMs, 3_000);
-          return Effect.succeed({
-            exitCode: ChildProcessSpawner.ExitCode(0),
-            stdout: JSON.stringify({ title: "Pairing expiry", body: "Preserve remote access" }),
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          });
+      const provider = yield* makeProvider(
+        {},
+        {
+          rest: (input) => {
+            assert.strictEqual(input.host, "github.com");
+            assert.strictEqual(input.path, "repos/owner/repo/issues/42");
+            return Effect.succeed(
+              restResponse(
+                encodeJson({ title: "Pairing expiry", body: "Preserve remote access", id: 1 }),
+              ),
+            );
+          },
         },
-      });
+      );
       const lookup = provider.resolveLink?.({
         cwd: "/unrelated",
         url: new URL(`https://github.com/owner/repo/${kind}/42`),
@@ -469,29 +436,26 @@ for (const kind of ["pull", "issues"]) {
         undefined,
       );
     }),
-  );
-}
+);
 
-for (const stage of ["read", "decode"] as const) {
-  it.effect(`retains the ${stage} failure without exposing its raw contents`, () =>
+it.effect.each(["read", "decode"] as const)(
+  "retains the %s failure without exposing its raw contents",
+  (stage) =>
     Effect.gen(function* () {
-      const cause = new GitHubCli.GitHubCliCommandError({
-        command: "gh",
-        cwd: "/repo",
-        cause: new Error("private response text"),
+      const cause = new GitHubApi.GitHubApiResponseError({
+        host: "github.com",
+        operation: "resolveLink",
+        status: 500,
       });
-      const provider = yield* makeProvider({
-        execute: () =>
-          stage === "read"
-            ? Effect.fail(cause)
-            : Effect.succeed({
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout: "private response text",
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              }),
-      });
+      const provider = yield* makeProvider(
+        {},
+        {
+          rest: () =>
+            stage === "read"
+              ? Effect.fail(cause)
+              : Effect.succeed(restResponse("private response text")),
+        },
+      );
       const lookup = provider.resolveLink?.({
         cwd: "/repo",
         url: new URL("https://github.com/owner/repo/issues/42"),
@@ -504,5 +468,76 @@ for (const stage of ["read", "decode"] as const) {
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
+);
+
+const multiAccountStatus = (extra: ReadonlyArray<Record<string, unknown>> = []) =>
+  processResult(
+    JSON.stringify({
+      hosts: {
+        "github.com": [
+          { state: "success", active: true, host: "github.com", login: "personal" },
+          { state: "success", active: false, host: "github.com", login: "work" },
+          ...extra,
+        ],
+        "ghe.acme.test": [
+          { state: "error", active: true, host: "ghe.acme.test", login: "jm", error: "expired" },
+        ],
+      },
+    }),
   );
-}
+
+it("reports every gh login and leads with the account Settings pin", () => {
+  const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
+    hosts: { "github.com": { account: "work", enabled: true } },
+    tokens: {},
+  });
+  assert.deepStrictEqual(auth.account, Option.some("work"));
+  assert.deepStrictEqual(auth.accounts, [
+    { host: "github.com", account: "personal", active: true, authenticated: true },
+    { host: "github.com", account: "work", active: false, authenticated: true },
+    { host: "ghe.acme.test", account: "jm", active: true, authenticated: false, error: "expired" },
+  ]);
+});
+
+it("falls back to gh's active login when the pinned account is gone", () => {
+  const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
+    hosts: { "github.com": { account: "former-job", enabled: true } },
+    tokens: {},
+  });
+  assert.deepStrictEqual(auth.account, Option.some("personal"));
+});
+
+it("reports unauthenticated when Settings turn off every signed-in host", () => {
+  const auth = GitHubSourceControlProvider.parseGitHubAuth(multiAccountStatus(), {
+    hosts: { "github.com": { enabled: false } },
+    tokens: {},
+  });
+  assert.strictEqual(auth.status, "unauthenticated");
+  assert.deepStrictEqual(
+    auth.detail,
+    Option.some("Every GitHub host gh is signed in to is turned off in Settings → Source Control."),
+  );
+});
+
+it("names the environment token that overrides the Settings choice", () => {
+  const auth = GitHubSourceControlProvider.parseGitHubAuth(
+    multiAccountStatus([
+      {
+        state: "success",
+        active: false,
+        host: "github.com",
+        login: "bot",
+        tokenSource: "GH_TOKEN",
+      },
+    ]),
+    { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {} },
+  );
+  assert.deepStrictEqual(auth.account, Option.some("bot"));
+  assert.deepStrictEqual(
+    auth.detail,
+    Option.some(
+      "Using GH_TOKEN from the server environment; it overrides the account chosen in Settings.",
+    ),
+  );
+  assert.strictEqual(auth.accounts?.[2]?.environmentVariable, "GH_TOKEN");
+});

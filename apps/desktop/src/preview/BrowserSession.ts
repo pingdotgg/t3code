@@ -3,7 +3,7 @@ import { session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -182,7 +182,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     // Legacy/default partitions are prefix + hex digest. The non-hex profile
     // marker creates a disjoint namespace while leaving every legacy default
     // partition byte-for-byte unchanged.
-    return `${prefix}${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Encoding.encodeHex(digest).slice(0, 20)}`;
+    return `${prefix}${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Hex.encode(digest).slice(0, 20)}`;
   });
 
   const getSession = Effect.fn("BrowserSession.getSession")(function* (
@@ -231,8 +231,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
@@ -244,14 +245,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () => browserSession.clearCache(),
             catch: (cause) =>
@@ -260,7 +261,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),

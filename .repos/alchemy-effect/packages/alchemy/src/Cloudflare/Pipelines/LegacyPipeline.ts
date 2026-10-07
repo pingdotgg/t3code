@@ -3,7 +3,7 @@ import * as pipelines from "@distilled.cloud/cloudflare/pipelines";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -178,8 +178,8 @@ export type LegacyPipeline = Resource<
  *   destination: {
  *     bucket: bucket.bucketName,
  *     credentials: {
- *       accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
- *       secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
+ *       accessKeyId: yield* Config.Redacted("R2_ACCESS_KEY_ID"),
+ *       secretAccessKey: yield* Config.Redacted("R2_SECRET_ACCESS_KEY"),
  *     },
  *   },
  * });

@@ -29,6 +29,7 @@ import type {
   BindingHooks,
   Module,
 } from "@alchemy.run/cloudflare-runtime/core";
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
 import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
@@ -39,7 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as NodeFs from "node:fs/promises";
 import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,9 +53,6 @@ import {
   PRERENDER_ENDPOINT,
   STATIC_PATHS_ENDPOINT,
 } from "./runtime/utils/prerender-constants.ts";
-
-/** Matches `dev-server.ts` in `@alchemy.run/cloudflare-runtime/vite`. */
-const DEFAULT_COMPATIBILITY_DATE = "2026-05-12";
 
 /** The subdirectory of the server output dir that hosts the prerender build. */
 const PRERENDER_OUTPUT_SUBDIR = "./.prerender/";

@@ -2,27 +2,36 @@ import * as Schema from "effect/Schema";
 
 import {
   PullRequestDetail,
+  PullRequestOperationError,
   pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
   type PullRequestBaseComparison,
   type PullRequestCheck,
-  type PullRequestChecksState,
+  type PullRequestChecksState as ContractPullRequestChecksState,
   type PullRequestComment,
   type PullRequestCommit,
   type PullRequestContextMetadata,
   type PullRequestDetailView,
   type PullRequestMergeability,
-  type PullRequestMergeMethod,
   type PullRequestReaction,
+  type PullRequestMergeMethod,
   type PullRequestRef,
   type RepositoryIdentity,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
   type SourceControlProviderKind,
+  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
   type VcsRef,
 } from "@t3tools/contracts";
+import {
+  legacyThreadPullRequestKey,
+  resolveThreadCurrentPullRequestLink,
+  threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";
@@ -77,7 +86,7 @@ export function resolvePullRequestPrimaryControl(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
-  readonly checksState: PullRequestChecksState | null;
+  readonly checksState: ContractPullRequestChecksState | null;
   readonly autoMergeEnabled: boolean | undefined;
   readonly hasMergeMethod: boolean;
   readonly canMerge: boolean;
@@ -134,6 +143,22 @@ export function pullRequestCheckoutCommand(
   }
 }
 
+/** Build a checkout command from identity metadata while the detail request is still pending. */
+export function loadingPullRequestCheckoutCommand(
+  reference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+): string | null {
+  const host = reference.host?.trim().toLowerCase();
+  const provider =
+    identity?.provider ??
+    (host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null);
+  if (provider !== "github" && provider !== "gitlab" && provider !== "azure-devops") return null;
+  if (identity?.provider !== undefined && host && pullRequestHostOf(identity, provider) !== host) {
+    return null;
+  }
+  return pullRequestCheckoutCommand(provider, reference.number, "");
+}
+
 /** Activity changes only when the same host resource reports a newer revision. */
 export function shouldRefreshPullRequestActivity(
   previous: { readonly key: string; readonly updatedAt: string } | null,
@@ -163,28 +188,82 @@ export function editPullRequestThreadComment<
   return comments.map((comment) => (comment.id === commentId ? { ...comment, body } : comment));
 }
 
+type LegacyLinkedPullRequest = Pick<ThreadLinkedPullRequest, "repository" | "number">;
+
 /**
- * Whether the pull request on a right-panel surface is the thread's own one. Repository and
- * number are not enough: one environment can hold two checkouts of the same repository under
+ * How the detail panel behaves beside a thread: "thread" for a pull request the thread itself
+ * is linked to (any layer of its stack), "page" for any other one the reader opened there.
+ *
+ * Decided from the thread's full link list, never from the single legacy `linkedPullRequest`:
+ * that field is one server-chosen link out of many, and a thread's own second link or lower
+ * stack layer would otherwise be handed a checkout button for a branch it already works on. The
+ * legacy fields only answer for servers that predate link lists. Repository and number are not
+ * enough either way: one environment can hold two checkouts of the same repository under
  * different projects, and the other project's checkout is somebody else's branch.
  */
-export function isThreadOwnPullRequest(
+export function pullRequestPanelContext(
   thread: {
     readonly projectId: string | null;
-    readonly repository: string | null;
-    readonly number: number | null;
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+    readonly linkedPullRequest?: LegacyLinkedPullRequest | null | undefined;
+    readonly branchPullRequest?: LegacyLinkedPullRequest | null | undefined;
   },
   surface: {
     readonly projectId: string;
+    readonly host?: string | undefined;
     readonly repository: string;
     readonly number: number;
   },
-): boolean {
-  return (
-    thread.projectId === surface.projectId &&
-    thread.repository === surface.repository &&
-    thread.number === surface.number
-  );
+): "page" | "thread" {
+  if (thread.projectId !== surface.projectId) return "page";
+  const links = visibleThreadPullRequests(thread.pullRequests ?? []);
+  if (links.length > 0) {
+    const repository = surface.repository.toLowerCase();
+    return links.some((link) =>
+      surface.host !== undefined
+        ? threadPullRequestKeysEqual(link, {
+            host: surface.host,
+            repository: surface.repository,
+            number: surface.number,
+          })
+        : link.number === surface.number && link.repository.toLowerCase() === repository,
+    )
+      ? "thread"
+      : "page";
+  }
+  const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
+  return legacy !== null &&
+    legacy.repository === surface.repository &&
+    legacy.number === surface.number
+    ? "thread"
+    : "page";
+}
+
+export function threadPullRequestPanelTarget(thread: {
+  readonly projectId: string;
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  readonly branchPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}) {
+  const current = resolveThreadCurrentPullRequestLink(thread.pullRequests ?? []);
+  const legacy = thread.linkedPullRequest;
+  if (
+    current !== null &&
+    legacy != null &&
+    threadPullRequestKeysEqual(current, legacyThreadPullRequestKey(legacy))
+  ) {
+    return legacy;
+  }
+  if (current !== null) {
+    return {
+      projectId: thread.projectId,
+      host: current.host,
+      repository: current.repository,
+      number: current.number,
+      url: current.url,
+    };
+  }
+  return legacy ?? thread.branchPullRequest ?? null;
 }
 
 /** Names where a pull-request task will land, without letting each surface guess independently. */
@@ -200,13 +279,6 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
         fixCheck: "Fix",
         fixFindings: "Fix findings in a thread",
       };
-}
-
-export function pullRequestComposerTarget<T>(
-  context: "page" | "thread",
-  target: T | null | undefined,
-): T | null {
-  return context === "thread" ? (target ?? null) : null;
 }
 
 /** Whether the open pull-request action group contains at least one action. */
@@ -230,6 +302,130 @@ export function isStackedPullRequestBase(
     ? defaultRef.name.slice(remotePrefix.length)
     : defaultRef.name;
   return defaultBranch !== baseBranch;
+}
+
+/** The slice of a detail that decides which actions it offers. */
+export type PullRequestActionableDetail = Pick<
+  PullRequestDetail,
+  "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
+>;
+
+/**
+ * The host says which strategies it offers at all; the repository narrows that to the ones it
+ * actually allows.
+ */
+export function allowedPullRequestMergeMethods(
+  detail: Pick<PullRequestActionableDetail, "capabilities" | "mergeCapabilities"> | null,
+): ReadonlyArray<PullRequestMergeMethod> {
+  return detail === null
+    ? []
+    : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+}
+
+/** The reader's preference where the repository allows it, and the first allowed method else. */
+export function resolveSelectedMergeMethod(
+  allowedMergeMethods: ReadonlyArray<PullRequestMergeMethod>,
+  preferred: PullRequestMergeMethod,
+): PullRequestMergeMethod {
+  return allowedMergeMethods.includes(preferred) ? preferred : (allowedMergeMethods[0] ?? "merge");
+}
+
+/**
+ * Two questions, both of which have to say yes: whether this host can do it at all, and whether
+ * this account may. A reader with read access on someone else's project sees the pull request and
+ * none of the buttons that would only ever be refused.
+ */
+function canPerformPullRequestAction(
+  detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
+  action: PullRequestAction,
+): boolean {
+  return (
+    detail !== null &&
+    detail.capabilities.actions.includes(action) &&
+    detail.viewerPermissions.actions.includes(action)
+  );
+}
+
+export function isPullRequestConflicting(
+  detail: Pick<PullRequestActionableDetail, "state" | "mergeability"> | null,
+): boolean {
+  return detail?.state === "open" && detail.mergeability === "conflicting";
+}
+
+/** The checks as one word. Failing outranks running: a red run is already worth acting on. */
+export type PullRequestChecksState = "none" | "pending" | "failing" | "passing";
+
+export function classifyPullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState {
+  if (checks.length === 0) return "none";
+  if (checks.some((check) => check.status === "failure" || check.status === "cancelled")) {
+    return "failing";
+  }
+  if (checks.some((check) => check.status === "pending" || check.status === "action-required")) {
+    return "pending";
+  }
+  return "passing";
+}
+
+/**
+ * The checks with every live facet, unlike the single-facet summary: a run with failures in it
+ * still says how much is in flight — "7 of 16 running · 1 failed" — because both numbers change
+ * what a reader does next.
+ */
+export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
+  if (checks.length === 0) return "No checks reported";
+  const failed = checks.filter(
+    (check) => check.status === "failure" || check.status === "cancelled",
+  ).length;
+  const pending = checks.filter((check) => check.status === "pending").length;
+  const actionRequired = checks.filter((check) => check.status === "action-required").length;
+  const passed = checks.filter((check) => check.status === "success").length;
+  const parts: string[] = [];
+  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
+  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  if (failed > 0) {
+    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+  }
+  if (parts.length === 0) {
+    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  }
+  return parts.join(" · ");
+}
+
+export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
+  return {
+    attention: checks.filter((check) =>
+      ["failure", "cancelled", "action-required"].includes(check.status),
+    ),
+    running: checks.filter((check) => check.status === "pending"),
+    completed: checks.filter((check) => ["success", "skipped", "neutral"].includes(check.status)),
+  };
+}
+
+export type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
+
+/**
+ * Which single action the thread panel's compact pull request row offers, ranked by what
+ * unblocks the merge next: conflicts stop everything, a draft is not up for review yet, failing
+ * checks want fixing, and only a clean open pull request earns Merge. While checks run the slot
+ * stays empty — the row shows their progress instead of an action that would race them.
+ */
+export function resolveThreadPanelPullRequestAction(
+  detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
+): ThreadPanelPullRequestAction | null {
+  if (detail === null || detail.state !== "open") return null;
+  if (isPullRequestConflicting(detail)) return "resolve";
+  if (detail.isDraft) {
+    return canPerformPullRequestAction(detail, "ready") ? "ready" : null;
+  }
+  const checks = classifyPullRequestChecks(detail.checks);
+  if (checks === "failing") return "fix";
+  if (checks === "pending") return null;
+  return canPerformPullRequestAction(detail, "merge") &&
+    allowedPullRequestMergeMethods(detail).length > 0
+    ? "merge"
+    : null;
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
@@ -993,6 +1189,12 @@ export function buildAddSelectionToAgentHandoff(input: {
     prompt: bounded(input.request),
     reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
   };
+}
+
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
+export function isPullRequestNotFound(failure: unknown): boolean {
+  return isPullRequestOperationError(failure) && failure.reason === "not-found";
 }
 
 /**

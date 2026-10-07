@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 import {
   normalizeAttachmentRelativePath,
@@ -88,6 +89,20 @@ export function createAttachmentId(threadId: string, extension?: string): string
   return `${threadSegment}-${NodeCrypto.randomUUID()}${attachmentIdExtensionSuffix(extension)}`;
 }
 
+export function createDeterministicAttachmentId(
+  threadId: string,
+  stableKey: string,
+): string | null {
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+  if (!threadSegment) return null;
+  const hash = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([threadId, stableKey]))
+    .digest("hex")
+    .slice(0, 32);
+  const uuid = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
+  return `${threadSegment}-${uuid}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
   if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
@@ -98,6 +113,25 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
     return null;
   }
   return match[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * Attachments a thread's `html_render` tool calls published. Only ids minted
+ * for this thread count, so deleting a fork never removes its source's pages.
+ */
+export function threadHtmlRenderAttachmentIds(
+  threadId: string,
+  items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,
+) {
+  const segment = toSafeThreadAttachmentSegment(threadId);
+  if (segment === null) return [];
+  return Array.from(items).flatMap((item) => {
+    const attachmentId = htmlRenderFromToolItem(item)?.attachmentId;
+    return attachmentId !== undefined &&
+      parseThreadSegmentFromAttachmentId(attachmentId) === segment
+      ? [attachmentId]
+      : [];
+  });
 }
 
 /** Null for attachment types this build does not know; callers skip those. */
@@ -259,7 +293,7 @@ export function sweepStalePendingAttachments(input: {
   return { deleted };
 }
 
-export function parseAttachmentIdFromRelativePath(relativePath: string): string | null {
+function parseAttachmentIdFromRelativePath(relativePath: string): string | null {
   const normalized = normalizeAttachmentRelativePath(relativePath);
   if (!normalized || normalized.includes("/")) {
     return null;

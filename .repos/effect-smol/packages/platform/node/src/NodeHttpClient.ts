@@ -12,6 +12,16 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { flow } from "effect/Function"
+import * as Cookies from "effect/http/Cookies"
+import * as Headers from "effect/http/Headers"
+import type * as Body from "effect/http/HttpBody"
+import * as Client from "effect/http/HttpClient"
+import * as Error from "effect/http/HttpClientError"
+import type { HttpClientRequest } from "effect/http/HttpClientRequest"
+import * as Response from "effect/http/HttpClientResponse"
+import type { HttpClientResponse } from "effect/http/HttpClientResponse"
+import * as IncomingMessage from "effect/http/HttpIncomingMessage"
+import * as UrlParams from "effect/http/UrlParams"
 import * as Inspectable from "effect/Inspectable"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -19,16 +29,6 @@ import { type Pipeable, pipeArguments } from "effect/Pipeable"
 import type * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import * as Cookies from "effect/unstable/http/Cookies"
-import * as Headers from "effect/unstable/http/Headers"
-import type * as Body from "effect/unstable/http/HttpBody"
-import * as Client from "effect/unstable/http/HttpClient"
-import * as Error from "effect/unstable/http/HttpClientError"
-import type { HttpClientRequest } from "effect/unstable/http/HttpClientRequest"
-import * as Response from "effect/unstable/http/HttpClientResponse"
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse"
-import * as IncomingMessage from "effect/unstable/http/HttpIncomingMessage"
-import * as UrlParams from "effect/unstable/http/UrlParams"
 import * as Http from "node:http"
 import * as Https from "node:https"
 import { Readable } from "node:stream"
@@ -36,7 +36,7 @@ import { pipeline } from "node:stream/promises"
 import { NodeHttpIncomingMessage } from "./NodeHttpIncomingMessage.ts"
 import * as NodeSink from "./NodeSink.ts"
 import * as NodeStream from "./NodeStream.ts"
-import * as Undici from "./Undici.ts"
+import type * as Undici from "./Undici.ts"
 
 // -----------------------------------------------------------------------------
 // Fetch
@@ -73,7 +73,7 @@ export {
    * @since 4.0.0
    */
   RequestInit
-} from "effect/unstable/http/FetchHttpClient"
+} from "effect/http/FetchHttpClient"
 
 // -----------------------------------------------------------------------------
 // Undici
@@ -83,6 +83,7 @@ export {
  * Service tag for the Undici `Dispatcher` used by the Undici-backed HTTP
  * client.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -90,23 +91,25 @@ export class Dispatcher extends Context.Service<Dispatcher, Undici.Dispatcher>()
   "@effect/platform-node/NodeHttpClient/Dispatcher"
 ) {}
 
+const loadUndici = Effect.promise(() => import("./Undici.ts"))
+
 /**
  * Acquires a new Undici `Agent` dispatcher and destroys it when the enclosing
  * scope is finalized.
  *
+ * @stability unstable
  * @category resource management
  * @since 4.0.0
  */
 export const makeDispatcher: Effect.Effect<Undici.Dispatcher, never, Scope.Scope> = Effect.acquireRelease(
-  // oxlint cannot resolve values re-exported through the local Undici facade.
-  // oxlint-disable-next-line import/namespace
-  Effect.sync(() => new Undici.Agent()),
+  Effect.map(loadUndici, (_) => new _.Agent()),
   (dispatcher) => Effect.promise(() => dispatcher.destroy())
 )
 
 /**
  * Provides the `Dispatcher` service using a scoped Undici `Agent`.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -116,17 +119,19 @@ export const layerDispatcher: Layer.Layer<Dispatcher> = Layer.effect(Dispatcher)
  * Provides the `Dispatcher` service from Undici's process-global dispatcher,
  * without creating or owning a new agent.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
-// oxlint cannot resolve values re-exported through the local Undici facade.
-// oxlint-disable-next-line import/namespace
-export const dispatcherLayerGlobal: Layer.Layer<Dispatcher> = Layer.sync(Dispatcher)(() => Undici.getGlobalDispatcher())
+export const dispatcherLayerGlobal: Layer.Layer<Dispatcher> = Layer.effect(Dispatcher)(
+  Effect.map(loadUndici, (_) => _.getGlobalDispatcher())
+)
 
 /**
  * Fiber reference containing default Undici request options applied to requests
  * sent by `makeUndici`.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -140,6 +145,7 @@ export const UndiciOptions = Context.Reference<Partial<Undici.Dispatcher.Request
  * `Dispatcher`, converts Effect HTTP bodies to Undici bodies, and maps
  * transport and decode failures to `HttpClientError`.
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -156,7 +162,7 @@ export const makeUndici = Effect.gen(function*() {
               method: request.method,
               headers: request.headers,
               origin: url.origin,
-              path: url.pathname + url.search + url.hash,
+              path: url.pathname + url.search,
               body,
               // leave timeouts to Effect.timeout etc
               headersTimeout: 60 * 60 * 1000,
@@ -171,7 +177,7 @@ export const makeUndici = Effect.gen(function*() {
             })
         })
       ),
-      Effect.map((response) => new UndiciResponse(request, response))
+      Effect.map((response) => new UndiciResponse(request, response, url.href.split("#")[0]))
     )
   )
 })
@@ -203,16 +209,19 @@ class UndiciResponse extends Inspectable.Class implements HttpClientResponse, Pi
   readonly [Response.TypeId]: typeof Response.TypeId
   readonly request: HttpClientRequest
   readonly source: Undici.Dispatcher.ResponseData
+  readonly url: string
 
   constructor(
     request: HttpClientRequest,
-    source: Undici.Dispatcher.ResponseData
+    source: Undici.Dispatcher.ResponseData,
+    url: string
   ) {
     super()
     this[IncomingMessage.TypeId] = IncomingMessage.TypeId
     this[Response.TypeId] = Response.TypeId
     this.request = request
     this.source = source
+    this.url = url
     source.body.on("error", noopErrorHandler)
   }
 
@@ -275,18 +284,7 @@ class UndiciResponse extends Inspectable.Class implements HttpClientResponse, Pi
     if (this.textBody) {
       return this.textBody
     }
-    this.textBody = Effect.tryPromise({
-      try: () => this.source.body.text(),
-      catch: (cause) =>
-        new Error.HttpClientError({
-          reason: new Error.DecodeError({
-            request: this.request,
-            response: this,
-            cause
-          })
-        })
-    }).pipe(Effect.cached, Effect.runSync)
-    this.arrayBufferBody = Effect.map(this.textBody, (_) => new TextEncoder().encode(_).buffer)
+    this.textBody = Effect.map(this.arrayBuffer, (_) => new TextDecoder().decode(_))
     return this.textBody
   }
 
@@ -307,17 +305,18 @@ class UndiciResponse extends Inspectable.Class implements HttpClientResponse, Pi
 
   private formDataBody?: Effect.Effect<FormData, Error.HttpClientError>
   get formData(): Effect.Effect<FormData, Error.HttpClientError> {
-    return this.formDataBody ??= Effect.tryPromise({
-      try: () => this.source.body.formData() as Promise<FormData>,
-      catch: (cause) =>
-        new Error.HttpClientError({
-          reason: new Error.DecodeError({
-            request: this.request,
-            response: this,
-            cause
+    return this.formDataBody ??= Effect.flatMap(this.arrayBuffer, (body) =>
+      Effect.tryPromise({
+        try: () => new globalThis.Response(body, { headers: this.headers }).formData(),
+        catch: (cause) =>
+          new Error.HttpClientError({
+            reason: new Error.DecodeError({
+              request: this.request,
+              response: this,
+              cause
+            })
           })
-        })
-    }).pipe(Effect.cached, Effect.runSync)
+      })).pipe(Effect.cached, Effect.runSync)
   }
 
   private arrayBufferBody?: Effect.Effect<ArrayBuffer, Error.HttpClientError>
@@ -357,6 +356,7 @@ class UndiciResponse extends Inspectable.Class implements HttpClientResponse, Pi
  * Provides an Undici-backed `HttpClient` using the current `Dispatcher`
  * service.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -370,6 +370,7 @@ export const layerUndiciNoDispatcher: Layer.Layer<
  * Provides an Undici-backed `HttpClient` together with a scoped default
  * Undici `Agent` dispatcher.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -460,7 +461,7 @@ export const makeNodeHttp = Effect.gen(function*() {
       sendBody(nodeRequest, request, request.body).pipe(Effect.andThen(Effect.never))
     ).pipe(
       Effect.onError(() => Effect.sync(() => nodeRequest.destroy())),
-      Effect.map((_) => new NodeHttpResponse(request, _))
+      Effect.map((_) => new NodeHttpResponse(request, _, url.href.split("#")[0]))
     )
   })
 })
@@ -580,10 +581,12 @@ const waitForFinish = (nodeRequest: Http.ClientRequest, request: HttpClientReque
 class NodeHttpResponse extends NodeHttpIncomingMessage<Error.HttpClientError> implements HttpClientResponse, Pipeable {
   readonly [Response.TypeId]: typeof Response.TypeId
   readonly request: HttpClientRequest
+  readonly url: string
 
   constructor(
     request: HttpClientRequest,
-    source: Http.IncomingMessage
+    source: Http.IncomingMessage,
+    url: string
   ) {
     super(source, (cause) =>
       new Error.HttpClientError({
@@ -595,6 +598,7 @@ class NodeHttpResponse extends NodeHttpIncomingMessage<Error.HttpClientError> im
       }))
     this[Response.TypeId] = Response.TypeId
     this.request = request
+    this.url = url
   }
 
   get status() {

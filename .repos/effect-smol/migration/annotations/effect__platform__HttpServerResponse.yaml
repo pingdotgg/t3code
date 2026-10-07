@@ -6,7 +6,7 @@
   note: "Now effectful and safe; use expireCookieUnsafe for synchronous throwing behavior."
 "@effect/platform/HttpServerResponse#file":
   replacement: "HttpServerResponse.file"
-  note: "Retained with updated FileSystem stream options."
+  note: "Retained; offset and bytesToRead accept ByteSize.Input, while chunkSize uses number. Path-backed responses validate ranges and clamp content length to the available bytes."
 "@effect/platform/HttpServerResponse#formData":
   replacement: "HttpServerResponse.formData"
   note: "Moved unchanged."
@@ -42,7 +42,7 @@
   note: "Moved unchanged."
 "@effect/platform/HttpServerResponse#toWeb":
   replacement: "HttpServerResponse.toWeb"
-  note: "Retained, but the optional Runtime became an optional Context for stream execution."
+  note: "Retained, but the optional Runtime became an optional Context for stream execution. For a raw Web Response, outer headers override native headers and cookies append, including when the body is omitted. With withoutBody, the raw status and statusText are preserved unless the outer status is 204, 205, or 304, which takes precedence."
 "@effect/platform/HttpServerResponse#TypeId":
   replacement: "HttpServerResponse.isHttpServerResponse"
   note: "The response brand is private in v4; use the public runtime refinement."
@@ -61,3 +61,6 @@
 "@effect/platform/HttpServerResponse#urlParams":
   replacement: "HttpServerResponse.urlParams"
   note: "Retained and widened to accept UrlParams.Input."
+"@effect/platform/HttpServerResponse#fileWeb":
+  replacement: "HttpServerResponse.fileWeb"
+  note: "Web File offset, bytesToRead, and chunkSize options use number, unlike path-backed ByteSize.Input ranges."

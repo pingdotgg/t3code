@@ -4,7 +4,7 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -35,8 +35,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       const messageDeltas = yield* Ref.make<Array<unknown>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(clientLayer, scope);
+      const layerClient = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerClient, scope);
 
       const result = yield* Effect.gen(function* () {
         const client = yield* CodexClient.CodexAppServerClient;
@@ -95,6 +95,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       assert.equal(result.skills.data[0]?.skills.length, 0);
       assert.deepEqual(yield* Ref.get(userInputRequests), [
         {
+          isBlocking: true,
           itemId: "item-approval-1",
           threadId: "thread-1",
           turnId: "turn-1",
@@ -129,8 +130,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
         CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),
       });
       const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(clientLayer, scope);
+      const layerClient = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerClient, scope);
 
       const initialized = yield* Effect.gen(function* () {
         const client = yield* CodexClient.CodexAppServerClient;

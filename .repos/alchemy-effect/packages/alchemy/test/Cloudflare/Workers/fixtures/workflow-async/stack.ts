@@ -1,32 +1,31 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Alchemy from "@/index";
+import * as Output from "@/Output";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as path from "pathe";
+import type { WorkflowEvents } from "./worker.ts";
 
 export type AsyncWorkflowEnv = Cloudflare.InferEnv<typeof AsyncWorkflowWorker>;
 
-// Async (non-Effect) Worker that hosts a `WorkflowEntrypoint` class and binds
-// it through `env` using the props-only `Cloudflare.Workflow` reference form.
-export const AsyncWorkflowWorker = Cloudflare.Worker("AsyncWorkflowWorker", {
-  main: path.resolve(import.meta.dirname, "worker.ts"),
-  workersDev: true,
-  env: {
-    MY_WORKFLOW: Cloudflare.Workflow<{ value: string }>("MyWorkflow", {
-      className: "MyWorkflow",
-    }),
-  },
-});
-
-export default Alchemy.Stack(
-  "AsyncWorkflowBindingStack",
+export class AsyncWorkflowWorker extends Cloudflare.Worker<AsyncWorkflowWorker>()(
+  "AsyncWorkflowWorker",
   {
-    providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+    main: `${import.meta.dirname}/worker.ts`,
+    workersDev: true,
+    assets: {
+      directory: `${import.meta.dirname}/assets`,
+      runWorkerFirst: true,
+    },
+    env: {
+      MY_WORKFLOW: Effect.succeed(
+        Cloudflare.Workflow<{ value: string }>("Greeting", {
+          className: "MyWorkflow",
+        }),
+      ),
+      EVENTS: Cloudflare.DurableObject<WorkflowEvents>("WorkflowEvents"),
+      GREETING: "hello",
+      CONFIG: Config.succeed("configured"),
+      EFFECT: Effect.succeed("effect"),
+      OUTPUT: Output.literal("output"),
+    },
   },
-  Effect.gen(function* () {
-    const worker = yield* AsyncWorkflowWorker;
-    return {
-      url: worker.url.as<string>(),
-    };
-  }),
-);
+) {}

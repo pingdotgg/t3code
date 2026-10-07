@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
+import { dotAlchemyDirectory } from "../AlchemyContext.ts";
+import { isPathWithin } from "../Util/isPathWithin.ts";
 import {
   inspectArtifactFile,
   inspectVerifiedFile,
@@ -38,6 +40,15 @@ export interface ComputeArchiveOptions {
    * Alchemy, Git, and dotenv files are always excluded.
    */
   ignore?: readonly string[];
+  /**
+   * Artifact-relative prefix applied to custom ignore patterns after they are
+   * validated.
+   */
+  ignorePrefix?: string;
+  /**
+   * Artifact-relative files that must remain present after exclusions.
+   */
+  requiredFiles?: readonly string[];
   /**
    * Maximum uncompressed bytes accepted across all archived files. Values
    * above the provider's 256 MiB hard ceiling are rejected.
@@ -139,18 +150,41 @@ const createComputeArchiveFile = Effect.fn(function* (
     directory,
     entrypoint,
     ignore = [],
+    ignorePrefix,
+    requiredFiles = [],
     maxUncompressedBytes = MAX_UNCOMPRESSED_BYTES,
     maxFileBytes = MAX_FILE_BYTES,
     maxEntries = MAX_ENTRIES,
   } = options;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = path.resolve(directory);
+  const runtimeBase = process.cwd();
+  const root = path.resolve(runtimeBase, directory);
   const realRoot = yield* fs.realPath(root);
+  const dotAlchemy = yield* dotAlchemyDirectory;
+  const runtimeRelative = path
+    .relative(root, path.resolve(runtimeBase, dotAlchemy))
+    .replaceAll("\\", "/");
   const normalizedEntrypoint = yield* normalizeEntrypoint(entrypoint);
   const validated = yield* Effect.try({
     try: () => ({
-      ignore: [...ALWAYS_IGNORED_PATTERNS, ...ignore].map(compileIgnorePattern),
+      ignore: [
+        ...(isPathWithin(root, dotAlchemy, runtimeBase)
+          ? [
+              // Keep runtime state out of the archive. Escape regex characters
+              // in the literal directory name (e.g. "cache[private]"); the
+              // suffix matches that directory and its descendants, not siblings
+              // whose names merely share its prefix (e.g. "cache-backup").
+              new RegExp(
+                `^${runtimeRelative.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:/.*)?$`,
+              ),
+            ]
+          : []),
+        ...ALWAYS_IGNORED_PATTERNS.map((pattern) =>
+          compileIgnorePattern(pattern),
+        ),
+        ...ignore.map((pattern) => compileIgnorePattern(pattern, ignorePrefix)),
+      ],
       maxUncompressedBytes: boundedLimit(
         "maxUncompressedBytes",
         maxUncompressedBytes,
@@ -201,6 +235,15 @@ const createComputeArchiveFile = Effect.fn(function* (
         `Entrypoint not found in compute artifact: ${normalizedEntrypoint}`,
       ),
     );
+  }
+
+  for (const file of requiredFiles) {
+    const normalized = yield* normalizeEntrypoint(file);
+    if (!isArchivedRegularFile(entries, `bundle/${normalized}`)) {
+      return yield* Effect.fail(
+        new Error(`Required file not found in compute artifact: ${normalized}`),
+      );
+    }
   }
 
   const manifest = new TextEncoder().encode(
@@ -409,7 +452,7 @@ const boundedLimit = (name: string, value: number, hardLimit: number) => {
   return value;
 };
 
-const compileIgnorePattern = (input: string) => {
+const compileIgnorePattern = (input: string, prefix?: string) => {
   const normalized = input.replaceAll("\\", "/").replace(/^\.\//, "");
   if (
     normalized.length === 0 ||
@@ -420,7 +463,8 @@ const compileIgnorePattern = (input: string) => {
   ) {
     throw new Error(`Invalid compute archive ignore pattern: ${input}`);
   }
-  const escaped = normalized
+  const scoped = prefix === undefined ? normalized : `${prefix}/${normalized}`;
+  const escaped = scoped
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replaceAll("**", "\0")
     .replaceAll("*", "[^/]*")

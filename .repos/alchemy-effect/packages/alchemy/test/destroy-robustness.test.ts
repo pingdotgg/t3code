@@ -62,7 +62,7 @@ const failsWith = (exit: Exit.Exit<unknown, unknown>, tag: string): boolean =>
       (r.error as { _tag?: string } | undefined)?._tag === tag,
   );
 
-describe("destroy aggregates failures", () => {
+describe("destroy aggregates failures", { tags: ["unit", "local"] }, () => {
   test.provider(
     "a failing delete does not interrupt sibling deletions",
     (stack) =>
@@ -177,82 +177,86 @@ describe("destroy aggregates failures", () => {
   );
 });
 
-describe("zombie rows (no registered provider)", () => {
-  const ghostRow = (fqn: string): ResourceState => ({
-    instanceId,
-    providerVersion: 0,
-    logicalId: fqn,
-    fqn,
-    namespace: undefined,
-    resourceType: "Test.Vanished",
-    status: "created",
-    props: { name: "ghost" },
-    attr: { name: "ghost" },
-    bindings: [],
-    downstream: [],
-  });
+describe(
+  "zombie rows (no registered provider)",
+  { tags: ["unit", "local"] },
+  () => {
+    const ghostRow = (fqn: string): ResourceState => ({
+      instanceId,
+      providerVersion: 0,
+      logicalId: fqn,
+      fqn,
+      namespace: undefined,
+      resourceType: "Test.Vanished",
+      status: "created",
+      props: { name: "ghost" },
+      attr: { name: "ghost" },
+      bindings: [],
+      downstream: [],
+    });
 
-  const diesWithMissingProvider = (
-    exit: Exit.Exit<unknown, unknown>,
-  ): MissingProviderError | undefined => {
-    if (!Exit.isFailure(exit)) return undefined;
-    const reason = exit.cause.reasons.find(
-      (r) => Cause.isDieReason(r) && r.defect instanceof MissingProviderError,
-    );
-    return reason && Cause.isDieReason(reason)
-      ? (reason.defect as MissingProviderError)
-      : undefined;
-  };
-
-  test.provider("destroy dies at plan time and destroys nothing", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          yield* TestResource("A", { string: "a" });
-        }),
+    const diesWithMissingProvider = (
+      exit: Exit.Exit<unknown, unknown>,
+    ): MissingProviderError | undefined => {
+      if (!Exit.isFailure(exit)) return undefined;
+      const reason = exit.cause.reasons.find(
+        (r) => Cause.isDieReason(r) && r.defect instanceof MissingProviderError,
       );
-      yield* seed("Ghost", ghostRow("Ghost"));
+      return reason && Cause.isDieReason(reason)
+        ? (reason.defect as MissingProviderError)
+        : undefined;
+    };
 
-      const exit = yield* stack.destroy().pipe(Effect.exit);
-
-      const defect = diesWithMissingProvider(exit);
-      expect(defect?.resourceType).toBe("Test.Vanished");
-      expect(defect?.fqn).toBe("Ghost");
-      // Fatal at plan time: NOTHING was destroyed — A's state is intact.
-      expect((yield* getState("A"))?.status).toBe("created");
-      expect(yield* getState("Ghost")).toBeDefined();
-
-      // Remediation path: clear the zombie row (as the error message
-      // instructs), then destroy proceeds normally.
-      yield* clearState("Ghost");
-      yield* stack.destroy();
-      expect(yield* getState("A")).toBeUndefined();
-    }),
-  );
-
-  test.provider(
-    "a deploy with a zombie orphan dies at plan time and applies nothing",
-    (stack) =>
+    test.provider("destroy dies at plan time and destroys nothing", (stack) =>
       Effect.gen(function* () {
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            yield* TestResource("A", { string: "a" });
+          }),
+        );
         yield* seed("Ghost", ghostRow("Ghost"));
 
-        const exit = yield* stack
-          .deploy(
-            Effect.gen(function* () {
-              const a = yield* TestResource("A", { string: "a" });
-              return a.string;
-            }),
-          )
-          .pipe(Effect.exit);
+        const exit = yield* stack.destroy().pipe(Effect.exit);
 
-        expect(diesWithMissingProvider(exit)?.resourceType).toBe(
-          "Test.Vanished",
-        );
-        // Fatal at plan time: the program was NOT applied.
-        expect(yield* getState("A")).toBeUndefined();
+        const defect = diesWithMissingProvider(exit);
+        expect(defect?.resourceType).toBe("Test.Vanished");
+        expect(defect?.fqn).toBe("Ghost");
+        // Fatal at plan time: NOTHING was destroyed — A's state is intact.
+        expect((yield* getState("A"))?.status).toBe("created");
         expect(yield* getState("Ghost")).toBeDefined();
 
+        // Remediation path: clear the zombie row (as the error message
+        // instructs), then destroy proceeds normally.
         yield* clearState("Ghost");
+        yield* stack.destroy();
+        expect(yield* getState("A")).toBeUndefined();
       }),
-  );
-});
+    );
+
+    test.provider(
+      "a deploy with a zombie orphan dies at plan time and applies nothing",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* seed("Ghost", ghostRow("Ghost"));
+
+          const exit = yield* stack
+            .deploy(
+              Effect.gen(function* () {
+                const a = yield* TestResource("A", { string: "a" });
+                return a.string;
+              }),
+            )
+            .pipe(Effect.exit);
+
+          expect(diesWithMissingProvider(exit)?.resourceType).toBe(
+            "Test.Vanished",
+          );
+          // Fatal at plan time: the program was NOT applied.
+          expect(yield* getState("A")).toBeUndefined();
+          expect(yield* getState("Ghost")).toBeDefined();
+
+          yield* clearState("Ghost");
+        }),
+    );
+  },
+);

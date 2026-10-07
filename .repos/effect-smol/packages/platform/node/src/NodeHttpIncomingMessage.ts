@@ -12,13 +12,13 @@
  * @since 4.0.0
  */
 import * as Effect from "effect/Effect"
+import * as Headers from "effect/http/Headers"
+import * as IncomingMessage from "effect/http/HttpIncomingMessage"
+import * as UrlParams from "effect/http/UrlParams"
 import * as Inspectable from "effect/Inspectable"
 import * as Option from "effect/Option"
 import type * as Schema from "effect/Schema"
 import type * as Stream from "effect/Stream"
-import * as Headers from "effect/unstable/http/Headers"
-import * as IncomingMessage from "effect/unstable/http/HttpIncomingMessage"
-import * as UrlParams from "effect/unstable/http/UrlParams"
 import type * as Http from "node:http"
 import * as NodeStream from "./NodeStream.ts"
 
@@ -76,17 +76,7 @@ export abstract class NodeHttpIncomingMessage<E> extends Inspectable.Class
     if (this.textEffect) {
       return this.textEffect
     }
-    this.textEffect = Effect.runSync(Effect.cached(
-      Effect.flatMap(
-        IncomingMessage.MaxBodySize,
-        (maxBodySize) =>
-          NodeStream.toString(() => this.source, {
-            onError: this.onError,
-            maxBytes: maxBodySize
-          })
-      )
-    ))
-    this.arrayBufferEffect = Effect.map(this.textEffect, (_) => new TextEncoder().encode(_).buffer)
+    this.textEffect = Effect.map(this.arrayBuffer, (_) => Buffer.from(_).toString("utf8"))
     return this.textEffect
   }
 

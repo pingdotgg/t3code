@@ -1,11 +1,14 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Channel, Context, Fiber, Stream, Tracer } from "effect"
+import { Channel, Context, Fiber, References, Stream, Tracer } from "effect"
+import * as Arr from "effect/Array"
 import * as Cause from "effect/Cause"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Latch from "effect/Latch"
 import * as Layer from "effect/Layer"
+import * as Ref from "effect/Ref"
+import * as Scheduler from "effect/Scheduler"
 import * as Scope from "effect/Scope"
 
 describe("Layer", () => {
@@ -36,6 +39,37 @@ describe("Layer", () => {
       const env = layer.pipe(Layer.merge(layer), Layer.build)
       yield* Effect.scoped(env)
       assert.deepStrictEqual(array, [acquire1, release1])
+    }))
+
+  it.effect("preserves a failure when a shared layer build is interrupted", () =>
+    Effect.gen(function*() {
+      const Shared = Context.Service<number>("Shared")
+      const Dying = Context.Service<number>("Dying")
+      const Runtime = Context.Service<boolean>("Runtime")
+
+      for (const kind of ["die", "fail"] as const) {
+        const sharedStarted = Latch.makeUnsafe()
+        const outerStarted = Latch.makeUnsafe()
+        const shared = Layer.effect(Shared)(sharedStarted.open.pipe(Effect.andThen(Effect.never)))
+        const dying = Layer.effect(Dying)(
+          Effect.all([sharedStarted.await, outerStarted.await]).pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.andThen(kind === "die" ? Effect.die("layer defect") : Effect.fail("layer failure"))
+          )
+        )
+        const runtime = Layer.effect(Runtime)(Effect.as(Effect.all([Shared, Dying]), true)).pipe(
+          Layer.provide([shared, dying])
+        )
+        const outerShared = Layer.fromBuild((memoMap, scope) =>
+          sharedStarted.await.pipe(
+            Effect.andThen(outerStarted.open),
+            Effect.andThen(shared.build(memoMap, scope))
+          )
+        )
+
+        const exit = yield* Layer.mergeAll(runtime, outerShared).pipe(Layer.build, Effect.scoped, Effect.exit)
+        assert.isTrue(kind === "die" ? Exit.hasDies(exit) : Exit.hasFails(exit))
+      }
     }))
 
   it.effect("sharing itself with merge", () =>
@@ -452,6 +486,103 @@ describe("Layer", () => {
   })
 
   describe("MemoMap", () => {
+    class Shared extends Context.Service<Shared, { readonly n: number }>()("Shared") {}
+
+    const releaseCounted = (released: Ref.Ref<number>) =>
+      Layer.effect(
+        Shared,
+        Effect.acquireRelease(Effect.succeed({ n: 1 }), () => Ref.update(released, (n) => n + 1))
+      )
+
+    // A small MaxOpsBeforeYield budget makes a fiber yield before each op, so
+    // sweeping the budget moves an interrupt through every step of a build.
+    const budgets = Arr.range(3, 64)
+
+    const settle = Effect.gen(function*() {
+      for (let i = 0; i < 200; i++) yield* Effect.yieldNow
+    })
+
+    it.effect("interrupting a build does not hang current or later requesters", () =>
+      Effect.gen(function*() {
+        for (const ops of budgets) {
+          const memoMap = Layer.makeMemoMapUnsafe()
+          const layer = Layer.effect(Shared, Effect.succeed({ n: 1 }))
+          const first = yield* Effect.forkChild(
+            Effect.provideService(
+              Layer.buildWithMemoMap(layer, memoMap, yield* Scope.make()),
+              Scheduler.MaxOpsBeforeYield,
+              ops
+            ),
+            { startImmediately: true }
+          )
+          const waiter = yield* Effect.forkChild(Layer.buildWithMemoMap(layer, memoMap, yield* Scope.make()), {
+            startImmediately: true
+          })
+          yield* Fiber.interrupt(first)
+          const later = yield* Effect.forkChild(Layer.buildWithMemoMap(layer, memoMap, yield* Scope.make()), {
+            startImmediately: true
+          })
+          yield* settle
+          assert.isDefined(waiter.pollUnsafe(), `waiter hung with ${ops} ops`)
+          assert.isDefined(later.pollUnsafe(), `later requester hung with ${ops} ops`)
+        }
+      }))
+
+    it.effect("an interrupted reuse does not keep the shared layer alive", () =>
+      Effect.gen(function*() {
+        for (const closed of [false, true]) {
+          for (const ops of budgets) {
+            const released = yield* Ref.make(0)
+            const memoMap = Layer.makeMemoMapUnsafe()
+            const layer = releaseCounted(released)
+            const scope1 = yield* Scope.make()
+            const scope2 = yield* Scope.make()
+            yield* Layer.buildWithMemoMap(layer, memoMap, scope1)
+            if (closed) yield* Scope.close(scope2, Exit.void)
+            const reuse = yield* Effect.forkChild(
+              Effect.provideService(Layer.buildWithMemoMap(layer, memoMap, scope2), Scheduler.MaxOpsBeforeYield, ops),
+              { startImmediately: true }
+            )
+            yield* Fiber.interrupt(reuse)
+            if (!closed) yield* Scope.close(scope2, Exit.void)
+            yield* Scope.close(scope1, Exit.void)
+            assert.strictEqual(yield* Ref.get(released), 1, `closed scope: ${closed}, ${ops} ops`)
+          }
+        }
+      }))
+
+    it.effect("running a get effect twice does not release the shared layer early", () =>
+      Effect.gen(function*() {
+        const released = yield* Ref.make(0)
+        const memoMap = Layer.makeMemoMapUnsafe()
+        const layer = releaseCounted(released)
+        const scope1 = yield* Scope.make()
+        const scope2 = yield* Scope.make()
+        yield* Layer.buildWithMemoMap(layer, memoMap, scope1)
+        const reuse = memoMap.get(layer, scope2)
+        assert.isDefined(reuse)
+        yield* reuse
+        yield* reuse
+        yield* Scope.close(scope2, Exit.void)
+        assert.strictEqual(yield* Ref.get(released), 0)
+        yield* Scope.close(scope1, Exit.void)
+        assert.strictEqual(yield* Ref.get(released), 1)
+      }))
+
+    it.effect("a get effect that never runs does not keep the shared layer alive", () =>
+      Effect.gen(function*() {
+        const released = yield* Ref.make(0)
+        const memoMap = Layer.makeMemoMapUnsafe()
+        const layer = releaseCounted(released)
+        const scope1 = yield* Scope.make()
+        const scope2 = yield* Scope.make()
+        yield* Layer.buildWithMemoMap(layer, memoMap, scope1)
+        assert.isDefined(memoMap.get(layer, scope2))
+        yield* Scope.close(scope2, Exit.void)
+        yield* Scope.close(scope1, Exit.void)
+        assert.strictEqual(yield* Ref.get(released), 1)
+      }))
+
     it("does not memoize a build before its Effect executes", () => {
       const memoMap = Layer.makeMemoMapUnsafe()
       const scope = Scope.makeUnsafe()
@@ -553,6 +684,36 @@ describe("Layer", () => {
   })
 
   describe("tracing", () => {
+    it.effect("withSpan forwards captureStackTrace to the layer stack frame", () =>
+      Effect.gen(function*() {
+        const Frame = Context.Service<References.StackFrame | undefined>("Frame")
+        const layer = Layer.effect(Frame, References.CurrentStackFrame)
+
+        // By default the frame records this call site, not Layer's internals.
+        const captured = yield* Effect.provide(Frame, Layer.withSpan(layer, "captured"))
+        assert.include(captured!.stack()!, "Layer.test.ts")
+
+        const disabled = yield* Effect.provide(
+          Frame,
+          layer.pipe(Layer.withSpan("disabled", { captureStackTrace: false }))
+        )
+        assert.isUndefined(disabled!.stack())
+
+        let calls = 0
+        const supplied = yield* Effect.provide(
+          Frame,
+          Layer.withSpan(layer, "supplied", {
+            captureStackTrace: () => {
+              calls++
+              return "at construct (app.ts:1:1)"
+            }
+          })
+        )
+        assert.strictEqual(calls, 0)
+        assert.strictEqual(supplied!.stack(), "at construct (app.ts:1:1)")
+        assert.strictEqual(calls, 1)
+      }))
+
     it.effect("withSpan supports data-first usage and runs the onEnd finalizer", () =>
       Effect.gen(function*() {
         // Edge case: the data-first overload has separate runtime branching, and onEnd

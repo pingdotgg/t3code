@@ -4,8 +4,8 @@ import {
 } from "@distilled.cloud/cloudflare/Credentials";
 import * as d1 from "@distilled.cloud/cloudflare/d1";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { md5 } from "../../Util/md5.ts";
 
 export interface ImportDatabaseOptions {

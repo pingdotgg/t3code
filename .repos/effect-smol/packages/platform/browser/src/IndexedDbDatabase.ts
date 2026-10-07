@@ -17,8 +17,8 @@ import * as Effectable from "effect/Effectable"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as MutableRef from "effect/MutableRef"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import * as Semaphore from "effect/Semaphore"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as IndexedDb from "./IndexedDb.ts"
 import * as IndexedDbQueryBuilder from "./IndexedDbQueryBuilder.ts"
 import type * as IndexedDbTable from "./IndexedDbTable.ts"
@@ -134,7 +134,7 @@ export class IndexedDbDatabase extends Context.Service<
   {
     readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
     readonly IDBKeyRange: typeof globalThis.IDBKeyRange
-    readonly reactivity: Reactivity.Reactivity["Service"]
+    readonly reactivity: Reactivity.Reactivity
     readonly rebuild: Effect.Effect<void, IndexedDbDatabaseError>
   }
 >()(TypeId) {}
@@ -553,7 +553,7 @@ const makeTransactionProto = <Source extends IndexedDbVersion.AnyWithProps>({
   readonly IDBKeyRange: typeof globalThis.IDBKeyRange
   readonly tables: ReadonlyMap<string, IndexedDbVersion.Tables<Source>>
   readonly transaction: globalThis.IDBTransaction
-  readonly reactivity: Reactivity.Reactivity["Service"]
+  readonly reactivity: Reactivity.Reactivity
 }): Transaction<Source> => {
   const migration = IndexedDbQueryBuilder.make({
     database,

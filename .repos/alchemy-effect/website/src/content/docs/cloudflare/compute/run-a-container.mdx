@@ -111,6 +111,9 @@ surrounding Effect context — handy for stack-level config like
 stage, app name, or anything else you'd want to vary per
 environment.
 
+To reuse matching image builds across stages, configure `publish.repository`
+in these same props; see [Share published images across stages](/cloudflare/compute/containers#share-published-images-across-stages).
+
 ## Implement `exec` as an RPC method
 
 Containers have **RPC methods** — the same pattern you used on
@@ -127,8 +130,8 @@ method. Implement it now:
 // src/Sandbox.runtime.ts
 import * as Effect from "effect/Effect";
 +import * as Stream from "effect/Stream";
-+import * as ChildProcess from "effect/unstable/process/ChildProcess";
-+import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
++import * as ChildProcess from "effect/process/ChildProcess";
++import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { Sandbox } from "./Sandbox.ts";
 
 export const SandboxLive = Sandbox.make(
@@ -183,9 +186,9 @@ HTTP server you'd normally run inside Docker just works:
 // src/Sandbox.runtime.ts
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { Sandbox } from "./Sandbox.ts";
 
 export const SandboxLive = Sandbox.make(
@@ -238,7 +241,7 @@ that lives in `Sandbox.runtime.ts` and Rolldown tree-shakes it out.
 
 `yield* Sandbox` hands you a **running** container instance — the
 same typed shape you declared on the class, plus a `getTcpPort`
-helper. Resolve it in the **outer** init phase and expose `exec`
+helper. Resolve it in the **outer** Construction phase and expose `exec`
 from the inner phase as an RPC method:
 
 ```diff lang="typescript"
@@ -265,7 +268,7 @@ captured stdout/stderr/exitCode flow back through the typed shape.
 
 `yield* Sandbox` only resolves once you tell the DO **how** to run
 the container. Provide `Cloudflare.Containers.layer(Sandbox, …)` on
-the DO's init — that layer binds, starts, and monitors the
+the DO's constructor — that layer binds, starts, and monitors the
 container, then satisfies the `Sandbox` tag with the running
 instance:
 
@@ -330,8 +333,8 @@ The Worker binds `Agent` and exposes the `/sandbox/exec` route:
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import Agent from "./Agent.ts";
 
 export default Cloudflare.Worker(
@@ -384,8 +387,8 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-+import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
++import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -428,7 +431,7 @@ to `Agent.ts` that proxies to it via `getTcpPort`:
 // src/Agent.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
++import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { Sandbox } from "./Sandbox.ts";
 
 export default class Agent extends Cloudflare.DurableObject<Agent>()(

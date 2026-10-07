@@ -25,7 +25,7 @@ import { hasProperty, type Predicate, type Refinement } from "./Predicate.ts"
 import * as TxRef from "./TxRef.ts"
 import type { NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/transactions/TxHashSet"
+const TypeId = "~effect/TxHashSet"
 
 const TxHashSetProto = {
   [TypeId]: TypeId,
@@ -500,6 +500,32 @@ export const isEmpty = <V>(self: TxHashSet<V>): Effect.Effect<boolean> =>
     const set = yield* TxRef.get(self.ref)
     return HashSet.isEmpty(set)
   })
+
+/**
+ * Checks whether the TxHashSet is non-empty.
+ *
+ * **Example** (Checking whether a set is non-empty)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, TxHashSet } from "effect"
+ *
+ * const program = Effect.gen(function*() {
+ *   const empty = yield* TxHashSet.empty<string>()
+ *   const emptyResult = yield* TxHashSet.isNonEmpty(empty)
+ *
+ *   const nonEmpty = yield* TxHashSet.make("a")
+ *   const nonEmptyResult = yield* TxHashSet.isNonEmpty(nonEmpty)
+ *   return [emptyResult, nonEmptyResult] as const
+ * })
+ *
+ * await Effect.runPromise(program) // => [false, true]
+ * ```
+ *
+ * @category predicates
+ * @since 4.0.0
+ */
+export const isNonEmpty = <V>(self: TxHashSet<V>): Effect.Effect<boolean> =>
+  Effect.map(isEmpty(self), (empty) => !empty)
 
 /**
  * Removes all values from the TxHashSet.

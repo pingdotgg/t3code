@@ -1,4 +1,4 @@
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Command from "@/Command";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
@@ -32,7 +32,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { timeout: 30000 },
+  { tags: ["unit", "local"], timeout: 30000 },
 );
 
 // All filesystem-mutating path scenarios live in one test: tests within a file
@@ -174,5 +174,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120000 },
+  { tags: ["unit", "local"], timeout: 120000 },
 );

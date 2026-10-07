@@ -7,8 +7,10 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
@@ -165,7 +167,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : accessibilityDetails?.format === "json"
       ? "Show accessibility JSON"
       : "Show extracted text";
-  const ContentsIcon = showingAccessibilityDetails ? ImageIcon : TextIcon;
 
   return (
     <Dialog
@@ -179,8 +180,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         variant="media"
         showCloseButton={false}
         bottomStickOnMobile={false}
-        backdropClassName="z-[60]"
-        viewportClassName="z-[60] grid-rows-1 place-items-center px-4 py-6 [-webkit-app-region:no-drag]"
         className="row-start-1 max-h-[92vh] w-[92vw] max-w-[92vw] items-center overflow-visible [--media-width:92vw] [--media-height:min(86vh,calc(100vh-160px))] sm:[--media-width:calc(92vw-96px)]"
         onKeyDown={onKeyDown}
         initialFocus={closeButtonRef}
@@ -195,7 +194,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="left-0 top-auto -bottom-12 translate-y-0 rounded-full bg-white/10 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="left-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label="Previous media"
             onClick={() => navigateImage(-1)}
           >
@@ -221,7 +220,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               accessibilityDetails ? (
                 <SnapShotAccessibilityData
                   details={accessibilityDetails}
-                  className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] animate-[snap-shot-contents-enter_140ms_ease-out] rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:animate-none"
+                  className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] transition-opacity duration-140 ease-out starting:opacity-0 rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:transition-none"
                 />
               ) : null
             ) : item.src === null || failedImageSrc === item.src ? (
@@ -254,25 +253,24 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                       <Button
                         aria-label={contentsLabel}
                         aria-pressed={showingAccessibilityDetails}
-                        className="[--control-icon-color:currentColor] hover:bg-white/10 hover:text-white"
                         onClick={() =>
                           setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
                         }
                         size="icon-micro"
-                        variant="ghost-muted"
+                        variant="overlay"
                       />
                     }
                   >
-                    <ContentsIcon className="size-3" aria-hidden="true" />
+                    <MorphIcon
+                      className="size-3"
+                      aria-hidden="true"
+                      icon={showingAccessibilityDetails ? ImageGlyph : TextGlyph}
+                    />
                   </TooltipTrigger>
                   <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
                 </Tooltip>
               ) : item.source ? (
-                <SnapShotContentsButton
-                  source={item.source}
-                  side="top"
-                  className="hover:bg-white/10 hover:text-white"
-                />
+                <SnapShotContentsButton source={item.source} side="top" />
               ) : null}
             </div>
           </div>
@@ -282,7 +280,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="right-0 top-auto -bottom-12 translate-y-0 rounded-full bg-white/10 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="right-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label="Next media"
             onClick={() => navigateImage(1)}
           >

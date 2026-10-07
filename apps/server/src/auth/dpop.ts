@@ -6,9 +6,9 @@ import type { DpopFailureReason } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import {
   ServerAuthDpopReplayKeyCalculationError,
@@ -17,6 +17,9 @@ import {
   type ServerAuthInternalError,
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+
+/** Secret store name prefix of DPoP replay markers. The server prunes expired ones. */
+export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
 
 export const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
   switch (code) {
@@ -86,7 +89,7 @@ export const verifyRequestDpopProof = (input: {
       Effect.flatMap((crypto) =>
         crypto.digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
       ),
-      Effect.map(Encoding.encodeBase64Url),
+      Effect.map(Base64Url.encode),
       Effect.mapError(
         (cause) =>
           new ServerAuthDpopReplayKeyCalculationError({
@@ -96,7 +99,7 @@ export const verifyRequestDpopProof = (input: {
     );
     yield* secretStore
       .create(
-        `dpop-proof-${replayKey}`,
+        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
         new TextEncoder().encode(
           [
             `thumbprint=${result.thumbprint}`,
@@ -115,7 +118,7 @@ export const verifyRequestDpopProof = (input: {
                 "environment.dpop.failure_code": mapped.dpopFailureReason,
               });
             }
-            return yield* Effect.fail(mapped);
+            return yield* mapped;
           }),
         ),
       );

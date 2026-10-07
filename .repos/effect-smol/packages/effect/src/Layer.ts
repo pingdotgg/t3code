@@ -234,19 +234,34 @@ export interface MemoMap {
 
 type MemoMapEntry = {
   observers: number
-  effect: Effect<Context.Context<any>, any>
+  readonly deferred: Deferred.Deferred<Context.Context<any>, any>
+  readonly scope: Scope.Closeable
   readonly finalizer: (exit: Exit.Exit<unknown, unknown>) => Effect<void>
 }
 
-const memoMapReuse = <RIn, E, ROut>(
-  entry: MemoMapEntry,
-  scope: Scope.Scope
-): Effect<Context.Context<ROut>, E, RIn> => {
+// The finalizer must not retain the caller of `getOrElseMemoize`.
+const makeMemoMapEntry = (memoMap: MemoMapImpl, layer: Layer<any, any, any>): MemoMapEntry => {
+  const entry: MemoMapEntry = {
+    observers: 0,
+    deferred: Deferred.makeUnsafe(),
+    scope: Scope.makeUnsafe(),
+    finalizer: (exit) =>
+      internalEffect.suspend(() => {
+        if (--entry.observers > 0) return internalEffect.void
+        memoMap.map.delete(layer)
+        return Scope.close(entry.scope, exit)
+      })
+  }
+  return entry
+}
+
+// Count and register synchronously so interruption cannot strand an observer.
+// A closed scope cannot own an entry.
+const memoMapObserve = (entry: MemoMapEntry, scope: Scope.Scope): boolean => {
+  if (scope.state._tag === "Closed") return false
   entry.observers++
-  return internalEffect.andThen(
-    internalEffect.scopeAddFinalizerExit(scope, (exit) => entry.finalizer(exit)),
-    entry.effect
-  )
+  internalEffect.scopeAddFinalizerUnsafe(scope, {}, entry.finalizer)
+  return true
 }
 
 /**
@@ -387,37 +402,6 @@ export const fromBuildMemo = <ROut, E, RIn>(
   return self
 }
 
-const memoMapBuild = <RIn, E, ROut>(
-  memoMap: MemoMapImpl,
-  layer: Layer<ROut, E, RIn>,
-  scope: Scope.Scope,
-  build: (memoMap: MemoMap, scope: Scope.Scope) => Effect<Context.Context<ROut>, E, RIn>
-): Effect<Context.Context<ROut>, E, RIn> => {
-  const layerScope = Scope.makeUnsafe()
-  const deferred = Deferred.makeUnsafe<Context.Context<ROut>, E>()
-  const entry: MemoMapEntry = {
-    observers: 1,
-    effect: Deferred.await(deferred),
-    finalizer: (exit: Exit.Exit<unknown, unknown>) =>
-      internalEffect.suspend(() => {
-        entry.observers--
-        if (entry.observers === 0) {
-          memoMap.map.delete(layer)
-          return Scope.close(layerScope, exit)
-        }
-        return internalEffect.void
-      })
-  }
-  memoMap.map.set(layer, entry)
-  return internalEffect.scopeAddFinalizerExit(scope, entry.finalizer).pipe(
-    internalEffect.flatMap(() => build(memoMap, layerScope)),
-    internalEffect.onExit((exit) => {
-      entry.effect = exit
-      return Deferred.done(deferred, exit)
-    })
-  )
-}
-
 class MemoMapImpl implements MemoMap {
   get [MemoMapTypeId](): typeof MemoMapTypeId {
     return MemoMapTypeId
@@ -437,7 +421,8 @@ class MemoMapImpl implements MemoMap {
   ): Effect<Context.Context<ROut>, E, RIn> | undefined {
     const local = this.map.get(layer)
     if (local) {
-      return memoMapReuse(local, scope)
+      memoMapObserve(local, scope)
+      return local.deferred.effect ?? Deferred.await(local.deferred)
     }
     return this.parent?.get(layer, scope)
   }
@@ -448,11 +433,24 @@ class MemoMapImpl implements MemoMap {
     build: (memoMap: MemoMap, scope: Scope.Scope) => Effect<Context.Context<ROut>, E, RIn>
   ): Effect<Context.Context<ROut>, E, RIn> {
     return internalEffect.suspend(() => {
-      const existing = this.get(layer, scope)
-      if (existing) {
-        return existing
-      }
-      return memoMapBuild(this, layer, scope, build)
+      // Install the exit handler before publishing an entry: it must complete
+      // the Deferred even if the first requester is interrupted.
+      let deferred: Deferred.Deferred<Context.Context<ROut>, E> | undefined
+      return internalEffect.onExitPrimitive(
+        internalEffect.suspend(() => {
+          const existing = this.get(layer, scope)
+          if (existing) return existing
+          const entry = makeMemoMapEntry(this, layer)
+          // A closed scope cannot own a shared entry; build in that scope instead.
+          if (!memoMapObserve(entry, scope)) return build(this, scope)
+          deferred = entry.deferred
+          this.map.set(layer, entry)
+          return build(this, entry.scope)
+        }),
+        (exit) => {
+          if (deferred) Deferred.doneUnsafe(deferred, exit)
+        }
+      )
     })
   }
 }
@@ -1137,6 +1135,8 @@ export const effectDiscard = <X, E, R>(effect: Effect<X, E, R>): Layer<never, E,
 export const suspend = <A, E, R>(evaluate: LazyArg<Layer<A, E, R>>): Layer<A, E, R> =>
   fromBuildMemo((memoMap, scope) => internalEffect.suspend(() => evaluate().build(memoMap, scope)))
 
+const unwrapKey = Context.Service<Layer<any, any, any>>("effect/Layer/unwrap")
+
 /**
  * Unwraps a `Layer` from an `Effect`, flattening the nested structure.
  *
@@ -1173,10 +1173,7 @@ export const suspend = <A, E, R>(evaluate: LazyArg<Layer<A, E, R>>): Layer<A, E,
  */
 export const unwrap = <A, E1, R1, E, R>(
   self: Effect<Layer<A, E1, R1>, E, R>
-): Layer<A, E | E1, R1 | Exclude<R, Scope.Scope>> => {
-  const service = Context.Service<Layer<A, E1, R1>>("effect/Layer/unwrap")
-  return flatMap(effect(service)(self), Context.get(service))
-}
+): Layer<A, E | E1, R1 | Exclude<R, Scope.Scope>> => flatMap(effect(unwrapKey)(self), Context.get(unwrapKey))
 
 const mergeAllEffect = <Layers extends [Layer<never, any, any>, ...Array<Layer<never, any, any>>]>(
   layers: Layers,
@@ -1738,21 +1735,24 @@ export const tap: {
  * @since 2.0.0
  */
 export const tapError: {
-  <E, XE extends E, RIn2, E2, X>(
-    f: (e: XE) => Effect<X, E2, RIn2>
+  <E, _XE extends E, RIn2, E2, X>(
+    f: (e: Types.NoInfer<E>) => Effect<X, E2, RIn2>
   ): <RIn, ROut>(self: Layer<ROut, E, RIn>) => Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>>
-  <RIn, E, XE extends E, ROut, RIn2, E2, X>(
+  <E, RIn2, E2, X>(
+    f: (e: E) => Effect<X, E2, RIn2>
+  ): <RIn, ROut, E1 extends E = E>(self: Layer<ROut, E1, RIn>) => Layer<ROut, E1 | E2, RIn | Exclude<RIn2, Scope.Scope>>
+  <RIn, E, _XE extends E, ROut, RIn2, E2, X>(
     self: Layer<ROut, E, RIn>,
-    f: (e: XE) => Effect<X, E2, RIn2>
+    f: (e: Types.NoInfer<E>) => Effect<X, E2, RIn2>
   ): Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>>
-} = dual(2, <RIn, E, XE extends E, ROut, RIn2, E2, X>(
+} = dual(2, <RIn, E, ROut, RIn2, E2, X>(
   self: Layer<ROut, E, RIn>,
-  f: (e: XE) => Effect<X, E2, RIn2>
+  f: (e: E) => Effect<X, E2, RIn2>
 ): Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>> =>
   fromBuild((memoMap, scope) =>
     internalEffect.catch_(
       self.build(memoMap, scope),
-      (error) => Scope.provide(internalEffect.andThen(f(error as XE), internalEffect.fail(error)), scope)
+      (error) => Scope.provide(internalEffect.andThen(f(error), internalEffect.fail(error)), scope)
     )
   ))
 
@@ -1778,22 +1778,24 @@ export const tapError: {
  * @since 4.0.0
  */
 export const tapCause: {
-  <E, XE extends E, RIn2, E2, X>(
-    f: (cause: Cause.Cause<XE>) => Effect<X, E2, RIn2>
+  <E, _XE extends E, RIn2, E2, X>(
+    f: (cause: Cause.Cause<Types.NoInfer<E>>) => Effect<X, E2, RIn2>
   ): <RIn, ROut>(self: Layer<ROut, E, RIn>) => Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>>
-  <RIn, E, XE extends E, ROut, RIn2, E2, X>(
+  <E, RIn2, E2, X>(
+    f: (cause: Cause.Cause<E>) => Effect<X, E2, RIn2>
+  ): <RIn, ROut, E1 extends E = E>(self: Layer<ROut, E1, RIn>) => Layer<ROut, E1 | E2, RIn | Exclude<RIn2, Scope.Scope>>
+  <RIn, E, _XE extends E, ROut, RIn2, E2, X>(
     self: Layer<ROut, E, RIn>,
-    f: (cause: Cause.Cause<XE>) => Effect<X, E2, RIn2>
+    f: (cause: Cause.Cause<Types.NoInfer<E>>) => Effect<X, E2, RIn2>
   ): Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>>
-} = dual(2, <RIn, E, XE extends E, ROut, RIn2, E2, X>(
+} = dual(2, <RIn, E, ROut, RIn2, E2, X>(
   self: Layer<ROut, E, RIn>,
-  f: (cause: Cause.Cause<XE>) => Effect<X, E2, RIn2>
+  f: (cause: Cause.Cause<E>) => Effect<X, E2, RIn2>
 ): Layer<ROut, E | E2, RIn | Exclude<RIn2, Scope.Scope>> =>
   fromBuild((memoMap, scope) =>
     internalEffect.catchCause(
       self.build(memoMap, scope),
-      (cause) =>
-        Scope.provide(internalEffect.andThen(f(cause as Cause.Cause<XE>), internalEffect.failCause(cause)), scope)
+      (cause) => Scope.provide(internalEffect.andThen(f(cause), internalEffect.failCause(cause)), scope)
     )
   ))
 
@@ -2676,7 +2678,7 @@ export const withSpan: {
             (span) => internalEffect.addFinalizer((exit) => options.onEnd!(span, exit))
           )
           : internalEffect.makeSpanScoped(name, options),
-        (span) => withParentSpan(self, span)
+        (span) => withParentSpan(self, span, options)
       )
     )
   }
@@ -2689,7 +2691,7 @@ export const withSpan: {
             (span) => internalEffect.addFinalizer((exit) => options.onEnd!(span, exit))
           )
           : internalEffect.makeSpanScoped(name, options),
-        (span) => withParentSpan(self, span)
+        (span) => withParentSpan(self, span, options)
       )
     )
 } as any

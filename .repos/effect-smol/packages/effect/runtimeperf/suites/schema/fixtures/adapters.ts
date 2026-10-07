@@ -11,6 +11,11 @@ const schema = Schema.Struct({
 const input = { a: "a", b: 1 }
 const invalidInput = { a: "a", b: "invalid" }
 
+export const makeValid = () => ({
+  run: () => schema.make(input),
+  validate: (result) => assert.deepEqual(result, input)
+})
+
 export const parserExitInvalid = () => {
   const run = SchemaParser.decodeUnknownExit(schema)
   return {
@@ -23,7 +28,10 @@ export const exitValid = () => {
   const run = Schema.decodeUnknownExit(schema)
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(result._tag, "Success")
+    validate: (result) => {
+      assert.equal(result._tag, "Success")
+      assert.deepEqual(result.value, input)
+    }
   }
 }
 
@@ -39,7 +47,10 @@ export const optionValid = () => {
   const run = Schema.decodeUnknownOption(schema)
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(Option.isSome(result), true)
+    validate: (result) => {
+      assert.equal(Option.isSome(result), true)
+      if (Option.isSome(result)) assert.deepEqual(result.value, input)
+    }
   }
 }
 
@@ -55,7 +66,10 @@ export const resultValid = () => {
   const run = Schema.decodeUnknownResult(schema)
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(Result.isSuccess(result), true)
+    validate: (result) => {
+      assert.equal(Result.isSuccess(result), true)
+      if (Result.isSuccess(result)) assert.deepEqual(result.success, input)
+    }
   }
 }
 

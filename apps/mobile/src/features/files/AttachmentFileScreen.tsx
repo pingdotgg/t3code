@@ -5,7 +5,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -19,10 +19,12 @@ import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { removeComposerDraftAttachment, useComposerDraft } from "../../state/use-composer-drafts";
+import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
 
 /**
  * Both the thread stack and the new-task sheet stack register this screen, so a chip in a
@@ -37,6 +39,8 @@ export type AttachmentFileRouteParams = {
   readonly sizeBytes: string;
   /** Present for a draft attachment, which may still live only on this device. */
   readonly draftKey?: string;
+  /** Present for a page an agent published with `html_render`, which takes the app theme. */
+  readonly htmlRender?: "1";
 };
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
@@ -53,6 +57,7 @@ function AttachmentDocumentBody(props: {
   readonly document: ReturnType<typeof useAttachmentDocument>;
   readonly name: string;
   readonly environmentId: EnvironmentId | null;
+  readonly htmlRender: boolean;
   readonly nativeViewer: "pending" | "open" | "unavailable" | null;
   readonly nativeError: string | null;
   readonly onOpenNative: () => void;
@@ -71,43 +76,26 @@ function AttachmentDocumentBody(props: {
     );
   }
   if (props.nativeViewer !== null && props.nativeViewer !== "unavailable") {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Opening in file viewer...</Text>
-      </View>
-    );
+    return <FilePreviewLoading message="Opening in file viewer..." />;
   }
   if (!document.uri || (document.needsText && !document.content)) {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
-      </View>
-    );
+    return <FilePreviewLoading message="Loading file..." />;
   }
   if (document.needsText && document.content) {
     const { content, table } = document;
     return (
       <View className="flex-1 bg-sheet">
         {content.truncated ? (
-          <View className="border-b border-warning-border bg-warning px-4 py-2">
-            <Text className="text-2xs font-t3-bold uppercase text-warning-foreground">
-              Partial file
-            </Text>
-            <Text className="text-xs leading-snug text-warning-foreground">
-              Preview limited to the first 1 MB. Save or share the file to read it in full.
-            </Text>
-          </View>
+          <FilePreviewNotice title="Partial file">
+            Preview limited to the first 1 MB. Save or share the file to read it in full.
+          </FilePreviewNotice>
         ) : null}
         {table && document.activeMode === "table" ? (
           <ScrollView className="flex-1">
             {table.truncated ? (
-              <View className="border-b border-warning-border bg-warning px-4 py-2">
-                <Text className="text-xs leading-snug text-warning-foreground">
-                  Table limited to the first 100 rows and 30 columns. Source shows the rest.
-                </Text>
-              </View>
+              <FilePreviewNotice>
+                Table limited to the first 100 rows and 30 columns. Source shows the rest.
+              </FilePreviewNotice>
             ) : null}
             <ScrollView horizontal>
               <View>
@@ -157,7 +145,11 @@ function AttachmentDocumentBody(props: {
     return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
   }
   if (document.kind === "html") {
-    return <WorkspaceFileWebPreview uri={document.uri} />;
+    return props.htmlRender ? (
+      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
+    ) : (
+      <WorkspaceFileWebPreview uri={document.uri} />
+    );
   }
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
@@ -180,7 +172,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const iconColor = useUniwindTheme()["--color-icon"];
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
-  const environmentId = params.environmentId ? EnvironmentId.make(params.environmentId) : null;
+  const environmentId = params.environmentId?.trim()
+    ? EnvironmentId.make(params.environmentId)
+    : null;
   const sizeBytes = Number.parseInt(params.sizeBytes, 10) || 0;
   const draftKey = params.draftKey ?? null;
   const draft = useComposerDraft(draftKey);
@@ -355,7 +349,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     },
     [menuActions],
   );
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"} · ${formatAttachmentSize(sizeBytes)}`;
+  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
 
   return (
     <View className="flex-1 bg-sheet">
@@ -421,6 +415,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         document={document}
         name={params.name}
         environmentId={environmentId}
+        htmlRender={params.htmlRender === "1"}
         nativeViewer={nativeViewer}
         nativeError={nativeError}
         onOpenNative={() => {

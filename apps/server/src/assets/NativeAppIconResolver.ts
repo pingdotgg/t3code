@@ -1,7 +1,7 @@
-import * as NodeCrypto from "node:crypto";
 import type { ToolActivityNativeAppReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -13,7 +13,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Hex from "effect/encoding/Hex";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
@@ -43,10 +44,10 @@ function appFromCacheKey(key: string): ToolActivityNativeAppReference {
 const existingFile = Effect.fn("NativeAppIconResolver.existingFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const info = yield* fileSystem.stat(filePath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(Option.none()) : Effect.fail(error),
+        error.reason._tag === "NotFound" ? Effect.succeedNone : Effect.fail(error),
     }),
   );
   return Option.isSome(info) && info.value.type === "File" ? filePath : null;
@@ -175,9 +176,13 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   const appVersion =
     (yield* plistValue(infoPlistPath, "CFBundleVersion")) ||
     (yield* plistValue(infoPlistPath, "CFBundleShortVersionString"));
-  const cacheKey = NodeCrypto.createHash("sha256")
-    .update(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`)
-    .digest("hex");
+  const crypto = yield* Crypto.Crypto;
+  const cacheKey = yield* crypto
+    .digest(
+      "SHA-256",
+      new TextEncoder().encode(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`),
+    )
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
   const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
   const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
   if (yield* existingFile(cachePath)) return cachePath;
@@ -185,7 +190,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${NodeCrypto.randomUUID()}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",

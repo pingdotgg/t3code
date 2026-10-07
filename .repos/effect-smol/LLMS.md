@@ -11,9 +11,11 @@ purposes. In practice, you would not include these comments in your code.
 
 ## Writing `Effect` code
 
-Prefer writing Effect code with `Effect.gen` & `Effect.fn("name")`. Then attach
-additional behaviour with combinators. This style is more readable and easier to
-maintain than using combinators alone.
+Prefer `Effect.gen` for inline Effect code. For reusable functions, prefer
+`Effect.fn("name")` when tracing is useful and `Effect.fnUntraced` when it is not,
+particularly in library implementations and hot paths. Avoid functions that only
+wrap and return `Effect.gen`. Attach additional behaviour with combinators; this
+style is more readable and easier to maintain than using combinators alone.
 
 ### Using Effect.gen
 
@@ -46,13 +48,16 @@ export class FileProcessingError extends Schema.TaggedError<FileProcessingError>
 }) {}
 ```
 
-### Using Effect.fn
+### Using Effect.fn and Effect.fnUntraced
 
-When writing functions that return an Effect, use `Effect.fn` to use the
-generator syntax.
+When writing reusable functions that return an Effect, use `Effect.fn` or
+`Effect.fnUntraced` to use the generator syntax.
 
-**Avoid creating functions that return an Effect.gen**, use `Effect.fn`
-instead.
+Use `Effect.fn("name")` when the function should create a tracing span. Prefer
+`Effect.fnUntraced` when tracing is not needed, particularly for library
+implementations and hot paths.
+
+**Avoid creating functions that only wrap and return an `Effect.gen`**.
 
 ```ts
 import { Effect, Schema } from "effect"
@@ -79,6 +84,16 @@ export const effectFunction = Effect.fn("effectFunction")(
     method: "effectFunction"
   })
 )
+
+// Effect.fnUntraced avoids tracing and stack-frame capture while still reusing
+// the generator body. This is preferred for library functions that do not
+// represent a useful tracing boundary.
+export const validateBatchSize = Effect.fnUntraced(function*(size: number): Effect.fn.Return<number, SomeError> {
+  if (!Number.isInteger(size) || size <= 0) {
+    return yield* new SomeError({ message: "Batch size must be a positive integer" })
+  }
+  return size
+})
 
 // Use Schema.TaggedError to define a custom error
 export class SomeError extends Schema.TaggedError<SomeError>()("SomeError", {
@@ -247,7 +262,7 @@ They let you model finite or infinite data sources.
   - `NodeStream.fromReadable` for Node.js readable streams
 - **[Consuming and transforming streams](./ai-docs/src/03_stream/20_consuming-streams.ts)**: How to transform and consume streams using operators like `map`, `flatMap`, `filter`, `mapEffect`, and various `run*` methods.
 - **[Decoding and encoding streams](./ai-docs/src/03_stream/30_encoding.ts)**:
-  Use `Stream.pipeThroughChannel` with the `Ndjson` & `Msgpack` modules to
+  Use `Stream.pipeThroughChannel` with the `Ndjson` and `SchemaBinary` modules to
   decode and encode streams of structured data.
 
 ## Integrating Effect into existing applications
@@ -287,7 +302,7 @@ Use it when your Effect programs need testable current time, safe parsing, stabl
 
 Effect has built-in support for structured logging, distributed tracing, and
 metrics. For exporting telemetry, use the lightweight Otlp modules from
-`effect/unstable/observability` in new projects, or use
+`effect/observability` in new projects, or use
 `@effect/opentelemetry` NodeSdk when integrating with an existing OpenTelemetry
 setup.
 
@@ -329,7 +344,7 @@ if (Predicate.isObject(thing)) {
 
 ## Working with SQL databases
 
-Use the `effect/unstable/sql` modules together with a driver package such as
+Use the `effect/sql` modules together with a driver package such as
 `@effect/sql-sqlite-node` to access SQL databases. Define domain models with
 `Model.Class` to derive schemas for the database and JSON boundaries, run
 migrations, and write type-safe queries.
@@ -357,13 +372,13 @@ Build http clients with the `HttpClient` module.
 
 ## Working with child processes
 
-Use the `effect/unstable/process` modules to define child processes and run them with `ChildProcessSpawner`.
+Use the `effect/process` modules to define child processes and run them with `ChildProcessSpawner`.
 
 - **[Working with child processes](./ai-docs/src/60_child-process/10_working-with-child-processes.ts)**: This example shows how to collect process output, compose pipelines, and stream long-running command output.
 
 ## Building CLI applications
 
-Use the "effect/unstable/cli" modules to build CLI applications. These modules
+Use the "effect/cli" modules to build CLI applications. These modules
 provide utilities for parsing command-line arguments, handling user input, and
 managing the flow of a CLI application.
 

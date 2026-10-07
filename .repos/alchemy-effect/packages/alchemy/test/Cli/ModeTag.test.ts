@@ -1,7 +1,7 @@
 /**
  * Local-vs-live mode indicators in the plan/deploy renderers.
  *
- * The rule (shared by the Ink TUI and the non-interactive LoggingCli via
+ * The rule (shared by the Sigil TUI and the non-interactive LoggingCli via
  * `formatModeNote`): dev tags EVERY mode-stamped row; deploy tags only the
  * local exceptions —
  *   - dev (default local): local rows get a `local` tag, live rows get a
@@ -14,11 +14,12 @@
  */
 import { formatModeNote, modeLabel } from "@/Cli/ModeTag.ts";
 import { formatPlanLines } from "@/Cli/LoggingCli.ts";
+import { PlanTree } from "@/Cli/components/view/PlanView.tsx";
 import type { CRUD, Plan } from "@/Plan.ts";
 import type { ProviderMode } from "@/ProviderMode.ts";
 import { describe, expect, test } from "alchemy-test";
 
-describe("formatModeNote", () => {
+describe("formatModeNote", { tags: ["unit", "local"] }, () => {
   test("mode-agnostic rows (no resolved mode) show nothing", () => {
     expect(
       formatModeNote({ mode: undefined, defaultMode: "live" }),
@@ -103,6 +104,7 @@ const crud = (options: {
   action: CRUD["action"];
   mode?: ProviderMode;
   priorMode?: ProviderMode;
+  namespace?: string;
 }): CRUD =>
   ({
     action: options.action,
@@ -115,7 +117,11 @@ const crud = (options: {
     resource: {
       LogicalId: options.id,
       Type: "Test.Resource",
-      FQN: options.id,
+      FQN: options.namespace
+        ? `${options.namespace}/${options.id}`
+        : options.id,
+      Namespace:
+        options.namespace === undefined ? undefined : { Id: options.namespace },
     },
   }) as unknown as CRUD;
 
@@ -137,7 +143,7 @@ const makePlan = (options: {
 const lineFor = (lines: string[], id: string) =>
   lines.find((line) => line.includes(`[${id}]`));
 
-describe("formatPlanLines rename tags", () => {
+describe("formatPlanLines rename tags", { tags: ["unit", "local"] }, () => {
   test("a migrated resource shows its former FQN", () => {
     const lines = formatPlanLines(
       makePlan({
@@ -154,7 +160,102 @@ describe("formatPlanLines rename tags", () => {
   });
 });
 
-describe("formatPlanLines mode tags", () => {
+describe("compact plan output", { tags: ["unit", "local"] }, () => {
+  test("surfaces adoption and intentional orphaning as distinct actions", () => {
+    const lines = formatPlanLines(
+      makePlan({
+        resources: {
+          Existing: crud({ id: "Existing", action: "adopted" }),
+        },
+        deletions: {
+          Preserved: crud({ id: "Preserved", action: "orphaned" }),
+        },
+      }),
+    );
+
+    expect(lineFor(lines, "Existing")).toContain("adopted");
+    expect(lineFor(lines, "Preserved")).toContain("orphaned");
+    expect(lines[0]).toContain("1 to adopted");
+    expect(lines[0]).toContain("1 to orphaned");
+  });
+
+  test("targets live status updates by FQN when logical IDs repeat", () => {
+    const store = new PlanTree(
+      makePlan({
+        resources: {
+          "claude/toolchain": crud({
+            id: "toolchain",
+            namespace: "claude",
+            action: "update",
+          }),
+          "codex/toolchain": crud({
+            id: "toolchain",
+            namespace: "codex",
+            action: "update",
+          }),
+        },
+      }),
+    );
+
+    store.emit({
+      _tag: "apply.resource.status",
+      fqn: "codex/toolchain",
+      id: "toolchain",
+      type: "Test.Resource",
+      status: "updating",
+    });
+
+    expect(store.snapshot().tasks.get("claude/toolchain")?.status).toBe(
+      "pending",
+    );
+    expect(store.snapshot().tasks.get("codex/toolchain")?.status).toBe(
+      "updating",
+    );
+  });
+
+  test("keeps unchanged resources available in review and progress context", () => {
+    const plan = makePlan({
+      defaultMode: "live",
+      resources: {
+        Stable: crud({ id: "Stable", action: "noop", mode: "live" }),
+        Changed: crud({ id: "Changed", action: "update", mode: "live" }),
+      },
+    });
+
+    const lines = formatPlanLines(plan);
+    expect(lineFor(lines, "Stable")).toContain("noop");
+    expect(lineFor(lines, "Changed")).toContain("update");
+    expect(lines).not.toContain("1 unchanged hidden");
+    const rows = new PlanTree(plan).rows;
+    expect(
+      rows.some((row) => row.type === "resource" && row.id === "Stable"),
+    ).toBe(true);
+    expect(
+      rows.some((row) => row.type === "resource" && row.id === "Changed"),
+    ).toBe(true);
+  });
+
+  test("an all-noop plan keeps typed resource rows", () => {
+    const rows = new PlanTree(
+      makePlan({
+        defaultMode: "live",
+        resources: {
+          Stable: crud({ id: "Stable", action: "noop", mode: "live" }),
+        },
+      }),
+    ).rows;
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        type: "resource",
+        id: "Stable",
+        resourceType: "Test.Resource",
+        action: "noop",
+      }),
+    );
+  });
+});
+
+describe("formatPlanLines mode tags", { tags: ["unit", "local"] }, () => {
   test("deploy (default live): local deletion rows get a dim local tag", () => {
     const lines = formatPlanLines(
       makePlan({

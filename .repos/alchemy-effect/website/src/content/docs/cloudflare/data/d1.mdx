@@ -84,14 +84,14 @@ with `all`, `first`, or `run`:
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./database.ts";
 
 export default Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    // init: register the binding, get a typed client
+    // Construction: register the binding, get a typed client
     const db = yield* Cloudflare.D1.QueryDatabase(Database);
 
     return {
@@ -148,7 +148,7 @@ services written against `SqlClient.SqlClient` run on D1 unchanged.
 Provide both tags with the layer form:
 
 ```typescript
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const makeApp = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

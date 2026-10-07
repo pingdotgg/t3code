@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { AWSEnvironment } from "./Environment.ts";
 
 /**
@@ -62,7 +62,7 @@ export const makeAssumeRoleResolver = (options: {
   readonly roleArn: Effect.Effect<string>;
   /** Layer supplying the long-lived credentials used to sign `AssumeRole`. */
   readonly base: Layer.Layer<Credentials>;
-  /** STS role session name. @default "alchemy-microvm" */
+  /** STS role session name. @default "alchemy" */
   readonly roleSessionName?: string;
   /**
    * Region for the STS endpoint. STS `AssumeRole` is global, so this only
@@ -78,7 +78,7 @@ export const makeAssumeRoleResolver = (options: {
       const response = yield* sts
         .assumeRole({
           RoleArn: roleArn,
-          RoleSessionName: options.roleSessionName ?? "alchemy-microvm",
+          RoleSessionName: options.roleSessionName ?? "alchemy",
         })
         .pipe(
           // A freshly-created IAM user/role/access-key is eventually
@@ -188,7 +188,7 @@ export const fromAssumeRole = (options: {
   readonly roleArn: string;
   /** Static credentials used to sign the `AssumeRole` call. */
   readonly base: Layer.Layer<Credentials>;
-  /** STS role session name. @default "alchemy-microvm" */
+  /** STS role session name. @default "alchemy" */
   readonly roleSessionName?: string;
   /**
    * Region for the STS endpoint. STS `AssumeRole` is global, so this only

@@ -42,62 +42,66 @@ const fixtureEntries = [
 // the co-located Foldkit.local.test.ts suite.
 const runEmulated = process.env.ALCHEMY_TEST_DEV === "1";
 
-describe.skipIf(!runLive || runEmulated)("AWS.Website.Foldkit", () => {
-  // The resource's reason to exist: a Foldkit app routes on the client, so
-  // the deployment is assets-only and deep links fall back to the shell
-  // without the caller configuring anything.
-  test.provider(
-    "deploys the foldkit client build to S3 behind CloudFront with SPA fallback",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.skipIf(!runLive || runEmulated)(
+  "AWS.Website.Foldkit",
+  { tags: ["provider:aws", "provider:aws:website", "live"] },
+  () => {
+    // The resource's reason to exist: a Foldkit app routes on the client, so
+    // the deployment is assets-only and deep links fall back to the shell
+    // without the caller configuring anything.
+    test.provider(
+      "deploys the foldkit client build to S3 behind CloudFront with SPA fallback",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-aws-live-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-aws-live-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            // Deliberately no `spa` — the default is what's under test.
-            const site = yield* AWS.Website.Foldkit("FoldkitSite", {
-              rootDir,
-              forceDestroy: true,
-              invalidation: { paths: "all", wait: true },
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              // Deliberately no `spa` — the default is what's under test.
+              const site = yield* AWS.Website.Foldkit("FoldkitSite", {
+                rootDir,
+                forceDestroy: true,
+                invalidation: { paths: "all", wait: true },
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(/^https:\/\//);
-        // Assets-only: a Foldkit app is client-only, so the composite never
-        // creates a server function.
-        expect(deployed.site.server).toBeUndefined();
-        expect(deployed.site.serverUrl).toBeUndefined();
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(/^https:\/\//);
+          // Assets-only: a Foldkit app is client-only, so the composite never
+          // creates a server function.
+          expect(deployed.site.server).toBeUndefined();
+          expect(deployed.site.serverUrl).toBeUndefined();
 
-        // The built index page serves from the edge.
-        yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER", {
-          timeout: "180 seconds",
-          label: "index",
-        });
-        // publicDir passthrough landed in the bucket.
-        yield* expectUrlContains(`${url}/robots.txt`, "User-agent", {
-          label: "public asset",
-        });
-        // SPA fallback (the composite's default): a deep link boots the app
-        // instead of 404ing, and the Foldkit router resolves the route.
-        yield* expectUrlContains(
-          `${url}/counter/42`,
-          "FOLDKIT_AWS_PAGE_MARKER",
-          {
-            label: "spa fallback",
-          },
-        );
+          // The built index page serves from the edge.
+          yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER", {
+            timeout: "180 seconds",
+            label: "index",
+          });
+          // publicDir passthrough landed in the bucket.
+          yield* expectUrlContains(`${url}/robots.txt`, "User-agent", {
+            label: "public asset",
+          });
+          // SPA fallback (the composite's default): a deep link boots the app
+          // instead of 404ing, and the Foldkit router resolves the route.
+          yield* expectUrlContains(
+            `${url}/counter/42`,
+            "FOLDKIT_AWS_PAGE_MARKER",
+            {
+              label: "spa fallback",
+            },
+          );
 
-        yield* stack.destroy();
-      }),
-    { timeout: 2_400_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 2_400_000 },
+    );
+  },
+);

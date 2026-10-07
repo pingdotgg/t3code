@@ -2,9 +2,11 @@ import { fromCredentials } from "@distilled.cloud/aws/Credentials";
 import * as AwsEndpoint from "@distilled.cloud/aws/Endpoint";
 import type { RegionName } from "@distilled.cloud/aws/Region";
 import * as S3 from "@distilled.cloud/aws/s3";
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
+import { projectBuckets } from "@/Railway/GraphQL.ts";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -24,11 +26,29 @@ const logLevel = Effect.provideService(
 const OBJECT_KEY = "alchemy-marker.txt";
 const OBJECT_BODY = "hello-from-railway";
 
+const readBucketCredentials = Query.fn(
+  (bucketId: string, environmentId: string, projectId: string) =>
+    RailwayApi.bucketS3Credentials({ bucketId, environmentId, projectId }).pipe(
+      Query.map((creds) => ({
+        bucketName: creds.bucketName,
+        endpoint: creds.endpoint,
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+        region: creds.region,
+      })),
+    ),
+);
+
+const readEnvironmentConfig = Query.fn((id: string, projectId: string) => ({
+  config: RailwayApi.environment({ id, projectId }).config,
+}));
+
 const listProjectBuckets = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
-    Effect.map((project) => project.buckets.edges.map((edge) => edge.node)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
-  );
+  projectBuckets(projectId, (bucket) => ({
+    id: bucket.id,
+    name: bucket.name,
+    projectId: bucket.projectId,
+  })).pipe(Effect.catchTag("RailwayNotFound", () => Effect.succeed([])));
 
 const findBucket = (projectId: string, bucketId: string, name: string) =>
   listProjectBuckets(projectId).pipe(
@@ -44,31 +64,25 @@ const firstCredentials = (
   environmentId: string,
   projectId: string,
 ) =>
-  railway
-    .bucketS3Credentials({
-      bucketId,
-      environmentId,
-      projectId,
-    })
-    .pipe(
-      Effect.flatMap((items) => {
-        const first = items[0];
-        return first !== undefined
-          ? Effect.succeed(first)
-          : Effect.fail(new Error("missing bucket credentials"));
-      }),
-      Effect.retry({
-        schedule: Schedule.spaced("2 seconds"),
-        times: 8,
-      }),
-    );
+  readBucketCredentials(bucketId, environmentId, projectId).pipe(
+    Effect.flatMap((items) => {
+      const first = items[0];
+      return first !== undefined
+        ? Effect.succeed(first)
+        : Effect.fail(new Error("missing bucket credentials"));
+    }),
+    Effect.retry({
+      schedule: Schedule.spaced("2 seconds"),
+      times: 8,
+    }),
+  );
 
 const waitUntilBucketGone = (
   environmentId: string,
   projectId: string,
   bucketId: string,
 ) =>
-  railway.environment({ id: environmentId, projectId }).pipe(
+  readEnvironmentConfig(environmentId, projectId).pipe(
     Effect.map((env) => {
       const buckets =
         env.config !== null &&
@@ -85,13 +99,11 @@ const waitUntilBucketGone = (
         ? ("gone" as const)
         : ("found" as const);
     }),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed("gone" as const),
-    ),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
       schedule: Schedule.spaced("2 seconds"),
       until: (status) => status === "gone",
-      times: 20,
+      times: 10,
     }),
   );
 
@@ -265,5 +277,16 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:railway",
+      "provider:railway:bucket",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

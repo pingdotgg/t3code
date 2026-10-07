@@ -54,12 +54,15 @@ const { variant = "primary", icon, href = "#", class: className } = Astro.props;
       border-color 120ms var(--alc-ease, cubic-bezier(0.2, 0, 0, 1)),
       color 120ms var(--alc-ease, cubic-bezier(0.2, 0, 0, 1));
   }
+  /* Deep forest instead of var(--alc-accent): mid-green moss cannot reach
+     the AAA 7:1 contrast ratio with any text color; #3f5a2a gives 7.2:1
+     against --alc-fg-on-accent in both themes. */
   .alc-btn--primary {
-    background: var(--alc-accent);
+    background: #3f5a2a;
     color: var(--alc-fg-on-accent);
   }
   .alc-btn--primary:hover {
-    background: var(--alc-accent-deep);
+    background: #324a1e;
   }
   /* Secondary: transparent surface with a hairline border. Slimmer
      padding than the primary so it doesn't feel oversized when sitting

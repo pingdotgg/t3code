@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -7,12 +9,15 @@ import {
   ComposerContextRecord,
   OrchestrationMessageContext,
 } from "./composerContext.ts";
-import { OrchestrationMessage, ThreadTurnStartCommand } from "./orchestration.ts";
+import {
+  OrchestrationV2Command,
+  OrchestrationV2ConversationMessageJson,
+} from "./orchestrationV2.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
-const decodeMessage = Schema.decodeUnknownSync(OrchestrationMessage);
-const decodeTurnStart = Schema.decodeUnknownSync(ThreadTurnStartCommand);
+const decodeMessage = Schema.decodeUnknownSync(OrchestrationV2ConversationMessageJson);
+const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -107,6 +112,14 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
   },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
+  thread: {
+    ...base,
+    kind: "thread",
+    label: "Fix login flow",
+    environmentId: "environment-1",
+    threadId: "thread-1",
+    title: "Fix login flow",
+  },
 };
 
 describe("ComposerContextRecord", () => {
@@ -186,6 +199,45 @@ describe("OrchestrationMessageContext", () => {
     ).toThrow();
   });
 
+  it("sends a message without a record it cannot encode", () => {
+    const wire = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext))({
+      version: 1,
+      records: [
+        decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],
+        { ...knownRecords.terminal, contextId: "ctx_2", terminalLabel: "   " },
+      ],
+    });
+    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
+  });
+
+  it("sends a message without the records the wire cannot carry", () => {
+    const wire = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext))({
+      version: 1,
+      records: [
+        decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],
+        {
+          ...base,
+          contextId: "ctx_2",
+          kind: "future-kind",
+          label: "x",
+          payload: { count: Number.NaN },
+        },
+        { ...knownRecords["review-comment"], contextId: "ctx_3", fenceLanguage: undefined },
+        // JSON.stringify throws on a bigint on every engine.
+        { ...base, contextId: "ctx_4", kind: "future-kind", label: "y", payload: { n: 1n } },
+      ],
+    });
+    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
+  });
+
+  it("reports a hole as a schema issue, even when collecting every issue", () => {
+    const result = Schema.decodeUnknownExit(Schema.toType(OrchestrationMessageContext))(
+      { version: 1, records: [undefined] },
+      { errors: "all" },
+    );
+    expect(Exit.isFailure(result) && Cause.hasFails(result.cause)).toBe(true);
+  });
+
   it("normalizes decoded record identifiers", () => {
     const context = decodeContext({
       version: 1,
@@ -221,12 +273,17 @@ describe("OrchestrationMessageContext", () => {
     ).toThrow();
   });
 
-  it("is optional on messages and turn-start commands", () => {
+  it("is optional on messages and message dispatch commands", () => {
     const message = {
+      createdBy: "user",
+      creationSource: "web",
       id: "m1",
+      threadId: "t1",
+      runId: null,
+      nodeId: null,
       role: "user",
       text: "hi",
-      turnId: null,
+      attachments: [],
       streaming: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -238,19 +295,18 @@ describe("OrchestrationMessageContext", () => {
     });
     expect(withContext.context?.records).toHaveLength(1);
 
-    const command = decodeTurnStart({
-      type: "thread.turn.start",
+    const command = decodeCommand({
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
       commandId: "c1",
       threadId: "t1",
-      message: {
-        messageId: "m1",
-        role: "user",
-        text: "hi",
-        attachments: [],
-        context: { version: 1, records: [knownRecords.image] },
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
+      messageId: "m1",
+      text: "hi",
+      attachments: [],
+      context: { version: 1, records: [knownRecords.image] },
+      dispatchMode: { type: "start_immediately" },
     });
-    expect(command.message.context?.records[0]?.kind).toBe("image");
+    expect(command.type === "message.dispatch" && command.context?.records[0]?.kind).toBe("image");
   });
 });
