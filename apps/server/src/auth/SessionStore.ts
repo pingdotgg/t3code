@@ -8,7 +8,6 @@ import {
   type AuthEnvironmentScope,
   type ClientSurface,
   RuntimeMode,
-
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
