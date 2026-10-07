@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { createDuoControl, createDuoPinch, type DuoCommand } from "./duoControl.ts";
+import { createDuoControl, createDuoPinch, duoFoldState, type DuoCommand } from "./duoControl.ts";
 afterEach(() => vi.useRealTimers());
 
 it("keeps a failed send visible, including a disconnect while draining queued motion", () => {
@@ -106,4 +106,53 @@ it("pinches only a hit device, accumulates independently of native readback, cla
   pinch.end();
   expect(change).toHaveBeenCalledTimes(count);
   expect(pinch.active).toBe(false);
+});
+
+// Screen configs as an iPhone Duo simulator reports them for each way of holding the device.
+it.each([
+  [
+    "vertical phone, closed",
+    { screenId: 1, orientation: "portrait", hingeAngle: 0 },
+    "closed",
+    true,
+  ],
+  [
+    "horizontal phone, closed",
+    { screenId: 1, orientation: "landscape_right", hingeAngle: 0 },
+    "closed",
+    false,
+  ],
+  [
+    "vertical phone opened as a book",
+    { screenId: 3, orientation: "landscape_left", hingeAngle: 180 },
+    "open",
+    true,
+  ],
+  [
+    "horizontal phone opened as a laptop",
+    { screenId: 3, orientation: "portrait_upside_down", hingeAngle: 180 },
+    "open",
+    false,
+  ],
+  ["half-open book", { screenId: 3, orientation: "landscape_left", hingeAngle: 90 }, "half", true],
+] as const)("reads a %s", (_name, screen, fold, phoneVertical) => {
+  expect(duoFoldState(screen)).toEqual({ fold, stand: false, phoneVertical });
+});
+
+it("marks native stands so the fold group does not also claim them", () => {
+  expect(
+    duoFoldState({ screenId: 3, orientation: "portrait", hingeAngle: 90, hingePose: "laptop" }),
+  ).toEqual({ fold: "half", stand: true, phoneVertical: false });
+});
+
+it("falls back like the 3D view when hinge fields are missing", () => {
+  expect(duoFoldState({ screenId: 1, orientation: "portrait" })).toMatchObject({
+    fold: "closed",
+    phoneVertical: true,
+  });
+  // Without a display ID the 3D view draws the open inner panel, so the controls do too.
+  expect(duoFoldState({ orientation: "landscape_left" })).toMatchObject({
+    fold: "open",
+    phoneVertical: true,
+  });
 });
