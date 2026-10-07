@@ -22,6 +22,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:12:2", "/repo/src/example.ts:12:2", true],
     ["example.ts:12:3", "/repo/src/example.ts:12:2", false],
     ["example.ts:49-74", "/repo/src/example.ts:49-74", true],
+    ["example.ts", "/repo/src/example.ts:49-74", true],
+    ["example.ts:49", "/repo/src/example.ts:49-74", false],
     ["example.ts:49-75", "/repo/src/example.ts:49-74", false],
     ["example.ts:49-74", "/repo/src/example.ts:49", false],
     ["example.ts:12", "/repo/src/example.ts", false],

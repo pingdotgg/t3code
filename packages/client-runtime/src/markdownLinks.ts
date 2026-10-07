@@ -276,9 +276,9 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
     path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
   const labelPosition = splitFilePathPosition(label.trim());
   if (
-    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
-    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
+    (labelPosition.line !== undefined &&
+      (labelPosition.line !== destination.line || labelPosition.endLine !== destination.endLine)) ||
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
   ) {
     return false;
   }
