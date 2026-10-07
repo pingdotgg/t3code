@@ -393,9 +393,11 @@ export const make = Effect.gen(function* () {
     });
     const { token, fingerprint } = yield* credential(host);
     const scope = yield* SourceControlRateLimit.CredentialScope;
-    // REST spends `core` and GraphQL its own quota; GitHub resets and pauses them separately.
+    // REST spends `core` and GraphQL its own quota, each with its own reserve. Every REST path
+    // this reads today is `core`; a `search/` read would need its own resource here. A refusal
+    // still pauses the whole host, the key PullRequestService records its own backoff under.
     const resource = input.graphql === true ? "graphql" : "core";
-    const key = { provider: "github" as const, host, resource };
+    const key = { provider: "github" as const, host };
     const run = Effect.gen(function* () {
       const lease = yield* quota
         .admit(host, resource, { allowReserve: input.allowReserve })

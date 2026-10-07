@@ -552,12 +552,13 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
-  it.effect("admits only one concurrent preview above the reserve and resumes after reset", () =>
+  it.effect("holds background previews once an answer reports the reserve, until it resets", () =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const quota = yield* GitHubQuota.GitHubQuota;
       const resetAt = "2099-08-13T14:00:00Z";
       yield* quota.observe("preview-budget.example", graphqlQuota(501, resetAt));
+      // GitHub's count, not ours: the answer below reports the reserve has been reached.
       mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
@@ -578,7 +579,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
             }),
             false,
             false,
-            graphqlQuota(500, resetAt),
+            graphqlQuota(499, resetAt),
           ),
         ),
       );
@@ -589,18 +590,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         host: "preview-budget.example",
         number: 7,
       };
-      const results = yield* Effect.all(
-        Array.from({ length: 20 }, (_, index) =>
-          cli.getPullRequestPreview({ ...input, number: index + 1 }).pipe(Effect.result),
-        ),
-        { concurrency: "unbounded" },
-      );
-      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
-      for (const result of results) {
-        if (result._tag === "Failure") {
-          expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
-        }
-      }
+      yield* cli.getPullRequestPreview(input);
+      const held = yield* Effect.flip(cli.getPullRequestPreview({ ...input, number: 8 }));
+      expect(held._tag).toBe("SourceControlRateLimitPausedError");
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       yield* TestClock.setTime(Date.parse(resetAt));
       yield* cli.getPullRequestPreview(input);

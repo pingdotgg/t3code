@@ -679,7 +679,12 @@ export const make = Effect.gen(function* () {
   const readViewerLogin = Effect.fn("GitHubSourceControlProvider.readViewerLogin")(function* (
     host: string,
   ) {
-    const response = yield* rest({ host, operation: "getViewer", path: "user" });
+    const response = yield* rest({
+      host,
+      operation: "getViewer",
+      path: "user",
+      allowReserve: true,
+    });
     const decoded = decodeViewerLogin(response.body);
     if (Result.isFailure(decoded)) {
       return yield* failure("GitHub request failed.", decoded.failure);
@@ -944,6 +949,8 @@ export const make = Effect.gen(function* () {
           host: locator.host,
           operation: "createPullRequest",
           method: "POST",
+          // A user's own write may spend the reserve the background leaves for it.
+          allowReserve: true,
           path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
           // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
           // gh allows maintainer edits unless told otherwise; the API's default is not documented.
@@ -990,6 +997,7 @@ export const make = Effect.gen(function* () {
             host,
             operation: "createRepository",
             method: "POST",
+            allowReserve: true,
             path:
               isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
             body: { name, private: input.visibility === "private" },

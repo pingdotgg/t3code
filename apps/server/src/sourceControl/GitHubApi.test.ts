@@ -222,35 +222,29 @@ describe("GitHubApi", () => {
     },
   );
 
-  it.effect("pauses GraphQL after a RATE_LIMITED answer until the reset, and only GraphQL", () => {
+  it.effect("pauses the host after a GraphQL RATE_LIMITED answer until the reset", () => {
     const reset = Math.floor(NOW / 1000) + 600;
-    const { layer, requests } = harness((request) =>
-      request.url.endsWith("/graphql")
-        ? json(
-            { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
-            { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
-          )
-        : json({ ok: true }),
+    const { layer, requests } = harness(() =>
+      json(
+        { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
+        { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
+      ),
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
       const api = yield* GitHubApi.GitHubApi;
-      const read = { host: "github.com", operation: "summary", query: "query { viewer { id } }" };
-      const first = yield* Effect.flip(api.graphql(read));
+      const first = yield* Effect.flip(
+        api.graphql({ host: "github.com", operation: "summary", query: "query { viewer { id } }" }),
+      );
       expect(first).toMatchObject({ _tag: "GitHubApiRateLimitError", retryAt: reset * 1000 });
-      const second = yield* Effect.flip(api.graphql(read));
+      const second = yield* Effect.flip(
+        api.rest({ host: "github.com", operation: "stack", path: "repos/acme/web/stacks" }),
+      );
       expect(second).toMatchObject({
         _tag: "SourceControlRateLimitPausedError",
         retryAt: reset * 1000,
       });
-      // REST spends its own quota, which GitHub has not refused.
-      const rest = yield* api.rest({
-        host: "github.com",
-        operation: "stack",
-        path: "repos/acme/web/stacks",
-      });
-      expect(rest.status).toBe(200);
-      expect(requests).toHaveLength(2);
+      expect(requests).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 

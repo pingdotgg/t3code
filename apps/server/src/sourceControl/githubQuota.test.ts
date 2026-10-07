@@ -43,6 +43,32 @@ describe("GitHubQuota", () => {
     }).pipe(Effect.provide(GitHubQuota.layer)),
   );
 
+  it.effect("lets interactive requests spend the reserve but not an empty quota", () =>
+    Effect.gen(function* () {
+      const quota = yield* GitHubQuota.GitHubQuota;
+      yield* quota.observe("github.com", headers(1));
+      yield* quota.admit("github.com", "graphql", { allowReserve: true });
+      yield* quota.observe("github.com", headers(0));
+      const refused = yield* Effect.flip(
+        quota.admit("github.com", "graphql", { allowReserve: true }),
+      );
+      assert.strictEqual(refused.retryAt, RESET);
+    }).pipe(Effect.provide(GitHubQuota.layer)),
+  );
+
+  it.effect("spends nothing locally, so a free 304 cannot run the balance down", () =>
+    Effect.gen(function* () {
+      const quota = yield* GitHubQuota.GitHubQuota;
+      yield* quota.observe("github.com", headers(501, "core"));
+      // Conditional reads answer 304 with the balance unchanged, however many are sent.
+      for (let index = 0; index < 5; index++) {
+        yield* quota.admit("github.com", "core");
+        yield* quota.observe("github.com", headers(501, "core"));
+      }
+      yield* quota.admit("github.com", "core");
+    }).pipe(Effect.provide(GitHubQuota.layer)),
+  );
+
   it.effect("forgets a balance once its window resets, and ignores answers naming no quota", () =>
     Effect.gen(function* () {
       const quota = yield* GitHubQuota.GitHubQuota;

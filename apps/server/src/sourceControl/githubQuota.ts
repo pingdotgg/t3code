@@ -49,9 +49,13 @@ function quotaFromHeaders(
  * Keeps the last tenth of each GitHub quota for interactive requests. A background sweep that
  * would dip below it is refused until the quota resets, so a user's next click still has budget.
  *
- * The balance comes from the response headers. Requests in flight together would all see the
- * last answer's balance, so each one admitted counts a point against it until its own answer
- * replaces the guess. A GraphQL read can cost more than a point; the reserve absorbs the difference.
+ * The balance is GitHub's own count from the latest answer's headers, so it already includes
+ * what anything else spent with the same token, such as an agent's `gh` commands. Requests in
+ * flight together all see that one balance; the reserve absorbs what they spend before their
+ * answers land. Nothing is debited locally, because a 304 or a request that never reached GitHub
+ * spends nothing, and a local count would drift below GitHub's for the rest of the window.
+ *
+ * Interactive requests may spend the reserve, but not a quota GitHub already reported empty.
  */
 export class GitHubQuota extends Context.Service<
   GitHubQuota,
@@ -77,22 +81,14 @@ const make = Effect.gen(function* () {
     function* (host, resource, options) {
       const now = yield* Clock.currentTimeMillis;
       const key = keyOf(host, resource, yield* SourceControlRateLimit.CredentialScope);
-      const retryAt = yield* Ref.modify(snapshots, (current) => {
-        const snapshot = current.get(key);
-        if (snapshot === undefined || snapshot.resetAtMs <= now) return [null, current] as const;
-        const remaining = snapshot.remaining - 1;
-        if (options?.allowReserve !== true && remaining < snapshot.limit * RESERVE_RATIO) {
-          return [snapshot.resetAtMs, current] as const;
-        }
-        const next = new Map(current);
-        next.set(key, { ...snapshot, remaining });
-        return [null, next] as const;
-      });
-      if (retryAt === null) return;
+      const snapshot = (yield* Ref.get(snapshots)).get(key);
+      if (snapshot === undefined || snapshot.resetAtMs <= now) return;
+      const floor = options?.allowReserve === true ? 1 : snapshot.limit * RESERVE_RATIO;
+      if (snapshot.remaining >= floor) return;
       return yield* new SourceControlRateLimit.SourceControlRateLimitPausedError({
         provider: "github",
         host: host.trim().toLowerCase(),
-        retryAt,
+        retryAt: snapshot.resetAtMs,
       });
     },
   );
@@ -104,9 +100,8 @@ const make = Effect.gen(function* () {
       const key = keyOf(host, quota.resource, yield* SourceControlRateLimit.CredentialScope);
       yield* Ref.update(snapshots, (current) => {
         const previous = current.get(key);
-        // Within one window the quota only falls, so the lower balance wins: an answer that
-        // finished out of order, or one that predates requests admitted since, says too much is
-        // left. An answer from an older window must not replace the current one.
+        // Within one window GitHub's count only falls, so an answer that finished out of order
+        // and reports more left is stale. An answer from an older window says nothing of this one.
         if (
           previous !== undefined &&
           (quota.resetAtMs < previous.resetAtMs ||
