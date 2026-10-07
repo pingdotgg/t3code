@@ -55,17 +55,16 @@ export function nextPaletteIndex(index: number, direction: -1 | 1, count: number
 }
 
 /**
- * The open thread's palette plugin actions. Running one needs
- * `orchestration:operate`, so a connection without it is offered none.
+ * The palette plugin actions of one environment, for the open thread and its
+ * project when there is one. Running one needs `orchestration:operate`, so a
+ * connection without it is offered none.
  */
 export function buildPluginActionPaletteItems(input: {
   readonly actions: ReadonlyArray<PluginAction>;
   readonly canOperate: boolean;
-  readonly thread: {
-    readonly environmentId: EnvironmentId;
-    readonly id: ThreadId;
-    readonly projectId: ProjectId;
-  };
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
+  readonly projectId: ProjectId | null;
   readonly runAction: (input: {
     readonly environmentId: EnvironmentId;
     readonly action: PluginAction;
@@ -73,10 +72,10 @@ export function buildPluginActionPaletteItems(input: {
   }) => void;
 }): CommandPaletteItem[] {
   if (!input.canOperate) return [];
-  const { environmentId } = input.thread;
+  const { environmentId } = input;
   const entries = pluginActionsAt(input.actions, "command-palette", {
-    threadId: input.thread.id,
-    projectId: input.thread.projectId,
+    threadId: input.threadId,
+    projectId: input.projectId,
   });
   const labels = pluginActionLabels(entries.map((entry) => entry.action));
   return entries.map(({ action, target }, index) => ({

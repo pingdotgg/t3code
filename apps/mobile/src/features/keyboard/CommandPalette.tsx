@@ -149,13 +149,18 @@ export function CommandPalette(props: {
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
-  // Plugin actions belong to the environment of the thread the palette was opened on.
-  const pluginActions = usePluginActions(activeThread?.environmentId ?? null);
+  const environments = useWorkspaceEnvironments();
+  // Plugin actions belong to the open thread's environment, else the first connected one.
+  const pluginActionEnvironmentId =
+    activeThreadRef?.environmentId ??
+    environments.find((environment) => environment.connectionState === "connected")
+      ?.environmentId ??
+    null;
+  const pluginActions = usePluginActions(pluginActionEnvironmentId);
   const canRunPluginActions = useEnvironmentScope(
-    activeThread?.environmentId ?? null,
+    pluginActionEnvironmentId,
     AuthOrchestrationOperateScope,
   );
-  const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string | null>(null);
@@ -310,12 +315,14 @@ export function CommandPalette(props: {
         })),
       );
     }
-    if (activeThread) {
+    if (pluginActionEnvironmentId !== null) {
       actions.push(
         ...buildPluginActionPaletteItems({
           actions: pluginActions,
           canOperate: canRunPluginActions,
-          thread: activeThread,
+          environmentId: pluginActionEnvironmentId,
+          threadId: activeThread?.id ?? null,
+          projectId: activeThread?.projectId ?? null,
           runAction: (input) => void runPluginAction(input),
         }),
       );
@@ -367,6 +374,7 @@ export function CommandPalette(props: {
     activeThreadRef,
     navigation,
     canRunPluginActions,
+    pluginActionEnvironmentId,
     pluginActions,
     projects,
     runCommand,

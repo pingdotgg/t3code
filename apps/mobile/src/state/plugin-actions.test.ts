@@ -85,7 +85,9 @@ describe("runPluginAction", () => {
     const [entry] = buildPluginActionPaletteItems({
       actions: [deploy],
       canOperate: true,
-      thread: { environmentId, id: threadId, projectId: ProjectId.make("project-1") },
+      environmentId,
+      threadId,
+      projectId: ProjectId.make("project-1"),
       runAction: (input) => void runPluginAction(input),
     });
     state.canOperate = false;
