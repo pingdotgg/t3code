@@ -183,12 +183,16 @@ export type ComposerCitationCommentRequest = {
   value: string;
   citationStart: number;
   sourceAnchor: AssistantCitationSourceAnchor;
+  insertedSpaces: CitationInsertedSpaces;
 };
+
+// Spaces added around a freshly inserted citation, removed with it if its comment is cancelled.
+type CitationInsertedSpaces = { before: boolean; after: boolean };
 
 type OpenCitationComment = {
   key: string;
   sourceAnchor?: AssistantCitationSourceAnchor;
-  removeOnCancel?: boolean;
+  removeOnCancel?: CitationInsertedSpaces;
 };
 
 const ComposerCitationCommentContext = createContext<{
@@ -392,18 +396,20 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     [editor, nodePos],
   );
 
+  // Undo a fresh insertion: drop the chip and the spaces inserted with it.
+  const removeOnCancel = commentTarget?.removeOnCancel;
   const onRemove = useCallback(() => {
-    if (!editor.isEditable) return;
+    if (!editor.isEditable || !removeOnCancel) return;
     const pos = nodePos();
     if (pos === null) return;
-    const current = editor.state.doc.nodeAt(pos);
+    const { doc } = editor.state;
+    const current = doc.nodeAt(pos);
     if (!current) return;
-    editor
-      .chain()
-      .focus()
-      .deleteRange({ from: pos, to: pos + current.nodeSize })
-      .run();
-  }, [editor, nodePos]);
+    const end = pos + current.nodeSize;
+    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
+    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    editor.chain().focus().deleteRange({ from, to }).run();
+  }, [editor, nodePos, removeOnCancel]);
 
   // Put the caret right after the chip so Enter sends and typing continues the prompt.
   const onRestoreFocus = useCallback(() => {
@@ -450,7 +456,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);
           },
-          ...(commentTarget?.removeOnCancel ? { onCancel: onRemove } : {}),
+          ...(removeOnCancel ? { onCancel: onRemove } : {}),
           onSave: onSaveComment,
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
@@ -1531,7 +1537,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           setOpenCitation({
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: true,
+            removeOnCancel: pendingCitation.insertedSpaces,
           });
         }
       }
@@ -1618,7 +1624,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           setOpenCitation({
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
-            removeOnCancel: true,
+            removeOnCancel: request.insertedSpaces,
           });
         }
       },
