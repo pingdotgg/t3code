@@ -64,7 +64,7 @@ vi.mock("../../state/environments", () => {
     environmentId,
     label: environmentId,
     connection: { phase: "connected" },
-    entry: { target: { _tag: "DirectConnectionTarget" } },
+    entry: { enabled: true, target: { _tag: "DirectConnectionTarget" } },
   });
   const primary = environment("primary");
   return {
