@@ -151,6 +151,7 @@ export const runPluginHostChild = (): void => {
       // failing, and is not deactivated later as if it had started.
       activated = undefined;
       handlers.clear();
+      eventHandlers.clear();
       controller.abort(new Error("Activation failed."));
       send({ _tag: "ActivationFailed", message: errorMessage(error) });
     }

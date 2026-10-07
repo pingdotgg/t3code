@@ -71,6 +71,15 @@ describe("plugin host child", () => {
       message: 'No handler named "leftover".',
     });
 
+    child.send(
+      JSON.stringify({ _tag: "Invoke", requestId: 2, handler: "t3.events", input: { events: [] } }),
+    );
+    expect(await child.read()).toEqual({
+      _tag: "Failed",
+      requestId: 2,
+      message: "The plugin declares the events capability but registered no onEvent handler.",
+    });
+
     // Deactivation skips the module's deactivate: it never started.
     child.send(JSON.stringify({ _tag: "Deactivate" }));
     expect(await child.read()).toEqual({ _tag: "Deactivated" });
