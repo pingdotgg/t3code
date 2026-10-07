@@ -1778,6 +1778,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ).hasSubagents = true;
         };
         const pendingRootTurns = yield* Ref.make(new Map<string, ProviderAdapterV2TurnInput>());
+        // Native threads whose turn/start was given up before Codex answered,
+        // by a deadline or a Stop. A turn Codex starts for one later has no run
+        // to report to.
+        const abandonedTurnStarts = new Set<string>();
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentModels = new Map<string, string>();
@@ -4116,6 +4120,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* Deferred.succeed(goalHold.next, next);
               return;
             }
+            // Codex accepted a start this adapter already gave up on, and the
+            // run has settled without it: stop the turn rather than let it work
+            // out of sight.
+            if (abandonedTurnStarts.delete(payload.threadId)) {
+              yield* Effect.logWarning("orchestration-v2.codex-abandoned-turn-started", {
+                nativeThreadId: payload.threadId,
+                nativeTurnId: payload.turn.id,
+              });
+              yield* client
+                .request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turn.id })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-abandoned-turn-stop-failed", {
+                      cause,
+                    }),
+                  ),
+                  Effect.forkIn(scope),
+                );
+              return;
+            }
             // A goal turn with no run to own it (Codex continued after the run
             // settled, or raced a Stop): stop it and pause the goal rather than
             // work out of sight.
@@ -5887,7 +5911,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               else next.delete(threadId);
               return next;
             });
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client
+              .request("turn/start", turnStartParams)
+              .pipe(Effect.onInterrupt(() => Effect.sync(() => abandonedTurnStarts.add(threadId))));
+            abandonedTurnStarts.delete(threadId);
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,

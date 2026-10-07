@@ -2285,6 +2285,70 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("stops a turn Codex starts after its turn/start was abandoned", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "abandoned-start-thread";
+      const nativeTurnId = "abandoned-start-turn";
+      const prompt = "Run a command.";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "abandoned-turn-start",
+        entries: [
+          // Codex never answers turn/start, then starts the turn anyway.
+          ...preamble.slice(0, -2),
+          {
+            type: "emit_inbound",
+            label: "turn/started",
+            afterMs: 1000,
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: nativeTurnId },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+        ],
+      });
+      const interruptSent = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          method === "turn/interrupt"
+            ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      );
+      const starting = yield* harness.runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("abandoned-start-attempt"),
+            text: prompt,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("500 millis");
+      // The provider request deadline gives up on the start.
+      yield* Fiber.interrupt(starting);
+      assert.isFalse(yield* Deferred.isDone(interruptSent));
+      yield* TestClock.adjust("500 millis");
+      yield* Deferred.await(interruptSent);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("settles Stop when a queued native turn fails before starting", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";
