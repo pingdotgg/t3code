@@ -41,6 +41,8 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
+import { environmentCatalog } from "../connection/catalog";
 import {
   resolveThreadProviderStack,
   threadRuntimeCanArchive,
@@ -160,6 +162,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
+import { searchableArchivedThreads, useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
@@ -191,6 +194,8 @@ import {
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isSidebarThreadWorking,
+  createWebThreadSearchContext,
+  getThreadSearchEnvironmentNames,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -2493,6 +2498,17 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const connectionCatalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const environmentNamesById = useMemo(
+    () =>
+      new Map(
+        [...connectionCatalog.entries].map(([environmentId, entry]) => [
+          environmentId,
+          getThreadSearchEnvironmentNames(entry.target),
+        ]),
+      ),
+    [connectionCatalog.entries],
+  );
   const environmentMachineById = useEnvironmentMachines();
   const orderedProjects = useMemo(
     () =>
@@ -2864,21 +2880,55 @@ export default function Sidebar() {
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const parsedThreadSearch = useMemo(
+    () => parseThreadSearchQuery(threadSearchQuery, { now: new Date() }),
+    [threadSearchQuery],
+  );
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
-  const searchableThreads = useMemo(
-    () => [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...workingThreads,
-      ...snoozedThreads,
-      ...settledThreads,
-    ],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
-  );
   const searchEnvironmentIds = useConnectedEnvironmentIds();
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedThreadSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedThreadSearch.filters.archived
+        ? searchableArchivedThreads(archivedSnapshots.snapshots, scopedProjectKeys)
+        : [
+            ...pinnedThreads,
+            ...activeThreads,
+            ...workingThreads,
+            ...snoozedThreads,
+            ...settledThreads,
+          ],
+    [
+      activeThreads,
+      archivedSnapshots.snapshots,
+      parsedThreadSearch.filters.archived,
+      pinnedThreads,
+      settledThreads,
+      snoozedThreads,
+      workingThreads,
+      scopedProjectKeys,
+    ],
+  );
+  const threadSearchContext = useMemo(
+    () =>
+      createWebThreadSearchContext({
+        projects: projectByKey,
+        projectDisplayNames: projectDisplayNameByKey,
+        environmentNames: environmentNamesById,
+        providerEntry: (thread, instanceId) =>
+          providerEntriesByEnvironment.get(thread.environmentId)?.get(instanceId),
+      }),
+    [environmentNamesById, projectByKey, projectDisplayNameByKey, providerEntriesByEnvironment],
+  );
   // useThreadSearch owns the debounce and the two-character floor.
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    parsedThreadSearch.text,
+    parsedThreadSearch.filters.archived,
+  );
   const threadSearchMatchByKey = useMemo(
     () =>
       new Map(threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const)),
@@ -2888,10 +2938,12 @@ export default function Sidebar() {
     () =>
       searchSidebarThreads(
         searchableThreads,
-        threadSearchQuery,
+        parsedThreadSearch,
         new Set(threadSearchMatchByKey.keys()),
+        threadSearchContext,
+        new Date(),
       ),
-    [searchableThreads, threadSearchQuery, threadSearchMatchByKey],
+    [searchableThreads, parsedThreadSearch, threadSearchContext, threadSearchMatchByKey],
   );
   const threadSearchResultOrderKey = threadSearchResults
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
@@ -3179,9 +3231,13 @@ export default function Sidebar() {
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
+      if (thread.archivedAt !== null) {
+        void router.navigate({ to: "/settings/archived" });
+        return;
+      }
       navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
     },
-    [clearThreadSearch, navigateToThread],
+    [clearThreadSearch, navigateToThread, router],
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -5162,7 +5218,7 @@ export default function Sidebar() {
                             }),
                           ) ?? null
                         }
-                        searchQuery={threadSearchQuery}
+                        searchQuery={parsedThreadSearch.text}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
                         onFileDropThreads={handleThreadFileDrop}
@@ -5176,7 +5232,12 @@ export default function Sidebar() {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {parsedThreadSearch.filters.archived && archivedSnapshots.error
+                  ? archivedSnapshots.error
+                  : threadSearch.isPending ||
+                      (parsedThreadSearch.filters.archived && archivedSnapshots.isLoading)
+                    ? "Searching thread messages…"
+                    : "No threads found"}
               </p>
             )
           ) : null}

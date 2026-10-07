@@ -496,6 +496,13 @@ function AdaptiveWorkspaceLayoutContent(
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
+      if (thread.archivedAt !== null) {
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsArchive" },
+        });
+        return;
+      }
       const params = {
         environmentId: String(thread.environmentId),
         threadId: String(thread.id),

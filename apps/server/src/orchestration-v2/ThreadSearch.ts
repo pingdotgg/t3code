@@ -26,7 +26,11 @@ export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   }
 }
 
-const SearchRequest = Schema.Struct({ pattern: Schema.String, limit: Schema.Int });
+const SearchRequest = Schema.Struct({
+  pattern: Schema.String,
+  limit: Schema.Int,
+  archived: Schema.Boolean,
+});
 const SearchRow = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -78,12 +82,12 @@ export class ThreadSearch extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // One best match per thread: user messages outrank assistant ones, then the
-  // newest message wins. Threads order by match kind, then recency.
+  // One best match per active (or archived, when requested) thread: user messages
+  // outrank assistant ones, then the newest message wins. Threads order by match kind, then recency.
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,
-    execute: ({ pattern, limit }) => sql`
+    execute: ({ pattern, limit, archived }) => sql`
       WITH candidate AS (
         SELECT
           threads.thread_id,
@@ -99,7 +103,7 @@ export const make = Effect.gen(function* () {
         INNER JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
         WHERE threads.deleted_at IS NULL
-          AND threads.archived_at IS NULL
+          AND ${archived ? sql`threads.archived_at IS NOT NULL` : sql`threads.archived_at IS NULL`}
           AND projects.deleted_at IS NULL
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
@@ -141,6 +145,7 @@ export const make = Effect.gen(function* () {
       const rows = yield* searchRows({
         pattern: `%${escapeLikePattern(input.query)}%`,
         limit: input.limit ?? 50,
+        archived: input.archived === true,
       }).pipe(
         Effect.mapError(
           (cause) =>

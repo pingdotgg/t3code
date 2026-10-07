@@ -29,6 +29,7 @@ import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures"
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
+  createMobileThreadSearchContext,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
   isThreadListV2ListItem,
@@ -417,6 +418,44 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("filters archive searches by user activity and orders newest activity first", () => {
+    const recent = makeThread({
+      id: ThreadId.make("recent"),
+      title: "Recent",
+      archivedAt: NOW,
+      latestUserMessageAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    });
+    const older = makeThread({
+      id: ThreadId.make("older"),
+      title: "Older",
+      archivedAt: NOW,
+      latestUserMessageAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    });
+    const stale = makeThread({
+      id: ThreadId.make("stale"),
+      title: "Stale",
+      archivedAt: NOW,
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: NOW,
+    });
+    const context = createMobileThreadSearchContext({
+      projects: new Map(),
+      providers: new Map(),
+      environmentNames: () => ["Local"],
+    });
+    const layout = buildThreadListV2Items({
+      threads: [older, stale, recent],
+      environmentId: null,
+      searchQuery: "is:archived since:7d env:local",
+      searchFilterContext: context,
+      searchNow: new Date(NOW),
+      now: NOW,
+    });
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["recent", "older"]);
+  });
+
   it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),

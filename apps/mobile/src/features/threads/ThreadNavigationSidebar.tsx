@@ -1,9 +1,10 @@
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { computeThreadMoveAvailability } from "./threadOrder";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
+import {
+  presentThreadShell,
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
   threadSearchMatchKey,
@@ -29,6 +30,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -66,6 +69,8 @@ import {
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
   buildThreadListV2Items,
+  getMobileThreadSearchEnvironmentNames,
+  useMobileThreadSearchContext,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   isThreadListV2ListItem,
@@ -131,6 +136,10 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
+  const parsedSearch = useMemo(
+    () => parseThreadSearchQuery(props.searchQuery, { now: new Date() }),
+    [props.searchQuery],
+  );
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
 
@@ -191,7 +200,23 @@ function ThreadNavigationSidebarPane(
           : [],
     [options.selectedEnvironmentId, workspaceEnvironments],
   );
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedSearch.filters.archived
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+          )
+        : threads,
+    [archivedSnapshots.snapshots, parsedSearch.filters.archived, threads],
+  );
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    parsedSearch.text,
+    parsedSearch.filters.archived,
+  );
   const threadSearchMatchByKey = useMemo(() => {
     const matches = new Map<string, EnvironmentThreadSearchMatch>();
     for (const match of threadSearch.matches) {
@@ -327,6 +352,25 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
+  const environmentNames = useMemo(
+    () =>
+      new Map(
+        workspaceEnvironments.map((environment) => [
+          environment.environmentId,
+          getMobileThreadSearchEnvironmentNames({
+            environmentId: environment.environmentId,
+            workspaceLabel: environment.environmentLabel,
+            savedConnectionLabel: savedConnectionsById[environment.environmentId]?.environmentLabel,
+          }),
+        ]),
+      ),
+    [savedConnectionsById, workspaceEnvironments],
+  );
+  const threadSearchContext = useMobileThreadSearchContext({
+    projects: projectByKey,
+    providers: providersByEnvironmentId,
+    environmentNames,
+  });
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -369,10 +413,11 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: searchableThreads,
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
-      searchQuery: props.searchQuery,
+      parsedSearch,
+      searchFilterContext: threadSearchContext,
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -397,13 +442,15 @@ function ThreadNavigationSidebarPane(
     settledShelfExpanded,
     props.selectedThreadKey,
     options.selectedEnvironmentId,
-    props.searchQuery,
+    parsedSearch,
     matchedThreadKeys,
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     threads,
+    searchableThreads,
     selectedProjectScope,
+    threadSearchContext,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -425,18 +472,20 @@ function ThreadNavigationSidebarPane(
     // (mirrors the compact Home v2 list) where they stay visible and
     // deletable while their environment is offline. Same environment scope
     // and search filter as the list.
-    const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
+    const v2SearchQuery = parsedSearch.text.trim().toLocaleLowerCase();
+    const v2PendingTasks = parsedSearch.hasFilters
+      ? []
+      : pendingTasks.filter(
+          (pendingTask) =>
+            (options.selectedEnvironmentId === null ||
+              pendingTask.environmentId === options.selectedEnvironmentId) &&
+            (selectedProjectRefs === null ||
+              selectedProjectRefs.has(
+                scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+              )) &&
+            (v2SearchQuery.length === 0 ||
+              pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+        );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
       items: threadListV2Layout.items,
       pendingTasks: v2PendingTasks,
@@ -696,6 +745,7 @@ function ThreadNavigationSidebarPane(
               hasQueuedMessages={item.hasQueuedMessages}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
+              readOnly={item.item.readOnly}
               snoozePresetMinute={item.snoozePresetMinute ?? ""}
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               timeLabel={item.timeLabel}
@@ -715,7 +765,7 @@ function ThreadNavigationSidebarPane(
                   threadId: thread.id,
                 }),
               )}
-              searchQuery={props.searchQuery}
+              searchQuery={parsedSearch.text}
               pane="sidebar"
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
@@ -814,7 +864,7 @@ function ThreadNavigationSidebarPane(
       regenerateThreadTitle,
       renameThread,
       props.onNewThreadOnBranch,
-      props.searchQuery,
+      parsedSearch,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
@@ -879,9 +929,12 @@ function ThreadNavigationSidebarPane(
         : Platform.OS === "android" && !catalogState.hasConnections
           ? "No environments connected"
           : props.searchQuery.trim().length > 0
-            ? threadSearch.isPending
+            ? threadSearch.isPending ||
+              (parsedSearch.filters.archived && archivedSnapshots.isLoading)
               ? "Searching thread messages…"
-              : "No matching threads"
+              : parsedSearch.filters.archived && archivedSnapshots.error
+                ? archivedSnapshots.error
+                : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
               : "No threads yet"}

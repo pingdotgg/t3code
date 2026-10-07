@@ -56,7 +56,11 @@ describe("linked pull request thread navigation", () => {
     expect(groups.flatMap((group) => group.items)).toEqual(items);
     expect(items[0]?.description).toBe("Archived thread");
     await items[0]?.run();
-    expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+    expect(runThread).toHaveBeenCalledWith({
+      environmentId,
+      id,
+      archivedAt: "2026-09-01T00:00:00.000Z",
+    });
   });
 });
 
@@ -823,6 +827,28 @@ it.each([
 });
 
 describe("filterCommandPaletteGroups", () => {
+  it("shows all filtered threads for qualifier-only queries and keeps empty-query recent groups", () => {
+    const threadItem: CommandPaletteActionItem = {
+      kind: "action",
+      value: "thread:one",
+      title: "Fix search",
+      searchTerms: ["Fix search"],
+      icon: null,
+      run: async () => {},
+    };
+    const recent = { value: "recent-threads", label: "Recent threads", items: [threadItem] };
+    const input = {
+      activeGroups: [recent],
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [threadItem],
+    };
+    expect(filterCommandPaletteGroups({ ...input, query: "status:failed" })).toEqual([
+      { value: "threads-search", label: "Threads", items: [threadItem] },
+    ]);
+    expect(filterCommandPaletteGroups({ ...input, query: "" })).toEqual([recent]);
+  });
+
   it("sorts secondary settings results after other matches", () => {
     const item = (value: string, title: string, secondary?: boolean) =>
       ({

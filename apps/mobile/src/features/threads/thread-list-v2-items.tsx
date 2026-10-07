@@ -459,6 +459,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
   readonly pinned?: boolean;
+  readonly readOnly?: boolean;
   /** Preformatted against the parent minute tick so this memoized row's
       countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
@@ -919,11 +920,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
-    ? "Opens the thread"
-    : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+  const swipeAccessibilityHint =
+    props.readOnly === true
+      ? "Opens the archived thread in Settings"
+      : !canOperateThread
+        ? "Opens the thread"
+        : secondaryAction === null
+          ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
+          : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
   const cardContent = (
@@ -1227,6 +1231,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
+  if (props.readOnly === true) return rowContent(() => {});
   if (!canOperateThread) return rowContent(() => {});
 
   return (

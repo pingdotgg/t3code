@@ -5,6 +5,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
+  presentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
   threadSearchMatchKey,
@@ -33,6 +34,8 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useThreadSearch } from "../../state/queries";
+import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
+import { parseThreadSearchQuery } from "@t3tools/client-runtime/state/threadSearchQuery";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -49,6 +52,8 @@ import {
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
   buildThreadListV2Items,
+  getMobileThreadSearchEnvironmentNames,
+  useMobileThreadSearchContext,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   threadListV2ListItemsAreEqual,
@@ -222,6 +227,10 @@ function HomeTopContentSpacer() {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const parsedSearch = useMemo(
+    () => parseThreadSearchQuery(props.searchQuery, { now: new Date() }),
+    [props.searchQuery],
+  );
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
@@ -245,7 +254,23 @@ export function HomeScreen(props: HomeScreenProps) {
           : [],
     [props.environments, props.selectedEnvironmentId],
   );
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const archivedSnapshots = useArchivedThreadSnapshots(
+    parsedSearch.filters.archived ? searchEnvironmentIds : [],
+  );
+  const searchableThreads = useMemo(
+    () =>
+      parsedSearch.filters.archived
+        ? archivedSnapshots.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+          )
+        : props.threads,
+    [archivedSnapshots.snapshots, parsedSearch.filters.archived, props.threads],
+  );
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    parsedSearch.text,
+    parsedSearch.filters.archived,
+  );
   const threadSearchMatchByKey = useMemo(() => {
     const matches = new Map<string, EnvironmentThreadSearchMatch>();
     for (const match of threadSearch.matches) {
@@ -504,6 +529,26 @@ export function HomeScreen(props: HomeScreenProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
+  const environmentNames = useMemo(
+    () =>
+      new Map(
+        props.environments.map((environment) => [
+          environment.environmentId,
+          getMobileThreadSearchEnvironmentNames({
+            environmentId: environment.environmentId,
+            workspaceLabel: environment.label,
+            savedConnectionLabel:
+              props.savedConnectionsById[environment.environmentId]?.environmentLabel,
+          }),
+        ]),
+      ),
+    [props.environments, props.savedConnectionsById],
+  );
+  const threadSearchContext = useMobileThreadSearchContext({
+    projects: projectByKey,
+    providers: providersByEnvironmentId,
+    environmentNames,
+  });
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -544,14 +589,14 @@ export function HomeScreen(props: HomeScreenProps) {
   ]);
   const threadListV2Layout = useMemo(() => {
     threadListInboxReturns.observe(workingShelfEnabled ? props.threads : null);
-    // Settled threads are live shells; archived threads keep their original
-    // "hidden from lists" meaning.
+    // Archive searches use the snapshot instead of the live shells.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: searchableThreads,
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
-      searchQuery: props.searchQuery,
+      parsedSearch,
+      searchFilterContext: threadSearchContext,
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -577,11 +622,13 @@ export function HomeScreen(props: HomeScreenProps) {
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
-    props.searchQuery,
+    parsedSearch,
     props.selectedEnvironmentId,
     props.threads,
+    searchableThreads,
     matchedThreadKeys,
     v2ScopedProjectGroup,
+    threadSearchContext,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -601,21 +648,29 @@ export function HomeScreen(props: HomeScreenProps) {
   // they are spliced in below the active block and stay visible and deletable
   // while their environment is offline. Same environment scope and search
   // filter as the list itself.
-  const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
+  const v2SearchQuery = parsedSearch.text.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
-      props.pendingTasks.filter(
-        (pendingTask) =>
-          (props.selectedEnvironmentId === null ||
-            pendingTask.environmentId === props.selectedEnvironmentId) &&
-          (v2ScopedProjectKeys === null ||
-            v2ScopedProjectKeys.has(
-              scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-            )) &&
-          (v2SearchQuery.length === 0 ||
-            pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-      ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+      parsedSearch.hasFilters
+        ? []
+        : props.pendingTasks.filter(
+            (pendingTask) =>
+              (props.selectedEnvironmentId === null ||
+                pendingTask.environmentId === props.selectedEnvironmentId) &&
+              (v2ScopedProjectKeys === null ||
+                v2ScopedProjectKeys.has(
+                  scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
+                )) &&
+              (v2SearchQuery.length === 0 ||
+                pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+          ),
+    [
+      parsedSearch.hasFilters,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      v2ScopedProjectKeys,
+      v2SearchQuery,
+    ],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -721,6 +776,7 @@ export function HomeScreen(props: HomeScreenProps) {
           hasQueuedMessages={item.hasQueuedMessages}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
+          readOnly={item.item.readOnly}
           snoozePresetMinute={item.snoozePresetMinute ?? ""}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           timeLabel={item.timeLabel}
@@ -745,7 +801,7 @@ export function HomeScreen(props: HomeScreenProps) {
               threadId: thread.id,
             }),
           )}
-          searchQuery={props.searchQuery}
+          searchQuery={parsedSearch.text}
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
@@ -830,7 +886,7 @@ export function HomeScreen(props: HomeScreenProps) {
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
       listEnvironments,
       savedConnectionsById: props.savedConnectionsById,
-      searchQuery: props.searchQuery,
+      searchQuery: parsedSearch.text,
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
       workingShelfEnabled,
@@ -851,8 +907,11 @@ export function HomeScreen(props: HomeScreenProps) {
   // that matches nothing needs the in-list "No results" state, not the
   // full-page "No threads yet". Settled threads are unarchived live shells,
   // so the archived-at check already covers the settled shelf.
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+  const hasAnyThreads = parsedSearch.filters.archived
+    ? searchableThreads.length > 0 ||
+      archivedSnapshots.isLoading ||
+      archivedSnapshots.error !== null
+    : props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -918,10 +977,23 @@ export function HomeScreen(props: HomeScreenProps) {
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
+    hasSearchQuery &&
+    (threadSearch.isPending || (parsedSearch.filters.archived && archivedSnapshots.isLoading)) ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title="Searching…"
+        detail="Searching thread messages…"
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : hasSearchQuery ? (
+      <EmptyState
+        title={
+          parsedSearch.filters.archived && archivedSnapshots.error ? "Search failed" : "No results"
+        }
+        detail={
+          parsedSearch.filters.archived && archivedSnapshots.error
+            ? archivedSnapshots.error
+            : `No threads matching "${props.searchQuery}".`
+        }
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

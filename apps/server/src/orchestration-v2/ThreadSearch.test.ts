@@ -172,6 +172,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
       // LIKE wildcards in the query match literally.
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "needle", archived: true })).matches.map(
+          (match) => match.threadId,
+        ),
+        [ThreadId.make("thread:archived")],
+      );
     }),
   );
 

@@ -63,6 +63,22 @@ describe("filterCommandPaletteItems", () => {
     ).toEqual(["siva:one"]);
     expect(filterCommandPaletteItems(items, "> message content", matches)).toEqual([]);
   });
+
+  it("applies qualifiers before including a server content match", () => {
+    const candidates = ["2026-10-06T12:00:00.000Z", "2026-09-01T12:00:00.000Z"].map(
+      (updatedAt, index) => ({
+        ...item(`thread:${index}`, "Unrelated title", "thread"),
+        searchTerms: [updatedAt],
+      }),
+    );
+    const matches = new Set(candidates.map((candidate) => candidate.key));
+    expect(
+      filterCommandPaletteItems(candidates, "since:7d", matches).map((candidate) => candidate.key),
+    ).toEqual(["thread:0", "thread:1"]);
+    expect(
+      filterCommandPaletteItems(candidates.slice(0, 1), "since:7d message", matches),
+    ).toHaveLength(1);
+  });
 });
 
 describe("nextPaletteIndex", () => {

@@ -12,6 +12,15 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
+  matchesThreadSearchFilters,
+  getThreadSearchProjectNames,
+  parseThreadSearchQuery,
+  sortThreadsByActivity,
+  type ParsedThreadSearchQuery,
+  type ThreadSearchFilters,
+  type ThreadSearchMatchContext,
+} from "@t3tools/client-runtime/state/threadSearchQuery";
+import {
   createInboxReturnTracker,
   isThreadWorking,
   sortInboxThreadsByReturn,
@@ -24,6 +33,7 @@ import {
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { useMemo } from "react";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
@@ -84,6 +94,65 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
+
+export function getMobileThreadSearchEnvironmentNames(input: {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceLabel?: string;
+  readonly savedConnectionLabel?: string;
+}): ReadonlyArray<string> {
+  const labels = [input.workspaceLabel, input.savedConnectionLabel].filter(
+    (name): name is string => name !== undefined && name.length > 0,
+  );
+  return labels.length > 0 ? [...new Set(labels)] : [input.environmentId];
+}
+
+export function createMobileThreadSearchContext(input: {
+  readonly projects: ReadonlyMap<
+    string,
+    { readonly title: string; readonly workspaceRoot: string }
+  >;
+  readonly environmentNames: (thread: EnvironmentThreadShell) => ReadonlyArray<string>;
+  readonly providers: ReadonlyMap<EnvironmentId, ReadonlyArray<ThreadListProvider>>;
+}): ThreadSearchMatchContext<EnvironmentThreadShell> {
+  return {
+    projectNames: (thread) => {
+      const project = input.projects.get(`${thread.environmentId}:${thread.projectId}`);
+      return getThreadSearchProjectNames(project);
+    },
+    environmentNames: input.environmentNames,
+    providerNames: (thread) => {
+      const providers = input.providers.get(thread.environmentId) ?? [];
+      return resolveThreadProviderStack(thread).flatMap((instanceId) => {
+        const provider = providers.find((entry) => entry.instanceId === instanceId);
+        return provider ? [provider.driver, instanceId, provider.displayName ?? ""] : [instanceId];
+      });
+    },
+    statusNames: (thread) => [resolveThreadListV2Status(thread)],
+    activityAt: (thread) => thread.latestUserMessageAt ?? thread.updatedAt,
+  };
+}
+
+export function useMobileThreadSearchContext(input: {
+  readonly projects: ReadonlyMap<
+    string,
+    { readonly title: string; readonly workspaceRoot: string }
+  >;
+  readonly providers: ReadonlyMap<EnvironmentId, ReadonlyArray<ThreadListProvider>>;
+  readonly environmentNames: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
+}): ThreadSearchMatchContext<EnvironmentThreadShell> {
+  return useMemo(
+    () =>
+      createMobileThreadSearchContext({
+        projects: input.projects,
+        providers: input.providers,
+        environmentNames: (thread) =>
+          input.environmentNames.get(thread.environmentId) ?? [thread.environmentId],
+      }),
+    [input.environmentNames, input.projects, input.providers],
+  );
+}
+
+export { sortThreadsByActivity };
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -273,6 +342,7 @@ export interface ThreadListV2Item {
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
+  readonly readOnly: boolean;
   readonly isLast: boolean;
 }
 
@@ -617,7 +687,11 @@ export function buildThreadListV2Items(input: {
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
   }> | null;
-  readonly searchQuery: string;
+  readonly searchQuery?: string;
+  readonly parsedSearch?: ParsedThreadSearchQuery;
+  readonly searchFilters?: ThreadSearchFilters;
+  readonly searchFilterContext?: ThreadSearchMatchContext<EnvironmentThreadShell>;
+  readonly searchNow?: Date;
   readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
@@ -663,7 +737,18 @@ export function buildThreadListV2Items(input: {
             pendingOrder: null,
           }),
         );
-  const query = input.searchQuery.trim().toLocaleLowerCase();
+  const parsedSearch =
+    input.parsedSearch ??
+    (input.searchFilters
+      ? {
+          text: input.searchQuery ?? "",
+          filters: input.searchFilters,
+          hasFilters: Object.values(input.searchFilters).some((clauses) =>
+            Array.isArray(clauses) ? clauses.length > 0 : clauses,
+          ),
+        }
+      : parseThreadSearchQuery(input.searchQuery ?? "", { now: input.searchNow ?? new Date() }));
+  const query = parsedSearch.text.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
@@ -676,12 +761,24 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+    if (
+      (!parsedSearch.filters.archived && thread.archivedAt !== null) ||
+      thread.lineage.relationshipToParent === "subagent"
+    )
+      continue;
     // The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }
+    if (
+      parsedSearch.hasFilters &&
+      input.searchFilterContext !== undefined &&
+      !matchesThreadSearchFilters(thread, parsedSearch.filters, input.searchFilterContext, {
+        now: input.searchNow ?? new Date(),
+      })
+    )
+      continue;
     if (
       query.length > 0 &&
       !thread.title.toLocaleLowerCase().includes(query) &&
@@ -695,6 +792,10 @@ export function buildThreadListV2Items(input: {
         }),
       ) !== true
     ) {
+      continue;
+    }
+    if (parsedSearch.filters.archived) {
+      active.push(thread);
       continue;
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
@@ -726,9 +827,11 @@ export function buildThreadListV2Items(input: {
 
   // The beta inbox is time-ordered, so the saved arrangement (and any move in
   // flight) is kept but not applied until the beta is off again.
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedActive = parsedSearch.filters.archived
+    ? sortThreadsByActivity(active)
+    : workingShelfEnabled
+      ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+      : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   // Newest send first; finishing and waking again do not move a row.
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
@@ -774,6 +877,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: true,
+      readOnly: parsedSearch.filters.archived,
       isLast: false,
     });
   }
@@ -783,6 +887,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      readOnly: parsedSearch.filters.archived,
       isLast: false,
     });
   }
@@ -793,6 +898,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      readOnly: parsedSearch.filters.archived,
       isLast: false,
     });
   }
@@ -803,6 +909,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: true,
       pinned: false,
+      readOnly: parsedSearch.filters.archived,
       isLast: false,
     });
   }
@@ -813,6 +920,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: false,
       pinned: false,
+      readOnly: parsedSearch.filters.archived,
       isLast: false,
     });
   }

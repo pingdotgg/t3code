@@ -1,5 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -10,6 +16,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerActionLabel?: ReactNode;
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
+  readonly inputRef?: RefObject<HTMLInputElement | null>;
   readonly inputProps: ComponentProps<typeof CommandInput>;
   /**
    * How tall the results panel may grow: the palette's list, a taller file list, or the whole
@@ -31,6 +38,7 @@ export function CommandPaletteContent({
   footerActionLabel,
   footerTrailing,
   inputAccessory,
+  inputRef: externalInputRef,
   inputProps,
   panelSize = "list",
   showBackHint,
@@ -50,7 +58,13 @@ export function CommandPaletteContent({
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} ref={inputRef} />
+          <CommandInput
+            {...inputProps}
+            ref={(node) => {
+              inputRef.current = node;
+              if (externalInputRef) externalInputRef.current = node;
+            }}
+          />
           {inputAccessory}
         </div>
         <CommandPanel
