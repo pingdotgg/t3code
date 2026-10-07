@@ -109,13 +109,15 @@ export interface RegistryVersion {
 
 /**
  * An in-memory npm registry: `GET /<name>/<version-or-tag>` and the tarballs
- * it points to. `offline` makes every request fail like a dropped network.
+ * it points to, on any host. `offline` makes every request fail like a dropped
+ * network; `redirects` answers a request URL with a 302 to another.
  */
 export const makeRegistry = () => {
   const packages = new Map<string, Map<string, RegistryVersion>>();
   const tags = new Map<string, Map<string, string>>();
   const requests: Array<string> = [];
   const state = { offline: false };
+  const redirects = new Map<string, string>();
   const publish = (name: string, version: string, published: RegistryVersion) => {
     const versions = packages.get(name) ?? new Map<string, RegistryVersion>();
     versions.set(version, published);
@@ -137,6 +139,9 @@ export const makeRegistry = () => {
         );
       const respond = (response: Response) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, response));
+      const location = redirects.get(url.href);
+      if (location !== undefined)
+        return respond(new Response(null, { status: 302, headers: { location } }));
       const tarball = /^\/tarballs\/(.+)\/-\/(.+)\.tgz$/.exec(url.pathname);
       if (tarball) {
         const name = decodeURIComponent(tarball[1]!);
@@ -165,5 +170,5 @@ export const makeRegistry = () => {
       );
     }),
   );
-  return { client, publish, tag, requests, state };
+  return { client, publish, tag, requests, state, redirects };
 };

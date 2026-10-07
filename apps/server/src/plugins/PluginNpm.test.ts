@@ -653,6 +653,57 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
       ),
     );
 
+    it.effect("trusts metadata only from https or this machine, across redirects and updates", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const registry = makeRegistry();
+          const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-transport-" });
+          const root = path.join(base, "npm");
+          const catalog = yield* startCatalog(scope);
+          const firstScope = yield* Scope.make();
+          const first = yield* startNpm(firstScope, catalog, registry, root);
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("moved", version, { tarball: filesTarball("moved", version) });
+
+          // One plain http hop is refused before it is fetched.
+          const metadata = `${REGISTRY}/moved/1.0.0`;
+          registry.redirects.set(metadata, "http://mirror.test/moved/1.0.0");
+          const insecure = yield* first.add({ name: "moved", version: "1.0.0" }).pipe(Effect.flip);
+          expect(insecure.reason).toBe("npm-registry-invalid");
+          expect(registry.requests).not.toContain("http://mirror.test/moved/1.0.0");
+          expect(yield* entries(root)).toEqual([]);
+
+          // https hops and a loopback registry are followed.
+          registry.redirects.set(metadata, "https://mirror.test/moved/1.0.0");
+          registry.redirects.set(
+            "https://mirror.test/moved/1.0.0",
+            "http://127.0.0.1:4873/moved/1.0.0",
+          );
+          const added = yield* first.add({ name: "moved", version: "1.0.0" });
+          expect(registry.requests).toContain("http://127.0.0.1:4873/moved/1.0.0");
+
+          // An installation saved from a plain http registry cannot update after a restart.
+          const home = path.dirname(added.installation.directory);
+          yield* fs.writeFileString(
+            path.join(home, "npm.json"),
+            toJson({ source: { ...added.package.source, registry: "http://registry.test" } }),
+          );
+          yield* Scope.close(firstScope, Exit.void);
+          const second = yield* startNpm(scope, catalog, registry, root);
+          const requested = registry.requests.length;
+          const update = yield* second
+            .stageUpdate({ installationId: added.installation.installationId, version: "1.1.0" })
+            .pipe(Effect.flip);
+          expect(update.reason).toBe("npm-registry-invalid");
+          expect(registry.requests.length).toBe(requested);
+          expect((yield* second.list).packages[0]!.stagedUpdate).toBeNull();
+        }),
+      ),
+    );
+
     it.effect("deletes a package's files when it is removed from the catalogue", () =>
       withDatabase(
         Effect.gen(function* () {

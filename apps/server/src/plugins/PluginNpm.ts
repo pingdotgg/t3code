@@ -70,7 +70,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { ServerConfig } from "../config.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
@@ -118,6 +118,7 @@ const storageError = (cause: unknown) =>
   );
 
 const MAX_METADATA_BYTES = 1024 * 1024;
+const MAX_METADATA_REDIRECTS = 5;
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
 /** Dependency declarations followed through one package's bundled tree. */
 const MAX_DEPENDENCY_EDGES = 20_000;
@@ -200,19 +201,20 @@ const toPackage = (entry: Installed): PluginNpmPackage => ({
   stagedUpdate: entry.staged?.update ?? null,
 });
 
-/** Registry base URL without a trailing slash; credentials, queries, and fragments are refused. */
 // Over plain http the registry's integrity and the tarball travel together, so
 // the digest check would authenticate nothing; only a loopback registry may use it.
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** Whether metadata fetched from `url` can vouch for a tarball's integrity. */
+const isTrustedRegistryUrl = (url: URL) =>
+  url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+
+/** Registry base URL without a trailing slash; credentials, queries, and fragments are refused. */
 const normalizeRegistry = (input: string) => {
   const url = URL.parse(input);
   if (
     url === null ||
-    !(
-      url.protocol === "https:" ||
-      (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
-    ) ||
+    !isTrustedRegistryUrl(url) ||
     url.username !== "" ||
     url.password !== "" ||
     url.search !== "" ||
@@ -429,10 +431,44 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       .readFileString(path.join(home, "npm.json"))
       .pipe(Effect.flatMap(decodeRecord), Effect.option);
 
+  /**
+   * GETs metadata from `url`, following each redirect only to a registry
+   * address `isTrustedRegistryUrl` accepts: one plain http hop would let a
+   * network attacker answer with its own integrity and tarball.
+   */
+  const getMetadata = Effect.fnUntraced(function* (url: string, what: string) {
+    let target = url;
+    for (let hop = 0; ; hop += 1) {
+      const response = yield* http
+        .execute(HttpClientRequest.get(target))
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      const location = response.headers.location;
+      if (response.status < 300 || response.status >= 400 || location === undefined)
+        return response;
+      const next = URL.parse(location, target);
+      if (hop >= MAX_METADATA_REDIRECTS || next === null || !isTrustedRegistryUrl(next))
+        return yield* npmError(
+          "npm-registry-invalid",
+          `The registry redirected the ${what} to an address it cannot be trusted from.`,
+        );
+      target = next.href;
+    }
+  });
+
   /** GETs `url` into memory, at most `maxBytes`. */
-  const fetchBytes = (url: string, maxBytes: number, timeout: `${number} seconds`, what: string) =>
+  const fetchBytes = (
+    url: string,
+    maxBytes: number,
+    timeout: `${number} seconds`,
+    what: string,
+    kind: "metadata" | "tarball",
+  ) =>
     Effect.gen(function* () {
-      const response = yield* http.execute(HttpClientRequest.get(url));
+      // A tarball may come from anywhere: authenticated metadata pinned its integrity.
+      const response =
+        kind === "metadata"
+          ? yield* getMetadata(url, what)
+          : yield* http.execute(HttpClientRequest.get(url));
       if (response.status === 404)
         return yield* npmError("npm-not-found", `The registry has no ${what}.`);
       if (response.status < 200 || response.status >= 300)
@@ -469,6 +505,13 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
 
   /** Asks the registry which exact version `request` names, and its tarball's integrity. */
   const resolve = Effect.fnUntraced(function* (registry: string, name: string, request: string) {
+    // Adding checks the registry too, but an installation saved before that check may not pass it.
+    const base = URL.parse(registry);
+    if (base === null || !isTrustedRegistryUrl(base))
+      return yield* npmError(
+        "npm-registry-invalid",
+        `${name} was installed from ${registry}, which serves packages over plain http. Remove it and add it again from an https registry.`,
+      );
     const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
     const what = `${name}@${request}`;
     const body = yield* fetchBytes(
@@ -476,6 +519,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       MAX_METADATA_BYTES,
       options.metadataTimeout ?? "30 seconds",
       `package ${what}`,
+      "metadata",
     );
     const metadata = yield* decodeMetadata(new TextDecoder().decode(body)).pipe(
       Effect.mapError(() =>
@@ -513,6 +557,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       limits.maxTarballBytes,
       options.tarballTimeout ?? "120 seconds",
       `tarball for ${name}@${resolved.version}`,
+      "tarball",
     );
     const actual = `sha512-${NodeCrypto.createHash("sha512").update(tarball).digest("base64")}`;
     if (actual !== resolved.integrity)
