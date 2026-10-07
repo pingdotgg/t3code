@@ -61,8 +61,9 @@ export interface EnvironmentUsageStatus {
 /** The read last saved per environment and window, so a read is saved once. */
 const lastSavedRead = new Map<string, string>();
 
-onSavedUsageChange((environmentId) => {
+onSavedUsageChange((environmentId, cleared) => {
   appAtomRegistry.refresh(savedUsageAtom(environmentId));
+  if (!cleared) return;
   for (const key of lastSavedRead.keys()) {
     if (key.startsWith(`${environmentId}\u0000`)) lastSavedRead.delete(key);
   }
@@ -169,10 +170,19 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       // Offline, the page keeps what this session read last, or else what
       // this browser saved the last time the environment answered.
       if (summary === null && offline) {
-        summary = pickSavedUsage(
-          Option.getOrElse(AsyncResult.value(get(savedUsageAtom(environmentId))), () => []),
-          input,
+        const saved = Option.getOrElse(
+          AsyncResult.value(get(savedUsageAtom(environmentId))),
+          () => [],
         );
+        summary = pickSavedUsage(saved, input);
+        // A server that answered this span only by day saved it by day.
+        if (summary === null && fallbackInput !== null) {
+          summary = pickSavedUsage(saved, fallbackInput);
+          if (summary !== null) {
+            readByDay = true;
+            window = fallbackInput;
+          }
+        }
       }
       statuses.push({
         environmentId,

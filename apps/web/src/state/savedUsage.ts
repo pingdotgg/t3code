@@ -81,10 +81,12 @@ function decodeSaved(stored: unknown): readonly SavedUsage[] {
   });
 }
 
-const listeners = new Set<(environmentId: string) => void>();
+const listeners = new Set<(environmentId: string, cleared: boolean) => void>();
 
-/** Called after an environment's saved usage changes or is cleared. */
-export function onSavedUsageChange(listener: (environmentId: string) => void): () => void {
+/** Called after an environment's saved usage changes, or is cleared. */
+export function onSavedUsageChange(
+  listener: (environmentId: string, cleared: boolean) => void,
+): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -123,7 +125,7 @@ export async function saveUsage(environmentId: string, saved: SavedUsage): Promi
         store.put([saved, ...kept].slice(0, MAX_SAVED_WINDOWS), environmentId);
       });
     });
-    for (const listener of listeners) listener(environmentId);
+    for (const listener of listeners) listener(environmentId, false);
   } catch (error) {
     console.warn("Could not save usage.", error);
   }
@@ -132,7 +134,7 @@ export async function saveUsage(environmentId: string, saved: SavedUsage): Promi
 /** Forgets an environment's saved usage, as when it is removed. */
 export async function clearSavedUsage(environmentId: string): Promise<void> {
   generations.set(environmentId, (generations.get(environmentId) ?? 0) + 1);
-  for (const listener of listeners) listener(environmentId);
+  for (const listener of listeners) listener(environmentId, true);
   if (typeof indexedDB === "undefined") return;
   try {
     await inTransaction("readwrite", (store) => {
