@@ -61,11 +61,13 @@ function makeThread(input: {
   };
 }
 
-// Grok's instance offers no Auto-accept edits; the Codex instance advertises no
-// restriction.
+// Grok's instance offers no Auto-accept edits; the Claude instance has bypass
+// mode disabled by settings; the Codex instance advertises no restriction.
 const grokInstanceId = ProviderInstanceId.make("grok");
+const claudeInstanceId = ProviderInstanceId.make("claude");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
+  [claudeInstanceId, ["approval-required", "auto-accept-edits", "auto"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -149,6 +151,8 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto-accept-edits"), "approval-required");
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
+      // Full access steps down to Auto rather than Supervised where Auto is offered.
+      assert.equal(yield* modeFor(claudeInstanceId, "full-access"), "auto");
       // A provider that advertises no restriction runs every mode as stored.
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
     }),

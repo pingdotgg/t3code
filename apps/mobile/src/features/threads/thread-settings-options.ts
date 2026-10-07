@@ -1,4 +1,8 @@
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import {
+  type ProviderOptionDescriptor,
+  type RuntimeMode,
+  unsupportedRuntimeModeFallback,
+} from "@t3tools/contracts";
 
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
@@ -50,7 +54,11 @@ export function compatibleRuntimeModeForChoices(
 ): RuntimeMode {
   return choices.some((choice) => choice.mode === runtimeMode)
     ? runtimeMode
-    : (choices[0]?.mode ?? runtimeMode);
+    : unsupportedRuntimeModeFallback(
+        runtimeMode,
+        choices.map((choice) => choice.mode),
+        choices[0]?.mode ?? runtimeMode,
+      );
 }
 
 export function selectableChoices(

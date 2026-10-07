@@ -29,6 +29,9 @@ Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
 session-wide choice, because Grok would remember that command for the whole project.
 
+When Claude settings disable bypass permissions mode, as an organization's managed policy can,
+Claude offers no **Full access**. A Claude thread already set to it runs in **Auto**.
+
 ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 

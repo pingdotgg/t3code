@@ -60,6 +60,12 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
   reportsContextWindow: true,
 } as const;
+// Settings such as a managed `permissions.disableBypassPermissionsMode` stop
+// Claude from entering bypassPermissions, so Full access is not offered.
+const CLAUDE_BYPASS_DISABLED_PRESENTATION = {
+  ...CLAUDE_PRESENTATION,
+  supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto"],
+} as const;
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -201,6 +207,9 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     // SessionStart hooks would run on every health check.
     settings: { disableAllHooks: true },
     allowedTools: [],
+    // Lets the probe ask for bypassPermissions, which Claude refuses when
+    // settings disable it. The probe never sends a prompt, so no tool runs.
+    allowDangerouslySkipPermissions: true,
     // Ignore MCP definitions from every filesystem setting source above. The
     // SDK combines this empty explicit map with --strict-mcp-config.
     mcpServers: {},
@@ -244,6 +253,11 @@ type ClaudeCapabilitiesProbe = {
    * otherwise successful response mean the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  /**
+   * Whether Claude accepted a switch to bypassPermissions, or `undefined`
+   * when the request timed out.
+   */
+  readonly bypassPermissionsAvailable?: boolean;
 };
 
 function parseClaudeInitializationCommands(
@@ -381,6 +395,13 @@ const probeClaudeCapabilities = (
                 rate_limits: usageResult.success.rate_limits,
               }
             : undefined;
+        const bypassPermissionsAvailable = yield* Effect.tryPromise(() =>
+          q.setPermissionMode("bypassPermissions"),
+        ).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+          Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+        );
         const account = init.account as
           | {
               readonly email?: string;
@@ -396,6 +417,9 @@ const probeClaudeCapabilities = (
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
+          ...(Option.isSome(bypassPermissionsAvailable)
+            ? { bypassPermissionsAvailable: bypassPermissionsAvailable.value }
+            : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
@@ -608,7 +632,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
   return buildServerProvider({
-    presentation: CLAUDE_PRESENTATION,
+    presentation:
+      capabilities.bypassPermissionsAvailable === false
+        ? CLAUDE_BYPASS_DISABLED_PRESENTATION
+        : CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
     models,

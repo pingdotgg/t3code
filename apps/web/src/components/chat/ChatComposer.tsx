@@ -44,6 +44,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  unsupportedRuntimeModeFallback,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
@@ -2144,13 +2145,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? runtimeModeOptions.filter((option) => supportedRuntimeModes.includes(option.mode))
       : runtimeModeOptions;
   // Older threads can contain a mode their current provider no longer offers.
-  // Display the provider's first supported mode, which is also its safe legacy
-  // fallback, without mutating persisted state until the user makes a choice.
+  // Display the mode the server will run (Auto for Full access where offered,
+  // otherwise the provider's first supported mode) without mutating persisted
+  // state until the user makes a choice.
   const compatibleRuntimeMode = compatibleRuntimeModeOptions.some(
     (option) => option.mode === runtimeMode,
   )
     ? runtimeMode
-    : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
+    : unsupportedRuntimeModeFallback(
+        runtimeMode,
+        compatibleRuntimeModeOptions.map((option) => option.mode),
+        compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode,
+      );
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,

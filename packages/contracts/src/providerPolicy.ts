@@ -31,6 +31,21 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
+/**
+ * The mode to use when a provider does not offer `runtimeMode`. Full access
+ * steps down to Auto where the provider offers it (Claude when settings
+ * disable bypass mode); every other case uses the caller's `fallback`.
+ */
+export function unsupportedRuntimeModeFallback(
+  runtimeMode: RuntimeMode,
+  supportedRuntimeModes: ReadonlyArray<RuntimeMode>,
+  fallback: RuntimeMode,
+): RuntimeMode {
+  return runtimeMode === "full-access" && supportedRuntimeModes.includes("auto")
+    ? "auto"
+    : fallback;
+}
+
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";

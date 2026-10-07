@@ -45,6 +45,24 @@ lines.on("line", (line) => {
       account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
     });
   }
+  // The probe asks for bypassPermissions to learn whether settings disable it.
+  if (message.request?.subtype === "set_permission_mode") {
+    if (process.env.T3_PROBE_BYPASS_DISABLED === "1") {
+      process.stdout.write(
+        JSON.stringify({
+          type: "control_response",
+          response: {
+            subtype: "error",
+            request_id: message.request_id,
+            error:
+              "Cannot set permission mode to bypassPermissions because it is disabled by settings or configuration",
+          },
+        }) + "\n",
+      );
+    } else {
+      reply({});
+    }
+  }
   // The probe follows initialize with get_usage on the same process.
   if (message.request?.subtype === "get_usage") {
     reply({

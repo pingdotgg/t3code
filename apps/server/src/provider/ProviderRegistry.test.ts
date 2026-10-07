@@ -151,6 +151,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly bypassPermissionsAvailable?: boolean;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -3094,6 +3095,35 @@ it.layer(
           }),
         ),
       ),
+    );
+
+    it.effect("stops offering Full access when Claude refuses bypassPermissions", () =>
+      Effect.gen(function* () {
+        const claudeVersionSpawner = layerMockSpawner((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+        const refused = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ bypassPermissionsAvailable: false }),
+        ).pipe(Effect.provide(claudeVersionSpawner));
+        assert.deepStrictEqual(refused.supportedRuntimeModes, [
+          "approval-required",
+          "auto-accept-edits",
+          "auto",
+        ]);
+        // Accepted, or unknown because the request timed out, offers every mode.
+        for (const bypassPermissionsAvailable of [true, undefined]) {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(
+              bypassPermissionsAvailable === undefined ? {} : { bypassPermissionsAvailable },
+            ),
+          ).pipe(Effect.provide(claudeVersionSpawner));
+          assert.strictEqual(status.supportedRuntimeModes, undefined);
+        }
+      }),
     );
 
     it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
