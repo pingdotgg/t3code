@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +11,8 @@ import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  hasCompleteProviderWorkspaceSnapshot,
+  hasCurrentProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
@@ -250,5 +257,50 @@ describe("workspace provider snapshots", () => {
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
+  });
+
+  it("uses partial workspace skills and commands while keeping discovery retryable", () => {
+    const partial = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        slashCommands: [{ name: "compact" }],
+        slashCommandsPending: true,
+      })),
+    } satisfies ServerProvider;
+    expect(resolveProviderSkillsForCwd(partial, "/workspace/project-a")).toEqual(
+      provider.workspaceSnapshots[0]?.skills,
+    );
+    expect(resolveProviderSlashCommandsForCwd(partial, "/workspace/project-a")).toEqual([
+      { name: "compact" },
+    ]);
+    expect(hasCompleteProviderWorkspaceSnapshot(partial, "/workspace/project-a")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-a")).toBe(true);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
+    expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
+  });
+
+  it("asks for a rescan once the workspace snapshot outlives its TTL", () => {
+    const scannedAt = Date.parse("2026-01-01T00:01:00.000Z");
+    const cwd = "/workspace/project-a";
+    expect(hasCurrentProviderWorkspaceSnapshot(provider, cwd, scannedAt)).toBe(true);
+    expect(
+      hasCurrentProviderWorkspaceSnapshot(
+        provider,
+        cwd,
+        scannedAt + PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS - 1,
+      ),
+    ).toBe(true);
+    expect(
+      hasCurrentProviderWorkspaceSnapshot(
+        provider,
+        cwd,
+        scannedAt + PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+      ),
+    ).toBe(false);
+    expect(hasCurrentProviderWorkspaceSnapshot(provider, "/workspace/project-b", scannedAt)).toBe(
+      false,
+    );
   });
 });

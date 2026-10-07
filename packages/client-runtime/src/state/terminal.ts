@@ -1,6 +1,6 @@
 import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -37,12 +37,21 @@ export function createTerminalEnvironmentAtoms<R, E>(
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
   return {
+    observe: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:terminal:observe",
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
+        Stream.suspend(() =>
+          subscribe(WS_METHODS.terminalObserve, input).pipe(
+            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
+          ),
+        ),
+    }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
         Stream.suspend(() =>
           subscribe(WS_METHODS.terminalAttach, input).pipe(
-            Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
+            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
           ),
         ),
     }),
@@ -54,7 +63,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:metadata",
       subscribe: (_input: null) =>
         subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
-          Stream.scan([] as ReadonlyArray<TerminalSummary>, applyTerminalMetadataStreamEvent),
+          Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
         ),
     }),
     open: createEnvironmentRpcCommand(runtime, {

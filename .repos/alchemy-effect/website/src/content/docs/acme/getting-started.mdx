@@ -1,0 +1,191 @@
+---
+title: Getting started
+description: Issue a staging TLS certificate with Let's Encrypt and an existing Cloudflare DNS zone.
+---
+
+This guide issues a certificate for a domain you control. It uses Let's Encrypt
+staging, so you can validate the deployment without consuming production issuance
+limits. The resulting certificate is deliberately **not trusted by browsers**.
+
+## Prepare the project
+
+Install Alchemy and the matching Effect version using [Cloudflare setup](/cloudflare/setup).
+You need an active Cloudflare DNS zone, its zone ID, and credentials that can read,
+create, and delete DNS records in that zone. The domain's authoritative nameservers
+must already point to Cloudflare.
+
+Use a domain you own wherever this guide says `example.com`. Set
+`CLOUDFLARE_ZONE_ID` in your project's `.env` to the zone ID from its Cloudflare
+dashboard. This example references the existing zone by ID; it does not create,
+adopt, modify the settings of, or delete the zone itself.
+
+## Create the stack
+
+Create `alchemy.run.ts`:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "Certificates",
+  { providers: Layer.empty, state: Alchemy.localState() },
+  Effect.gen(function* () {
+    return {};
+  }),
+);
+```
+
+The stack groups the certificate resources and persists their state locally.
+Treat that state as secret material and keep it out of source control. For a
+shared deployment runner, use a protected [remote state store](/state-store).
+
+## Register the providers
+
+```diff lang="typescript"
++import * as ACME from "alchemy/ACME";
++import * as Cloudflare from "alchemy/Cloudflare";
+
+ export default Alchemy.Stack(
+   "Certificates",
+-  { providers: Layer.empty, state: Alchemy.localState() },
++  {
++    providers: Layer.mergeAll(ACME.providers(), Cloudflare.providers()),
++    state: Alchemy.localState(),
++  },
+```
+
+`ACME.providers()` manages accounts and certificates. `Cloudflare.providers()`
+registers the Cloudflare DNS solver used to prove control of the domain.
+
+## Connect Cloudflare
+
+```sh
+alchemy profile edit --add Cloudflare
+```
+
+Select the Cloudflare account containing your zone. You can use OAuth or a
+suitably scoped API token; [Cloudflare setup](/cloudflare/setup) also documents
+non-interactive environment credentials for CI.
+
+## Create an ACME account
+
+Inside the stack's `Effect.gen`, add the account before `return`:
+
+```diff lang="typescript"
+ Effect.gen(function* () {
++  const account = yield* ACME.Account("Issuer", {
++    ca: ACME.LetsEncryptStaging,
++    contact: ["mailto:ops@example.com"],
++    termsOfServiceAgreed: true,
++  });
+   return {};
+ }),
+```
+
+Replace the contact address with yours and review the CA's terms before agreeing.
+The account gets its own signing key, which Alchemy persists in stack state and
+reuses on subsequent deployments.
+
+## Request the certificate
+
+```diff lang="typescript"
++import * as Config from "effect/Config";
+
+   const account = yield* ACME.Account("Issuer", {
+     ca: ACME.LetsEncryptStaging,
+     contact: ["mailto:ops@example.com"],
+     termsOfServiceAgreed: true,
+   });
++  const certificate = yield* ACME.Certificate("Site", {
++    account,
++    identifiers: ["example.com"],
++    solver: Cloudflare.DNS.AcmeSolver({
++      zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
++    }),
++  });
+```
+
+The solver publishes a temporary `_acme-challenge.example.com` TXT record.
+It waits for propagation before asking the CA to validate it, then removes that
+challenge record. Existing unrelated TXT values are preserved.
+
+## Return certificate metadata
+
+```diff lang="typescript"
+-  return {};
++  return {
++    serial: certificate.serial,
++    expires: certificate.notAfter,
++  };
+```
+
+Return metadata rather than private keys. The PEM chain and redacted key remain
+available as resource outputs for a [TLS consumer](/acme/using-certificates).
+
+## Deploy to a development stage
+
+```sh
+alchemy deploy --stage dev
+```
+
+Allow time for DNS validation: Cloudflare's solver includes a 60-second wait to
+let cached challenge values expire. A successful deployment returns the serial
+number and expiry. It does not configure a website or an HTTPS listener.
+
+## Review the complete file
+
+The steps above produce this `alchemy.run.ts`:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as ACME from "alchemy/ACME";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "Certificates",
+  {
+    providers: Layer.mergeAll(ACME.providers(), Cloudflare.providers()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const account = yield* ACME.Account("Issuer", {
+      ca: ACME.LetsEncryptStaging,
+      contact: ["mailto:ops@example.com"],
+      termsOfServiceAgreed: true,
+    });
+    const certificate = yield* ACME.Certificate("Site", {
+      account,
+      identifiers: ["example.com"],
+      solver: Cloudflare.DNS.AcmeSolver({
+        zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+      }),
+    });
+    return {
+      serial: certificate.serial,
+      expires: certificate.notAfter,
+    };
+  }),
+);
+```
+
+## Clean up the development stack
+
+```sh
+alchemy destroy --stage dev
+```
+
+Destruction deactivates the ACME account and removes the stack's certificate
+state. By default it does not revoke an issued certificate. The existing DNS
+zone is not a managed resource in this example and remains intact. Read
+[Renewal & revocation](/acme/renewal) before choosing a production deletion policy.
+
+## Next steps
+
+- [Certificate authorities](/acme/certificate-authorities) — switch to a trusted production CA.
+- [DNS validation](/acme/dns-validation) — add a wildcard or customize propagation.
+- [Using certificates](/acme/using-certificates) — attach the chain and key to a TLS consumer.

@@ -1,11 +1,11 @@
 import * as Prisma from "alchemy/Prisma";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Connection, Project, region, appNameConfig } from "./Database.ts";
 
-const messageConfig = Config.string("PRISMA_EFFECT_MESSAGE").pipe(
+const messageConfig = Config.String("PRISMA_EFFECT_MESSAGE").pipe(
   Effect.orElseSucceed(() => "hello from Effect-native Prisma Compute"),
 );
 

@@ -3,7 +3,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -32,6 +36,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -47,6 +52,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   workspaceRoot: string | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
@@ -85,6 +91,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   const openSaveDialog = () => {
+    if (!canWriteFiles) return;
     if (!workspaceRoot) {
       toastManager.add(
         stackedThreadToast({
@@ -101,7 +108,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   const handleSaveToWorkspace = () => {
     const relativePath = savePath.trim();
-    if (!workspaceRoot) {
+    if (!workspaceRoot || !readEnvironmentScope(environmentId, AuthFilesystemWriteScope)) {
       return;
     }
     if (!relativePath) {
@@ -146,11 +153,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div className="rounded-3xl border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          {/* Same heading level as the message author headings in the timeline,
+              so a plan's own headings nest beneath it in the outline. */}
+          <h3 className="truncate text-sm font-medium text-foreground">{title}</h3>
         </div>
         <Menu>
           <MenuTrigger
@@ -163,7 +172,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {isCopied ? "Copied!" : "Copy to clipboard"}
             </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
-            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+            <MenuItem
+              onClick={openSaveDialog}
+              disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
+            >
               Save to workspace
             </MenuItem>
           </MenuPopup>
@@ -175,15 +187,19 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
+              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           ) : (
             <ChatMarkdown
               text={displayedPlanMarkdown}
               cwd={cwd}
+              environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           )}
           {canCollapse && !expanded ? (
@@ -219,7 +235,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
               <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input
@@ -244,7 +260,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <Button
               size="sm"
               onClick={() => void handleSaveToWorkspace()}
-              disabled={isSavingToWorkspace}
+              disabled={!canWriteFiles || isSavingToWorkspace}
             >
               {isSavingToWorkspace ? "Saving..." : "Save"}
             </Button>

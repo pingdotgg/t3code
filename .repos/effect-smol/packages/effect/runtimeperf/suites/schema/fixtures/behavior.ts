@@ -7,25 +7,37 @@ import assert from "node:assert/strict"
 
 const decodeCase = (schema, input, success, options) => () => {
   const run = Schema.decodeUnknownExit(schema, options)
+  const isOutput = success ? Schema.is(schema) : undefined
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(result._tag, success ? "Success" : "Failure")
+    validate: (result) => {
+      assert.equal(result._tag, success ? "Success" : "Failure")
+      if (result._tag === "Success") assert.equal(isOutput?.(result.value), true)
+    }
   }
 }
 
 const decodeParserCase = (schema, input, success, options) => () => {
   const run = SchemaParser.decodeUnknownExit(schema, options)
+  const isOutput = success ? Schema.is(schema) : undefined
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(result._tag, success ? "Success" : "Failure")
+    validate: (result) => {
+      assert.equal(result._tag, success ? "Success" : "Failure")
+      if (result._tag === "Success") assert.equal(isOutput?.(result.value), true)
+    }
   }
 }
 
 const encodeParserCase = (schema, input, success, options) => () => {
   const run = SchemaParser.encodeUnknownExit(schema, options)
+  const isOutput = success ? Schema.is(Schema.flip(schema)) : undefined
   return {
     run: () => run(input),
-    validate: (result) => assert.equal(result._tag, success ? "Success" : "Failure")
+    validate: (result) => {
+      assert.equal(result._tag, success ? "Success" : "Failure")
+      if (result._tag === "Success") assert.equal(isOutput?.(result.value), true)
+    }
   }
 }
 
@@ -146,7 +158,7 @@ export const optionalPresentValid = decodeCase(
 export const optionalPresentInvalid = decodeCase(optionalStruct, { required: "value", optionalKey: 1 }, false)
 
 const suspendedString = Schema.String.pipe(Schema.decode({
-  decode: new SchemaGetter.Getter((input) => Effect.suspend(() => Effect.succeed(input))),
+  decode: SchemaGetter.transformOptionalEffect((input) => Effect.suspend(() => Effect.succeed(input))),
   encode: SchemaGetter.passthrough()
 }))
 const suspendedObjectFields = Object.fromEntries(
@@ -160,6 +172,32 @@ export const object32SuspendedMiddleValid = decodeParserCase(
   Schema.Struct(suspendedObjectFields),
   suspendedObjectInput,
   true
+)
+
+const suspendedArrayInput = Array.from({ length: 32 }, (_, index) => `value${index}`)
+const suspendedObjectAllFields = Object.fromEntries(
+  Array.from({ length: 32 }, (_, index) => [`field${index}`, suspendedString])
+)
+
+export const array32SuspendedConcurrent4 = decodeParserCase(
+  Schema.Array(suspendedString),
+  suspendedArrayInput,
+  true,
+  { concurrency: 4 }
+)
+
+export const object32SuspendedConcurrent4 = decodeParserCase(
+  Schema.Struct(suspendedObjectAllFields),
+  suspendedObjectInput,
+  true,
+  { concurrency: 4 }
+)
+
+export const record32SuspendedConcurrent4 = decodeParserCase(
+  Schema.Record(Schema.String, suspendedString),
+  suspendedObjectInput,
+  true,
+  { concurrency: 4 }
 )
 
 const literal2 = Schema.Literals(["value0", "value1"])
@@ -187,19 +225,6 @@ export const taggedWithFallbackValid = decodeParserCase(
   taggedWithFallback,
   { kind: "a", value: "value" },
   true
-)
-
-const propertyOrderSchema = Schema.Struct({
-  a: Schema.String,
-  b: Schema.String
-})
-const propertyOrderInput = { extra: "extra", b: "b", a: "a" }
-
-export const propertyOrderOriginal = decodeCase(
-  propertyOrderSchema,
-  propertyOrderInput,
-  true,
-  { onExcessProperty: "preserve", propertyOrder: "original" }
 )
 
 const recursiveTree = Schema.Struct({

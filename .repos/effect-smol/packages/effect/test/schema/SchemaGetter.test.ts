@@ -7,7 +7,7 @@ const formatIssue = SchemaIssue.makeFormatterDefault()
 function makeAsserts<T, E>(getter: SchemaGetter.Getter<T, E>) {
   return async (input: E, expected: T) => {
     const r = await Effect.runPromise(
-      getter.run(Option.some(input), {}).pipe(
+      SchemaGetter.run(getter, Option.some(input), {}).pipe(
         Effect.mapError(formatIssue),
         Effect.result
       )
@@ -17,16 +17,82 @@ function makeAsserts<T, E>(getter: SchemaGetter.Getter<T, E>) {
 }
 
 describe("SchemaGetter", () => {
+  it.effect("forbiddenEncoding", () =>
+    Effect.gen(function*() {
+      const getter: SchemaGetter.Getter<string, number> = SchemaGetter.forbiddenEncoding
+      const issue = yield* SchemaGetter.run(getter, Option.some(1), {}).pipe(Effect.flip)
+
+      assert.strictEqual(issue._tag, "Forbidden")
+      assert.strictEqual(formatIssue(issue), "Encoding is not supported")
+    }))
+
   it.effect("stringifyJson fails when JSON.stringify returns undefined", () =>
-    SchemaGetter.stringifyJson().run(Option.some(undefined), {}).pipe(
+    SchemaGetter.run(SchemaGetter.stringifyJson(), Option.some(undefined), {}).pipe(
       Effect.flip,
       Effect.map((issue) => assert.strictEqual(issue._tag, "InvalidValue"))
     ))
 
-  it("map", () => {
-    const getter = SchemaGetter.succeed(1).map((t) => t + 1)
-    const result = Effect.runSync(getter.run(Option.some(1), {}))
-    assertSome(result, 2)
+  it.effect("map", () =>
+    Effect.gen(function*() {
+      const getter = SchemaGetter.map(SchemaGetter.succeed(1), (t) => t + 1)
+      const result = yield* SchemaGetter.run(Option.some(1), {})(getter)
+      assertSome(result, 2)
+    }))
+
+  it("map preserves the specialized execution mode", () => {
+    assert.strictEqual(SchemaGetter.map(SchemaGetter.passthrough<number>(), String)._tag, "Transform")
+    assert.strictEqual(SchemaGetter.map(SchemaGetter.transform(Number), String)._tag, "Transform")
+    assert.strictEqual(
+      SchemaGetter.map(
+        SchemaGetter.transformOptional((input: Option.Option<string>) => Option.map(input, Number)),
+        String
+      )._tag,
+      "TransformOptional"
+    )
+    assert.strictEqual(
+      SchemaGetter.map(SchemaGetter.transformEffect((input: string) => Effect.succeed(Number(input))), String)._tag,
+      "TransformEffect"
+    )
+    assert.strictEqual(
+      SchemaGetter.map(
+        SchemaGetter.transformOptionalEffect((input: Option.Option<string>) =>
+          Effect.succeed(Option.map(input, Number))
+        ),
+        String
+      )._tag,
+      "TransformOptionalEffect"
+    )
+  })
+
+  it.effect("compose", () =>
+    Effect.gen(function*() {
+      const first = SchemaGetter.transform<number, string>(Number)
+      const second = SchemaGetter.transform((value: number) => value * 2)
+      const composed = SchemaGetter.compose(first, second)
+
+      assert.strictEqual(composed._tag, "Transform")
+      assertSome(yield* SchemaGetter.run(composed, Option.some("2"), {}), 4)
+      assert.strictEqual(SchemaGetter.compose(SchemaGetter.passthrough<string>(), first), first)
+      assert.strictEqual(SchemaGetter.compose(first, SchemaGetter.passthrough<number>()), first)
+    }))
+
+  it("compose preserves the specialized execution mode", () => {
+    const transform = SchemaGetter.transform<number, string>(Number)
+    const transformNumber = SchemaGetter.transform((value: number) => value + 1)
+    const transformOptional = SchemaGetter.transformOptional<number, number>(Option.map((value) => value + 1))
+    const transformEffect = SchemaGetter.transformEffect((value: number) => Effect.succeed(value + 1))
+    const transformOptionalEffect = SchemaGetter.transformOptionalEffect((input: Option.Option<number>) =>
+      Effect.succeed(Option.map(input, (value) => value + 1))
+    )
+
+    assert.strictEqual(SchemaGetter.compose(transform, transformOptional)._tag, "TransformOptional")
+    assert.strictEqual(SchemaGetter.compose(transform, transformEffect)._tag, "TransformEffect")
+    assert.strictEqual(SchemaGetter.compose(transformOptional, transformNumber)._tag, "TransformOptional")
+    assert.strictEqual(SchemaGetter.compose(transformEffect, transformNumber)._tag, "TransformEffect")
+    assert.strictEqual(SchemaGetter.compose(transformEffect, transformEffect)._tag, "TransformEffect")
+    assert.strictEqual(SchemaGetter.compose(transformOptional, transformEffect)._tag, "TransformOptionalEffect")
+    assert.strictEqual(SchemaGetter.compose(transformEffect, transformOptional)._tag, "TransformOptionalEffect")
+    assert.strictEqual(SchemaGetter.compose(transformOptionalEffect, transformNumber)._tag, "TransformOptionalEffect")
   })
 
   it("dateTimeUtcFromInput", async () => {
@@ -38,6 +104,17 @@ describe("SchemaGetter", () => {
   })
 
   describe("makeTreeRecord", () => {
+    it("preserves array-valued leaves at duplicate paths", () => {
+      deepStrictEqual(
+        SchemaGetter.makeTreeRecord([
+          ["permissions", ["read"]],
+          ["permissions", ["write"]],
+          ["permissions", ["share"]]
+        ]),
+        { permissions: [["read"], ["write"], ["share"]] }
+      )
+    })
+
     it("replaces conflicting leaf values with containers", () => {
       deepStrictEqual(
         SchemaGetter.makeTreeRecord([
@@ -96,6 +173,19 @@ describe("SchemaGetter", () => {
           ["a[0][b]", 1]
         ]),
         { a: [{ b: 1 }] }
+      )
+    })
+
+    it("preserves invalid array index segments as object keys", () => {
+      assert.deepStrictEqual(
+        SchemaGetter.makeTreeRecord([
+          ["leading[01]", "a"],
+          ["overflow[4294967295]", "b"]
+        ]),
+        {
+          leading: { "01": "a" },
+          overflow: { "4294967295": "b" }
+        }
       )
     })
   })

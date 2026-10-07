@@ -145,6 +145,23 @@ describe("Schema", () => {
       expect(schema.make).type.toBe<Make<string, string>>()
     })
 
+    it("StringForLiteralAutocomplete", () => {
+      const schema = Schema.StringForLiteralAutocomplete
+      expect(schema).type.toBe<Schema.StringForLiteralAutocomplete>()
+      expect(schema.make).type.toBe<Make<string & {}, string & {}>>()
+    })
+
+    it("StringForLiteralAutocomplete | Literals", () => {
+      const schema = Schema.Union([
+        Schema.StringForLiteralAutocomplete,
+        Schema.Literals(["GET", "POST"])
+      ])
+      expect(schema.make).type.toBe<
+        Make<"GET" | "POST" | (string & {}), "GET" | "POST" | (string & {})>
+      >()
+      expect(schema.members[1].literals).type.toBe<readonly ["GET", "POST"]>()
+    })
+
     it("Number", () => {
       const schema = Schema.Number
       expect(schema.make).type.toBe<Make<number, number>>()
@@ -530,6 +547,13 @@ describe("Schema", () => {
     })
   })
 
+  describe("toEncoderXml", () => {
+    it("returns SchemaIssue.Issue in the error channel", () => {
+      const encode = Schema.toEncoderXml(Schema.toCodecStringTree(Schema.FiniteFromString))
+      expect(encode).type.toBe<(value: number) => Effect.Effect<string, SchemaIssue.Issue>>()
+    })
+  })
+
   describe("toCodecArrayFromSingle", () => {
     it("revealCodec + annotate", () => {
       const stringTree = Schema.toCodecStringTree(Schema.Array(Schema.FiniteFromString))
@@ -651,6 +675,35 @@ describe("Schema", () => {
       expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<string>>()
       expect(schema).type.toBe<Schema.String>()
       expect(schema.annotate({})).type.toBe<Schema.String>()
+    })
+  })
+
+  describe("StringForLiteralAutocomplete", () => {
+    const schema = Schema.StringForLiteralAutocomplete
+
+    it("ast type", () => {
+      expect(schema.ast).type.toBe<SchemaAST.String>()
+    })
+
+    it("revealCodec + annotate", () => {
+      expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<string & {}>>()
+      expect(schema).type.toBe<Schema.StringForLiteralAutocomplete>()
+      expect(schema.annotate({})).type.toBe<Schema.StringForLiteralAutocomplete>()
+    })
+
+    it("union with Literals", () => {
+      const method = Schema.Union([
+        Schema.StringForLiteralAutocomplete,
+        Schema.Literals(["GET", "POST"])
+      ])
+      expect(Schema.revealCodec(method)).type.toBe<Schema.Codec<"GET" | "POST" | (string & {})>>()
+      expect(method).type.toBe<
+        Schema.Union<readonly [Schema.StringForLiteralAutocomplete, Schema.Literals<readonly ["GET", "POST"]>]>
+      >()
+      expect(method.annotate({})).type.toBe<
+        Schema.Union<readonly [Schema.StringForLiteralAutocomplete, Schema.Literals<readonly ["GET", "POST"]>]>
+      >()
+      expect(method.members[1].literals).type.toBe<readonly ["GET", "POST"]>()
     })
   })
 
@@ -859,6 +912,24 @@ describe("Schema", () => {
       .type.toBe<Schema.Codec<readonly ["a", number & Brand.Brand<"MyBrand">], `a${number}`>>()
     expect(Schema.revealCodec(Schema.TemplateLiteralParser(["a", Schema.Union([Schema.Number, Schema.String])])))
       .type.toBe<Schema.Codec<readonly ["a", string | number], `a${string}` | `a${number}`>>()
+  })
+
+  it("TemplateLiteralParser propagates decoding and encoding services separately", () => {
+    const first = hole<Schema.Codec<number, string, "DecodeFirst", "EncodeFirst">>()
+    const second = hole<Schema.Codec<boolean, 0 | 1, "DecodeSecond", "EncodeSecond">>()
+    const schema = Schema.TemplateLiteralParser(["value:", first, ":", second])
+
+    expect(schema.DecodingServices).type.toBe<"DecodeFirst" | "DecodeSecond">()
+    expect(schema.EncodingServices).type.toBe<"EncodeFirst" | "EncodeSecond">()
+    expect(Schema.decodeEffect(schema)).type.toBe<
+      (
+        input: `value:${string}:0` | `value:${string}:1`,
+        options?: SchemaAST.ParseOptions
+      ) => Effect.Effect<readonly ["value:", number, ":", boolean], Schema.SchemaError, "DecodeFirst" | "DecodeSecond">
+    >()
+    expect(Schema.encodeEffect(schema)(["value:", 1, ":", true])).type.toBe<
+      Effect.Effect<`value:${string}:0` | `value:${string}:1`, Schema.SchemaError, "EncodeFirst" | "EncodeSecond">
+    >()
   })
 
   describe("flip", () => {
@@ -1548,6 +1619,25 @@ describe("Schema", () => {
         Schema.brand<Schema.brand<Schema.Number, "MyBrand">, "MyBrand2">
       >()
     })
+
+    it("should require a single concrete identifier", () => {
+      const identifier: string = "MyBrand"
+      const union = "MyBrand" as "MyBrand" | "OtherBrand"
+      const pattern = "brand:MyBrand" as `brand:${string}`
+
+      expect(Schema.brand).type.not.toBeCallableWith(identifier)
+      expect(Schema.brand).type.not.toBeCallableWith(union)
+      expect(Schema.brand).type.not.toBeCallableWith(pattern)
+      expect(Schema.brand<"MyBrand" | "OtherBrand">).type.not.toBeCallableWith("MyBrand")
+
+      const empty = Schema.String.pipe(Schema.brand(""))
+      expect(empty).type.toBe<Schema.brand<Schema.String, "">>()
+
+      const flag = Schema.Boolean.pipe(Schema.brand("Flag"))
+      expect(Schema.revealCodec(flag)).type.toBe<
+        Schema.Codec<boolean & Brand.Brand<"Flag">, boolean, never, never>
+      >()
+    })
   })
 
   it("decodeTo as composition", () => {
@@ -1779,10 +1869,10 @@ describe("Schema", () => {
   it("asStandardSchemaV1 should not be callable with a schema with DecodingServices", () => {
     class MagicNumber extends Context.Service<MagicNumber, number>()("MagicNumber") {}
     const DepString = Schema.Number.pipe(Schema.decode({
-      decode: SchemaGetter.onSome((n) =>
+      decode: SchemaGetter.transformEffect((n) =>
         Effect.gen(function*() {
           const magicNumber = yield* MagicNumber
-          return Option.some(n * magicNumber)
+          return n * magicNumber
         })
       ),
       encode: SchemaGetter.passthrough()
@@ -1804,7 +1894,30 @@ describe("Schema", () => {
       expect(schema).type.toBe<Schema.brand<Schema.Number, "Int">>()
     })
 
-    it("should convert a union of keys to an intersection of brands", () => {
+    it("should support an explicit type argument", () => {
+      type Int = number & Brand.Brand<"Int">
+      const Int = Brand.check<Int>(Schema.isInt())
+      const schema = Schema.Number.pipe(Schema.fromBrand<Int>("Int", Int))
+      expect(schema).type.toBe<Schema.brand<Schema.Number, "Int">>()
+    })
+
+    it("should preserve the constructor's enum brand key", () => {
+      enum Key {
+        X = "X",
+        Y = "Y"
+      }
+      type X = string & Brand.Brand<Key.X>
+      const X = Brand.nominal<X>()
+      const schema = Schema.String.pipe(Schema.fromBrand(Key.X, X))
+      expect(schema).type.toBe<Schema.brand<Schema.String, Key.X>>()
+      expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<X, string>>()
+      expect(Schema.fromBrand).type.not.toBeCallableWith("X", X)
+
+      const literal = Schema.String.pipe(Schema.fromBrand(Key.X, Brand.nominal<string & Brand.Brand<"X">>()))
+      expect(literal).type.toBe<Schema.brand<Schema.String, "X">>()
+    })
+
+    it("should reject multiple brand keys", () => {
       type Int = number & Brand.Brand<"Int">
       const Int = Brand.check<Int>(Schema.isInt())
 
@@ -1813,11 +1926,101 @@ describe("Schema", () => {
 
       const PositiveInt = Brand.all(Int, Positive)
 
-      const schema = Schema.Number.pipe(Schema.fromBrand("PositiveInt", PositiveInt))
-      expect(schema).type.toBe<Schema.brand<Schema.Number, "Int" | "Positive">>()
+      expect(Schema.fromBrand).type.not.toBeCallableWith("PositiveInt", PositiveInt)
+      expect(Schema.fromBrand).type.not.toBeCallableWith("Int", PositiveInt)
+    })
+
+    it("should require the constructor brand identifier", () => {
+      type Int = number & Brand.Brand<"Int">
+      const Int = Brand.check<Int>(Schema.isInt())
+      const identifier: string = "Int"
+      const union = "Int" as "Int" | "Integer"
+      const pattern = "brand:Int" as `brand:${string}`
+
+      expect(Schema.fromBrand).type.not.toBeCallableWith("Integer", Int)
+      expect(Schema.fromBrand).type.not.toBeCallableWith(identifier, Int)
+      expect(Schema.fromBrand).type.not.toBeCallableWith(union, Int)
+      expect(Schema.fromBrand).type.not.toBeCallableWith(pattern, Int)
+    })
+
+    it("should reject different brand keys across union members", () => {
+      type Input = string & Brand.Brand<"MIDIPortId"> & Brand.Brand<"input">
+      type Output = string & Brand.Brand<"MIDIPortId"> & Brand.Brand<"output">
+      const InputOrOutput = Brand.nominal<Input | Output>()
+
+      expect(Schema.fromBrand).type.not.toBeCallableWith("MIDIPortId", InputOrOutput)
+    })
+
+    it("should require the brand key in every union member", () => {
+      type Id = string & Brand.Brand<"Id">
+      type Unbranded = number & Brand.Brand<never>
+      const IdOrUnbranded = Brand.nominal<Id | Unbranded>()
+
+      expect(Schema.fromBrand).type.not.toBeCallableWith("Id", IdOrUnbranded)
+    })
+
+    it("should reject non-concrete constructor brand keys", () => {
+      const dynamic = Brand.nominal<string & Brand.Brand<string>>()
+      const pattern = Brand.nominal<string & Brand.Brand<`brand:${string}`>>()
+      const empty = Brand.nominal<string & Brand.Brand<never>>()
+      const impossible = Brand.nominal<never>()
+      const unsafe = Brand.nominal<any>()
+
+      expect(Schema.fromBrand).type.not.toBeCallableWith("MyBrand", dynamic)
+      expect(Schema.fromBrand).type.not.toBeCallableWith("brand:MyBrand", pattern)
+      expect(Schema.fromBrand).type.not.toBeCallableWith("MyBrand", empty)
+      expect(Schema.fromBrand).type.not.toBeCallableWith("MyBrand", impossible)
+      expect(Schema.fromBrand).type.not.toBeCallableWith("MyBrand", unsafe)
+    })
+
+    it("should support a union base with one brand key", () => {
+      type Flag = boolean & Brand.Brand<"Flag">
+      const Flag = Brand.nominal<Flag>()
+      const flag = Schema.Boolean.pipe(Schema.fromBrand("Flag", Flag))
+      expect(Schema.revealCodec(flag)).type.toBe<Schema.Codec<Flag, boolean>>()
+
+      type Id = (string | number) & Brand.Brand<"Id">
+      const Id = Brand.nominal<Id>()
+      const id = Schema.Union([Schema.String, Schema.Number]).pipe(Schema.fromBrand("Id", Id))
+      expect(Schema.revealCodec(id)).type.toBe<Schema.Codec<Id, string | number>>()
+    })
+
+    it("should compose brands explicitly", () => {
+      type Int = number & Brand.Brand<"Int">
+      const Int = Brand.check<Int>(Schema.isInt())
+
+      type Positive = number & Brand.Brand<"Positive">
+      const Positive = Brand.check<Positive>(Schema.isGreaterThan(0))
+
+      const schema = Schema.Number.pipe(
+        Schema.fromBrand("Int", Int),
+        Schema.fromBrand("Positive", Positive)
+      )
+      expect(schema).type.toBe<
+        Schema.brand<Schema.brand<Schema.Number, "Int">, "Positive">
+      >()
       expect(Schema.revealCodec(schema)).type.toBe<
         Schema.Codec<number & Brand.Brand<"Int"> & Brand.Brand<"Positive">, number>
       >()
+    })
+
+    it("should support multiple constructors for the same brand key", () => {
+      type Name = string & Brand.Brand<"Name">
+      const Name = Brand.all(
+        Brand.check<Name>(Schema.isMinLength(1)),
+        Brand.check<Name>(Schema.isMaxLength(20))
+      )
+      const schema = Schema.String.pipe(Schema.fromBrand("Name", Name))
+      expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<Name, string>>()
+
+      const inline = Schema.String.pipe(Schema.fromBrand(
+        "Name",
+        Brand.all(
+          Brand.check<Name>(Schema.isMinLength(1)),
+          Brand.check<Name>(Schema.isMaxLength(20))
+        )
+      ))
+      expect(Schema.revealCodec(inline)).type.toBe<Schema.Codec<Name, string>>()
     })
   })
 

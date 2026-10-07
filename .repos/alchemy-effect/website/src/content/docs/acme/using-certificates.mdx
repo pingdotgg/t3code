@@ -1,0 +1,186 @@
+---
+title: Using certificates
+description: Upload an ACME certificate to Fly or pass its chain and private key to another TLS consumer.
+---
+
+Issuance creates certificate material; it does not create an HTTPS endpoint.
+A TLS consumer must receive the matching chain and private key, present the
+certificate for the correct hostname, and reload replacements after renewal.
+
+## Choose the right output
+
+| Output | Contents | Typical use |
+| --- | --- | --- |
+| `certificate` | Leaf certificate PEM | Revocation or certificate inspection |
+| `chain` | Full PEM chain, leaf first | TLS server or certificate upload |
+| `privateKey` | Redacted PKCS#8 private key PEM | TLS server or certificate upload |
+| `notAfter` | ISO 8601 expiry | Monitoring and renewal scheduling |
+| `serial` | Certificate serial number | Identifying the installed version |
+
+The account's `privateKey` is a different key, used to sign ACME requests. A TLS
+consumer needs the **certificate's** private key, never the account's key.
+
+## Register Fly's provider
+
+Start with the [Getting started](/acme/getting-started) stack and add Fly:
+
+```diff lang="typescript"
++import * as Fly from "alchemy/Fly";
+
+-    providers: Layer.mergeAll(ACME.providers(), Cloudflare.providers()),
++    providers: Layer.mergeAll(
++      ACME.providers(),
++      Cloudflare.providers(),
++      Fly.providers(),
++    ),
+```
+
+Connect your Fly account using [Fly setup](/fly/setup). The ACME account and DNS
+solver remain independent of Fly; only the upload resource uses Fly credentials.
+
+## Create the destination App
+
+Inside the stack Effect, before the upload:
+
+```typescript
+const app = yield* Fly.App("Site", {});
+```
+
+Use your application's existing `App` instead when it already owns the TLS
+endpoint. Creating an App alone does not start a service or allocate public IPs.
+
+## Upload the certificate
+
+After resolving the ACME certificate:
+
+```typescript
+yield* Fly.Certificate("SiteTls", {
+  app,
+  hostname: "example.com",
+  kind: "custom",
+  fullchain: certificate.chain,
+  privateKey: certificate.privateKey,
+});
+```
+
+The resource outputs establish a dependency on issuance. After an ACME renewal
+changes the chain and key, the same deployment updates the Fly upload. Pass the
+redacted key directly; the provider handles unwrapping it for the API.
+
+## Review the complete upload stack
+
+This example uses Let's Encrypt **production** because the destination is a
+public TLS consumer. First verify DNS issuance with the staging-only getting
+started example. Replace the hostname, contact address, and zone configuration
+with your own values:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as ACME from "alchemy/ACME";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Fly from "alchemy/Fly";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "SiteCertificates",
+  {
+    providers: Layer.mergeAll(
+      ACME.providers(),
+      Cloudflare.providers(),
+      Fly.providers(),
+    ),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const app = yield* Fly.App("Site", {});
+    const account = yield* ACME.Account("Issuer", {
+      ca: ACME.LetsEncrypt,
+      contact: ["mailto:ops@example.com"],
+      termsOfServiceAgreed: true,
+    });
+    const certificate = yield* ACME.Certificate("Site", {
+      account,
+      identifiers: ["example.com"],
+      solver: Cloudflare.DNS.AcmeSolver({
+        zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
+      }),
+    });
+    yield* Fly.Certificate("SiteTls", {
+      app,
+      hostname: "example.com",
+      kind: "custom",
+      fullchain: certificate.chain,
+      privateKey: certificate.privateKey,
+    });
+    return { appName: app.appName, expires: certificate.notAfter };
+  }),
+);
+```
+
+## Make the hostname reachable
+
+Follow [Fly IPs & certificates](/fly/networking) to publish a Service, allocate
+public IPs, and point the hostname's DNS records at the App. A successful
+certificate upload is separate from traffic routing. Check the certificate
+served by `https://example.com` after the routing is ready.
+
+For ordinary Fly-managed certificates, `Fly.Certificate` with `kind: "acme"`
+lets Fly handle issuance. Use this independent `ACME.Certificate` plus
+`kind: "custom"` combination when you need control over the issuing CA or DNS
+validation and will operate renewal yourself.
+
+## Pass outputs to another resource
+
+Alchemy resource props accept outputs directly. If another provider accepts PEM
+chain and key inputs, pass `certificate.chain` and `certificate.privateKey` to
+those fields just as in the Fly upload. Follow that provider's expected chain
+format and supported key algorithms.
+
+For a consumer outside Alchemy, build an explicit secure delivery process.
+Store the chain and key as a matching pair, restrict key access, reload the TLS
+service after renewal, and verify the certificate it serves. Exporting a PEM
+once does not subscribe the consumer to later resource updates.
+
+## Upload from an application
+
+In an initialized Fly Service or Worker, bind the destination App separately
+from the ACME account:
+
+```typescript
+const certificates = yield* Fly.WriteCertificates(Site);
+```
+
+Provide `Fly.WriteCertificatesHttp` on the host Effect. `Site` is the same App
+resource your service uses; the binding transports the necessary app identity
+and scoped credentials to runtime.
+
+## Install a runtime-issued certificate
+
+After `issuer.issue` returns inside a request or job:
+
+```typescript
+yield* certificates.upload({
+  hostname: "example.com",
+  fullchain: issued.chain,
+  privateKey: issued.privateKey,
+});
+```
+
+Use the [runtime issuance guide](/acme/runtime) for the account and DNS bindings.
+The runtime upload is not a `Fly.Certificate` stack resource. Your application
+must track and renew it; avoid having a deploy-time resource and a runtime job
+both manage the same App/hostname.
+
+## Keep removal and revocation separate
+
+Removing a Fly certificate stops that App from using it but does not revoke it
+at the issuing CA. Revoking at the CA does not remove the Fly upload. For a
+runtime-managed certificate, replace or remove the consumer copy first, then
+call `issuer.revoke` according to your retirement policy.
+
+See [Renewal & revocation](/acme/renewal), the
+[Fly Certificate reference](/providers/fly/certificate), and
+[WriteCertificates reference](/providers/fly/writecertificates) for the separate
+lifecycle controls.

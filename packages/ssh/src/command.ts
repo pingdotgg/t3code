@@ -1,20 +1,19 @@
-import * as NodeCrypto from "node:crypto";
-
-import type { DesktopSshEnvironmentTarget, DesktopUpdateChannel } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { buildSshChildEnvironment, type SshAuthOptions } from "./auth.ts";
 import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
-const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
 
@@ -73,12 +72,16 @@ export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string
   return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`;
 }
 
-export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
-  return NodeCrypto.createHash("sha256")
-    .update(targetConnectionKey(target))
-    .digest("hex")
-    .slice(0, 16);
-}
+/** Names the remote state directory for a target: the first 16 hex chars of its SHA-256 key. */
+export const remoteStateKey = Effect.fn("ssh/command.remoteStateKey")(function* (
+  target: DesktopSshEnvironmentTarget,
+): Effect.fn.Return<string, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", encoder.encode(targetConnectionKey(target)))
+    .pipe(Effect.orDie);
+  return Hex.encode(digest).slice(0, 16);
+});
 
 function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
   const destination = target.alias.trim() || target.hostname.trim();
@@ -363,20 +366,3 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
     ),
   );
 });
-
-export function resolveRemoteT3CliPackageSpec(input: {
-  readonly appVersion: string;
-  readonly updateChannel: DesktopUpdateChannel;
-  readonly isDevelopment?: boolean;
-}): string {
-  const appVersion = input.appVersion.trim();
-  if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
-    return `t3@${appVersion}`;
-  }
-
-  if (input.isDevelopment) {
-    return "t3@nightly";
-  }
-
-  return input.updateChannel === "nightly" ? "t3@nightly" : "t3@latest";
-}

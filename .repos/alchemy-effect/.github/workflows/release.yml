@@ -54,7 +54,7 @@ jobs:
           token: ${{ steps.bot-token.outputs.token }}
 
       - name: Checkout distilled
-        run: git submodule update --init --depth=1 --checkout -- distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
       - name: Restore Turbo cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -81,6 +81,11 @@ jobs:
           bun scripts/release/prepare.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
 
       - name: Build release packages
+        # Match preview CI: the cold tsgo build can starve the runner
+        # without Go heap limits on this 32 GB machine.
+        env:
+          GOMEMLIMIT: 6GiB
+          GOGC: "40"
         run: >-
           pnpm turbo run build
           $(jq -r '.[] | "--filter=\(.name)"' release-packages.json)
@@ -120,7 +125,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout distilled
-        run: git submodule update --init --depth=1 --checkout -- distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
       - name: Setup pnpm, Node.js, Bun
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0

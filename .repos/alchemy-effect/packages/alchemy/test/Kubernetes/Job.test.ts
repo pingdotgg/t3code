@@ -27,4 +27,12 @@ test.provider(
       expect(Array.isArray(all)).toBe(true);
       expect(all).toEqual([]);
     }),
+  {
+    tags: [
+      "provider:aws",
+      "provider:kubernetes",
+      "provider:kubernetes:job",
+      "live",
+    ],
+  },
 );

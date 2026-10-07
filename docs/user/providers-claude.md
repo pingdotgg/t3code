@@ -49,9 +49,12 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter and may suggest it when you return to
-a large older thread. See [commands and skills](./composer.md#commands-and-skills)
-for using composer commands.
+**Compact context** from the context meter. When you return to a large thread
+after more than an hour, the send button changes to **Compact and send**: Enter
+summarizes the history first, then sends your message. To keep the full history
+for that message, open the menu next to the button and choose **Send with full
+history**. See [commands and skills](./composer.md#commands-and-skills) for using
+composer commands.
 
 ## Usage limits
 
@@ -88,8 +91,15 @@ If that Claude config directory has a cached Anthropic login, run `/logout` in a
 Claude Code session using that directory before starting the router setup. Cached
 login credentials can conflict with the router token.
 
-Verify requests in OpenRouter's activity dashboard. For model-role overrides and
-current compatibility requirements, use the
+Select the model you want in T3 Code. For an OpenRouter model outside the built-in
+list, open that Claude instance in **Settings > Providers** and add its full model
+ID with **Add custom model**. Then select it in the chat model picker.
+`ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
+do not replace the explicit model ID selected in T3 Code. Custom models may have
+fewer effort, thinking, or context controls than built-in models.
+
+Verify the model used in OpenRouter's activity dashboard. For current compatibility
+requirements, use the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
 
 ## Other routers

@@ -146,7 +146,10 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, cert.certificateId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!runGatewayCertTests)(
@@ -193,7 +196,10 @@ test.provider.skipIf(!runGatewayCertTests)(
       yield* stack.destroy();
       yield* expectGone(accountId, second.certificateId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -236,5 +242,8 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, cert.certificateId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"],
+    timeout: 120_000,
+  },
 );

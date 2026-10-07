@@ -1,6 +1,6 @@
 import * as AWS from "@/AWS";
 import { Index, VectorBucket } from "@/AWS/S3Vectors";
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import * as s3vectors from "@distilled.cloud/aws/s3vectors";
@@ -95,7 +95,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertBucketDeleted(bucket.vectorBucketName);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3vectors", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -149,7 +152,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertBucketDeleted("alchemy-test-vectors-a");
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3vectors", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -212,7 +218,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertBucketDeleted(bucketName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3vectors", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -261,5 +270,8 @@ test.provider(
       yield* assertBucketDeleted(bucket.vectorBucketName);
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:s3vectors", "live"],
+    timeout: 120_000,
+  },
 );

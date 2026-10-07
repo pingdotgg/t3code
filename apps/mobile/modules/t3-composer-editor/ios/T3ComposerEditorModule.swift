@@ -36,14 +36,18 @@ enum T3ComposerClipboard {
   }
 }
 
+// Expo Modules 2.0: the clipboard function is a @JS member; the view stays in
+// definition() until the 2.0 view API lands.
+@ExpoModule("T3ComposerEditor")
 public class T3ComposerEditorModule: Module {
+  // UIPasteboard is main-thread only, so the member is main-actor isolated.
+  @JS
+  @MainActor
+  func writeContextClipboard(text: String, fragment: String) async {
+    T3ComposerClipboard.write(text: text, fragment: fragment)
+  }
+
   public func definition() -> ModuleDefinition {
-    Name("T3ComposerEditor")
-
-    AsyncFunction("writeContextClipboard") { (text: String, fragment: String) in
-      T3ComposerClipboard.write(text: text, fragment: fragment)
-    }.runOnQueue(.main)
-
     View(T3ComposerEditorView.self) {
       Prop("controlledDocumentJson") { (view: T3ComposerEditorView, documentJson: String) in
         view.setControlledDocumentJson(documentJson)
@@ -87,6 +91,21 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("submitTitle") { (view: T3ComposerEditorView, title: String) in
+        view.setSubmitTitle(title)
+      }
+      Prop("alternateSubmitTitle") { (view: T3ComposerEditorView, title: String) in
+        view.setAlternateSubmitTitle(title)
+      }
+      Prop("enterBehavior") { (view: T3ComposerEditorView, behavior: String) in
+        view.setEnterBehavior(behavior)
+      }
+      Prop("textPasteThresholdBytes") { (view: T3ComposerEditorView, threshold: Int) in
+        view.setTextPasteThresholdBytes(threshold)
+      }
+      Prop("maxInputChars") { (view: T3ComposerEditorView, maxInputChars: Int) in
+        view.setMaxInputChars(maxInputChars)
+      }
 
       Events(
         "onComposerChange",
@@ -97,6 +116,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",
+        "onComposerPasteText",
         "onComposerContentSizeChange"
       )
 

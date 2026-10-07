@@ -2,12 +2,12 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, expect, it } from "@effect/vitest"
 import { Duration, Effect, FileSystem, Layer } from "effect"
-import * as PersistedQueueTest from "effect-test/unstable/persistence/PersistedQueueTest"
-import * as SqlCleanupTest from "effect-test/unstable/persistence/SqlCleanupTest"
+import * as PersistedQueueTest from "effect-test/persistence/PersistedQueueTest"
+import * as SqlCleanupTest from "effect-test/persistence/SqlCleanupTest"
+import { PersistedQueue, Persistence } from "effect/persistence"
+import { Reactivity } from "effect/reactivity"
+import * as SqlClient from "effect/sql/SqlClient"
 import { TestClock } from "effect/testing"
-import { PersistedQueue, Persistence } from "effect/unstable/persistence"
-import { Reactivity } from "effect/unstable/reactivity"
-import * as SqlClient from "effect/unstable/sql/SqlClient"
 
 const ClientLayer = Effect.gen(function*() {
   const fs = yield* FileSystem.FileSystem
@@ -23,7 +23,18 @@ const ClientLayer = Effect.gen(function*() {
 const testLayer = (layer: Layer.Layer<Persistence.BackingPersistence, never, SqlClient.SqlClient>) =>
   layer.pipe(Layer.provideMerge(ClientLayer))
 
-const suite = (name: string, layer: Layer.Layer<Persistence.BackingPersistence, never, SqlClient.SqlClient>) =>
+const suite = (
+  name: string,
+  layer: Layer.Layer<Persistence.BackingPersistence, never, SqlClient.SqlClient>,
+  options: {
+    /**
+     * A crafted `getMany` key which, if request keys are interpolated into SQL
+     * without parameterization, escapes the `IN` list and
+     * reads the `sqli_victim` store's entries from the `sqli_attacker` store.
+     */
+    readonly injectionProbe: string
+  }
+) =>
   it.layer(testLayer(layer))(`Persistence (${name})`, (it) => {
     it.effect("set + get", () =>
       Effect.gen(function*() {
@@ -114,10 +125,49 @@ const suite = (name: string, layer: Layer.Layer<Persistence.BackingPersistence, 
         expect(yield* storeA.get("shared-key")).toEqual(undefined)
         expect(yield* storeB.get("shared-key")).toEqual({ name: "Bob" })
       }))
+
+    it.effect("getMany treats keys containing single quotes as data", () =>
+      Effect.gen(function*() {
+        const persistence = yield* Persistence.BackingPersistence
+        const store = yield* persistence.make("test_store_quotes")
+        yield* store.set("it's-a-key", { name: "Alice" }, undefined)
+
+        // Keys must be bound as parameters, not
+        // interpolated into the `IN` list as raw string literals.
+        const values = yield* store.getMany(["it's-a-key", "missing'key"])
+        expect(values).toEqual([{ name: "Alice" }, undefined])
+      }))
+
+    it.effect("getMany preserves store isolation for crafted keys", () =>
+      Effect.gen(function*() {
+        const persistence = yield* Persistence.BackingPersistence
+        const victim = yield* persistence.make("sqli_victim")
+        yield* victim.set("secret", { secret: "victim-data" }, undefined)
+
+        const attacker = yield* persistence.make("sqli_attacker")
+        yield* attacker.set("innocent", { name: "Mallory" }, undefined)
+
+        // The probe is a no-op key when keys are parameterized. If keys are
+        // interpolated into raw SQL it escapes the `IN` list and exfiltrates
+        // the victim store's `secret` entry into the attacker's results.
+        const values = yield* attacker.getMany(["secret", options.injectionProbe])
+        expect(values).toEqual([undefined, undefined])
+        expect(yield* attacker.get("secret")).toEqual(undefined)
+      }))
   })
 
-suite("table-per-store", Persistence.layerBackingSqlMultiTable)
-suite("single-table", Persistence.layerBackingSql)
+suite("table-per-store", Persistence.layerBackingSqlMultiTable, {
+  // Expands to `... WHERE id IN ('secret', '') UNION SELECT id, value FROM
+  // effect_persistence_sqli_victim WHERE ('1'='1') AND (expires IS NULL OR
+  // expires > ?)`, appending every victim row to the attacker's result set.
+  injectionProbe: `') UNION SELECT id, value FROM effect_persistence_sqli_victim WHERE ('1'='1`
+})
+suite("single-table", Persistence.layerBackingSql, {
+  // Expands to `... WHERE store_id = 'sqli_attacker' AND id IN ('secret', '')
+  // OR store_id='sqli_victim' AND ('1'='1') AND (expires IS NULL OR expires >
+  // ?)`, bypassing the store isolation filter.
+  injectionProbe: `') OR store_id='sqli_victim' AND ('1'='1`
+})
 
 PersistedQueueTest.suite(
   "sql-sqlite-node",

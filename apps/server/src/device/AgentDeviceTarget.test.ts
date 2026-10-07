@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
@@ -37,7 +41,9 @@ console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
       const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
-      const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
+      const files = yield* Effect.forEach(["mini", "android"], (host) =>
+        agentDeviceConfigPath(dir, host, path),
+      );
       for (const [index, file] of files.entries())
         yield* writeAgentDeviceConfig(file, {
           baseUrl: `http://127.0.0.1:${1000 + index}`,
@@ -69,8 +75,8 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        agentDeviceSession("thread", "android", "same-id"),
+      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
+        yield* agentDeviceSession("thread", "android", "same-id"),
       );
       for (const args of [
         ["snapshot"],
@@ -84,6 +90,11 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
           ).rejects.toThrow("Call device_open first"),
         );
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });

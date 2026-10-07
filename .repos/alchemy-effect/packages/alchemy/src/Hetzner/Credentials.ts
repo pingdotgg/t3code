@@ -1,10 +1,12 @@
 import { ConfigError } from "@distilled.cloud/core/errors";
 import { Credentials } from "@distilled.cloud/hetzner";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { getAuthProvider } from "../Auth/AuthProvider.ts";
-import { ALCHEMY_PROFILE, AlchemyProfile } from "../Auth/Profile.ts";
+import {
+  deferUntilFirstUse,
+  orDieCredentialsUnavailable,
+  resolveProviderConfig,
+} from "../Auth/Resolve.ts";
 import {
   HETZNER_AUTH_PROVIDER_NAME,
   type HetznerAuthConfig,
@@ -30,29 +32,30 @@ export const fromAuthProvider = () =>
   Layer.effect(
     Credentials,
     Effect.gen(function* () {
-      const profile = yield* AlchemyProfile;
-      const auth = yield* getAuthProvider<
+      // Defer profile lookup and credential resolution until first use, so
+      // building the provider layers never requires a configured profile.
+      const resolve = yield* resolveProviderConfig<
         HetznerAuthConfig,
         HetznerResolvedCredentials
-      >(HETZNER_AUTH_PROVIDER_NAME);
-      const profileName = yield* ALCHEMY_PROFILE;
-      const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
-
-      return yield* profile.loadOrConfigure(auth, profileName, { ci }).pipe(
-        Effect.flatMap((config) =>
-          auth.read(profileName, config as HetznerAuthConfig),
+      >(HETZNER_AUTH_PROVIDER_NAME).pipe(
+        Effect.flatMap(({ profileName, resolve }) =>
+          resolve.pipe(
+            Effect.map((creds) => ({
+              token: creds.token,
+              apiBaseUrl: creds.apiBaseUrl,
+            })),
+            Effect.mapError(
+              (e) =>
+                new ConfigError({
+                  message: `Failed to resolve Hetzner credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
+                }),
+            ),
+          ),
         ),
-        Effect.map((creds) => ({
-          token: creds.token,
-          apiBaseUrl: creds.apiBaseUrl,
-        })),
-        Effect.mapError(
-          (e) =>
-            new ConfigError({
-              message: `Failed to resolve Hetzner credentials for profile '${profileName}': ${(e as { message?: string }).message ?? String(e)}`,
-            }),
-        ),
-        Effect.orDie,
+        deferUntilFirstUse,
+      );
+      return yield* resolve.pipe(
+        orDieCredentialsUnavailable(HETZNER_AUTH_PROVIDER_NAME),
         Effect.cached,
       );
     }),

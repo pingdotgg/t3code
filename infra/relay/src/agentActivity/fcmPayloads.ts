@@ -5,13 +5,7 @@ import {
 } from "./agentActivityAggregate.ts";
 import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
 
-export function androidActivityHero(aggregate: RelayAgentActivityAggregateState) {
-  return [...aggregate.activities].sort(
-    (a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase),
-  )[0];
-}
-
-/** The expanded Android card uses the same rows and priority as the iOS widget. */
+/** Android focuses the priority thread while retaining rows for older clients. */
 export function androidActivityData(aggregate: RelayAgentActivityAggregateState | null) {
   const rows = [...(aggregate?.activities ?? [])].sort(
     (a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase),
@@ -40,7 +34,12 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
   );
   return {
     active: String(activeCount > 0),
+    // Keep the status bar chip short enough to display alongside the app icon.
+    activity_chip: activeCount > 0 ? (attentionCount > 0 ? "Review" : "Active") : "",
     activity_title: title,
+    activity_phase: hero?.phase ?? "",
+    activity_active_count: String(activeCount),
+    activity_attention_count: String(attentionCount),
     activity_body: hero
       ? `${hero.status}: ${clean(hero.threadTitle)} · ${clean(hero.projectTitle)}`
       : "",

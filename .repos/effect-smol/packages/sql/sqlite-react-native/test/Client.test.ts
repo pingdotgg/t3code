@@ -1,14 +1,14 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { Reactivity } from "effect/unstable/reactivity"
+import { Reactivity } from "effect/reactivity"
 import { vi } from "vitest"
 
 const state = vi.hoisted(() => ({
   database: {
     close() {},
     execute: async () => ({ rowsAffected: 0, rows: [{ value: 1 }] }),
-    executeRaw: async () => [[1]],
-    executeRawSync: () => [[1]],
+    executeRaw: async () => ({ rowsAffected: 0, rawRows: [[1]], columnNames: ["value"] }),
+    executeRawSync: () => ({ rowsAffected: 0, rawRows: [[1]], columnNames: ["value"] }),
     executeSync: () => ({ rowsAffected: 0, rows: [{ value: 1 }] })
   }
 }))

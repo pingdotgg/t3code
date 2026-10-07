@@ -9,7 +9,9 @@ import type {
   PullRequestCapabilities,
   PullRequestChecksState,
   PullRequestCheck,
+  PullRequestChecks,
   PullRequestComment,
+  PullRequestFileViewed,
   PullRequestCommit,
   PullRequestInvolvement,
   PullRequestLabel,
@@ -30,6 +32,7 @@ import type {
   PullRequestReviewerKind,
   PullRequestLabelCandidateList,
   PullRequestState,
+  PullRequestPreview,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
   SourceControlProviderKind,
@@ -49,7 +52,13 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
   {
     provider: SourceControlProviderKindSchema,
     operation: Schema.String,
-    reason: Schema.Literals(["missing-tool", "unauthenticated", "rate-limited", "failed"]),
+    reason: Schema.Literals([
+      "missing-tool",
+      "unauthenticated",
+      "rate-limited",
+      "not-found",
+      "failed",
+    ]),
     detail: Schema.String,
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
@@ -58,6 +67,15 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
   override get message(): string {
     return `${this.provider} failed in ${this.operation}: ${this.detail}`;
   }
+}
+
+/**
+ * `status` moves with the state, mergeability, head, or checks, which the detail read reports;
+ * `remarks` moves with comments and reviews, which only the activity read reports.
+ */
+export interface ProviderChangeRequestWatchFingerprint {
+  readonly status: string;
+  readonly remarks: string;
 }
 
 export interface PullRequestProviderFailure {
@@ -114,6 +132,11 @@ export interface ProviderChangeRequestSummary {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
+  /**
+   * The host-native stack the pull request sits in, from the same read. Null when the host says
+   * it is in none; absent when the read did not ask.
+   */
+  readonly stack?: PullRequestStackMembership | null | undefined;
 }
 
 /** One layer of a host-native stack, bottom to top order is the array's. */
@@ -205,6 +228,8 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  /** The head commit, where the host's detail read reports it. */
+  readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -238,6 +263,7 @@ export interface ProviderChangeRequestActivity {
    */
   readonly commentCount: number;
   readonly commentsTruncated: boolean;
+  readonly reviewThreadsTruncated?: boolean;
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   /** The change request's own reactions, from a host that has them. */
@@ -258,6 +284,32 @@ export interface ProviderDiffFileContents {
   readonly newContents: string;
 }
 
+export interface ProviderFilesViewed {
+  readonly files: ReadonlyArray<PullRequestFileViewed>;
+  /** The host has more files than were read, so the ones missing here are not "unviewed". */
+  readonly truncated: boolean;
+}
+
+/**
+ * What version each of the asked-for files is at, on the change request's head. Opaque strings,
+ * compared only against one another, where the empty string is the answer for a file the change
+ * request deletes rather than a gap. A path is absent only where the read could not say, so a
+ * provider converts its host's own absences on the way here.
+ *
+ * The whole path a version travels, and the three senses of null along it, are in
+ * `docs/internals/pull-request-file-revisions.md`.
+ */
+export interface ProviderFileRevisions {
+  readonly revisions: ReadonlyMap<string, string>;
+  /**
+   * Whether these are every file the change request carries rather than only the paths asked
+   * about. A host with no per-file version reads the whole change to answer for one file, and
+   * saying so is what keeps the next tick, naming a path nothing asked about before, from making
+   * it read the whole change again. False for a read cut short, which cannot speak past the cut.
+   */
+  readonly complete?: boolean;
+}
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   /** Provider-native repository identity, e.g. `owner/repo` or `group/subgroup/project`. */
@@ -276,12 +328,28 @@ export interface ProviderRepositoryRef {
  * failing at call time.
  */
 export interface PullRequestProviderApi {
+  readonly withVerifiedCredential?: <A, E, R>(
+    input: { readonly cwd: string; readonly host: string },
+    use: (identity: {
+      readonly accountId: string;
+      readonly viewer: string;
+      readonly credentialFingerprint: string;
+    }) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | PullRequestProviderError, R>;
+  readonly getRoutingIdentity?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<
+    { readonly accountId: string; readonly viewer: string },
+    PullRequestProviderError
+  >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
 
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {
     readonly cwd: string;
+    readonly host?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
@@ -353,9 +421,21 @@ export interface PullRequestProviderApi {
     }>;
   }) => Effect.Effect<ReadonlyArray<ProviderChangeRequestStat>, PullRequestProviderError>;
 
+  readonly getChangeRequestChecks?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestChecks, PullRequestProviderError>;
+
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /** Hosts without a narrow read use their existing detail response for hover cards. */
+  readonly getChangeRequestPreview?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<
+    Omit<PullRequestPreview, "projectId" | "repository">,
+    PullRequestProviderError
+  >;
 
   /**
    * The cheap live fields used by linked threads. Optional because a provider without a narrow
@@ -364,6 +444,15 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestSummary?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
+  /**
+   * A cheap fingerprint of what a pull request watch reports, so it reads the change request in
+   * full only when this moves. Null when the host gave no answer for it. Optional: a host
+   * without one has its watched change requests read in full on every pass.
+   */
+  readonly getChangeRequestWatchFingerprint?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
 
   /**
    * The host-native stack a change request belongs to, or null when it is not stacked. Optional
@@ -397,7 +486,11 @@ export interface PullRequestProviderApi {
    * is no request at all.
    */
   readonly getViewerPermissions: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Skip branch comparison when checking permission for an unrelated operation. */
+      readonly includeUpdateBranch?: boolean;
+    },
   ) => Effect.Effect<PullRequestViewerPermissions, PullRequestProviderError>;
 
   /**
@@ -428,12 +521,48 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<ProviderDiffFileContents, PullRequestProviderError>;
 
+  /**
+   * Which files the reader has already cleared. Only called when `capabilities.viewedFiles` is
+   * `"host"`, and read apart from the patch: this moves with every press rather than every push.
+   */
+  readonly getFilesViewed?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderFilesViewed, PullRequestProviderError>;
+
+  /**
+   * Clears files, or puts them back. Only called when `capabilities.viewedFiles` is `"host"`.
+   * A host with no bulk form is still owed one round trip for the batch rather than one per file,
+   * since the point of gathering presses is that the host is asked once.
+   */
+  readonly setFilesViewed?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  /**
+   * What version the head has of each of these files. Required of a host whose
+   * `capabilities.viewedFiles` is `"environment"`, and unused by one that keeps the marks itself:
+   * the marks live here, but only the host can say whether what a reader cleared last week is
+   * still what is in front of them. Asked for the marked paths alone, so the cost follows how
+   * much of the change request has been read rather than how large it is.
+   */
+  readonly getFileRevisions?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    },
+  ) => Effect.Effect<ProviderFileRevisions, PullRequestProviderError>;
+
   readonly runAction: (
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
+      /** GitHub merge message cleanup; ignored by hosts without support. */
+      readonly removeAgentCreditsOnMerge?: boolean;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */

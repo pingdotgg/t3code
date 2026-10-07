@@ -1,21 +1,27 @@
+import {
+  environmentServiceInstances,
+  waitUntilDeleted,
+  projectServices as fetchProjectServices,
+} from "./GraphQL.ts";
 import { createHash } from "node:crypto";
-import type {
-  ProjectResponseServicesEdgesItemNode,
-  ServiceCreateResponse,
-  ServiceInstanceResponse,
-  ServiceInstanceUpdateInput,
-  ServiceResponse,
-  ServiceUpdateResponse,
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import {
+  Railway,
+  type Service as RailwayService,
+  type ServiceCreateInput,
+  type ServiceInstance as RailwayServiceInstance,
+  type ServiceInstanceUpdateInput,
+  type VariableUpsertInput,
 } from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import * as FileSystem from "effect/FileSystem";
 import * as Schedule from "effect/Schedule";
+import type * as Types from "effect/Types";
 import { Unowned } from "../AdoptPolicy.ts";
 import * as Bundle from "../Bundle/Bundle.ts";
-import { isResolved } from "../Diff.ts";
+import { isResolved, stripEffects } from "../Diff.ts";
 import type { InputProps } from "../Input.ts";
 import {
   Platform,
@@ -28,11 +34,13 @@ import type { Resource } from "../Resource.ts";
 import type { ServerHost } from "../Server/Process.ts";
 import { Stack } from "../Stack.ts";
 import { createRailwayName, matchesAlchemyPhysicalName } from "./Metadata.ts";
+import { readServiceRegion, syncServiceRegion } from "./ServiceRegion.ts";
 import {
   assertHostDisk,
   type MountSpec,
   type ServiceBinding,
 } from "./MountVolume.ts";
+import { attachVolumeToService } from "./Volume.ts";
 import {
   ownedProjects,
   projectEnvironmentIds,
@@ -55,6 +63,34 @@ import {
   type RailwayHostRuntimeContext,
 } from "./hosted.ts";
 import { mintRpcToken, RPC_TOKEN_ENV } from "./rpc-token.ts";
+
+const serviceFields = <E>(service: Query<RailwayService, E>) => ({
+  id: service.id,
+  name: service.name,
+  deletedAt: service.deletedAt,
+});
+type CloudService = UnwrapPlan<ReturnType<typeof serviceFields>>;
+
+const attributeInstanceFields = <E>(
+  instance: Query<RailwayServiceInstance, E>,
+) => ({
+  source: instance.source.pipe(Query.map((s) => ({ image: s.image }))),
+  region: instance.region,
+  numReplicas: instance.numReplicas,
+  sleepApplication: instance.sleepApplication,
+  latestDeployment: instance.latestDeployment.pipe(
+    Query.map((d) => ({ id: d.id, status: d.status })),
+  ),
+  cronSchedule: instance.cronSchedule,
+  nextCronRunAt: instance.nextCronRunAt,
+});
+const instanceFields = <E>(instance: Query<RailwayServiceInstance, E>) => ({
+  ...attributeInstanceFields(instance),
+  deletedAt: instance.deletedAt,
+  startCommand: instance.startCommand,
+});
+type AttributeInstance = UnwrapPlan<ReturnType<typeof attributeInstanceFields>>;
+type ServiceInstanceResponse = UnwrapPlan<ReturnType<typeof instanceFields>>;
 
 export { FunctionBundleNotSingleFile } from "./hosted.ts";
 export type { InferEnv } from "./InferEnv.ts";
@@ -162,8 +198,11 @@ export interface FunctionProps<
    */
   sleepApplication?: boolean;
   /**
-   * Region for the service instance (`us-west2`, `us-east4`, …). If
-   * omitted, Railway picks the default. Updates in place.
+   * Region the function runs in (`us-west2`, `europe-west4-drams3a`, …).
+   * Railway places replicas with `deploy.multiRegionConfig`. Omit this
+   * and the current placement is left alone (the workspace default on
+   * first create). Updating it moves the replicas in place and keeps
+   * the current replica count.
    */
   region?: string;
   /**
@@ -209,7 +248,10 @@ export type Function<Env extends Record<string, any> = Record<string, any>> =
       cronSchedule: string | undefined;
       /** Observed `sleepApplication`. */
       sleepApplication: boolean | undefined;
-      /** Observed region, if Railway reported one. */
+      /**
+       * Region the function is placed in. Set when
+       * `deploy.multiRegionConfig` has replicas in exactly one region.
+       */
       region: string | undefined;
       /** Port published on the generated service domain. */
       port: number | undefined;
@@ -467,6 +509,7 @@ const resolveFunctionProps = (
  * ```
  *
  * @resource
+ * @product Function
  */
 export const Function: Platform<
   Function,
@@ -552,12 +595,6 @@ class FunctionDeployPending extends Data.TaggedError(
   status: string;
 }> {}
 
-type CloudService =
-  | ServiceResponse
-  | ServiceCreateResponse
-  | ServiceUpdateResponse
-  | ProjectResponseServicesEdgesItemNode;
-
 const projectIdOf = (value: unknown): string | undefined => {
   if (value === null || typeof value !== "object") return undefined;
   const rec = value as { projectId?: unknown };
@@ -624,10 +661,14 @@ const resolveSource = (props: FunctionProps) =>
     });
   });
 
+const readRuntimeImage = Query.fn(() => ({
+  image: Railway.functionRuntime({ name: FUNCTION_RUNTIME_NAME }).latestVersion
+    .image,
+}));
+
 const latestRuntimeImage = () =>
-  railway.functionRuntime({ name: FUNCTION_RUNTIME_NAME }).pipe(
-    Effect.flatMap((runtime) => {
-      const image = runtime.latestVersion.image;
+  readRuntimeImage().pipe(
+    Effect.flatMap(({ image }) => {
       if (image.length === 0) {
         return new FunctionRuntimeImageMissing({
           message: "functionRuntime(bun) returned an empty latestVersion.image",
@@ -654,34 +695,31 @@ const deployReady = (status: string | undefined) =>
 const deployFailed = (status: string | undefined) =>
   status === "FAILED" || status === "CRASHED" || status === "REMOVED";
 
-const alreadyExists = (message: string) =>
-  /already exists|already in use|duplicate/i.test(message);
+const readService = Query.fn((id: string) =>
+  serviceFields(Railway.service({ id })),
+);
 
 const getById = (serviceId: string) =>
-  railway.service({ id: serviceId }).pipe(
+  readService(serviceId).pipe(
     Effect.map((service) => (isGoneService(service) ? undefined : service)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed(undefined),
-    ),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
   );
 
+const readInstance = Query.fn((environmentId: string, serviceId: string) =>
+  instanceFields(Railway.serviceInstance({ environmentId, serviceId })),
+);
+
 const getInstance = (environmentId: string, serviceId: string) =>
-  railway.serviceInstance({ environmentId, serviceId }).pipe(
+  readInstance(environmentId, serviceId).pipe(
     Effect.map((instance) => (isGoneInstance(instance) ? undefined : instance)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed(undefined),
-    ),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
   );
 
 const listProjectServices = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
-    Effect.map((project) =>
-      project.services.edges
-        .map((edge) => edge.node)
-        .filter((node) => !isGoneService(node)),
-    ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed([] as ProjectResponseServicesEdgesItemNode[]),
+  fetchProjectServices(projectId, serviceFields).pipe(
+    Effect.map((services) => services.filter((node) => !isGoneService(node))),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed([] as CloudService[]),
     ),
   );
 
@@ -702,7 +740,7 @@ const waitForInstance = (environmentId: string, serviceId: string) =>
     }),
     Effect.retry({
       while: (e) => e._tag === "Railway.FunctionPending",
-      times: 20,
+      times: 10,
       schedule: Schedule.spaced("2 seconds"),
     }),
     Effect.catchTag("Railway.FunctionPending", () =>
@@ -710,10 +748,16 @@ const waitForInstance = (environmentId: string, serviceId: string) =>
     ),
   );
 
+const readDeployLogs = Query.fn((deploymentId: string) =>
+  Railway.deploymentLogs({ deploymentId, limit: 80 }).pipe(
+    Query.map((row) => ({ severity: row.severity, message: row.message })),
+  ),
+);
+
 const fetchDeployLogs = (deploymentId: string | undefined) =>
   deploymentId === undefined || deploymentId.length === 0
     ? Effect.succeed("")
-    : railway.deploymentLogs({ deploymentId, limit: 80 }).pipe(
+    : readDeployLogs(deploymentId).pipe(
         Effect.map((rows) =>
           rows
             .map((row) =>
@@ -751,7 +795,7 @@ const waitForDeployment = (environmentId: string, serviceId: string) =>
     Effect.retry({
       while: (e) => e._tag === "Railway.FunctionDeployPending",
       // Queued builds under full-suite load can exceed 3 minutes — allow ~8.
-      times: 96,
+      times: 10,
       schedule: Schedule.spaced("5 seconds"),
     }),
   );
@@ -769,24 +813,31 @@ const asVariableMap = (value: unknown): Record<string, string> => {
   return out;
 };
 
+const readVariables = Query.fn(
+  (projectId: string, environmentId: string, serviceId: string) =>
+    Railway.variables({
+      projectId,
+      environmentId,
+      serviceId,
+      unrendered: true,
+    }),
+);
+
+const variableUpsert = Query.fn((input: VariableUpsertInput) =>
+  Railway.variableUpsert({ input }),
+);
+
 const listVariableMap = (
   projectId: string,
   environmentId: string,
   serviceId: string,
 ) =>
-  railway
-    .variables({
-      projectId,
-      environmentId,
-      serviceId,
-      unrendered: true,
-    })
-    .pipe(
-      Effect.map(asVariableMap),
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed({} as Record<string, string>),
-      ),
-    );
+  readVariables(projectId, environmentId, serviceId).pipe(
+    Effect.map(asVariableMap),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed({} as Record<string, string>),
+    ),
+  );
 
 const upsertVariable = (input: {
   projectId: string;
@@ -795,16 +846,37 @@ const upsertVariable = (input: {
   name: string;
   value: string;
 }) =>
-  railway.variableUpsert({
-    input: {
-      projectId: input.projectId,
-      environmentId: input.environmentId,
-      serviceId: input.serviceId,
-      name: input.name,
-      value: input.value,
-      skipDeploys: true,
-    },
+  variableUpsert({
+    projectId: input.projectId,
+    environmentId: input.environmentId,
+    serviceId: input.serviceId,
+    name: input.name,
+    value: input.value,
+    skipDeploys: true,
   });
+
+const serviceCreate = Query.fn((input: ServiceCreateInput) =>
+  serviceFields(Railway.serviceCreate({ input })),
+);
+
+const serviceUpdate = Query.fn((id: string, name: string) =>
+  serviceFields(Railway.serviceUpdate({ id, input: { name } })),
+);
+
+const serviceInstanceUpdate = Query.fn(
+  (
+    environmentId: string,
+    serviceId: string,
+    input: ServiceInstanceUpdateInput,
+  ) => Railway.serviceInstanceUpdate({ environmentId, serviceId, input }),
+);
+
+const serviceInstanceDeploy = Query.fn(
+  (environmentId: string, serviceId: string) =>
+    Railway.serviceInstanceDeployV2({ environmentId, serviceId }),
+);
+
+const serviceDelete = Query.fn((id: string) => Railway.serviceDelete({ id }));
 
 const hostedProgramProps = (
   props: FunctionProps,
@@ -851,29 +923,24 @@ const syncEnv = Effect.fn(function* (input: {
 
 const syncMounts = Effect.fn(function* (input: {
   environmentId: string;
+  projectId: string;
   serviceId: string;
   mounts: MountSpec[];
 }) {
   for (const mount of input.mounts) {
-    if (mount.volumeId.length === 0) continue;
-    yield* railway
-      .volumeInstanceUpdate({
-        volumeId: mount.volumeId,
-        environmentId: input.environmentId,
-        input: {
-          serviceId: input.serviceId,
-          mountPath: mount.path,
-        },
-      })
-      .pipe(
-        Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
-      );
+    yield* attachVolumeToService({
+      environmentId: input.environmentId,
+      projectId: input.projectId,
+      serviceId: input.serviceId,
+      volumeId: mount.volumeId,
+      mountPath: mount.path,
+    });
   }
 });
 
 const toAttrs = (input: {
   service: CloudService;
-  instance: ServiceInstanceResponse | undefined;
+  instance: AttributeInstance | undefined;
   domain: ServiceDomainRecord | undefined;
   projectId: string;
   environmentId: string;
@@ -881,6 +948,7 @@ const toAttrs = (input: {
   port: number | undefined;
   codeHash: string;
   rpcToken: string;
+  region: string | undefined;
 }): Function["Attributes"] => ({
   serviceId: input.service.id,
   name: input.service.name,
@@ -890,7 +958,7 @@ const toAttrs = (input: {
   runtime: FUNCTION_RUNTIME_NAME,
   cronSchedule: input.instance?.cronSchedule ?? undefined,
   sleepApplication: input.instance?.sleepApplication ?? undefined,
-  region: input.instance?.region ?? undefined,
+  region: input.region,
   port: input.port ?? input.domain?.targetPort,
   dnsName: `${input.service.name}.railway.internal`,
   rpcToken: input.rpcToken,
@@ -910,7 +978,7 @@ const instanceSettingsDelta = (input: {
   props: FunctionProps;
 }): ServiceInstanceUpdateInput | undefined => {
   const instance = input.instance;
-  const delta: ServiceInstanceUpdateInput = {};
+  const delta: Types.Mutable<ServiceInstanceUpdateInput> = {};
   let changed = false;
 
   if (!sameImage(instance?.source?.image, input.sourceImage)) {
@@ -935,13 +1003,6 @@ const instanceSettingsDelta = (input: {
     delta.sleepApplication = input.props.sleepApplication;
     changed = true;
   }
-  if (
-    input.props.region !== undefined &&
-    (instance?.region ?? undefined) !== input.props.region
-  ) {
-    delta.region = input.props.region;
-    changed = true;
-  }
   return changed ? delta : undefined;
 };
 
@@ -961,7 +1022,10 @@ export const FunctionProvider = () =>
         stables: ["serviceId", "projectId", "environmentId"],
         nuke: { dependsOn: ["Railway.Project"] },
 
-        diff: Effect.fn(function* ({ news, output }) {
+        diff: Effect.fn(function* ({ news: desired, output }) {
+          // Runtime exports are covered by the bundle hash, not evaluated
+          // as infrastructure inputs during planning.
+          const news = stripEffects(desired);
           if (news === undefined || !isResolved(news)) return undefined;
           if (output === undefined) return undefined;
           const nextProject = projectIdOf(news.project);
@@ -1025,6 +1089,15 @@ export const FunctionProvider = () =>
             resolvedEnvId.length > 0
               ? yield* getInstance(resolvedEnvId, found.id)
               : undefined;
+          const region =
+            resolvedEnvId.length > 0
+              ? yield* readServiceRegion({
+                  environmentId: resolvedEnvId,
+                  projectId: resolvedProjectId,
+                  serviceId: found.id,
+                  legacy: instance?.region,
+                })
+              : undefined;
           const attrs = toAttrs({
             service: found,
             instance,
@@ -1035,6 +1108,7 @@ export const FunctionProvider = () =>
             port: output?.port ?? olds?.port,
             codeHash: output?.code.hash ?? "",
             rpcToken: output?.rpcToken ?? "",
+            region,
           });
           if (output !== undefined) return attrs;
           return matchesAlchemyPhysicalName(found.name)
@@ -1046,37 +1120,52 @@ export const FunctionProvider = () =>
           const projects = yield* ownedProjects();
           const rows = yield* Effect.forEach(projects, (project) =>
             Effect.gen(function* () {
-              const services = yield* listProjectServices(project.projectId);
-              const envIds = yield* projectEnvironmentIds(project);
-              const items = yield* Effect.forEach(
-                services.filter((service) =>
-                  matchesAlchemyPhysicalName(service.name),
-                ),
-                (service) =>
-                  Effect.gen(function* () {
-                    for (const environmentId of envIds) {
-                      const instance = yield* getInstance(
-                        environmentId,
-                        service.id,
-                      );
-                      const image = instance?.source?.image ?? undefined;
-                      if (!isFunctionImage(image)) continue;
-                      return toAttrs({
-                        service,
-                        instance,
-                        domain: undefined,
-                        projectId: project.projectId,
-                        environmentId,
-                        image: image ?? "",
-                        port: undefined,
-                        codeHash: "",
-                        rpcToken: "",
-                      });
-                    }
-                    return undefined;
-                  }),
+              const services = new Map(
+                (yield* listProjectServices(project.projectId))
+                  .filter((service) => matchesAlchemyPhysicalName(service.name))
+                  .map((service) => [service.id, service]),
               );
-              return items.filter((item) => item !== undefined);
+              if (services.size === 0) return [];
+              const envIds = yield* projectEnvironmentIds(project);
+              const items = yield* Effect.forEach(envIds, (environmentId) =>
+                environmentServiceInstances(
+                  environmentId,
+                  project.projectId,
+                  (instance) => ({
+                    ...attributeInstanceFields(instance),
+                    serviceId: instance.serviceId,
+                    deletedAt: instance.deletedAt,
+                  }),
+                ).pipe(
+                  Effect.map((instances) =>
+                    instances.flatMap((instance) => {
+                      const service = services.get(instance.serviceId);
+                      const image = instance.source?.image;
+                      if (
+                        instance.deletedAt != null ||
+                        service === undefined ||
+                        !isFunctionImage(image)
+                      )
+                        return [];
+                      return [
+                        toAttrs({
+                          service,
+                          instance,
+                          domain: undefined,
+                          projectId: project.projectId,
+                          environmentId,
+                          image: image ?? "",
+                          port: undefined,
+                          codeHash: "",
+                          rpcToken: "",
+                          region: instance.region ?? undefined,
+                        }),
+                      ];
+                    }),
+                  ),
+                ),
+              );
+              return items.flat();
             }),
           );
           return rows.flat();
@@ -1178,23 +1267,16 @@ export const FunctionProvider = () =>
           }
 
           if (current === undefined) {
-            const created = yield* railway
-              .serviceCreate({
-                input: {
-                  projectId,
-                  environmentId,
-                  name,
-                  source: { image },
-                },
-              })
-              .pipe(
-                Effect.catchTag("RailwayValidationError", (e) =>
-                  alreadyExists(e.message)
-                    ? Effect.succeed(undefined)
-                    : Effect.fail(e),
-                ),
-                Effect.catchTag("Conflict", () => Effect.succeed(undefined)),
-              );
+            const created = yield* serviceCreate({
+              projectId,
+              environmentId,
+              name,
+              source: { image },
+            }).pipe(
+              Effect.catchTag("RailwayValidationError", () =>
+                Effect.succeed(undefined),
+              ),
+            );
             current = created ?? (yield* findByName(projectId, name));
           }
 
@@ -1203,10 +1285,7 @@ export const FunctionProvider = () =>
           }
 
           if (current.name !== name) {
-            current = yield* railway.serviceUpdate({
-              id: current.id,
-              input: { name },
-            });
+            current = yield* serviceUpdate(current.id, name);
           }
 
           // The service instance must exist in this environment before a
@@ -1231,15 +1310,29 @@ export const FunctionProvider = () =>
             props,
           });
           if (instanceDelta !== undefined) {
-            yield* railway.serviceInstanceUpdate({
+            yield* serviceInstanceUpdate(
               environmentId,
-              serviceId: current.id,
-              input: instanceDelta,
-            });
+              current.id,
+              instanceDelta,
+            );
             needsDeploy = true;
             instance =
               (yield* getInstance(environmentId, current.id)) ?? instance;
           }
+
+          // Pin `deploy.multiRegionConfig` before the build, then again after,
+          // in case the deploy wrote the workspace default back.
+          const serviceId = current.id;
+          const placeRegion = () =>
+            syncServiceRegion({
+              environmentId,
+              projectId,
+              serviceId,
+              region: props.region,
+              legacy: instance?.region,
+              fallbackReplicas: instance?.numReplicas,
+            });
+          let region = yield* placeRegion();
 
           const envChanged = yield* syncEnv({
             projectId,
@@ -1260,19 +1353,15 @@ export const FunctionProvider = () =>
 
           yield* syncMounts({
             environmentId,
+            projectId,
             serviceId: current.id,
             mounts: bound.mounts,
           });
 
           if (needsDeploy || instance?.latestDeployment == null) {
-            yield* railway
-              .serviceInstanceDeployV2({
-                environmentId,
-                serviceId: current.id,
-              })
-              .pipe(
-                Effect.catchTag("RailwayValidationError", () => Effect.void),
-              );
+            yield* serviceInstanceDeploy(environmentId, current.id).pipe(
+              Effect.catchTag("RailwayValidationError", () => Effect.void),
+            );
           }
 
           // Cron-only Functions sleep until the schedule. Waiting for
@@ -1299,6 +1388,8 @@ export const FunctionProvider = () =>
             }
           }
 
+          region = yield* placeRegion();
+
           return toAttrs({
             service: current,
             instance,
@@ -1309,32 +1400,22 @@ export const FunctionProvider = () =>
             port,
             codeHash,
             rpcToken,
+            region,
           });
         }),
 
         delete: Effect.fn(function* ({ output }) {
           const serviceId = output.serviceId;
           if (serviceId.length === 0) return;
-          yield* railway
-            .serviceDelete({
-              id: serviceId,
-              ...(output.environmentId.length > 0
-                ? { environmentId: output.environmentId }
-                : {}),
-            })
-            .pipe(
-              Effect.catchTag(
-                ["RailwayNotFound", "NotFound"],
-                () => Effect.void,
-              ),
-            );
-          yield* getById(serviceId).pipe(
-            Effect.map((service) => service === undefined),
-            Effect.repeat({
-              schedule: Schedule.spaced("1 second"),
-              until: (gone) => gone,
-              times: 8,
-            }),
+          yield* serviceDelete(serviceId).pipe(
+            Effect.catchTag("RailwayNotFound", () => Effect.void),
+          );
+          yield* waitUntilDeleted(
+            "Service",
+            serviceId,
+            getById(serviceId).pipe(
+              Effect.map((service) => service === undefined),
+            ),
           );
         }),
       });

@@ -1,12 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
-  ProjectFaviconPath,
-} from "./orchestration.ts";
+} from "./chatAttachment.ts";
+import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
@@ -41,6 +41,13 @@ export const AssetResource = Schema.Union([
         inline response after deciding the file type is safe to preview. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   }),
+  // An image a tool returned inline, such as a device screenshot, by its order
+  // in the stored output. The timeline never carries these bytes.
+  Schema.TaggedStruct("tool-output-image", {
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    index: NonNegativeInt,
+  }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     // A cache-key hint only. The server reads the authoritative path from the
@@ -49,6 +56,13 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
+  }),
+  // An upload a pull request body points at on GitHub. A private repository serves these only
+  // to a request that carries a credential, which the client has none of, so the server fetches
+  // them with the `gh` credential the repository at `cwd` authenticates with.
+  Schema.TaggedStruct("github-media", {
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
@@ -211,7 +225,9 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   override get message(): string {
     return this.resource._tag === "media-file"
       ? "Media file was not found."
-      : "Workspace asset was not found.";
+      : this.resource._tag === "tool-output-image"
+        ? "Tool output image was not found."
+        : "Workspace asset was not found.";
   }
 }
 
@@ -285,6 +301,15 @@ export class AssetSigningKeyLoadError extends Schema.TaggedError<AssetSigningKey
   }
 }
 
+export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<AssetGitHubMediaUrlValidationError>()(
+  "AssetGitHubMediaUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Only media hosted by GitHub can be fetched with a GitHub credential.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -298,6 +323,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
+  AssetGitHubMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

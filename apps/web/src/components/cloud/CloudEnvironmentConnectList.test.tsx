@@ -1,8 +1,8 @@
-import type { Discovery } from "@t3tools/client-runtime/relay";
+import { RELAY_TUNNEL_RELEASED_MESSAGE, type Discovery } from "@t3tools/client-runtime/relay";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -152,6 +152,40 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+describe("cloud environment offline reasons", () => {
+  it("tells the user to update a computer whose idle tunnel was removed", async () => {
+    const base = linkedMachines.get(newMachineId)!;
+    const offlineEntry = (offlineReason?: "tunnel_released") => ({
+      ...base,
+      availability: "offline" as const,
+      status: Option.some({
+        environmentId: newMachineId,
+        endpoint: base.environment.endpoint,
+        status: "offline" as const,
+        checkedAt: "2026-09-15T00:00:00Z",
+        error: "Managed endpoint health request failed.",
+        ...(offlineReason ? { offlineReason } : {}),
+      }),
+    });
+    const rowText = () =>
+      renderer!.root.findAllByType("p").flatMap((paragraph) => paragraph.children);
+
+    discovery.listEnvironments.mockResolvedValue(new Map([[newMachineId, offlineEntry()]]));
+    await mount();
+    expect(rowText()).toContain("T3 Connect · Not added · Relay offline");
+
+    await act(async () => {
+      publish({
+        environments: new Map([[newMachineId, offlineEntry("tunnel_released")]]),
+        refreshing: false,
+        offline: false,
+        error: Option.none(),
+      });
+    });
+    expect(rowText()).toContain(RELAY_TUNNEL_RELEASED_MESSAGE);
+  });
+});
+
 describe("cloud onboarding discovery", () => {
   it("signals that the section can expand after initial discovery settles", async () => {
     let finishDiscovery!: (environments: DiscoveredEnvironments) => void;
@@ -175,7 +209,85 @@ describe("cloud onboarding discovery", () => {
       finishDiscovery(linkedMachines);
     });
     expect(onDiscoveryReady).toHaveBeenCalledTimes(1);
-    expect(renderer!.root.findByType("button").children).toEqual(["Connect"]);
+    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
+  });
+
+  it("keeps incompatible discoveries unselected until the user enables a compatible server", async () => {
+    const base = linkedMachines.get(newMachineId)!;
+    const entry = (protocolVersion: number) => ({
+      ...base,
+      status: Option.some({
+        environmentId: newMachineId,
+        endpoint: base.environment.endpoint,
+        status: "online" as const,
+        checkedAt: "2026-09-15T00:00:00Z",
+        descriptor: {
+          environmentId: newMachineId,
+          label: base.environment.label,
+          platform: { os: "linux" as const, arch: "x64" as const },
+          serverVersion: "1.0.0",
+          orchestrationProtocolVersion: protocolVersion,
+          capabilities: { repositoryIdentity: true },
+        },
+      }),
+    });
+    discovery.listEnvironments.mockResolvedValue(
+      new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION + 1)]]),
+    );
+    const onSelectionChange = vi.fn();
+    const autoSelectedComputers = new Set<EnvironmentId>();
+    function Setup() {
+      const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId>>(
+        new Set([newMachineId]),
+      );
+      return (
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          showSavedEnvironments
+          selection={{
+            autoSelectedComputers,
+            selectedIds,
+            onChange: (id, checked) => {
+              onSelectionChange(id, checked);
+              setSelectedIds((current) => {
+                const next = new Set(current);
+                if (checked) next.add(id);
+                else next.delete(id);
+                return next;
+              });
+            },
+          }}
+        />
+      );
+    }
+    await act(async () => {
+      renderer = create(<Setup />);
+    });
+    expect(discovery.register).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledWith(newMachineId, false);
+    expect(renderer!.root.findByType("input").props.checked).toBe(false);
+    expect(renderer!.root.findByType("input").props.disabled).toBe(true);
+    expect(renderer!.root.findAllByType("span").flatMap((span) => span.children)).toContain(
+      "Client not supported",
+    );
+    await act(async () => {
+      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
+    });
+    expect(discovery.register).not.toHaveBeenCalled();
+    await act(async () =>
+      publish({
+        ...discovery.state!,
+        environments: new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION)]]),
+      }),
+    );
+    expect(discovery.register).not.toHaveBeenCalled();
+    expect(renderer!.root.findByType("input").props.checked).toBe(false);
+    expect(renderer!.root.findByType("input").props.disabled).toBe(false);
+    await act(async () => {
+      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
+    });
+    expect(discovery.register).toHaveBeenCalledTimes(1);
   });
 
   it("connects and selects discovered computers by default without overwriting deselection", async () => {
@@ -232,7 +344,7 @@ describe("cloud onboarding discovery", () => {
     expect(renderer!.root.findAllByType("p").map((node) => node.children)).toContainEqual([
       "Work laptop",
     ]);
-    expect(renderer!.root.findByType("button").children).toEqual(["Connect"]);
+    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(2);
   });
@@ -240,7 +352,7 @@ describe("cloud onboarding discovery", () => {
   it("keeps a discovered computer visible when it is added to the browser", async () => {
     discovery.listEnvironments.mockResolvedValue(linkedMachines);
     await mount();
-    expect(renderer!.root.findByType("button").children).toEqual(["Connect"]);
+    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
     await act(async () => {
       renderer!.update(
         <CloudEnvironmentConnectRows
@@ -249,6 +361,7 @@ describe("cloud onboarding discovery", () => {
             {
               environmentId: newMachineId,
               connection: { phase: "connected", error: null, traceId: null },
+              relayManaged: true,
             },
           ]}
           showSavedEnvironments

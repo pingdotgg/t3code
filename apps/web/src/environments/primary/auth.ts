@@ -2,6 +2,7 @@ import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthEnvironmentScope,
+  AuthGrantScope,
   AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
@@ -11,7 +12,7 @@ import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3too
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClientError } from "effect/unstable/http";
+import { HttpClientError } from "effect/http";
 
 import {
   getPairingTokenFromUrl,
@@ -140,6 +141,7 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -307,13 +309,13 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
-  const bootstrapCredential = getDesktopBootstrapCredential();
+async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
   const currentSession = await fetchSessionState();
-  if (currentSession.authenticated) {
+  if (currentSession.authenticated && !urlCredential) {
     return { status: "authenticated" };
   }
 
+  const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
     return {
       status: "requires-auth",
@@ -347,12 +349,13 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   await waitForAuthenticatedSessionAfterBootstrap();
   resolvedAuthenticatedGateState = { status: "authenticated" };
   bootstrapPromise = null;
+  explicitPairingRequested = false;
   stripPairingTokenFromUrl();
 }
 
 export async function createServerPairingCredential(input?: {
   readonly label?: string;
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes?: ReadonlyArray<AuthGrantScope>;
 }): Promise<AuthPairingCredentialResult> {
   const trimmedLabel = input?.label?.trim();
   try {
@@ -428,19 +431,45 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
-  if (resolvedAuthenticatedGateState?.status === "authenticated") {
-    return resolvedAuthenticatedGateState;
+  // An explicit pairing link replaces this browser's grant, even when the
+  // current cookie or a cached gate already authenticates it. Keep that intent
+  // after stripping the token, which causes the router to load this gate again.
+  if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
+    explicitPairingRequested = false;
+  } else if (peekPairingTokenFromUrl()) {
+    explicitPairingRequested = true;
+  }
+  if (explicitPairingRequested) {
+    const currentSession = await fetchSessionState();
+    return { status: "requires-auth", auth: currentSession.auth };
   }
 
-  if (bootstrapPromise) {
-    return bootstrapPromise;
+  const urlCredential = takePairingTokenFromUrl();
+  const previousPromise = bootstrapPromise;
+  if (urlCredential) {
+    resolvedAuthenticatedGateState = null;
+  } else {
+    if (previousPromise) {
+      return previousPromise;
+    }
+
+    if (resolvedAuthenticatedGateState?.status === "authenticated") {
+      return resolvedAuthenticatedGateState;
+    }
   }
 
-  const nextPromise = bootstrapServerAuth();
+  const nextPromise = previousPromise
+    ? previousPromise
+        .catch(() => undefined)
+        .then(() => {
+          resolvedAuthenticatedGateState = null;
+          return bootstrapServerAuth(urlCredential);
+        })
+    : bootstrapServerAuth(urlCredential);
   bootstrapPromise = nextPromise;
   return nextPromise
     .then((result) => {
-      if (result.status === "authenticated") {
+      if (bootstrapPromise === nextPromise && result.status === "authenticated") {
         resolvedAuthenticatedGateState = result;
       }
       return result;
@@ -455,4 +484,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  explicitPairingRequested = false;
 }

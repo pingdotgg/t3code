@@ -23,7 +23,6 @@
         "name": "@effect/language-service",
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
@@ -50,8 +49,15 @@
           "globalTimers": "error",
           "globalTimersInEffect": "error",
           "globalFetch": "error",
-          "globalFetchInEffect": "error"
-        }
+          "globalFetchInEffect": "error",
+          "schemaNumber": "off"
+        },
+        "overrides": [
+          {
+            "include": ["**/*.test.ts", "**/*.test.tsx"],
+            "options": { "diagnosticSeverity": { "preferSchemaOverJson": "off" } }
+          }
+        ]
       }
     ]
   }

@@ -50,7 +50,7 @@ everything else updates in place.
 
 ## Publish from a Lambda
 
-Bind `SNS.Publish(topic)` in the function's init phase and call
+Bind `SNS.Publish(topic)` in the function's Construction phase and call
 it from runtime handlers. The binding quietly attaches
 `sns:Publish` scoped to the topic ARN to the function's
 execution role:
@@ -60,7 +60,7 @@ execution role:
 import * as AWS from "alchemy/AWS";
 import * as SNS from "alchemy/AWS/SNS";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Orders } from "./topic.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(

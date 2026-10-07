@@ -27,9 +27,9 @@ interface FirstRunWorkspaceInput {
     readonly id: string;
     readonly projectId: string;
     readonly environmentId: string;
-    readonly latestTurn: unknown;
+    readonly latestRun: unknown;
     readonly latestUserMessageAt: string | null;
-    readonly session: unknown;
+    readonly runtime: unknown;
   }>;
 }
 
@@ -49,6 +49,7 @@ interface FirstRunDecisionInput {
 }
 
 interface HostedFirstRunDecisionInput {
+  readonly localEnvironmentDisabled?: boolean;
   readonly hydrated: boolean;
   readonly completed: boolean;
   readonly catalogReady: boolean;
@@ -115,9 +116,9 @@ export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean
     input.bootstrapThreadId === bootstrapThread.id &&
     bootstrapThread.environmentId === input.primaryEnvironmentId &&
     bootstrapThread.projectId === bootstrapProject.id &&
-    bootstrapThread.latestTurn === null &&
+    bootstrapThread.latestRun === null &&
     bootstrapThread.latestUserMessageAt === null &&
-    bootstrapThread.session === null
+    bootstrapThread.runtime === null
   );
 }
 
@@ -178,7 +179,9 @@ export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput
     return { decision: "pending", persistCompletion: false };
   }
 
-  return input.environmentCount === 0
+  // An existing desktop may have disabled its server before onboarding existed.
+  // Keep Connections accessible so it can turn local execution back on.
+  return input.environmentCount === 0 && !input.localEnvironmentDisabled
     ? { decision: "wizard", persistCompletion: false }
     : { decision: "app", persistCompletion: true };
 }

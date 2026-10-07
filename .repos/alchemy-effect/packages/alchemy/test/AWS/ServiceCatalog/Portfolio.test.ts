@@ -95,5 +95,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertPortfolioGone(created.portfolioId);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:servicecatalog", "live"],
+    timeout: 180_000,
+  },
 );

@@ -14,7 +14,7 @@ import {
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
-import { type MediaActionsSource } from "../lib/mediaActions";
+import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
@@ -127,7 +127,7 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
   const file = new File(directory, `${id}.${extension}`);
   if (!file.exists) {
     file.create();
-    file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
+    await file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
   }
   return file.uri;
 }
@@ -226,13 +226,15 @@ function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   // The document picker types every pick as a plain file, so a picture arrives here as one.
   // What it *is* decides how it presents, the same way videos are already recognised below.
   if (attachment.type === "image" || imageMimeType(attachment) !== null) {
+    // A pasted-text marker does not fit the snapshot source a picture carries.
+    const { source: _droppedSource, ...rest } = attachment;
     return (
       <ComposerImageAttachment
         {...props}
         attachment={
           attachment.type === "image"
             ? attachment
-            : { ...attachment, type: "image", previewUri: attachment.fileUri }
+            : { ...rest, type: "image", previewUri: attachment.fileUri }
         }
       />
     );

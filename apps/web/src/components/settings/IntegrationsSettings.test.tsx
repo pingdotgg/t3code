@@ -17,6 +17,16 @@ const { listBrowserImportSources } = vi.hoisted(() => ({
   listBrowserImportSources: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render, children }: { render: ReactNode; children: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
+  TooltipPopup: () => null,
+}));
 vi.mock("../preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources },
 }));
@@ -24,11 +34,14 @@ vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),
   usePrimaryEnvironment: () => null,
+  // Settings rows resolve the primary grant before rendering server controls.
+  usePrimaryEnvironmentId: () => null,
 }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "Connect to an environment",
-  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   useClientSettingsHydrated: () => true,
   usePrimarySettingsAvailable: () => true,
   usePrimarySettings: () => DEFAULT_UNIFIED_SETTINGS,
@@ -44,7 +57,10 @@ vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => nul
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: { kind: "all", environmentIds: [] },
+    search: {},
     environment: null,
+    environments: [],
+    target: null,
     connectedEnvironments: [],
     targets: [],
   }),

@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
@@ -38,17 +39,50 @@ const VolumeStack = Effect.gen(function* () {
   return { project, environment, api, volume };
 });
 
+const listVolumeInstanceBackups = Query.fn((volumeInstanceId: string) =>
+  RailwayApi.volumeInstanceBackupList({ volumeInstanceId }).pipe(
+    Query.map((backup) => ({
+      id: backup.id,
+      name: backup.name,
+      createdAt: backup.createdAt,
+    })),
+  ),
+);
+
+const readVolumeInstanceState = Query.fn((id: string) => {
+  const instance = RailwayApi.volumeInstance({ id });
+  return { deletedAt: instance.deletedAt, state: instance.state };
+});
+
+const createVolumeInstanceBackup = Query.fn((volumeInstanceId: string) => {
+  const created = RailwayApi.volumeInstanceBackupCreate({ volumeInstanceId });
+  return { workflowId: created.workflowId };
+});
+
+const readWorkflowStatus = Query.fn((workflowId: string) => {
+  const workflow = RailwayApi.workflowStatus({ workflowId });
+  return { status: workflow.status };
+});
+
+const deleteVolumeInstanceBackup = Query.fn(
+  (volumeInstanceBackupId: string, volumeInstanceId: string) => {
+    const deleted = RailwayApi.volumeInstanceBackupDelete({
+      volumeInstanceBackupId,
+      volumeInstanceId,
+    });
+    return { workflowId: deleted.workflowId };
+  },
+);
+
 const listLive = (volumeInstanceId: string) =>
-  railway
-    .volumeInstanceBackupList({ volumeInstanceId })
-    .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound", "RailwayForbidden"], () =>
-        Effect.succeed([]),
-      ),
-    );
+  listVolumeInstanceBackups(volumeInstanceId).pipe(
+    Effect.catchTag(["RailwayNotFound", "RailwayForbidden"], () =>
+      Effect.succeed([]),
+    ),
+  );
 
 const waitUntilReady = (volumeInstanceId: string) =>
-  railway.volumeInstance({ id: volumeInstanceId }).pipe(
+  readVolumeInstanceState(volumeInstanceId).pipe(
     Effect.map((instance) =>
       instance.deletedAt == null &&
       instance.state !== "DELETED" &&
@@ -61,7 +95,7 @@ const waitUntilReady = (volumeInstanceId: string) =>
         ? ("ready" as const)
         : ("pending" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    Effect.catchTag("RailwayNotFound", () =>
       Effect.succeed("pending" as const),
     ),
     Effect.repeat({
@@ -98,9 +132,7 @@ test.provider(
       yield* waitUntilReady(created.volume.volumeInstanceId);
 
       const result = yield* Effect.result(
-        railway.volumeInstanceBackupCreate({
-          volumeInstanceId: created.volume.volumeInstanceId,
-        }),
+        createVolumeInstanceBackup(created.volume.volumeInstanceId),
       );
       if (Result.isSuccess(result)) {
         yield* Effect.logInfo(
@@ -110,35 +142,42 @@ test.provider(
           result.success.workflowId != null &&
           result.success.workflowId.length > 0
         ) {
-          yield* railway
-            .workflowStatus({
-              workflowId: result.success.workflowId,
-            })
-            .pipe(Effect.catchTag(["RailwayForbidden"], () => Effect.void));
+          yield* readWorkflowStatus(result.success.workflowId).pipe(
+            Effect.catchTag("RailwayForbidden", () => Effect.void),
+          );
         }
         const extras = yield* listLive(created.volume.volumeInstanceId);
         for (const extra of extras) {
-          yield* railway
-            .volumeInstanceBackupDelete({
-              volumeInstanceBackupId: extra.id,
-              volumeInstanceId: created.volume.volumeInstanceId,
-            })
-            .pipe(
-              Effect.catchTag(
-                ["RailwayNotFound", "NotFound", "RailwayForbidden"],
-                () => Effect.void,
-              ),
-            );
+          yield* deleteVolumeInstanceBackup(
+            extra.id,
+            created.volume.volumeInstanceId,
+          ).pipe(
+            Effect.catchTag(
+              ["RailwayNotFound", "RailwayForbidden"],
+              () => Effect.void,
+            ),
+          );
         }
         yield* stack.destroy();
         return;
       }
 
-      expect(result.failure._tag).toEqual("RailwayForbidden");
+      expect(result.failure._tag === "RailwayForbidden").toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:volume",
+      "provider:railway:volumebackup",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!backupEntitled)(
@@ -213,5 +252,16 @@ test.provider.skipIf(!backupEntitled)(
       );
       expect(backupGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:volume",
+      "provider:railway:volumebackup",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -23,7 +23,7 @@ import {
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 
 /**
  * Human-readable gloss for each diagnostic. Deliberately our own words rather
@@ -110,13 +110,10 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
   }
 }
 
-export const DevShareError = Schema.Union([
-  TailscaleUnavailableError,
-  TailnetNameMissingError,
-  DevServeFailedError,
-]);
-export type DevShareError = typeof DevShareError.Type;
-export const isDevShareError = Schema.is(DevShareError);
+export type DevShareError =
+  | TailscaleUnavailableError
+  | TailnetNameMissingError
+  | DevServeFailedError;
 
 /**
  * Removes any mapping for `webPort`, reporting whether the port is now clear.

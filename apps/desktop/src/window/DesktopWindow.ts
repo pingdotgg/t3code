@@ -22,15 +22,33 @@ import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
+  TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
+// Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
+// buttons are 14 points tall and do not scale with the renderer's zoom.
+const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
+const MACOS_WINDOW_BUTTON_RADIUS = 7;
+
+function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
+  if (window.isDestroyed() || window.isFullScreen()) return;
+  window.setWindowButtonPosition({
+    x: 16,
+    y: Math.round(
+      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
+        MACOS_WINDOW_BUTTON_RADIUS,
+    ),
+  });
+}
+
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
@@ -67,6 +85,7 @@ type DesktopWindowRuntimeServices =
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
+  | DesktopRendererHistory.DesktopRendererHistory
   | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =
@@ -84,7 +103,7 @@ export class DesktopWindow extends Context.Service<
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     // Show a lightweight "Connecting to WSL" splash window immediately (wsl-only
-    // mode), before the WSL backend that serves the renderer is ready. It is
+    // mode), before the WSL backend that acts as the primary is ready. It is
     // dismissed automatically once the real main window reveals.
     readonly showConnectingSplash: Effect.Effect<void>;
     // Marks the primary backend as ready so `createMainIfBackendReady` and the
@@ -241,7 +260,10 @@ function getWindowTitleBarOptions(
   if (platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 16, y: 18 },
+      trafficLightPosition: {
+        x: 16,
+        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
+      },
     };
   }
 
@@ -302,6 +324,7 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -400,6 +423,7 @@ export const make = Effect.gen(function* () {
       },
     });
 
+    yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
@@ -580,6 +604,7 @@ export const make = Effect.gen(function* () {
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
+      void runPromise(previewManager.prepareWebview(contents));
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
@@ -642,6 +667,9 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
       }
     });
+    window.webContents.on("input-event", (_event, input) => {
+      if (input.type === "gestureScrollEnd") window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+    });
 
     window.on("page-title-updated", (event) => {
       event.preventDefault();
@@ -660,6 +688,7 @@ export const make = Effect.gen(function* () {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
       window.on("leave-full-screen", () => {
+        syncMacosWindowButtons(window);
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
       });
     }
@@ -720,6 +749,7 @@ export const make = Effect.gen(function* () {
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
+      if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
     window.webContents.on(
       "did-fail-load",
@@ -838,9 +868,15 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  // With the local environment disabled there is no backend to wait for: the
+  // renderer is served from bundled assets and only talks to remote environments.
+  const waitingForBackend = Effect.gen(function* () {
+    if (yield* Ref.get(backendReadyRef)) return false;
+    return (yield* desktopSettings.get).localEnvironmentEnabled;
+  });
+
   const createMainIfBackendReady = Effect.gen(function* () {
-    const backendReady = yield* Ref.get(backendReadyRef);
-    if (!backendReady) return;
+    if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
     yield* createMain;
@@ -873,6 +909,7 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
@@ -898,7 +935,7 @@ export const make = Effect.gen(function* () {
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
-    if (Option.isNone(existingWindow) && (!reveal || !(yield* Ref.get(backendReadyRef)))) return;
+    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
     if (targetWindow.isDestroyed()) return;
     const send = Effect.sync(() => {
@@ -984,6 +1021,7 @@ export const make = Effect.gen(function* () {
       webContents.setZoomLevel(
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );
+      if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
       // Chromium pushes the new level down to embedded guests, which would zoom
       // the previewed page along with the app UI. The preview browser keeps its
       // own zoom, so put each guest back where the preview left it.

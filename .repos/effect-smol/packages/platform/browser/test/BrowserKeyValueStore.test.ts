@@ -2,10 +2,10 @@ import * as BrowserKeyValueStore from "@effect/platform-browser/BrowserKeyValueS
 import * as IndexedDb from "@effect/platform-browser/IndexedDb"
 import { assert, describe, it } from "@effect/vitest"
 import { Layer } from "effect"
-import { testLayer } from "effect-test/unstable/persistence/KeyValueStore.test"
+import { testLayer } from "effect-test/persistence/KeyValueStore.test"
 import * as Effect from "effect/Effect"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
 import * as Result from "effect/Result"
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
 import { IDBKeyRange, indexedDB } from "fake-indexeddb"
 
 describe("KeyValueStore / layerLocalStorage", () => testLayer(BrowserKeyValueStore.layerLocalStorage))
@@ -23,6 +23,18 @@ describe("KeyValueStore / layerIndexedDb", () => {
       Layer.provide(layerFakeIndexedDb)
     )
   )
+
+  it.effect("reports a key containing bytes as present", () => {
+    const layer = BrowserKeyValueStore.layerIndexedDb({
+      database: `kvs_binary_has_${crypto.randomUUID()}`
+    }).pipe(Layer.provide(layerFakeIndexedDb))
+
+    return Effect.gen(function*() {
+      const store = yield* KeyValueStore.KeyValueStore
+      yield* store.set("binary", new Uint8Array([0, 127, 255]))
+      assert.isTrue(yield* store.has("binary"))
+    }).pipe(Effect.provide(layer))
+  })
 
   it.effect("does not report a write before its transaction commits", () => {
     const db = {

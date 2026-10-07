@@ -1,6 +1,8 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -362,6 +364,159 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reads every file version the patch states, not only the paths asked about", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            [
+              "diff --git a/a.ts b/a.ts",
+              "index 1111111..2222222 100644",
+              "--- a/a.ts",
+              "+++ b/a.ts",
+              "@@ -1 +1 @@",
+              "-a",
+              "+b",
+              "diff --git a/b.ts b/b.ts",
+              "index 3333333..4444444 100644",
+              "--- a/b.ts",
+              "+++ b/b.ts",
+              "@@ -1 +1 @@",
+              "-c",
+              "+d",
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const revisions = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 71,
+        paths: ["a.ts", "missing.ts"],
+      });
+
+      // `b.ts` was not asked about and is reported anyway: parsing the patch for `a.ts` read it
+      // too, and the caller holding it is what stops the next tick paying for the patch again.
+      // `missing.ts` was asked about and the whole patch was read without finding it, which is
+      // what a file this pull request deletes looks like, so it is answered as the empty version.
+      assert.deepStrictEqual(
+        [...revisions.revisions],
+        [
+          ["a.ts", "2222222"],
+          ["b.ts", "4444444"],
+          ["missing.ts", ""],
+        ],
+      );
+      assert.strictEqual(revisions.complete, true);
+      expect(callAt(0)).toMatchObject({ url: "/repositories/acme/web/pullrequests/71/diff" });
+    }),
+  );
+
+  it.effect("says nothing about the files past the end of a patch it could not read whole", () =>
+    Effect.gen(function* () {
+      // Bitbucket's patch is read up to a byte ceiling, and a file past the cut was not looked at.
+      // Answering for it as deleted would clear a mark on it once and for good.
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed({
+          body: "diff --git a/a.ts b/a.ts\nindex 1111111..2222222 100644\n@@ -1 +1 @@\n",
+          truncated: true,
+        }),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const revisions = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 72,
+        paths: ["a.ts", "past-the-cut.ts"],
+      });
+
+      assert.deepStrictEqual([...revisions.revisions], [["a.ts", "2222222"]]);
+      // `past-the-cut.ts` gets no empty version, and nothing here may be held as the whole story.
+      assert.strictEqual(revisions.complete, false);
+    }),
+  );
+
+  it.effect("reads the patch once for a run of ticks, not once a tick", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.succeed(
+          response(
+            [
+              "diff --git a/a.ts b/a.ts",
+              "index 1111111..2222222 100644",
+              "@@ -1 +1 @@",
+              "diff --git a/b.ts b/b.ts",
+              "index 3333333..4444444 100644",
+              "@@ -1 +1 @@",
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const first = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 74,
+        paths: ["a.ts"],
+      });
+      // A path nobody has asked about before, which is what every tick after the first names.
+      const second = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 74,
+        paths: ["b.ts"],
+      });
+
+      const both = [
+        ["a.ts", "2222222"],
+        ["b.ts", "4444444"],
+      ];
+      assert.deepStrictEqual([...first.revisions], both);
+      assert.deepStrictEqual([...second.revisions], both);
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("reads the patch afresh once the one it held has aged out", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.succeed(
+          response("diff --git a/a.ts b/a.ts\nindex 1111111..2222222 100644\n@@ -1 +1 @@\n"),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const read = () =>
+        api.getFileRevisions({ repository: "acme/web", number: 75, paths: ["a.ts"] });
+
+      yield* read();
+      yield* read();
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+
+      // Well inside the window the caller holds versions for: a refresh drops what it holds so
+      // that the read after it reaches Bitbucket, and this must not answer that read instead.
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* read();
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("asks Bitbucket nothing when no file has been ticked off", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const revisions = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 73,
+        paths: [],
+      });
+
+      assert.strictEqual(revisions.revisions.size, 0);
+      assert.strictEqual(mockedRequest.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("aggregates every diffstat page", () =>
     Effect.gen(function* () {
       const next = "https://api.bitbucket.org/2.0/diffstat?page=2";
@@ -521,7 +676,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       expect(call.method).toBe("PUT");
       expect(call.url).toBe("/repositories/acme/web/pullrequests/7");
       // Bitbucket's PUT is a partial update, so a field left out of the body is left as it was.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(call.body ?? "")).toEqual({ title: "A new title" });
     }),
   );
@@ -533,7 +687,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       yield* api.updateChangeRequest({ repository: "acme/web", number: 7, body: "New body." });
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).body ?? "")).toEqual({ description: "New body." });
     }),
   );
@@ -550,7 +703,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         body: "New body.",
       });
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).body ?? "")).toEqual({
         title: "A new title",
         description: "New body.",
@@ -581,7 +733,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
   it.effect("fails the read when Bitbucket answers with something unreadable", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         Effect.succeed(response(JSON.stringify({ error: "nope" }))),
       );
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
@@ -614,7 +765,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("fails when the credentials belong to no named account", () =>
     Effect.gen(function* () {
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(JSON.stringify({}))));
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
@@ -629,7 +779,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               next: "https://api.bitbucket.org/2.0/comments?page=2",
               values: [
@@ -650,7 +799,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
           response(
             // The reply arrives a page after the remark it answers, which is why the threads
             // are only assembled once every page is in hand.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               values: [
                 {
@@ -685,7 +833,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValue(
         Effect.succeed(
           response(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               next: "https://api.bitbucket.org/2.0/comments?page=2",
               values: [
@@ -713,7 +860,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               values: [
                 {
@@ -786,7 +932,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       });
 
       expect(callAt(0).url).toContain("/pullrequests/7/comments");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).body ?? "")).toEqual({
         content: { raw: "why remove?" },
         inline: { path: "src/a.ts", from: 12 },
@@ -833,7 +978,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         body: "Fixed.",
       });
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).body ?? "")).toEqual({
         content: { raw: "Fixed." },
         parent: { id: 10 },
@@ -846,7 +990,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValue(
         Effect.succeed(
           response(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({ values: [{ type: "repository_permission", permission: "read" }] }),
           ),
         ),
@@ -862,7 +1005,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("escapes a repository name before it goes inside a filter literal", () =>
     Effect.gen(function* () {
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       mockedRequest.mockReturnValue(Effect.succeed(response(JSON.stringify({ values: [] }))));
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
@@ -920,7 +1062,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(
             response(
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify({ values: [{ user: bilal }, { user: octocat }, { user: hubot }] }),
             ),
           ),
@@ -958,7 +1099,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       const call = callAt(1);
       expect(call.method).toBe("PUT");
       expect(call.url).toBe("/repositories/acme/web/pullrequests/7");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(call.body ?? "")).toEqual({
         reviewers: [{ uuid: "{octocat}" }, { uuid: "{hubot}" }],
       });
@@ -981,7 +1121,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         requested: false,
       });
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(1).body ?? "")).toEqual({ reviewers: [{ uuid: "{octocat}" }] });
     }),
   );

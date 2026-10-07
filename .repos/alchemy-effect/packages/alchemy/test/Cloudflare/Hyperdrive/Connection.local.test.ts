@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import HyperdriveLocalWorker, {
   LocalHyperdrive,
 } from "./fixtures/local-worker.ts";
@@ -33,7 +33,11 @@ const logLevel = Effect.provideService(
 class WorkerNotReady extends Data.TaggedError("WorkerNotReady")<{
   status: number;
   body: string;
-}> {}
+}> {
+  override get message() {
+    return `worker answered ${this.status}: ${this.body.slice(0, 500)}`;
+  }
+}
 
 const getJsonReady = (url: string) =>
   Effect.gen(function* () {
@@ -107,7 +111,17 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 /**
@@ -170,5 +184,15 @@ test.provider(
         );
       expect(gone).toBe(true);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

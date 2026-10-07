@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
@@ -61,7 +61,7 @@ function makeDriver(calls: string[]): VcsDriver.VcsDriver["Service"] {
 it.effect("routes repository initialization through an explicit VCS driver kind", () => {
   const calls: string[] = [];
   const driver = makeDriver(calls);
-  const testLayer = VcsProvisioningService.layer.pipe(
+  const layerTest = VcsProvisioningService.layer.pipe(
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
         get: (kind) => (kind === "git" ? Effect.succeed(driver) : Effect.die("unexpected kind")),
@@ -74,13 +74,13 @@ it.effect("routes repository initialization through an explicit VCS driver kind"
     yield* provisioning.initRepository({ cwd: "/repo", kind: "git" });
 
     assert.deepStrictEqual(calls, ["git:/repo"]);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("defaults repository initialization to Git until callers choose a VCS kind", () => {
   const calls: string[] = [];
   const driver = makeDriver(calls);
-  const testLayer = VcsProvisioningService.layer.pipe(
+  const layerTest = VcsProvisioningService.layer.pipe(
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
         get: (kind) => (kind === "git" ? Effect.succeed(driver) : Effect.die("unexpected kind")),
@@ -93,5 +93,5 @@ it.effect("defaults repository initialization to Git until callers choose a VCS 
     yield* provisioning.initRepository({ cwd: "/repo" });
 
     assert.deepStrictEqual(calls, ["default:/repo"]);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });

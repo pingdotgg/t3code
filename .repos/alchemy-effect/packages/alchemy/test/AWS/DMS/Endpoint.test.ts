@@ -100,7 +100,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(endpoint.endpointIdentifier);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:dms", "live"], timeout: 240_000 },
 );
 
 test.provider(
@@ -133,5 +133,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(endpoint.endpointIdentifier);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:dms", "live"], timeout: 240_000 },
 );

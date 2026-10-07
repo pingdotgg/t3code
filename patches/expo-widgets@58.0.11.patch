@@ -1,0 +1,181 @@
+diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
+index c9f4dfe1f10a3a65ab72bd7e639f6f6d148e5f95..dc0792e1cd7b6762394de5e3fefa0863a253f70c 100644
+--- a/build/Widgets.types.d.ts
++++ b/build/Widgets.types.d.ts
+@@ -93,6 +93,10 @@ export type LiveActivityEnvironment = {
+      * The color scheme of the activity's environment.
+      */
+     colorScheme: 'light' | 'dark';
++    /** The rendering mode supplied by WidgetKit for this presentation. */
++    widgetRenderingMode?: WidgetRenderingMode;
++    /** Whether the presentation OS supports Liquid Glass. @platform iOS 26+ */
++    isLiquidGlassAvailable?: boolean;
+     /**
+      * Whether the activity is displayed in a context with reduced luminance.
+      * @platform iOS 16+
+diff --git a/ios/LiveActivityFactory.swift b/ios/LiveActivityFactory.swift
+index 29e4f1566d188665e301d32bc1ad85640f83e68c..7143f9a1c06245d16649b981d7f5cde1d8868217 100644
+--- a/ios/LiveActivityFactory.swift
++++ b/ios/LiveActivityFactory.swift
+@@ -19,6 +19,14 @@ final class LiveActivityFactory: SharedObject {
+       throw LiveActivitiesNotSupportedException()
+     }
+ 
++    // iOS ends an activity after 8 hours but leaves it frozen on the Lock Screen for up to
++    // 4 more. getInstances() can't see it, so a caller starting a replacement would leave
++    // both cards visible. Dismiss the ended ones now.
++    for activity in Activity<LiveActivityAttributes>.activities
++    where activity.content.state.name == name && activity.activityState == .ended {
++      Task { await activity.end(nil, dismissalPolicy: .immediate) }
++    }
++
+     do {
+       let initialState = LiveActivityAttributes.ContentState(name: name, props: props)
+       let activity = try Activity.request(
+diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
+index 76b2199c2d3f879463fed5d2bd49038b0428a2e7..6cb52c3de4ad9696bc0c51ad62401cce96f405e7 100644
+--- a/ios/Widgets/Utils.swift
++++ b/ios/Widgets/Utils.swift
+@@ -125,6 +125,10 @@ func getLiveActivityEnvironment(for environment: EnvironmentValues, in context:
+     "isStale": context.isStale
+   ]
+ 
++  if #available(iOS 26.0, *) {
++    env["isLiquidGlassAvailable"] = true
++  }
++  env["widgetRenderingMode"] = environment.widgetRenderingMode.description
+   if #available(iOS 18.0, *) {
+     env["isActivityUpdateReduced"] = environment.isActivityUpdateReduced
+     env["activityFamily"] = "\(environment.activityFamily)"
+diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
+index 4d135c4e4eb1f846315654ed9d835a935d120d42..dae47445b27516fa2464a25b68bddc8f6dec3e1e 100644
+--- a/ios/Widgets/WidgetLiveActivity.swift
++++ b/ios/Widgets/WidgetLiveActivity.swift
+@@ -19,53 +19,41 @@ struct LiveActivityAttributes: ActivityAttributes {
+ }
+ 
+ public struct WidgetLiveActivity: Widget {
+-  @Environment(\.self) var env
+-  
+   let widgetContext: AppContext = AppContext()
+ 
+   public init() {}
+ 
+   public var body: some WidgetConfiguration {
+     ActivityConfiguration(for: LiveActivityAttributes.self) { context in
+-      let nodes = getLiveActivityNodes(
+-        forName: context.state.name,
+-        props: context.state.props,
+-        environment: getLiveActivityEnvironment(for: env, in: context)
+-      )
+       // Only apply widgetURL when the activity has one: a hierarchy with more than one
+       // widgetURL modifier is undefined behavior, and layouts can set their own through
+       // the widgetURL modifier from @expo/ui.
+-      let banner = LiveActivityBannerView(context: context, nodes: nodes)
++      let banner = LiveActivityBannerView(context: context)
+       if let url = context.attributes.url.flatMap(URL.init(string:)) {
+         banner.widgetURL(url)
+       } else {
+         banner
+       }
+     } dynamicIsland: { context in
+-      let nodes = getLiveActivityNodes(
+-        forName: context.state.name,
+-        props: context.state.props,
+-        environment: getLiveActivityEnvironment(for: env, in: context)
+-      )
+       let island = DynamicIsland {
+         DynamicIslandExpandedRegion(.center) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedCenter")
++          LiveActivitySectionView(context: context, sectionName: "expandedCenter")
+         }
+         DynamicIslandExpandedRegion(.leading) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedLeading")
++          LiveActivitySectionView(context: context, sectionName: "expandedLeading")
+         }
+         DynamicIslandExpandedRegion(.trailing) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedTrailing")
++          LiveActivitySectionView(context: context, sectionName: "expandedTrailing")
+         }
+         DynamicIslandExpandedRegion(.bottom) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedBottom")
++          LiveActivitySectionView(context: context, sectionName: "expandedBottom")
+         }
+       } compactLeading: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "compactLeading")
++        LiveActivitySectionView(context: context, sectionName: "compactLeading")
+       } compactTrailing: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "compactTrailing")
++        LiveActivitySectionView(context: context, sectionName: "compactTrailing")
+       } minimal: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "minimal")
++        LiveActivitySectionView(context: context, sectionName: "minimal")
+       }
+       if let url = context.attributes.url.flatMap(URL.init(string:)) {
+         return island.widgetURL(url)
+@@ -77,11 +65,16 @@ public struct WidgetLiveActivity: Widget {
+ }
+ 
+ private struct LiveActivitySectionView: View {
++  @Environment(\.self) var env
+   let context: ActivityViewContext<LiveActivityAttributes>
+-  let nodes: [String: Any]
+   let sectionName: String
+ 
+   var body: some View {
++    let nodes = getLiveActivityNodes(
++      forName: context.state.name,
++      props: context.state.props,
++      environment: getLiveActivityEnvironment(for: env, in: context)
++    )
+     if let node = nodes[sectionName] as? [String: Any] {
+       WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)
+     } else {
+@@ -91,10 +84,17 @@ private struct LiveActivitySectionView: View {
+ }
+ 
+ private struct LiveActivityBannerView: View {
++  // Read inside the rendered view: Widget-level values do not include the
++  // presentation's color scheme, rendering mode, or reduced-luminance state.
++  @Environment(\.self) var env
+   var context: ActivityViewContext<LiveActivityAttributes>
+-  let nodes: [String: Any]
+ 
+   var body: some View {
++    let nodes = getLiveActivityNodes(
++      forName: context.state.name,
++      props: context.state.props,
++      environment: getLiveActivityEnvironment(for: env, in: context)
++    )
+     if #available(iOS 18.0, *) {
+       LiveActivityBanner(context: context, nodes: nodes)
+     } else if let node = nodes["banner"] as? [String: Any] {
+diff --git a/scripts/build-layout-registry.mjs b/scripts/build-layout-registry.mjs
+index d52a60e342c8e0a8a1d78f7174da5e60e6bd1c53..fa9bd77c5c04d459038a5b4a00e1391780b406fa 100644
+--- a/scripts/build-layout-registry.mjs
++++ b/scripts/build-layout-registry.mjs
+@@ -154,6 +154,8 @@ function createLayoutRegistry(expectedWidgets, capturedLayouts) {
+   return registry;
+ }
+ 
+-if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
++// Compare real paths: pnpm exposes the package through a symlink, so the
++// invoked path and import.meta.url differ while naming the same file.
++if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(__filename)) {
+   await main();
+ }
+diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
+index 07706139379384dae27befef4e3e5ae09d04a0db..924fa0029243664e369ce08c81e504b6300bfc7f 100644
+--- a/src/Widgets.types.ts
++++ b/src/Widgets.types.ts
+@@ -107,6 +107,10 @@ export type LiveActivityEnvironment = {
+    * The color scheme of the activity's environment.
+    */
+   colorScheme: 'light' | 'dark';
++  /** The rendering mode supplied by WidgetKit for this presentation. */
++  widgetRenderingMode?: WidgetRenderingMode;
++  /** Whether the presentation OS supports Liquid Glass. @platform iOS 26+ */
++  isLiquidGlassAvailable?: boolean;
+   /**
+    * Whether the activity is displayed in a context with reduced luminance.
+    * @platform iOS 16+

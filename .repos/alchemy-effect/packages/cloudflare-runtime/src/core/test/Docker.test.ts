@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import {
   buildFailureHint,
   CONTAINER_LOOPBACK_ALIAS,
@@ -326,13 +326,9 @@ layer(
           "--format",
           "{{.Id}}",
         ]);
-        expect(present.spawned).not.toContainEqual([
-          "docker",
-          "pull",
-          PINNED_WITHOUT_TAG,
-          "--platform",
-          "linux/amd64",
-        ]);
+        expect(present.spawned.filter(([, verb]) => verb === "pull")).toEqual(
+          [],
+        );
       }),
   );
 });
@@ -354,12 +350,14 @@ layer(Layer.provide(DockerLive, Layer.merge(NodeServices.layer, absent.layer)))(
             "--format",
             "{{.Id}}",
           ]);
-          expect(absent.spawned).toContainEqual([
-            "docker",
-            "pull",
-            PINNED_WITHOUT_TAG,
-            "--platform",
-            "linux/amd64",
+          // Exactly one pull, with no `--platform`: the interceptor is a
+          // host-side sidecar, so Docker must resolve the host-native variant
+          // of this multi-arch image. Forcing `linux/amd64` here runs it
+          // under emulation on arm64 hosts, where it exits 1 with
+          // `setsockoptint: protocol not available` before workerd can create
+          // the user container.
+          expect(absent.spawned.filter(([, verb]) => verb === "pull")).toEqual([
+            ["docker", "pull", PINNED_WITHOUT_TAG],
           ]);
         }),
     );

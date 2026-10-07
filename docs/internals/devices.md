@@ -60,7 +60,7 @@ a shim directory to the provider's PATH. The CLI installs on the environment
 server even when that server cannot run simulators. Hosts start on demand.
 
 That environment is fixed when the provider subprocess spawns, so
-[`prepareMcpSession`](../../apps/server/src/provider/Layers/ProviderService.ts)
+[`prepareMcpSession`](../../apps/server/src/orchestration-v2/ProviderSessionManager.ts)
 starts agent-device only when device support and agent access have both been
 enabled, the session has the `device` capability, and the machine can run at
 least one platform. Starting it later from `device_open` would leave the
@@ -69,7 +69,8 @@ already-running agent without the CLI.
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a
 device and cannot drift from the pinned CLI version. The always-on prompt block
-is a few lines that point at the tools and forbid raw `simctl` and `adb`.
+is a few lines that point at the tools and prefer them over raw `simctl` and
+`adb`, which stay available for what the tools do not cover.
 
 ## The viewer decodes both vendored protocols
 

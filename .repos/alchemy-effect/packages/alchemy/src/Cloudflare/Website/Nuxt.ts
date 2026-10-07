@@ -134,7 +134,7 @@ export interface NuxtProps<
  * ```typescript
  * const site = yield* Cloudflare.Website.Nuxt("Website", {
  *   env: {
- *     API_KEY: Config.redacted("API_KEY"),
+ *     API_KEY: Config.Redacted("API_KEY"),
  *   },
  * });
  *
@@ -302,9 +302,19 @@ export const Nuxt: {
     never,
     Req | Providers
   >;
-} = ((id?: any, propsEff?: any) =>
+} = (<const Bindings extends WorkerBindingProps = {}, Req = never>(
+  id?: string,
+  propsEff?:
+    | InputProps<NuxtProps<Bindings>>
+    | Effect.Effect<InputProps<NuxtProps<Bindings>>, never, Req>,
+) =>
   id === undefined
-    ? (id: string, propsEff: any) => effectClass(Nuxt(id, propsEff))
+    ? <const Bindings extends WorkerBindingProps = {}, Req = never>(
+        id: string,
+        propsEff?:
+          | InputProps<NuxtProps<Bindings>>
+          | Effect.Effect<InputProps<NuxtProps<Bindings>>, never, Req>,
+      ) => effectClass(Nuxt(id, propsEff))
     : Worker(
         id,
         Effect.map(

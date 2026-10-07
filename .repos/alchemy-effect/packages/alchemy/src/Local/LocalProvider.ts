@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 import { isResolved, stripEffects, type Diff } from "../Diff.ts";
 import type { Platform } from "../Platform.ts";
 import type { ProviderService } from "../Provider.ts";
@@ -267,7 +267,8 @@ export const canonicalHash = (value: unknown): Effect.Effect<string> => {
  * a per-id semaphore so restarts never interleave.
  *
  * @param cls - the resource class (or Platform) this provider serves.
- * @param serverEntryUrl - sidecar entry module (see {@link RpcProvider.effect}).
+ * @param providersUrl - the provider group module this provider is registered
+ *   in (see {@link RpcProvider.effect}).
  * @param spec - Effect constructing the {@link LocalProviderSpec}; resolve
  *   the services your callbacks need here and close over them.
  */
@@ -278,12 +279,12 @@ export const make = <
   Req = never,
 >(
   cls: ResourceClassLike<R> | Platform<R, any, any, any, any>,
-  serverEntryUrl: string,
+  providersUrl: string,
   spec: Effect.Effect<LocalProviderSpec<R, Config, StartR>, never, Req>,
 ) =>
   RpcProvider.effect(
     cls,
-    serverEntryUrl,
+    providersUrl,
     Effect.gen(function* () {
       const {
         resolveConfig = defaultResolveConfig<R, Config>,
@@ -299,7 +300,8 @@ export const make = <
       // The provider layer scope: in the sidecar this closes at session
       // shutdown, interrupting every registered instance and running its
       // finalizers (killing the processes).
-      const rootScope = yield* Effect.scope;
+      // Close independent instances concurrently at provider shutdown.
+      const rootScope = yield* Scope.fork(yield* Effect.scope, "parallel");
 
       // Keyed by FQN (namespace path + logical id): a restart replaces the
       // entry, a replacement's new generation overwrites it (and the old
@@ -456,7 +458,7 @@ export const make = <
               if (existing) {
                 if (existing.configHash === configHash) {
                   yield* Effect.log(
-                    `[${id}] No changes, using existing instance`,
+                    `[${fqn}] No changes, using existing instance`,
                   );
                   // Adopt the newest instanceId so a later replacement's
                   // old-generation delete cannot tear this instance down.
@@ -464,7 +466,7 @@ export const make = <
                   return yield* Fiber.join(existing.fiber);
                 }
                 yield* Effect.log(
-                  `[${id}] Changes detected, restarting instance`,
+                  `[${fqn}] Changes detected, restarting instance`,
                 );
                 yield* teardown(existing);
                 instances.delete(fqn);

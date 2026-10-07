@@ -1,5 +1,7 @@
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthSourceControlWriteScope,
   WS_METHODS,
   type SourceControlPublishRepositoryResult,
 } from "@t3tools/contracts";
@@ -8,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -101,14 +103,14 @@ describe("source control environment atoms", () => {
         } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
         const removed = new Array<string>();
         const cache = Persistence.EnvironmentCacheStore.of({
-          loadShell: () => Effect.succeed(Option.none()),
+          loadShell: () => Effect.succeedNone,
           saveShell: () => Effect.void,
-          loadThread: () => Effect.succeed(Option.none()),
+          loadThread: () => Effect.succeedNone,
           saveThread: () => Effect.void,
           removeThread: () => Effect.void,
-          loadServerConfig: () => Effect.succeed(Option.none()),
+          loadServerConfig: () => Effect.succeedNone,
           saveServerConfig: () => Effect.void,
-          loadVcsRefs: () => Effect.succeed(Option.none()),
+          loadVcsRefs: () => Effect.succeedNone,
           saveVcsRefs: () => Effect.void,
           removeVcsRefs: (environmentId, cwd) =>
             Effect.sync(() => {
@@ -168,3 +170,23 @@ describe("source control environment atoms", () => {
     ),
   );
 });
+
+// Transport fixtures have a source-control-only session; authorization edge cases
+// are exercised by commandPermissions.test.ts.
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+}));
+const grantedSessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make(
+    AsyncResult.success({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "test",
+      },
+      scopes: [AuthSourceControlWriteScope],
+    }),
+  ),
+);

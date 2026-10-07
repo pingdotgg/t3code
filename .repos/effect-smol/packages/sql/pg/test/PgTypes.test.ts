@@ -8,6 +8,12 @@ const success = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
+const makeParameter = (oid: number, value: unknown): PgTypesResult.Parameter => ({
+  [PgTypesResult.ParameterTypeId]: PgTypesResult.ParameterTypeId,
+  oid,
+  value
+})
+
 const PgTypes = {
   ...PgTypesResult,
   encode: (value: unknown, oid: number) => success(PgTypesResult.encode(value, oid)),
@@ -45,6 +51,8 @@ const roundTrips: Array<{
   readonly value: unknown
   /** Set when PostgreSQL normalises the value, so encode is checked separately. */
   readonly encoded?: unknown
+  /** Expected decoded value, if different from the input. */
+  readonly decoded?: unknown
 }> = [
   { name: "bool", oid: PgTypes.OID.bool, value: true },
   { name: "int2", oid: PgTypes.OID.int2, value: -12345 },
@@ -52,6 +60,7 @@ const roundTrips: Array<{
   { name: "int8Max", oid: PgTypes.OID.int8, value: BigInt("9223372036854775807") },
   { name: "int8Min", oid: PgTypes.OID.int8, value: BigInt("-9223372036854775808") },
   { name: "oid", oid: PgTypes.OID.oid, value: 4294967295 },
+  { name: "regclass", oid: PgTypes.OID.regclass, value: 4294967295 },
   { name: "float4", oid: PgTypes.OID.float4, value: 1.5 },
   { name: "float8", oid: PgTypes.OID.float8, value: -3.0625 },
   { name: "numeric", oid: PgTypes.OID.numeric, value: "12345.6789" },
@@ -76,13 +85,27 @@ const roundTrips: Array<{
   { name: "dateNegInfinity", oid: PgTypes.OID.date, value: "-infinity" },
   { name: "time", oid: PgTypes.OID.time, value: BigInt(45296000000) },
   { name: "timetz", oid: PgTypes.OID.timetz, value: "12:34:56+02:00" },
-  { name: "timestamp", oid: PgTypes.OID.timestamp, value: 1717171717123 },
-  { name: "timestampInfinity", oid: PgTypes.OID.timestamp, value: Number.POSITIVE_INFINITY },
-  { name: "timestamptz", oid: PgTypes.OID.timestamptz, value: 1717171717123 },
-  { name: "timestamptzNegInfinity", oid: PgTypes.OID.timestamptz, value: Number.NEGATIVE_INFINITY },
+  { name: "timestamp", oid: PgTypes.OID.timestamp, value: new Date(1717171717123) },
+  {
+    name: "timestampInfinity",
+    oid: PgTypes.OID.timestamp,
+    value: Number.POSITIVE_INFINITY,
+    decoded: new Date(Number.NaN)
+  },
+  { name: "timestamptz", oid: PgTypes.OID.timestamptz, value: new Date(1717171717123) },
+  {
+    name: "timestamptzNegInfinity",
+    oid: PgTypes.OID.timestamptz,
+    value: Number.NEGATIVE_INFINITY,
+    decoded: new Date(Number.NaN)
+  },
   { name: "int4ArrayWithNulls", oid: PgTypes.OID.int4Array, value: [1, null, -3] },
   { name: "textArrayEmpty", oid: PgTypes.OID.textArray, value: [] },
-  { name: "timestamptzArray", oid: PgTypes.OID.timestamptzArray, value: [0, null, 1717171717000] }
+  {
+    name: "timestamptzArray",
+    oid: PgTypes.OID.timestamptzArray,
+    value: [new Date(0), null, new Date(1717171717000)]
+  }
 ]
 
 /** One value per element OID that has an array type. */
@@ -95,6 +118,7 @@ const elementSamples: Record<number, unknown> = {
   [PgTypes.OID.int4]: 70000,
   [PgTypes.OID.text]: "héllo ☃",
   [PgTypes.OID.oid]: 4294967295,
+  [PgTypes.OID.regclass]: 4294967295,
   [PgTypes.OID.json]: { a: [1, 2] },
   [PgTypes.OID.jsonb]: { a: [1, 2] },
   [PgTypes.OID.cidr]: "10.0.0.0/8",
@@ -105,8 +129,8 @@ const elementSamples: Record<number, unknown> = {
   [PgTypes.OID.varchar]: "abc",
   [PgTypes.OID.date]: "2024-02-29",
   [PgTypes.OID.time]: BigInt(45296000000),
-  [PgTypes.OID.timestamp]: 1717171717123,
-  [PgTypes.OID.timestamptz]: 0,
+  [PgTypes.OID.timestamp]: new Date(1717171717123),
+  [PgTypes.OID.timestamptz]: new Date(0),
   [PgTypes.OID.timetz]: "12:34:56+02:00",
   [PgTypes.OID.numeric]: "-98765432109876543210",
   [PgTypes.OID.uuid]: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
@@ -157,14 +181,15 @@ describe("PgTypes", () => {
   })
 
   describe("round trips against captured PostgreSQL rows", () => {
-    for (const { encoded, name, oid, value } of roundTrips) {
+    for (const { decoded, encoded, name, oid, value } of roundTrips) {
       it(name, () => {
         const golden = column(rows[name])
-        assert.deepStrictEqual(PgTypes.decode(golden, oid, 1), value)
+        const expected = decoded === undefined ? value : decoded
+        assert.deepStrictEqual(PgTypes.decode(golden, oid, 1), expected)
         if (encoded !== false) {
           assert.deepStrictEqual(PgTypes.encode(value, oid), golden)
         }
-        assert.deepStrictEqual(PgTypes.decode(PgTypes.encode(value, oid), oid, 1), value)
+        assert.deepStrictEqual(PgTypes.decode(PgTypes.encode(value, oid), oid, 1), expected)
       })
     }
   })
@@ -272,6 +297,52 @@ describe("PgTypes", () => {
     })
   })
 
+  it("uses canonical PostgreSQL wire bytes for equivalent IPv6 CIDR text", () => {
+    const expected = bytes("0320011020010db8000000000000000000000000")
+    assert.deepStrictEqual(
+      PgTypes.encode("2001:0DB8:0000:0000:0000:0000:0000:0000/32", PgTypes.OID.cidr),
+      expected
+    )
+    assert.strictEqual(PgTypes.decode(expected, PgTypes.OID.cidr, 1), "2001:db8::/32")
+  })
+
+  it("includes the input and column type in network encoding errors", () => {
+    for (
+      const [type, input, reason] of [
+        ["inet", "010.1.2.3/24", "leading zeroes are not allowed"],
+        ["cidr", "010.1.2.3/24", "leading zeroes are not allowed"],
+        ["inet", "192.0.2.1/33", "prefix length must be an integer from 0 through 32"],
+        ["cidr", "10.1.2.3/8", "address has non-zero host bits"],
+        ["cidr", "2001:db8::1/32", "address has non-zero host bits"]
+      ] as const
+    ) {
+      const result = PgTypesResult.encode(input, PgTypes.OID[type])
+      if (Result.isSuccess(result)) assert.fail("expected Failure")
+      assert.strictEqual(result.failure._tag, "PgTypesCodecError")
+      assert.strictEqual(result.failure.message, `Invalid ${type} value ${JSON.stringify(input)}: ${reason}`)
+    }
+  })
+
+  it("uses shared canonical parsing for inet and cidr", () => {
+    assert.deepStrictEqual(
+      PgTypes.encode("10.1.2.3", PgTypes.OID.cidr),
+      bytes("022001040a010203")
+    )
+    const inet = bytes("0380001020010db8000000000000000000000001")
+    assert.deepStrictEqual(
+      PgTypes.encode("2001:0DB8:0000:0000:0000:0000:0000:0001", PgTypes.OID.inet),
+      inet
+    )
+    assert.strictEqual(PgTypes.decode(inet, PgTypes.OID.inet, 1), "2001:db8::1")
+    assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode("010.1.2.3", PgTypes.OID.inet))
+  })
+
+  it("preserves inet host bits alongside the prefix", () => {
+    for (const value of ["10.1.2.3/8", "2001:db8::1/32"]) {
+      assert.strictEqual(PgTypes.decode(PgTypes.encode(value, PgTypes.OID.inet), PgTypes.OID.inet, 1), value)
+    }
+  })
+
   describe("errors", () => {
     it("rejects the text format", () => {
       assertThrowsTagged("PgTypesCodecError", () => PgTypes.decode(bytes("31"), PgTypes.OID.int4, 0))
@@ -310,8 +381,10 @@ describe("PgTypes", () => {
       )
     })
 
-    it("rejects NaN timestamps", () => {
+    it("rejects NaN and invalid Date timestamps", () => {
       assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode(Number.NaN, PgTypes.OID.timestamptz))
+      assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode(new Date(Number.NaN), PgTypes.OID.timestamptz))
+      assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode(new Date(Number.NaN), PgTypes.OID.timestamp))
     })
 
     it("rejects timestamps outside the PostgreSQL int64 range", () => {
@@ -345,6 +418,10 @@ describe("PgTypes", () => {
     it("rejects host bits outside a cidr netmask", () => {
       assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode("10.1.2.3/8", PgTypes.OID.cidr))
       assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode("2001:db8::1/32", PgTypes.OID.cidr))
+    })
+
+    it("rejects an embedded IPv4 address before IPv6 compression", () => {
+      assertThrowsTagged("PgTypesCodecError", () => PgTypes.encode("1.2.3.4::", PgTypes.OID.inet))
     })
 
     it("rejects invalid network masks and CIDR host bits on decode", () => {
@@ -470,8 +547,30 @@ describe("PgTypes", () => {
   })
 
   describe("unknown OIDs", () => {
-    it("decodes to the raw bytes", () => {
-      assert.deepStrictEqual(PgTypes.decode(bytes("00ff"), 99999, 1), bytes("00ff"))
+    it("decodes unregistered scalar OIDs as UTF-8 text", () => {
+      for (const label of ["use_key", "gérer ☃", ""]) {
+        assert.strictEqual(PgTypes.decode(new TextEncoder().encode(label), 99999, 1), label)
+      }
+    })
+
+    it("rejects invalid UTF-8 with the same codec failure as text", () => {
+      for (const wire of ["ff", "c3", "c328"]) {
+        const expected = PgTypesResult.decode(bytes(wire), PgTypes.OID.text, 1)
+        const actual = PgTypesResult.decode(bytes(wire), 99999, 1)
+        assert.isTrue(Result.isFailure(expected))
+        assert.isTrue(Result.isFailure(actual))
+        if (Result.isFailure(expected) && Result.isFailure(actual)) {
+          assert.strictEqual(actual.failure._tag, "PgTypesCodecError")
+          assert.strictEqual(actual.failure.message, expected.failure.message)
+        }
+      }
+    })
+
+    it("keeps bytea binary even when its bytes are invalid UTF-8", () => {
+      const payload = bytes("00ff")
+      const value = PgTypes.decode(payload, PgTypes.OID.bytea, 1)
+      assert.instanceOf(value, Uint8Array)
+      assert.deepStrictEqual(value, payload)
     })
 
     it("fails to encode until a codec is registered", () => {
@@ -541,6 +640,7 @@ describe("PgTypes", () => {
     it("agrees with the exact 64-bit conversion either side of the Number boundary", () => {
       const epochMs = BigInt(946684800000)
       const boundary = BigInt("9007199254740992")
+      const dateLimitMs = BigInt("8640000000000000")
       const micros = [
         BigInt(0),
         BigInt(1),
@@ -553,21 +653,45 @@ describe("PgTypes", () => {
         boundary + BigInt(7),
         -boundary,
         -boundary - BigInt(7),
+        (dateLimitMs - epochMs) * BigInt(1000),
+        (dateLimitMs - epochMs) * BigInt(1000) - BigInt(1),
+        (-dateLimitMs - epochMs) * BigInt(1000),
+        (-dateLimitMs - epochMs) * BigInt(1000) + BigInt(1)
+      ]
+      for (const oid of [PgTypes.OID.timestamp, PgTypes.OID.timestamptz]) {
+        for (const value of micros) {
+          const expectedMs = Number(value / BigInt(1000) + epochMs)
+          const decoded = PgTypes.decode(int64Bytes(value), oid, 1) as Date
+          assert.instanceOf(decoded, Date)
+          assert.isTrue(Number.isFinite(decoded.getTime()), `${value} microseconds, OID ${oid}`)
+          assert.strictEqual(decoded.getTime(), expectedMs, `${value} microseconds, OID ${oid}`)
+        }
+      }
+    })
+
+    it("decodes finite wire timestamps outside the Date range to invalid Dates", () => {
+      const epochMs = BigInt(946684800000)
+      const dateLimitMs = BigInt("8640000000000000")
+      const micros = [
+        (dateLimitMs + BigInt(1) - epochMs) * BigInt(1000),
+        (-dateLimitMs - BigInt(1) - epochMs) * BigInt(1000),
         BigInt("9223372036854775806"),
         BigInt("-9223372036854775807")
       ]
-      for (const value of micros) {
-        assert.strictEqual(
-          PgTypes.decode(int64Bytes(value), PgTypes.OID.timestamptz, 1),
-          Number(value / BigInt(1000)) + 946684800000,
-          `${value} microseconds`
-        )
+      for (const oid of [PgTypes.OID.timestamp, PgTypes.OID.timestamptz]) {
+        for (const value of micros) {
+          const decoded = PgTypes.decode(int64Bytes(value), oid, 1) as Date
+          assert.instanceOf(decoded, Date)
+          assert.isTrue(Number.isNaN(decoded.getTime()), `${value} microseconds, OID ${oid}`)
+        }
       }
     })
 
     it("round trips milliseconds through both the float and the BigInt path", () => {
       for (const ms of [0, 1, -1, 946684800000, 1717171717123, -62135596800000, 253402300799000, 9007199254740]) {
-        assert.strictEqual(PgTypes.decode(PgTypes.encode(ms, PgTypes.OID.timestamp), PgTypes.OID.timestamp, 1), ms)
+        const encoded = PgTypes.encode(ms, PgTypes.OID.timestamp)
+        assert.deepStrictEqual(PgTypes.encode(new Date(ms), PgTypes.OID.timestamp), encoded)
+        assert.deepStrictEqual(PgTypes.decode(encoded, PgTypes.OID.timestamp, 1), new Date(ms))
       }
     })
 
@@ -576,8 +700,8 @@ describe("PgTypes", () => {
       const after = new Uint8Array(8)
       new DataView(before.buffer).setBigInt64(0, BigInt(-1))
       new DataView(after.buffer).setBigInt64(0, BigInt(1))
-      assert.strictEqual(PgTypes.decode(before, PgTypes.OID.timestamp, 1), 946684800000)
-      assert.strictEqual(PgTypes.decode(after, PgTypes.OID.timestamp, 1), 946684800000)
+      assert.deepStrictEqual(PgTypes.decode(before, PgTypes.OID.timestamp, 1), new Date(946684800000))
+      assert.deepStrictEqual(PgTypes.decode(after, PgTypes.OID.timestamp, 1), new Date(946684800000))
     })
   })
 
@@ -671,12 +795,17 @@ describe("PgTypes", () => {
     })
 
     it("carries the OID with the value", () => {
-      assert.deepStrictEqual(PgTypes.int4(1), { oid: PgTypes.OID.int4, value: 1 })
-      assert.deepStrictEqual(PgTypes.timestamptz(0), { oid: PgTypes.OID.timestamptz, value: 0 })
-      assert.deepStrictEqual(PgTypes.array([1, null], PgTypes.OID.int4), {
-        oid: PgTypes.OID.int4Array,
-        value: [1, null]
-      })
+      assert.deepStrictEqual(PgTypes.int4(1), makeParameter(PgTypes.OID.int4, 1))
+      assert.deepStrictEqual(PgTypes.timestamptz(0), makeParameter(PgTypes.OID.timestamptz, 0))
+      assert.deepStrictEqual(
+        PgTypes.array([1, null], PgTypes.OID.int4),
+        makeParameter(
+          PgTypes.OID.int4Array,
+          [1, null]
+        )
+      )
+      assert.isTrue(PgTypesResult.isParameter(PgTypes.int4(1)))
+      assert.isFalse(PgTypesResult.isParameter({ oid: PgTypes.OID.int4, value: 1 }))
     })
 
     it("encodes SQL NULL as null", () => {
@@ -743,9 +872,9 @@ describe("PgTypes", () => {
     it("writes every builtin parameter as the bytes encode produces", () => {
       const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
       const parameters = [
-        ...roundTrips.map(({ oid, value }) => ({ oid, value })),
-        { oid: PgTypes.OID.int4, value: null },
-        { oid: PgTypes.OID.textArray, value: null }
+        ...roundTrips.map(({ oid, value }) => makeParameter(oid, value)),
+        makeParameter(PgTypes.OID.int4, null),
+        makeParameter(PgTypes.OID.textArray, null)
       ]
       assert.deepStrictEqual(
         encodeBind({ portal: "p1", statement: "s1", parameters }),
@@ -761,11 +890,11 @@ describe("PgTypes", () => {
       const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
       for (
         const parameter of [
-          { oid: PgTypes.OID.bool, value: 1 },
-          { oid: PgTypes.OID.bytea, value: "bytes" },
-          { oid: PgTypes.OID.json, value: undefined },
-          { oid: PgTypes.OID.jsonb, value: undefined },
-          { oid: PgTypes.OID.int4Array, value: "not-an-array" }
+          makeParameter(PgTypes.OID.bool, 1),
+          makeParameter(PgTypes.OID.bytea, "bytes"),
+          makeParameter(PgTypes.OID.json, undefined),
+          makeParameter(PgTypes.OID.jsonb, undefined),
+          makeParameter(PgTypes.OID.int4Array, "not-an-array")
         ]
       ) {
         assertThrowsTagged(
@@ -791,13 +920,35 @@ describe("PgTypes", () => {
       }
     })
 
+    it("isolates registry codecs and installs their generic array codec", () => {
+      const oid = 90_001
+      const arrayOid = 90_002
+      const registry = PgTypesResult.makeRegistry()
+      registry.register<string>(oid, {
+        encode: (value) => Result.succeed(new TextEncoder().encode(value.toUpperCase())),
+        decode: (value) => Result.succeed(new TextDecoder().decode(value).toLowerCase())
+      }, { arrayOid })
+
+      assert.strictEqual(PgTypesResult.arrayOidFor(oid), undefined)
+      assert.strictEqual(PgTypesResult.arrayOidFor(oid, registry), arrayOid)
+      assertThrowsTagged("PgTypesCodecError", () => PgTypesResult.encode("ab", oid))
+
+      const scalar = success(PgTypesResult.encode("ab", oid, registry))
+      assert.deepStrictEqual(scalar, bytes("4142"))
+      assert.strictEqual(success(PgTypesResult.decode(scalar, oid, 1, registry)), "ab")
+
+      const array = success(PgTypesResult.encode(["ab", null], arrayOid, registry))
+      assert.deepStrictEqual(success(PgTypesResult.decode(array, arrayOid, 1, registry)), ["ab", null])
+      assert.deepStrictEqual(success(PgTypesResult.array([], oid, registry)), makeParameter(arrayOid, []))
+    })
+
     it("writes every array OID as the bytes encode produces", () => {
       const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
       for (const [elementOid, sample] of Object.entries(elementSamples)) {
         const arrayOid = PgTypes.arrayOidFor(Number(elementOid))!
         assert.notStrictEqual(arrayOid, undefined)
         for (const value of [[], [sample], [null], [sample, null, sample]]) {
-          const parameters = [{ oid: arrayOid, value }]
+          const parameters = [makeParameter(arrayOid, value)]
           assert.deepStrictEqual(
             encodeBind({ portal: "", statement: "", parameters }),
             PgProtocol.encodeBind({
@@ -814,7 +965,7 @@ describe("PgTypes", () => {
     it("frames array elements that grow the pool mid-write", () => {
       const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
       const value = ["a", "b".repeat(24 * 1024), null, "c"]
-      const parameters = [{ oid: PgTypes.OID.textArray, value }, PgTypes.int4(7)]
+      const parameters = [makeParameter(PgTypes.OID.textArray, value), PgTypes.int4(7)]
       assert.deepStrictEqual(
         encodeBind({ portal: "p", statement: "s", parameters }),
         PgProtocol.encodeBind({ portal: "p", statement: "s", parameters: parameters.map(PgTypes.encodeParameter) })
@@ -823,7 +974,7 @@ describe("PgTypes", () => {
 
     it("writes a registered codec through encode when it has no writer", () => {
       const encodeBind = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
-      const parameters = [{ oid: 99999, value: "ab" }]
+      const parameters = [makeParameter(99999, "ab")]
       assertThrowsTagged("PgTypesCodecError", () => encodeBind({ portal: "", statement: "", parameters }))
       PgTypes.register<string>(99999, {
         encode: (value) => Result.succeed(new TextEncoder().encode(value.toUpperCase())),
@@ -865,6 +1016,7 @@ describe("PgTypes", () => {
 
     it("maps element OIDs to array OIDs", () => {
       assert.strictEqual(PgTypes.arrayOidFor(PgTypes.OID.text), PgTypes.OID.textArray)
+      assert.strictEqual(PgTypes.arrayOidFor(PgTypes.OID.regclass), PgTypes.OID.regclassArray)
       assert.strictEqual(PgTypes.arrayOidFor(99999), undefined)
       assertThrowsTagged("PgTypesCodecError", () => PgTypes.array([], 99999))
     })
@@ -889,15 +1041,38 @@ describe("PgTypes", () => {
       assert.deepStrictEqual((messages[0] as PgProtocol.DataRow<unknown>).values, [null, "a"])
     })
 
-    it("copies the bytes of a column whose OID has no codec", () => {
-      const parser = PgProtocol.makeParser({ readField: PgTypes.makeFieldReader(binary([99999])) })
-      const payload = new Uint8Array([1, 2, 3])
+    it("reads unregistered scalar columns as UTF-8 text and preserves NULL", () => {
+      const parser = PgProtocol.makeParser({
+        readField: PgTypes.makeFieldReader(binary([PgTypes.OID.int4, 99999, 99999, 99999, 99999]))
+      })
+      const messages = parser.push(dataRow([
+        PgTypes.encode(7, PgTypes.OID.int4),
+        new TextEncoder().encode("use_key"),
+        new TextEncoder().encode("gérer ☃"),
+        new Uint8Array(0),
+        null
+      ]))
+      assert.deepStrictEqual((messages[0] as PgProtocol.DataRow<unknown>).values, [7, "use_key", "gérer ☃", "", null])
+    })
+
+    it("rejects invalid UTF-8 in an unregistered column with a codec error", () => {
+      for (const wire of ["ff", "c3", "c328"]) {
+        const parser = PgProtocol.makeParser({
+          readField: PgTypes.makeFieldReader(binary([PgTypes.OID.int4, 99999]))
+        })
+        assertThrowsTagged(
+          "PgTypesCodecError",
+          () => parser.push(dataRow([PgTypes.encode(7, PgTypes.OID.int4), bytes(wire)]))
+        )
+      }
+    })
+
+    it("reads bytea as Uint8Array even when its bytes are invalid UTF-8", () => {
+      const parser = PgProtocol.makeParser({ readField: PgTypes.makeFieldReader(binary([PgTypes.OID.bytea])) })
+      const payload = bytes("00ff")
       const value = (parser.push(dataRow([payload]))[0] as PgProtocol.DataRow<unknown>).values[0]
+      assert.instanceOf(value, Uint8Array)
       assert.deepStrictEqual(value, payload)
-      // A copy, not a view into the parser's buffer, which is far larger and
-      // holds the whole frame rather than just this field.
-      assert.strictEqual((value as Uint8Array).byteOffset, 0)
-      assert.strictEqual((value as Uint8Array).buffer.byteLength, payload.length)
     })
 
     it("hands a view to a registered codec that cannot read in place", () => {

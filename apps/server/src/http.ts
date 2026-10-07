@@ -1,4 +1,4 @@
-import Mime from "@effect/platform-node/Mime";
+import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -16,7 +16,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { cast } from "effect/Function";
 import {
-  HttpBody,
   HttpClient,
   HttpClientResponse,
   HttpMiddleware,
@@ -24,12 +23,13 @@ import {
   HttpServerResponse,
   HttpServerRequest,
   HttpServerRespondable,
-} from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { OtlpTracer } from "effect/unstable/observability";
+} from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -46,6 +46,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -55,7 +56,9 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 // HTML previews are agent output, not the app. The sandbox gives the document an
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
 // out of reach. Relative sibling assets still load through their signed URLs.
-const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
+// No modals: agent HTML can open without a click (inline renders, and mobile
+// loads it as the top document), and must not raise blocking dialogs.
+const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups";
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.
@@ -203,7 +206,10 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   }
   if (mediaFile && mediaInfo) {
     const size = bytesToRead ?? mediaInfo.size;
-    headers["Content-Type"] ??= Mime.getType(asset.path) ?? "application/octet-stream";
+    headers["Content-Type"] ??= Option.getOrElse(
+      Mime.getType(asset.path),
+      () => "application/octet-stream",
+    );
     headers["Content-Length"] = String(size);
     if (!isMedia) {
       headers["Last-Modified"] = mediaInfo.mtime.toUTCString();
@@ -224,11 +230,11 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
-export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
+export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
 
-export const browserApiCorsLayer = Layer.unwrap(
+export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
@@ -291,7 +297,7 @@ const authenticateRawRouteWithScope = (
     }
   });
 
-export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
+export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "metadata",
   Effect.fnUntraced(function* (handlers) {
@@ -308,10 +314,13 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
   readonly cause: unknown;
-  readonly bodyJson: OtlpTracer.TraceData;
 }> {}
 
-export const otlpTracesProxyRouteLayer = HttpRouter.add(
+// Renderers export up to once a second while they have spans buffered, so
+// tracing this proxy would add more server spans than it forwards.
+// withTracerEnabled(false) drops the handler's spans, including the forward.
+// untracedRequestsLayer drops the HTTP server span.
+export const layerOtlpTracesProxyRoute = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
   Effect.gen(function* () {
@@ -319,21 +328,18 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig.ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
+    const otlpHeaders = config.otlpTracesExport.headers;
     const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
+    const serialization = yield* OtlpSerialization.OtlpSerialization;
     const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
-      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause, bodyJson }),
+      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause }),
     }).pipe(
       Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to decode browser OTLP traces", {
-          cause,
-          bodyJson,
-        }),
-      ),
+      Effect.catch((cause) => Effect.logWarning("Failed to decode browser OTLP traces", { cause })),
     );
 
     if (otlpTracesUrl === undefined) {
@@ -342,7 +348,8 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
 
     return yield* httpClient
       .post(otlpTracesUrl, {
-        body: HttpBody.jsonUnsafe(bodyJson),
+        body: serialization.traces(bodyJson),
+        headers: otlpHeaders,
       })
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -363,10 +370,28 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
       EnvironmentInternalError: HttpServerRespondable.toResponse,
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
+    Effect.withTracerEnabled(false),
   ),
 );
 
-export const assetRouteLayer = HttpRouter.add(
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+
+// Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
+// before routing, so a route handler cannot skip it. TracerDisabledWhen is one
+// predicate for the whole server, and HttpRouter.serve builds its routes
+// privately, so it is provided to the served layer, never merged into the
+// routes. Add paths here instead of providing it again. The query string is
+// ignored, as in routing.
+const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
+  const queryIndex = request.url.indexOf("?");
+  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  // Webhook URLs carry their secret token in the path, so they never reach a trace.
+  return UNTRACED_REQUEST_PATHS.has(path) || path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`);
+});
+
+export const withUntracedRequests = Layer.provide(layerUntracedRequests);
+
+export const layerAssetRoute = HttpRouter.add(
   "GET",
   `${ASSET_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
@@ -389,6 +414,25 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    if (asset.kind === "bytes") {
+      return HttpServerResponse.uint8Array(asset.bytes, {
+        contentType: asset.mimeType,
+        headers: { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
+      });
+    }
+    if (asset.kind === "github-media") {
+      return yield* githubMediaResponse(asset, request.headers).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+        ),
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.empty({
+            status: 502,
+            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+          }),
+        ),
+      );
+    }
     return yield* assetFileResponse(
       asset,
       request.method === "GET" ? request.headers.range : undefined,
@@ -400,7 +444,7 @@ export const assetRouteLayer = HttpRouter.add(
   }),
 );
 
-export const attachmentUploadRouteLayer = HttpRouter.add(
+export const layerAttachmentUploadRoute = HttpRouter.add(
   "POST",
   `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
@@ -491,7 +535,7 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     Effect.fnUntraced(function* (offset: bigint) {
       if (offset >= size) return;
       const remaining = size - offset;
-      const bytes = yield* file.readAlloc(remaining < 65_536n ? remaining : 65_536n);
+      const bytes = yield* file.readAlloc(Number(remaining < 65_536n ? remaining : 65_536n));
       if (Option.isNone(bytes)) return;
       return [bytes.value, offset + BigInt(bytes.value.byteLength)] as const;
     }),
@@ -567,7 +611,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       }
     }
     const fileInfo = opened.info;
-    const mimeType = Mime.getType(filePath) ?? "application/octet-stream";
+    const mimeType = Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream");
     const isHtml = mimeType === "text/html";
 
     // A hash-like name is not enough: custom static files can use the same naming pattern.
@@ -628,7 +672,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 );
 
 // Read the installed build's manifest once. Unknown files use revalidation.
-export const staticAndDevRouteLayer = Layer.unwrap(
+export const layerStaticAndDevRoute = Layer.unwrap(
   loadImmutableBuildAssets.pipe(
     Effect.map((assets) => HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets))),
   ),

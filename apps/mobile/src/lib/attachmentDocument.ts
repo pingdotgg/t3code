@@ -11,6 +11,7 @@ import type { FileBackedComposerAttachment } from "./composerImages";
 import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
 import { useRefreshAssetUrl } from "../state/assets";
+import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation";
 
 const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 
@@ -32,8 +33,6 @@ export function useAttachmentDocument(input: {
 }) {
   const kind = filePreviewKind(input);
   const delimiter = filePreviewDelimiter(input);
-  const renderedMode =
-    kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const shareController = useRef<AbortController | null>(null);
   useEffect(() => () => shareController.current?.abort(), []);
   const resource = useMemo(
@@ -61,6 +60,12 @@ export function useAttachmentDocument(input: {
   const [contentError, setContentError] = useState<string | null>(null);
   const textReadUrl = useRef<{ uri: string; authorizedAt: number } | null>(null);
   const [rendered, setRendered] = useState(true);
+  const presentation = attachmentDocumentPresentation({
+    kind,
+    hasTable: table !== null,
+    hasEnvironment: input.environmentId !== null,
+    rendered,
+  });
   const [revision, setRevision] = useState(0);
   const [sharing, setSharing] = useState(false);
   const uri = input.attachment ? localUri : remoteUri;
@@ -185,7 +190,7 @@ export function useAttachmentDocument(input: {
   };
   return {
     kind,
-    renderedMode,
+    ...presentation,
     uri,
     /** Native viewers resolve their own fresh URL from this instead of reusing `uri`. */
     resource,

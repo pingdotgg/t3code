@@ -1,7 +1,8 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Fly from "@/Fly";
 import * as Alchemy from "@/index.ts";
+import { Stack as StackService } from "@/Stack.ts";
+import { Stage } from "@/Stage.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
@@ -9,8 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Api from "./fixtures/app/api.ts";
 import {
   Marker,
@@ -30,9 +30,25 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
+// Out-of-band verification resolves Fly credentials the same way the stack
+// does — through the Alchemy profile via `Fly.providers()` — not from
+// `FLY_API_TOKEN`, which a laptop running off a profile does not have.
 const distilled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(Layer.mergeAll(CredentialsFromEnv, FetchHttpClient.layer)),
+    Effect.provide(
+      Fly.providers().pipe(
+        Layer.provideMerge(
+          Layer.succeed(StackService, {
+            name: "FlyAppFixtureVerify",
+            stage: "test",
+            resources: {},
+            bindings: {},
+            actions: {},
+          }),
+        ),
+        Layer.provideMerge(Layer.succeed(Stage, "test")),
+      ),
+    ),
   );
 
 class ApiNotReady extends Data.TaggedError("ApiNotReady")<{
@@ -179,5 +195,17 @@ test(
     expect(body.ok).toEqual(true);
     expect(body.name).toEqual(SECRET_NAME);
   }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:ipassignment",
+      "provider:fly:machine",
+      "provider:fly:secret",
+      "provider:fly:service",
+      "provider:fly:volume",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

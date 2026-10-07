@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
+
+import { appAtomRegistry } from "./atom-registry";
 import type {
   EnvironmentProject,
+  EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -9,11 +13,11 @@ import type {
   ScopedThreadRef,
   ServerConfig,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { environmentThreadShells } from "./threads";
+import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -25,12 +29,41 @@ const EMPTY_SERVER_CONFIG_ATOM = Atom.make<ServerConfig | null>(null).pipe(
   Atom.withLabel("mobile-server-config:empty"),
 );
 
+/** Resolves when the project event reaches the live client store. */
+export function waitForProject(
+  ref: ScopedProjectRef,
+  timeoutMs = 10_000,
+): Promise<EnvironmentProject | null> {
+  const atom = environmentProjects.projectAtom(ref);
+  const current = appAtomRegistry.get(atom);
+  if (current !== null) return Promise.resolve(current);
+  return new Promise((resolve) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      resolve(null);
+    }, timeoutMs);
+    const finish = (project: EnvironmentProject | null) => {
+      if (project === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(project);
+    };
+    unsubscribe = appAtomRegistry.subscribe(atom, finish);
+    finish(appAtomRegistry.get(atom));
+  });
+}
+
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
+}
+
+export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {
@@ -55,4 +88,11 @@ export function useEnvironmentServerConfig(
 
 export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
   return useAtomValue(environmentServerConfigsAtom);
+}
+
+const selectReportedModelSelection = (thread: EnvironmentThread | null) =>
+  thread === null ? null : deriveReportedModelSelection(thread.projection);
+
+export function useThreadReportedModelSelection(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadDetails.threadAtom(ref), selectReportedModelSelection);
 }

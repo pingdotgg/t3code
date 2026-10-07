@@ -90,6 +90,7 @@ export interface Context extends Resource<
  * ```
  *
  * @resource
+ * @product Context
  */
 export const Context = Resource<Context>("Docker.Context");
 

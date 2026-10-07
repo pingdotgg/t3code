@@ -58,10 +58,10 @@ const BigDecimalProto: Omit<BigDecimal, "value" | "scale" | "normalized"> = {
   [TypeId]: TypeId,
   [Hash.symbol](this: BigDecimal): number {
     const normalized = normalize(this)
-    return Hash.combine(Hash.hash(normalized.value), Hash.number(normalized.scale))
+    return Hash.combine(Hash.string(String(normalized.value)), Hash.number(normalized.scale))
   },
   [Equal.symbol](this: BigDecimal, that: unknown): boolean {
-    return isBigDecimal(that) && equals(this, that)
+    return isBigDecimal(that) && compare(this, that) === 0
   },
   toString(this: BigDecimal) {
     return `BigDecimal(${format(this)})`
@@ -106,12 +106,16 @@ const BigDecimalProto: Omit<BigDecimal, "value" | "scale" | "normalized"> = {
 export const isBigDecimal = (u: unknown): u is BigDecimal => hasProperty(u, TypeId)
 
 /**
- * Creates a `BigDecimal` from a `bigint` value and a scale.
+ * Creates a `BigDecimal` from a `bigint` value and a safe integer scale.
  *
  * **When to use**
  *
  * Use to construct a decimal directly from its unscaled integer value and
  * decimal scale.
+ *
+ * **Gotchas**
+ *
+ * Throws a `RangeError` if `scale` is not a safe integer.
  *
  * **Example** (Creating decimals from bigint and scale)
  *
@@ -133,9 +137,18 @@ export const isBigDecimal = (u: unknown): u is BigDecimal => hasProperty(u, Type
  * @since 2.0.0
  */
 export const make = (value: bigint, scale: number): BigDecimal => {
+  if (!Number.isSafeInteger(scale)) {
+    throw new RangeError(`Scale must be a safe integer, got ${scale}`)
+  }
   const o = Object.create(BigDecimalProto)
   o.value = value
   o.scale = scale
+  return o
+}
+
+const makeNormalized = (value: bigint, scale: number): BigDecimal => {
+  const o = make(value, scale)
+  o.normalized = o
   return o
 }
 
@@ -149,9 +162,7 @@ export const makeNormalizedUnsafe = (value: bigint, scale: number): BigDecimal =
     throw new RangeError("Value must be normalized")
   }
 
-  const o = make(value, scale)
-  o.normalized = o
-  return o
+  return makeNormalized(value, scale)
 }
 
 const bigint0 = BigInt(0)
@@ -161,7 +172,7 @@ const bigint2 = BigInt(2)
 const bigint5 = BigInt(5)
 const bigint_5 = BigInt(-5)
 const bigint10 = BigInt(10)
-const zero = makeNormalizedUnsafe(bigint0, 0)
+const zero = makeNormalized(bigint0, 0)
 const one = makeNormalizedUnsafe(bigint1, 0)
 
 /**
@@ -195,23 +206,9 @@ export const normalize = (self: BigDecimal): BigDecimal => {
       self.normalized = zero
     } else {
       const digits = `${self.value}`
-
-      let trail = 0
-      for (let i = digits.length - 1; i >= 0; i--) {
-        if (digits[i] === "0") {
-          trail++
-        } else {
-          break
-        }
-      }
-
-      if (trail === 0) {
-        self.normalized = self
-      }
-
-      const value = BigInt(digits.substring(0, digits.length - trail))
-      const scale = self.scale - trail
-      self.normalized = makeNormalizedUnsafe(value, scale)
+      let end = digits.length
+      while (digits[end - 1] === "0") end--
+      self.normalized = makeNormalized(BigInt(digits.slice(0, end)), self.scale - (digits.length - end))
     }
   }
 
@@ -630,6 +627,41 @@ export const divideUnsafe: {
   return divideWithPrecision(self.value, that.value, scale, DEFAULT_PRECISION)
 })
 
+const MAX_COMPARISON_SCALE_ALIGNMENT = 100
+const comparisonPowersOfTen: Array<bigint | undefined> = [bigint1]
+
+const compareBigInt = (self: bigint, that: bigint): Ordering => self === that ? 0 : self < that ? -1 : 1
+
+const compareMagnitude = (self: BigDecimal, that: BigDecimal): Ordering => {
+  const selfDigits = `${self.value < bigint0 ? -self.value : self.value}`
+  const thatDigits = `${that.value < bigint0 ? -that.value : that.value}`
+  const exponentDifference = BigInt(selfDigits.length - thatDigits.length) - BigInt(self.scale) + BigInt(that.scale)
+  if (exponentDifference !== bigint0) return exponentDifference < bigint0 ? -1 : 1
+
+  const length = Math.max(selfDigits.length, thatDigits.length)
+  return order.String(selfDigits.padEnd(length, "0"), thatDigits.padEnd(length, "0"))
+}
+
+const compare = (self: BigDecimal, that: BigDecimal): Ordering => {
+  if (self.scale === that.scale) return compareBigInt(self.value, that.value)
+
+  const selfSign = sign(self)
+  const thatSign = sign(that)
+  if (selfSign !== thatSign) return selfSign < thatSign ? -1 : 1
+  if (selfSign === 0) return 0
+
+  const scaleDifference = self.scale - that.scale
+  const absoluteScaleDifference = Math.abs(scaleDifference)
+  if (absoluteScaleDifference > MAX_COMPARISON_SCALE_ALIGNMENT) {
+    return selfSign === -1 ? compareMagnitude(that, self) : compareMagnitude(self, that)
+  }
+
+  const powerOfTen = comparisonPowersOfTen[absoluteScaleDifference] ??= bigint10 ** BigInt(absoluteScaleDifference)
+  return scaleDifference > 0
+    ? compareBigInt(self.value, that.value * powerOfTen)
+    : compareBigInt(self.value * powerOfTen, that.value)
+}
+
 /**
  * Provides an `Order` instance for `BigDecimal` that allows comparing and sorting BigDecimal values.
  *
@@ -655,22 +687,7 @@ export const divideUnsafe: {
  * @category instances
  * @since 2.0.0
  */
-export const Order: order.Order<BigDecimal> = order.make((self, that) => {
-  const scmp = order.Number(sign(self), sign(that))
-  if (scmp !== 0) {
-    return scmp
-  }
-
-  if (self.scale > that.scale) {
-    return order.BigInt(self.value, scale(that, self.scale).value)
-  }
-
-  if (self.scale < that.scale) {
-    return order.BigInt(scale(self, that.scale).value, that.value)
-  }
-
-  return order.BigInt(self.value, that.value)
-})
+export const Order: order.Order<BigDecimal> = order.make(compare)
 
 /**
  * Returns `true` if the first argument is less than the second, otherwise `false`.
@@ -1100,17 +1117,7 @@ export const remainderUnsafe: {
  * @category instances
  * @since 2.0.0
  */
-export const Equivalence: Equ.Equivalence<BigDecimal> = Equ.make((self, that) => {
-  if (self.scale > that.scale) {
-    return scale(that, self.scale).value === self.value
-  }
-
-  if (self.scale < that.scale) {
-    return scale(self, that.scale).value === that.value
-  }
-
-  return self.value === that.value
-})
+export const Equivalence: Equ.Equivalence<BigDecimal> = Equ.make((self, that) => compare(self, that) === 0)
 
 /**
  * Checks whether two `BigDecimal`s are equal.
@@ -1385,27 +1392,12 @@ export const format = (n: BigDecimal): string => {
   }
 
   const negative = normalized.value < bigint0
-  const absolute = negative ? `${normalized.value}`.substring(1) : `${normalized.value}`
-
-  let before: string
-  let after: string
-
-  if (normalized.scale >= absolute.length) {
-    before = "0"
-    after = "0".repeat(normalized.scale - absolute.length) + absolute
-  } else {
-    const location = absolute.length - normalized.scale
-    if (location > absolute.length) {
-      const zeros = location - absolute.length
-      before = `${absolute}${"0".repeat(zeros)}`
-      after = ""
-    } else {
-      after = absolute.slice(location)
-      before = absolute.slice(0, location)
-    }
-  }
-
-  const complete = after === "" ? before : `${before}.${after}`
+  const absolute = `${negative ? -normalized.value : normalized.value}`
+  const digits = normalized.scale > 0
+    ? absolute.padStart(normalized.scale + 1, "0")
+    : absolute.padEnd(absolute.length - normalized.scale, "0")
+  const point = digits.length - normalized.scale
+  const complete = normalized.scale > 0 ? `${digits.slice(0, point)}.${digits.slice(point)}` : digits
   return negative ? `-${complete}` : complete
 }
 
@@ -1435,17 +1427,12 @@ export const toExponential = (n: BigDecimal): string => {
   }
 
   const normalized = normalize(n)
-  const digits = `${abs(normalized).value}`
-  const head = digits.slice(0, 1)
-  const tail = digits.slice(1)
-
-  let output = `${isNegative(normalized) ? "-" : ""}${head}`
-  if (tail !== "") {
-    output += `.${tail}`
-  }
-
+  const digits = `${normalized.value}`
+  const point = normalized.value < bigint0 ? 2 : 1
+  const head = digits.slice(0, point)
+  const tail = digits.slice(point)
   const exp = tail.length - normalized.scale
-  return `${output}e${exp >= 0 ? "+" : ""}${exp}`
+  return `${head}${tail === "" ? "" : `.${tail}`}e${exp >= 0 ? "+" : ""}${exp}`
 }
 
 /**

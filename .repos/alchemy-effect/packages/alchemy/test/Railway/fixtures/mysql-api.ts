@@ -1,8 +1,8 @@
 import * as Drizzle from "@/Drizzle/MySQL.ts";
 import * as Railway from "@/Railway";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Partition, Site } from "./suite-env.ts";
 
 export const MYSQL_API_PORT = 3000;
@@ -25,7 +25,9 @@ export default class MySQLApi extends Railway.Service<MySQLApi>()(
     environment: Partition,
     main: import.meta.url,
     port: MYSQL_API_PORT,
-    build: { install: ["mysql2"] },
+    // Match Alchemy's installed version; multiple lockfile entries make an
+    // unversioned external ambiguous when bundling this fixture.
+    build: { install: { mysql2: "3.24.2" } },
   },
   Effect.gen(function* () {
     const conn = yield* Railway.ConnectMySQL(Db);

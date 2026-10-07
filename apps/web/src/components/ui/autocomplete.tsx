@@ -30,7 +30,7 @@ function AutocompleteInput({
       {startAddon && (
         <div
           aria-hidden="true"
-          className="[&_svg]:-mx-0.5 pointer-events-none absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
+          className="[&_svg]:-mx-0.5 pointer-events-none has-[button]:pointer-events-auto absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
           data-slot="autocomplete-start-addon"
         >
           {startAddon}
@@ -125,7 +125,7 @@ function AutocompleteItem({ className, children, ...props }: AutocompletePrimiti
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-default select-none items-center rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex min-h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}
       data-slot="autocomplete-item"
@@ -133,16 +133,6 @@ function AutocompleteItem({ className, children, ...props }: AutocompletePrimiti
     >
       {children}
     </AutocompletePrimitive.Item>
-  );
-}
-
-function AutocompleteSeparator({ className, ...props }: AutocompletePrimitive.Separator.Props) {
-  return (
-    <AutocompletePrimitive.Separator
-      className={cn("mx-2 my-1 h-px bg-border last:hidden", className)}
-      data-slot="autocomplete-separator"
-      {...props}
-    />
   );
 }
 
@@ -156,11 +146,35 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
   );
 }
 
+const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
+
 function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
   return (
     <AutocompletePrimitive.GroupLabel
-      className={cn("px-2 py-1.5 font-medium text-muted-foreground text-xs", className)}
+      className={cn(GROUP_LABEL_CLASS_NAME, className)}
       data-slot="autocomplete-group-label"
+      {...props}
+    />
+  );
+}
+
+// A group label for virtualized lists, where rows cannot be wrapped in a group.
+function AutocompleteListHeading({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(GROUP_LABEL_CLASS_NAME, className)}
+      data-slot="autocomplete-group-label"
+      role="presentation"
+      {...props}
+    />
+  );
+}
+
+function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimitive.List.Props) {
+  return (
+    <AutocompletePrimitive.List
+      className={cn("size-full min-w-0", className)}
+      data-slot="autocomplete-list"
       {...props}
     />
   );
@@ -177,16 +191,6 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
       {...props}
     />
   );
-}
-
-function AutocompleteRow({ className, ...props }: AutocompletePrimitive.Row.Props) {
-  return (
-    <AutocompletePrimitive.Row className={className} data-slot="autocomplete-row" {...props} />
-  );
-}
-
-function AutocompleteValue({ ...props }: AutocompletePrimitive.Value.Props) {
-  return <AutocompletePrimitive.Value data-slot="autocomplete-value" {...props} />;
 }
 
 function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
@@ -216,19 +220,6 @@ function AutocompleteClear({ className, ...props }: AutocompletePrimitive.Clear.
   );
 }
 
-function AutocompleteStatus({ className, ...props }: AutocompletePrimitive.Status.Props) {
-  return (
-    <AutocompletePrimitive.Status
-      className={cn(
-        "px-3 py-2 font-medium text-muted-foreground text-xs empty:m-0 empty:p-0",
-        className,
-      )}
-      data-slot="autocomplete-status"
-      {...props}
-    />
-  );
-}
-
 function AutocompleteCollection({ ...props }: AutocompletePrimitive.Collection.Props) {
   return <AutocompletePrimitive.Collection data-slot="autocomplete-collection" {...props} />;
 }
@@ -249,23 +240,18 @@ function AutocompleteTrigger({
   );
 }
 
-const useAutocompleteFilter = AutocompletePrimitive.useFilter;
-
 export {
   Autocomplete,
   AutocompleteInput,
   AutocompleteTrigger,
   AutocompletePopup,
   AutocompleteItem,
-  AutocompleteSeparator,
   AutocompleteGroup,
   AutocompleteGroupLabel,
   AutocompleteEmpty,
-  AutocompleteValue,
   AutocompleteList,
+  AutocompleteListHeading,
+  AutocompleteListVirtualized,
   AutocompleteClear,
-  AutocompleteStatus,
-  AutocompleteRow,
   AutocompleteCollection,
-  useAutocompleteFilter,
 };

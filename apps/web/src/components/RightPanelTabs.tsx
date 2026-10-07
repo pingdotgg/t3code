@@ -11,24 +11,21 @@ import type {
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
+  ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
-  Bot,
   Smartphone,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileDiff,
   Files,
-  GitPullRequest,
-  GitPullRequestArrow,
   Globe2,
   Plus,
   TerminalSquare,
-  Volume2,
-  VolumeOff,
 } from "lucide-react";
+import { Volume2, VolumeOff } from "lucide";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -36,6 +33,8 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -44,8 +43,10 @@ import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
+import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
@@ -64,7 +65,13 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useDeviceState } from "~/state/device";
+import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
+import {
+  newestPullRequestSummary,
+  pullRequestEnvironment,
+  useSharedPullRequestSummary,
+} from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
@@ -73,15 +80,19 @@ import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
+  keybindings: ResolvedKeybindingsConfig;
+  getShortcutContext: () => ShortcutMatchContext;
   /** Forwarded to PreviewPanelShell so this surface persists its own width. */
   widthStorageKey?: string;
   /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
   defaultWidth?: number;
+  inlineSize?: PreviewPanelInlineSize;
   layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
   /** Fallback environment for surfaces that do not carry their own. */
@@ -116,7 +127,6 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddAgents: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -124,11 +134,8 @@ interface RightPanelTabsProps {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
-  agentsAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
-  /** Running + waiting subagents; badges the Agents card in the empty state. */
-  liveAgentCount: number;
   children: ReactNode;
 }
 
@@ -155,7 +162,6 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
-  agents: "Agents are only available from a thread.",
   device: "Devices are only available from a thread.",
 } as const;
 
@@ -179,7 +185,6 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
-  agents: "Available from a thread.",
   device: "Available from a thread.",
 } as const;
 
@@ -319,7 +324,6 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddAgents: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -327,9 +331,7 @@ function RightPanelEmptyState(props: {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
-  agentsAvailable: boolean;
   deviceAvailable: boolean;
-  liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -342,7 +344,6 @@ function RightPanelEmptyState(props: {
       available: props.browserAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
       onClick: props.onAddBrowser,
-      badgeCount: 0,
     },
     {
       label: "Terminal",
@@ -351,7 +352,6 @@ function RightPanelEmptyState(props: {
       available: props.terminalAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
       onClick: props.onAddTerminal,
-      badgeCount: 0,
     },
     {
       label: "Files",
@@ -360,7 +360,6 @@ function RightPanelEmptyState(props: {
       available: props.filesAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
       onClick: props.onAddFiles,
-      badgeCount: 0,
     },
     {
       label: "Diff",
@@ -369,34 +368,22 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
-      badgeCount: 0,
     },
     {
       label: "Pull request",
-      icon: GitPullRequest,
+      icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
       onClick: props.onAddPullRequest,
-      badgeCount: 0,
     },
     {
       label: "Linked pull requests",
-      icon: GitPullRequestArrow,
+      icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
-      badgeCount: 0,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
     },
     {
       label: "Device",
@@ -406,7 +393,6 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
-      badgeCount: 0,
     },
   ] as const;
 
@@ -480,14 +466,6 @@ function RightPanelEmptyState(props: {
     return (
       <span className="relative inline-flex shrink-0">
         <Icon className={iconClassName} />
-        {action.badgeCount > 0 ? (
-          <span
-            aria-hidden
-            className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-          >
-            {action.badgeCount}
-          </span>
-        ) : null}
       </span>
     );
   };
@@ -500,13 +478,13 @@ function RightPanelEmptyState(props: {
       aria-label="Open a surface"
       data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
       className={cn(
-        "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pt-6 outline-none",
+        "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 outline-none",
         // The panel topbar sits above this container; matching bottom padding
         // keeps the list centered against the full panel, not the leftover.
-        "pb-[calc(var(--workspace-topbar-height)+--spacing(6))]",
+        "pb-(--workspace-topbar-height)",
       )}
     >
-      <div className="w-full max-w-xs">
+      <div className="w-full max-w-xs py-6">
         <h3 className="mb-3 text-center font-medium text-foreground text-sm">Open a surface</h3>
         <div className="flex flex-col gap-0.5">
           {actions.map((action) =>
@@ -529,7 +507,7 @@ function RightPanelEmptyState(props: {
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[var(--control-radius)] px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
+                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
                   )}
                 >
@@ -555,7 +533,7 @@ function RightPanelEmptyState(props: {
                       render={
                         <Button
                           aria-label="Open browser in a profile"
-                          className="absolute top-1/2 right-8 -translate-y-1/2 [--control-icon-color:currentColor]"
+                          className="absolute top-1/2 right-8 -translate-y-1/2"
                           size="icon-xs"
                           variant="ghost-muted"
                         />
@@ -563,12 +541,7 @@ function RightPanelEmptyState(props: {
                     >
                       <ChevronDown className="size-3.5" />
                     </MenuTrigger>
-                    <MenuPopup
-                      align="end"
-                      side="bottom"
-                      sideOffset={6}
-                      className="min-w-40 max-w-56"
-                    >
+                    <MenuPopup align="end" side="bottom" sideOffset={6} className="max-w-56">
                       {props.browserProfiles.map((profile) => (
                         <MenuItem
                           key={profile.id}
@@ -589,7 +562,7 @@ function RightPanelEmptyState(props: {
                   <div
                     tabIndex={0}
                     aria-disabled="true"
-                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-[var(--control-radius)] px-2.5 text-left text-sm opacity-50"
+                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{action.label}</span>
@@ -628,8 +601,6 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
-    case "agents":
-      return "Agents";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -712,9 +683,7 @@ function SurfaceIcon({
         />
       );
     case "pull-requests":
-      return <GitPullRequestArrow className="size-3 shrink-0" />;
-    case "agents":
-      return <Bot className="size-3 shrink-0" />;
+      return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -801,18 +770,26 @@ function PullRequestSurfaceIcon({
           },
         }),
   ).data;
-  // Only state and draft reach the tab. A list seed cannot know mergeability, so feeding the
-  // full detail would flip an open tab to the conflict glyph the moment its read lands.
-  const status =
-    linkedSnapshot !== null
-      ? linkedSnapshot
-      : detail === null
-        ? (seed ?? null)
-        : { state: detail.state, isDraft: detail.isDraft };
+  const reference = useMemo(
+    () => ({
+      projectId: surface.projectId as ProjectId,
+      repository: surface.repository,
+      number: surface.number,
+    }),
+    [surface.projectId, surface.repository, surface.number],
+  );
+  const sharedSummary = useSharedPullRequestSummary(resolvedEnvironmentId, reference, null);
+  // The compact tab intentionally shows lifecycle and draft state only. Conflict warnings have
+  // their own presentation on surfaces that have mergeability, while this tab stays stable as
+  // detail data arrives.
+  const status = linkedSnapshot ?? newestPullRequestSummary(detail, sharedSummary) ?? seed ?? null;
   if (status === null) {
-    return <GitPullRequest className="size-3 shrink-0 text-muted-foreground" />;
+    return <PullRequestGlyph.pullRequest className="size-3 shrink-0 text-muted-foreground" />;
   }
-  const presentation = resolvePullRequestState({ state: status.state, isDraft: status.isDraft });
+  const presentation = resolvePullRequestState({
+    state: status.state,
+    isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
+  });
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
@@ -821,6 +798,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -828,6 +806,30 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
+
+  if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
+
+  const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (
+      resolveShortcutCommand(event, props.keybindings, {
+        context: { ...props.getShortcutContext(), rightPanelOpen: true },
+      }) !== "rightPanel.new"
+    )
+      return;
+    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) {
+      addSurfaceTriggerRef.current?.focus();
+      setAddSurfaceMenuOpen(true);
+    }
+  });
+  useEffect(() => {
+    if (props.open === false) return;
+    document.addEventListener("keydown", onNewSurfaceKeyDown, true);
+    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+  }, [props.open]);
 
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -895,7 +897,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     {
       label: "Pull request",
-      icon: GitPullRequest,
+      icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
@@ -903,19 +905,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     {
       label: "Linked pull requests",
-      icon: GitPullRequestArrow,
+      icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
       onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      onClick: props.onAddAgents,
     },
     {
       label: "Device",
@@ -1097,6 +1091,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.open !== undefined ? { open: props.open } : {})}
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
+      {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
     >
       <div
         className={cn(
@@ -1106,19 +1101,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // controls a few pixels higher and the cluster jumps on open.
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar &&
-            (props.layoutControls
-              ? "wco:pr-[var(--workspace-native-controls-inset)]"
-              : "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]"),
+          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
       >
         <ScrollArea
+          radius="none"
           ref={tabListRef}
           hideScrollbars
           scrollFade
-          className="min-w-0 flex-1 rounded-none"
+          className="min-w-0 flex-1"
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
@@ -1186,11 +1179,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                 .catch(() => undefined);
                             }}
                           >
-                            {audio === "muted" ? (
-                              <VolumeOff className="size-3" />
-                            ) : (
-                              <Volume2 className="size-3" />
-                            )}
+                            <MorphIcon
+                              className="size-3"
+                              icon={audio === "muted" ? VolumeOff : Volume2}
+                            />
                           </button>
                         }
                       />
@@ -1236,21 +1228,32 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           </button>
                         }
                       />
-                      <TooltipPopup>{title}</TooltipPopup>
+                      <TooltipPopup>
+                        {surface.kind === "device" ? (
+                          <DeviceTabTooltip
+                            surface={surface}
+                            environmentId={props.environmentId}
+                            title={title}
+                          />
+                        ) : (
+                          title
+                        )}
+                      </TooltipPopup>
                     </Tooltip>
                   )}
                 </div>
               );
             })}
-            {props.surfaces.length > 0 ? (
+            {props.open !== false ? (
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
+                  ref={addSurfaceTriggerRef}
                   render={
                     <Button
                       aria-label="Add panel surface"
-                      className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                      className="shrink-0"
                       size="icon-xs"
-                      variant="ghost"
+                      variant="ghost-muted"
                     />
                   }
                 >
@@ -1260,7 +1263,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   align="start"
                   side="bottom"
                   sideOffset={6}
-                  className="min-w-44"
                   onKeyDownCapture={handleAddSurfaceMenuKeyDown}
                 >
                   {addSurfaceActions.map((action) => {
@@ -1301,7 +1303,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             and run to 48 characters, which would otherwise widen
                             the popup to fit-content and wrap.
                           */}
-                          <MenuSubPopup className="min-w-40 max-w-56">
+                          <MenuSubPopup className="max-w-56">
                             {browserProfiles.map((profile) => (
                               <MenuItem
                                 key={profile.id}
@@ -1377,6 +1379,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </div>
         ) : null}
         {props.layoutControls}
+        {ownsDesktopTitleBar && !props.layoutControls ? (
+          // Keeps the tabs clear of the window controls when the layout toggles live elsewhere.
+          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
+        ) : null}
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
@@ -1395,7 +1401,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
-            onAddAgents={props.onAddAgents}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1403,14 +1408,36 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
-            agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
-            liveAgentCount={props.liveAgentCount}
           />
         ) : (
           props.children
         )}
       </div>
     </PreviewPanelShell>
+  );
+}
+
+function DeviceTabTooltip(props: {
+  surface: Extract<RightPanelSurface, { kind: "device" }>;
+  environmentId: EnvironmentId | null;
+  title: string;
+}) {
+  const target = props.surface.target;
+  const { state } = useDeviceState(target ? props.environmentId : null);
+  const device = target
+    ? state.devices.find((entry) => entry.hostId === target.hostId && entry.id === target.deviceId)
+    : undefined;
+  const host = target ? state.hosts.find((entry) => entry.id === target.hostId) : undefined;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span>{props.title}</span>
+      {target ? (
+        <span className="text-muted-foreground">
+          {host?.label ?? "Device host"} ·{" "}
+          {device?.version ?? (target.platform === "ios" ? "iOS" : "Android")}
+        </span>
+      ) : null}
+    </div>
   );
 }

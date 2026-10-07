@@ -7,16 +7,18 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
-const relayClientAvailableLayer = Layer.succeed(
+const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
   RelayClient.RelayClient.of({
     resolve: Effect.succeed({
@@ -32,19 +34,19 @@ const relayClientAvailableLayer = Layer.succeed(
 
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     relayClientLayer,
     Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: () => Effect.succeed(Option.none()),
+      get: () => Effect.succeedNone,
     }),
   );
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -62,6 +64,7 @@ function makeHandle(input: {
   readonly onKill: () => void;
   readonly isRunning?: () => boolean;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly output?: Stream.Stream<Uint8Array>;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(input.pid),
@@ -75,13 +78,70 @@ function makeHandle(input: {
     stdin: Sink.drain,
     stdout: Stream.empty,
     stderr: Stream.empty,
-    all: Stream.empty,
+    all: input.output ?? Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
   });
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it("retries connector startup failures but stops for unsupported runtimes", () => {
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "not-installed",
+        reason: "The relay client is not installed.",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "spawn-failed",
+        reason: "spawn failed",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        failure: "unsupported-platform",
+        reason: "Relay client is unsupported on linux-arm.",
+      }),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({ status: "unsupported" }),
+    ).toBe(false);
+  });
+
+  it.effect("serializes updates to persisted cloud link state", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+      );
+
+      const first = yield* runtime
+        .withLinkStateLock(
+          Deferred.succeed(firstEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstEntered);
+
+      const second = yield* runtime
+        .withLinkStateLock(Deferred.succeed(secondEntered, undefined))
+        .pipe(Effect.forkChild);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(false);
+
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(true);
+    }),
+  );
+
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(
@@ -108,6 +168,246 @@ describe("CloudManagedEndpointRuntime", () => {
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
   });
+
+  it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-09-15T06:30:43Z ERR Register tunnel error from server side error="Failed to get tunnel" connIndex=0 event=0 ip=198.41.200.23',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Record for tunnel not found" connIndex=0',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0',
+      ),
+    ).toBe(true);
+    // Seen in production on 2026-10-06 after the relay deleted an idle tunnel.
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Unauthorized: Tunnel not found" connIndex=0 event=0 ip=198.41.200.23',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Tunnel not found" connIndex=0',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="connection timed out" connIndex=0',
+      ),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="Unauthorized: Tunnel not found" connIndex=0',
+      ),
+    ).toBe(false);
+  });
+
+  it.effect("keeps recovery requests sent before the server starts consuming them", () =>
+    Effect.gen(function* () {
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      };
+
+      yield* runtime.requestRecovery(config);
+
+      expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+    }),
+  );
+
+  it.effect("signals each registered tunnel connection", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 700,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-04T06:30:43Z INF Registered tunnel connection connIndex=0 event=0\n",
+        ),
+      );
+      expect(Option.isSome(yield* Stream.runHead(runtime.tunnelConnected))).toBe(true);
+    }),
+  );
+
+  it.effect("recovers a rejected tunnel without waiting for the connector to exit", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const firstBatchObserved = yield* Deferred.make<void>();
+      const secondBatchObserved = yield* Deferred.make<void>();
+      const recoveryRequested = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      const recoveryRetried = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      let recoveryRequestCount = 0;
+      const spawned: Array<number> = [];
+      const encoder = new TextEncoder();
+      const connectorOutput = Stream.fromQueue(output).pipe(
+        Stream.tap((chunk) => {
+          const line = new TextDecoder().decode(chunk);
+          if (line === "first checkpoint\n") {
+            return Deferred.succeed(firstBatchObserved, undefined).pipe(Effect.asVoid);
+          }
+          if (line === "second checkpoint\n") {
+            return Deferred.succeed(secondBatchObserved, undefined).pipe(Effect.asVoid);
+          }
+          return Effect.void;
+        }),
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const pid = 600;
+          spawned.push(pid);
+          const handle = makeHandle({ pid, onKill: () => {}, output: connectorOutput });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "deleted-tunnel",
+      };
+      const rejectedLine =
+        '2026-09-15T06:30:43Z ERR Register tunnel error from server side error="Failed to get tunnel" connIndex=0 event=0 ip=198.41.200.23\n';
+
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((requested) => {
+          recoveryRequestCount += 1;
+          return Deferred.succeed(
+            recoveryRequestCount === 1 ? recoveryRequested : recoveryRetried,
+            requested,
+          ).pipe(Effect.asVoid);
+        }),
+        Effect.forkChild,
+      );
+      yield* runtime.applyConfig(config);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine.repeat(3)));
+      yield* Queue.offer(output, encoder.encode("first checkpoint\n"));
+      yield* Deferred.await(firstBatchObserved);
+      expect(yield* Deferred.isDone(recoveryRequested)).toBe(false);
+
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-06-17T02:00:00Z INF Registered tunnel connection connIndex=0\n" +
+            rejectedLine.repeat(3),
+        ),
+      );
+      yield* Queue.offer(output, encoder.encode("second checkpoint\n"));
+      yield* Deferred.await(secondBatchObserved);
+      expect(yield* Deferred.isDone(recoveryRequested)).toBe(false);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine));
+
+      expect(yield* Deferred.await(recoveryRequested)).toEqual(config);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine.repeat(4)));
+
+      expect(yield* Deferred.await(recoveryRetried)).toEqual(config);
+      expect(spawned).toEqual([600]);
+    }),
+  );
+
+  it.effect("requests recovery while the connector never registers a connection", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 800,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const requests = yield* Queue.unbounded<RelayManagedEndpointRuntimeConfig>();
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((config) => Queue.offer(requests, config)),
+        Effect.forkChild,
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "silently-deleted",
+      };
+      yield* runtime.applyConfig(config);
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      expect(yield* Queue.size(requests)).toBe(0);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* Queue.take(requests)).toEqual(config);
+      // Still unconnected, so it asks again.
+      yield* TestClock.adjust(Duration.minutes(3));
+      expect(yield* Queue.take(requests)).toEqual(config);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not request recovery once the connector has connected", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 801,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const requests = yield* Queue.unbounded<RelayManagedEndpointRuntimeConfig>();
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((config) => Queue.offer(requests, config)),
+        Effect.forkChild,
+      );
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-06T00:00:00Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Queue.size(requests)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
     Effect.gen(function* () {
@@ -156,8 +456,8 @@ describe("CloudManagedEndpointRuntime", () => {
 
       expect(spawned.map((command) => command.command)).toEqual(["cloudflared", "cloudflared"]);
       expect(spawned.map((command) => command.args)).toEqual([
-        ["tunnel", "run"],
-        ["tunnel", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
       ]);
       expect(spawned.map((command) => command.options.env?.TUNNEL_TOKEN)).toEqual([
         "token-1",
@@ -378,6 +678,37 @@ describe("CloudManagedEndpointRuntime", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("a recovery that returns the same config keeps the crash backoff", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(900, 4);
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "same-token",
+        tunnelId: "same-tunnel",
+      };
+      // The startup consumer re-applies whatever the relay hands back. When the
+      // relay confirms the current tunnel, that must not look like a config change.
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((requested) => runtime.applyConfig(requested).pipe(Effect.asVoid)),
+        Effect.forkChild,
+      );
+
+      yield* runtime.applyConfig(config);
+      yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[1]!);
+      expect(spawned).toEqual([900, 901]);
+
+      // Second rapid crash still waits out the base delay.
+      yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(spawned).toEqual([900, 901]);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Deferred.await(spawnSignals[2]!);
+      expect(spawned).toEqual([900, 901, 902]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("an explicit config change clears the backoff and preempts a delayed restart", () =>
     Effect.gen(function* () {
       const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(800, 3);
@@ -510,6 +841,7 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(status).toEqual({
         status: "failed",
         providerKind: "cloudflare_tunnel",
+        failure: "not-installed",
         reason: "The relay client is not installed.",
       });
       expect(spawn).not.toHaveBeenCalled();

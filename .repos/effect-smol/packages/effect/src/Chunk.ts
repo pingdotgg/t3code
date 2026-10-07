@@ -19,6 +19,7 @@ import { dual, identity, pipe } from "./Function.ts"
 import * as Hash from "./Hash.ts"
 import type { TypeLambda } from "./HKT.ts"
 import { type Inspectable, NodeInspectSymbol, toJson } from "./Inspectable.ts"
+import * as Count from "./internal/count.ts"
 import type { NonEmptyIterable } from "./NonEmptyIterable.ts"
 import type { Option } from "./Option.ts"
 import * as O from "./Option.ts"
@@ -30,7 +31,7 @@ import * as R from "./Result.ts"
 import type { Result } from "./Result.ts"
 import type { Covariant, NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/collections/Chunk"
+const TypeId = "~effect/Chunk"
 
 /**
  * A Chunk is an immutable, ordered collection optimized for efficient concatenation and access patterns.
@@ -168,9 +169,19 @@ const emptyArray: ReadonlyArray<never> = []
  * @since 4.0.0
  */
 export const makeEquivalence = <A>(isEquivalent: Equivalence.Equivalence<A>): Equivalence.Equivalence<Chunk<A>> =>
-  Equivalence.make((self, that) =>
-    self.length === that.length && toReadonlyArray(self).every((value, i) => isEquivalent(value, getUnsafe(that, i)))
-  )
+  Equivalence.make((self, that) => {
+    if (self.length !== that.length) {
+      return false
+    }
+    const as = toReadonlyArray(self)
+    const bs = toReadonlyArray(that)
+    for (let i = 0; i < as.length; i++) {
+      if (!isEquivalent(as[i], bs[i])) {
+        return false
+      }
+    }
+    return true
+  })
 
 const _equivalence = makeEquivalence(Equal.equals)
 
@@ -248,7 +259,7 @@ const makeChunk = <A>(backing: Backing<A>): Chunk<A> => {
     }
     case "ISlice": {
       chunk.length = backing.length
-      chunk.depth = backing.chunk.depth + 1
+      chunk.depth = 0
       chunk.left = _empty
       chunk.right = _empty
       break
@@ -365,13 +376,7 @@ const copyToArray = <A>(self: Chunk<A>, array: Array<any>, initial: number): voi
       break
     }
     case "ISlice": {
-      let i = 0
-      let j = initial
-      while (i < self.length) {
-        array[j] = getUnsafe(self, i)
-        i += 1
-        j += 1
-      }
+      copy(toReadonlyArray(self.backing.chunk), self.backing.offset, array, initial, self.length)
       break
     }
   }
@@ -712,6 +717,7 @@ export const prepend: {
 
 /**
  * Takes the first up to `n` elements from the chunk.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Taking elements from the start)
  *
@@ -729,7 +735,7 @@ export const take: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
 } = dual(2, <A>(self: Chunk<A>, _n: number): Chunk<A> => {
-  const n = Math.floor(_n)
+  const n = Count.normalize(_n)
   if (n <= 0) {
     return _empty
   } else if (n >= self.length) {
@@ -769,6 +775,7 @@ export const take: {
 
 /**
  * Drops the first up to `n` elements from the chunk.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Dropping elements from the start)
  *
@@ -786,7 +793,7 @@ export const drop: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
 } = dual(2, <A>(self: Chunk<A>, _n: number): Chunk<A> => {
-  const n = Math.floor(_n)
+  const n = Count.normalize(_n)
   if (n <= 0) {
     return self
   } else if (n >= self.length) {
@@ -825,6 +832,7 @@ export const drop: {
 
 /**
  * Drops the last `n` elements.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Dropping elements from the end)
  *
@@ -841,7 +849,10 @@ export const drop: {
 export const dropRight: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
-} = dual(2, <A>(self: Chunk<A>, n: number): Chunk<A> => take(self, Math.max(0, self.length - n)))
+} = dual(
+  2,
+  <A>(self: Chunk<A>, n: number): Chunk<A> => take(self, self.length - Math.min(Count.normalize(n), self.length))
+)
 
 /**
  * Drops all elements so long as the predicate returns true.
@@ -1004,7 +1015,7 @@ export const filterMap: {
 } = dual(
   2,
   <A, B, X>(self: Chunk<A>, f: (input: A, i: number) => Result<B, X>): Chunk<B> => {
-    const as = RA.fromIterable(self)
+    const as = toReadonlyArray(self)
     const out: Array<B> = []
     for (let i = 0; i < as.length; i++) {
       const result = f(as[i], i)
@@ -1044,7 +1055,7 @@ export const filter: {
   <A>(self: Chunk<A>, predicate: Predicate<A>): Chunk<A>
 } = dual(
   2,
-  <A>(self: Chunk<A>, predicate: Predicate<A>): Chunk<A> => fromArrayUnsafe(RA.filter(self, predicate))
+  <A>(self: Chunk<A>, predicate: Predicate<A>): Chunk<A> => fromArrayUnsafe(RA.filter(toReadonlyArray(self), predicate))
 )
 
 /**
@@ -1149,12 +1160,17 @@ export const flatMap: {
   if (self.backing._tag === "ISingleton") {
     return f(self.backing.a, 0)
   }
-  let out: Chunk<B> = _empty
-  let i = 0
-  for (const k of self) {
-    out = appendAll(out, f(k, i++))
+  const as = toReadonlyArray(self)
+  const chunks = new Array<Chunk<B>>(as.length)
+  for (let i = 0; i < as.length; i++) {
+    chunks[i] = f(as[i], i)
   }
-  return out
+  for (let step = 1; step < chunks.length; step *= 2) {
+    for (let i = 0; i + step < chunks.length; i += 2 * step) {
+      chunks[i] = appendAll(chunks[i], chunks[i + step])
+    }
+  }
+  return chunks.length === 0 ? _empty : chunks[0]
 })
 
 /**
@@ -1231,12 +1247,13 @@ export const flatten: <S extends Chunk<Chunk<any>>>(self: S) => Chunk.Flatten<S>
  *
  * **Details**
  *
- * The final chunk may contain fewer than `n` elements. Empty input produces an
- * empty chunk of chunks.
+ * `n` is rounded down and normalized to at least `1`. The final chunk may
+ * contain fewer than `n` elements. Empty input produces an empty chunk of
+ * chunks.
  *
  * **Gotchas**
  *
- * Values of `n` less than or equal to zero produce singleton chunks.
+ * `NaN` and values of `n` less than or equal to zero produce singleton chunks.
  *
  * **Example** (Splitting into fixed-size chunks)
  *
@@ -1263,11 +1280,12 @@ export const chunksOf: {
   (n: number): <A>(self: Chunk<A>) => Chunk<Chunk<A>>
   <A>(self: Chunk<A>, n: number): Chunk<Chunk<A>>
 } = dual(2, <A>(self: Chunk<A>, n: number) => {
+  const size = Count.normalizeNonEmpty(n)
   const gr: Array<Chunk<A>> = []
   let current: Array<A> = []
   toReadonlyArray(self).forEach((a) => {
     current.push(a)
-    if (current.length >= n) {
+    if (current.length >= size) {
       gr.push(fromArrayUnsafe(current))
       current = []
     }
@@ -1713,23 +1731,23 @@ export const mapAccum: {
 })
 
 /**
- * Splits a chunk using a `Filter` into failures and successes.
+ * Splits a chunk using a `Filter` into successes and failures.
  *
  * **Details**
  *
- * Returns `[excluded, satisfying]`. The filter receives `(element, index)`.
+ * Returns `[passes, fails]`. The filter receives `(element, index)`.
  *
  * **Example** (Partitioning with a Result)
  *
  * ```ts import.meta.vitest
  * import { Chunk, Result } from "effect"
  *
- * const [excluded, satisfying] = Chunk.partition(Chunk.make(1, -2, 3), (n, i) =>
+ * const [passes, fails] = Chunk.partition(Chunk.make(1, -2, 3), (n, i) =>
  *   n > 0 ? Result.succeed(n + i) : Result.fail(`negative:${n}`)
  * )
  *
- * Chunk.toArray(excluded) // => ["negative:-2"]
- * Chunk.toArray(satisfying) // => [1, 5]
+ * Chunk.toArray(passes) // => [1, 5]
+ * Chunk.toArray(fails) // => ["negative:-2"]
  * ```
  *
  * @category filtering
@@ -1738,32 +1756,32 @@ export const mapAccum: {
 export const partition: {
   <A, Pass, Fail>(
     f: (input: NoInfer<A>, i: number) => Result<Pass, Fail>
-  ): (self: Chunk<A>) => [excluded: Chunk<Fail>, satisfying: Chunk<Pass>]
+  ): (self: Chunk<A>) => [passes: Chunk<Pass>, fails: Chunk<Fail>]
   <A, Pass, Fail>(
     self: Chunk<A>,
     f: (input: A, i: number) => Result<Pass, Fail>
-  ): [excluded: Chunk<Fail>, satisfying: Chunk<Pass>]
+  ): [passes: Chunk<Pass>, fails: Chunk<Fail>]
 } = dual(
   2,
   <A, Pass, Fail>(
     self: Chunk<A>,
     f: (input: A, i: number) => Result<Pass, Fail>
-  ): [excluded: Chunk<Fail>, satisfying: Chunk<Pass>] => {
-    const [excluded, satisfying] = RA.partition(self, f)
-    return [fromArrayUnsafe(excluded), fromArrayUnsafe(satisfying)]
+  ): [passes: Chunk<Pass>, fails: Chunk<Fail>] => {
+    const [passes, fails] = RA.partition(self, f)
+    return [fromArrayUnsafe(passes), fromArrayUnsafe(fails)]
   }
 )
 
 /**
- * Separates a chunk of `Result` values into a chunk of failures and a chunk of
- * successes.
+ * Separates a chunk of `Result` values into a chunk of successes and a chunk of
+ * failures.
  *
  * **Details**
  *
- * The returned tuple is `[failures, successes]`, preserving the original order
+ * The returned tuple is `[successes, failures]`, preserving the original order
  * within each side.
  *
- * **Example** (Separating failures and successes)
+ * **Example** (Separating successes and failures)
  *
  * ```ts import.meta.vitest
  * import { Chunk, Result } from "effect"
@@ -1776,21 +1794,21 @@ export const partition: {
  *   Result.succeed(3)
  * )
  *
- * const [errors, values] = Chunk.separate(chunk)
- * Chunk.toArray(errors) // => ["error1", "error2"]
+ * const [values, errors] = Chunk.separate(chunk)
  * Chunk.toArray(values) // => [1, 2, 3]
+ * Chunk.toArray(errors) // => ["error1", "error2"]
  *
  * // All successes
  * const allSuccesses = Chunk.make(Result.succeed(1), Result.succeed(2))
- * const [noErrors, allValues] = Chunk.separate(allSuccesses)
- * Chunk.toArray(noErrors) // => []
+ * const [allValues, noErrors] = Chunk.separate(allSuccesses)
  * Chunk.toArray(allValues) // => [1, 2]
+ * Chunk.toArray(noErrors) // => []
  * ```
  *
  * @category filtering
  * @since 2.0.0
  */
-export const separate = <A, B>(self: Chunk<Result<B, A>>): [Chunk<A>, Chunk<B>] =>
+export const separate = <A, B>(self: Chunk<Result<B, A>>): [Chunk<B>, Chunk<A>] =>
   pipe(
     RA.separate(toReadonlyArray(self)),
     ([l, r]) => [fromArrayUnsafe(l), fromArrayUnsafe(r)]
@@ -1918,9 +1936,9 @@ export const splitAt: {
  *
  * **Details**
  *
- * `n` is floored and normalized to at least `1`. If `n` is greater than or
- * equal to the chunk length, the first result is the original chunk and the
- * second result is empty.
+ * `n` is rounded down and normalized to at least `1`, with `NaN` treated as
+ * `1`. If `n` is greater than or equal to the chunk length, the first result is
+ * the original chunk and the second result is empty.
  *
  * **Example** (Splitting non-empty chunks at an index)
  *
@@ -1948,7 +1966,7 @@ export const splitNonEmptyAt: {
   (n: number): <A>(self: NonEmptyChunk<A>) => [beforeIndex: NonEmptyChunk<A>, fromIndex: Chunk<A>]
   <A>(self: NonEmptyChunk<A>, n: number): [beforeIndex: NonEmptyChunk<A>, fromIndex: Chunk<A>]
 } = dual(2, <A>(self: NonEmptyChunk<A>, n: number): [Chunk<A>, Chunk<A>] => {
-  const _n = Math.max(1, Math.floor(n))
+  const _n = Count.normalizeNonEmpty(n)
   return _n >= self.length ?
     [self, empty()] :
     [take(self, _n), drop(self, _n)]
@@ -1959,8 +1977,9 @@ export const splitNonEmptyAt: {
  *
  * **Details**
  *
- * The chunk size is derived from the input length and `n`; the final chunk may
- * contain fewer elements than the others.
+ * `n` is rounded down and normalized to at least `1`, with `NaN` treated as
+ * `1`. The chunk size is derived from the input length and normalized count;
+ * the final chunk may contain fewer elements than the others.
  *
  * **Example** (Splitting chunks into groups)
  *
@@ -1987,7 +2006,7 @@ export const splitNonEmptyAt: {
 export const split: {
   (n: number): <A>(self: Chunk<A>) => Chunk<Chunk<A>>
   <A>(self: Chunk<A>, n: number): Chunk<Chunk<A>>
-} = dual(2, <A>(self: Chunk<A>, n: number) => chunksOf(self, Math.ceil(self.length / Math.floor(n))))
+} = dual(2, <A>(self: Chunk<A>, n: number) => chunksOf(self, Math.ceil(self.length / Count.normalizeNonEmpty(n))))
 
 /**
  * Splits this chunk on the first element that matches this predicate.
@@ -2079,6 +2098,7 @@ export const tailNonEmpty = <A>(self: NonEmptyChunk<A>): Chunk<A> => drop(self, 
 
 /**
  * Takes the last `n` elements.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Taking elements from the end)
  *
@@ -2101,7 +2121,10 @@ export const tailNonEmpty = <A>(self: NonEmptyChunk<A>): Chunk<A> => drop(self, 
 export const takeRight: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
-} = dual(2, <A>(self: Chunk<A>, n: number): Chunk<A> => drop(self, self.length - n))
+} = dual(
+  2,
+  <A>(self: Chunk<A>, n: number): Chunk<A> => drop(self, self.length - Math.min(Count.normalize(n), self.length))
+)
 
 /**
  * Takes all elements so long as the predicate returns true.
@@ -2250,7 +2273,7 @@ export const dedupeAdjacent = <A>(self: Chunk<A>): Chunk<A> => fromArrayUnsafe(R
  * @since 2.0.0
  */
 export const unzip = <A, B>(self: Chunk<readonly [A, B]>): [Chunk<A>, Chunk<B>] => {
-  const [left, right] = RA.unzip(self)
+  const [left, right] = RA.unzip(toReadonlyArray(self))
   return [fromArrayUnsafe(left), fromArrayUnsafe(right)]
 }
 
@@ -2281,7 +2304,7 @@ export const zipWith: {
 } = dual(
   3,
   <A, B, C>(self: Chunk<A>, that: Chunk<B>, f: (a: A, b: B) => C): Chunk<C> =>
-    fromArrayUnsafe(RA.zipWith(self, that, f))
+    fromArrayUnsafe(RA.zipWith(toReadonlyArray(self), toReadonlyArray(that), f))
 )
 
 /**
@@ -2405,7 +2428,8 @@ export const replace: {
  *
  * **Details**
  *
- * `n` is normalized to an integer greater than or equal to `1`.
+ * `n` is rounded down and normalized to an integer greater than or equal to
+ * `1`. `NaN` is treated as `1`.
  *
  * **Example** (Generating chunks from indices)
  *
@@ -2604,7 +2628,7 @@ export const findLast: {
   <A>(predicate: Predicate<NoInfer<A>>): (self: Chunk<A>) => Option<A>
   <A, B extends A>(self: Chunk<A>, refinement: Refinement<A, B>): Option<B>
   <A>(self: Chunk<A>, predicate: Predicate<A>): Option<A>
-} = RA.findLast
+} = dual(2, <A>(self: Chunk<A>, predicate: Predicate<A>): Option<A> => RA.findLast(toReadonlyArray(self), predicate))
 
 /**
  * Returns the last index for which a predicate holds.
@@ -2632,7 +2656,7 @@ export const findLastIndex: {
   <A>(self: Chunk<A>, predicate: Predicate<A>): O.Option<number>
 } = dual(
   2,
-  <A>(self: Chunk<A>, predicate: Predicate<A>): O.Option<number> => RA.findLastIndex(self, predicate)
+  <A>(self: Chunk<A>, predicate: Predicate<A>): O.Option<number> => RA.findLastIndex(toReadonlyArray(self), predicate)
 )
 
 /**
@@ -2667,8 +2691,15 @@ export const every: {
   <A>(self: Chunk<A>, predicate: Predicate<A>): boolean
 } = dual(
   2,
-  <A, B extends A>(self: Chunk<A>, refinement: Refinement<A, B>): self is Chunk<B> =>
-    RA.fromIterable(self).every(refinement)
+  <A, B extends A>(self: Chunk<A>, refinement: Refinement<A, B>): self is Chunk<B> => {
+    const as = toReadonlyArray(self)
+    for (let i = 0; i < as.length; i++) {
+      if (!refinement(as[i])) {
+        return false
+      }
+    }
+    return true
+  }
 )
 
 /**
@@ -2699,7 +2730,15 @@ export const some: {
   <A>(self: Chunk<A>, predicate: Predicate<A>): self is NonEmptyChunk<A>
 } = dual(
   2,
-  <A>(self: Chunk<A>, predicate: Predicate<A>): self is NonEmptyChunk<A> => RA.fromIterable(self).some(predicate)
+  <A>(self: Chunk<A>, predicate: Predicate<A>): self is NonEmptyChunk<A> => {
+    const as = toReadonlyArray(self)
+    for (let i = 0; i < as.length; i++) {
+      if (predicate(as[i])) {
+        return true
+      }
+    }
+    return false
+  }
 )
 
 /**
@@ -2729,7 +2768,7 @@ export const some: {
 export const join: {
   (sep: string): (self: Chunk<string>) => string
   (self: Chunk<string>, sep: string): string
-} = RA.join
+} = dual(2, (self: Chunk<string>, sep: string): string => toReadonlyArray(self).join(sep))
 
 /**
  * Reduces the elements of a chunk from left to right.
@@ -2859,5 +2898,5 @@ export const difference: {
   <A>(self: Chunk<A>, that: Chunk<A>): Chunk<A>
 } = dual(
   2,
-  <A>(self: Chunk<A>, that: Chunk<A>): Chunk<A> => fromArrayUnsafe(RA.difference(self, that))
+  <A>(self: Chunk<A>, that: Chunk<A>): Chunk<A> => fromArrayUnsafe(RA.difference(self, toReadonlyArray(that)))
 )

@@ -4,17 +4,20 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -39,6 +42,9 @@ function makeRegistry(input: {
     readonly url: string;
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
+  readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
+  readonly githubApi?: Partial<GitHubApi.GitHubApi["Service"]>;
+  readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -57,7 +63,7 @@ function makeRegistry(input: {
       }),
   } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
 
-  const registryLayer = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+  const layerRegistry = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
     get: () => Effect.succeed(driver as unknown as VcsDriver.VcsDriver["Service"]),
     resolve:
       input.resolve ??
@@ -78,7 +84,7 @@ function makeRegistry(input: {
         })),
   });
 
-  const processLayer = Layer.mock(VcsProcess.VcsProcess)({
+  const layerProcess = Layer.mock(VcsProcess.VcsProcess)({
     run: () => Effect.succeed(processOutput("")),
     ...input.process,
   });
@@ -86,12 +92,16 @@ function makeRegistry(input: {
   return SourceControlProviderRegistry.make.pipe(
     Effect.provide(
       Layer.mergeAll(
-        registryLayer,
-        processLayer,
+        NodeServices.layer,
+        layerRegistry,
+        layerProcess,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
-        Layer.mock(GitHubCli.GitHubCli)({}),
-        Layer.mock(GitLabCli.GitLabCli)({}),
+        ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
+        Layer.mock(GitHubApi.GitHubApi)(input.githubApi ?? {}),
+        Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
+        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -292,4 +302,57 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
 
     assert.strictEqual(provider.kind, "azure-devops");
   }),
+);
+
+it.effect(
+  "routes linked subjects by URL independently of the checkout and skips unsupported links",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "https://github.com/unrelated/checkout.git" }],
+        githubApi: {
+          rest: () =>
+            Effect.succeed({
+              status: 200,
+              headers: {},
+              body: JSON.stringify({ title: "GitHub issue", body: null }),
+              truncated: false,
+              invalidUtf8: false,
+            }),
+        },
+        gitlab: {
+          execute: () =>
+            Effect.succeed(
+              processOutput(JSON.stringify({ title: "GitLab MR", description: "Nested project" })),
+            ),
+        },
+      });
+      for (const [url, expected] of [
+        ["https://github.com/team/project/issues/1", { title: "GitHub issue", body: null }],
+        [
+          "https://gitlab.com/team/sub/project/-/merge_requests/2",
+          { title: "GitLab MR", body: "Nested project" },
+        ],
+      ] as const) {
+        const lookup = registry.resolveLink({ cwd: "/unrelated", url: new URL(url) });
+        assert.ok(lookup);
+        assert.deepStrictEqual(yield* lookup, expected);
+      }
+      for (const url of [
+        "https://example.test/team/project/issues/1",
+        "https://github.attacker.test/team/project/issues/1",
+        "https://gitlab.attacker.test/team/project/-/issues/1",
+        "https://github.com/team/project",
+        "https://codeberg.org/team/project/issues/1",
+        "https://bitbucket.org/team/project/pull-requests/1",
+        "https://dev.azure.com/org/project/_git/repo/pullrequest/1",
+        "http://github.com/team/project/issues/1",
+        "https://user:secret@github.com/team/project/issues/1",
+      ]) {
+        assert.strictEqual(
+          registry.resolveLink({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+        );
+      }
+    }).pipe(Effect.scoped),
 );

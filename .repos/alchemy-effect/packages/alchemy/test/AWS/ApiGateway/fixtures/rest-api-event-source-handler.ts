@@ -1,7 +1,7 @@
 import * as ApiGateway from "@/AWS/ApiGateway";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class RestApiEventSourceFunction extends Lambda.Function<RestApiEventSourceFunction>()(
   "RestApiEventSourceFunction",
@@ -18,7 +18,7 @@ export class RestApiEventSourceFunction extends Lambda.Function<RestApiEventSour
  * full `create` settles only after every bound child (including the
  * `Method`s that reference `host.functionArn`), so awaiting those outputs
  * inside the host's own effect would deadlock the plan. The test discovers
- * the REST API id out-of-band by its deterministic physical name.
+ * the REST API id out-of-band by its stack, stage, and logical-id tags.
  */
 export default RestApiEventSourceFunction.make(
   {

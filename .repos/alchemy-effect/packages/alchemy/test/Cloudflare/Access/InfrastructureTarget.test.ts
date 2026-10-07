@@ -15,34 +15,37 @@ const { test } = Test.make({
   state: Cloudflare.state(),
 });
 
-test.provider("list enumerates the deployed infrastructure target", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed infrastructure target",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const target = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Access.InfrastructureTarget("ListTarget", {
-          hostname: "list-test.bastion.internal",
-          ip: { ipv4: { ipAddr: "10.7.0.42" } },
-        });
-      }),
-    );
+      const target = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Access.InfrastructureTarget("ListTarget", {
+            hostname: "list-test.bastion.internal",
+            ip: { ipv4: { ipAddr: "10.7.0.42" } },
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Access.InfrastructureTarget,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Access.InfrastructureTarget,
+      );
+      const all = yield* provider.list();
 
-    const found = all.find((t) => t.targetId === target.targetId);
-    expect(found).toBeDefined();
-    expect(found?.accountId).toEqual(accountId);
-    expect(found?.hostname).toEqual(target.hostname);
-    expect(found?.ip.ipv4?.ipAddr).toEqual("10.7.0.42");
+      const found = all.find((t) => t.targetId === target.targetId);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(accountId);
+      expect(found?.hostname).toEqual(target.hostname);
+      expect(found?.ip.ipv4?.ipAddr).toEqual("10.7.0.42");
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
 test.provider(
@@ -91,7 +94,7 @@ test.provider(
       // the Output-valued `ip` prop lost in the round-trip. `hostname`
       // survives so the cold-read identity path runs.
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -144,7 +147,10 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 240_000,
+  },
 );
 
 const findOwnedError = (

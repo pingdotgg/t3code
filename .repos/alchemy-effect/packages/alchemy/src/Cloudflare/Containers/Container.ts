@@ -4,14 +4,14 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import type * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { InlineDockerfile } from "../../Docker/Dockerfile.ts";
 import type { InputProps } from "../../Input.ts";
 import type { Named } from "../../Named.ts";
-import type { ResourceClassLike } from "../../Resource.ts";
+import type { ResourceClass, ResourceClassLike } from "../../Resource.ts";
 import type { Rpc } from "../../Rpc.ts";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { effectClass } from "../../Util/effect.ts";
@@ -82,7 +82,9 @@ export class ContainerCrashedError extends Data.TaggedError(
   readonly cause?: unknown;
 }> {}
 
-export interface ContainerStartupOptions extends cf.ContainerStartupOptions {}
+// Upstream changed ContainerStartupOptions to an intersection with an
+// image/containerSnapshot union, which an interface cannot extend.
+export type ContainerStartupOptions = cf.ContainerStartupOptions;
 
 import type {
   EffectfulContainerProps,
@@ -167,7 +169,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * runtime. Keeping them separate ensures the bundler only includes
  * the tiny class in the DO's output.
  *
- * See the [Platform concept](/infrastructure-as-effects/functions-and-servers)
+ * See the [Runtime concept](/infrastructure-as-effects/runtime)
  * page for how this fits into the async / effect / layer
  * progression.
  * ### Container Layer
@@ -326,6 +328,62 @@ export type Container<Id extends string = string> = Named<Id> & {
  * }) {}
  * ```
  *
+ * Builds are cached by default at
+ * `registry.cloudflare.com/<account-id>/<application-physical-name>`.
+ * The generated physical name includes the stage and resource instance, so
+ * subsequent updates in that stage can reuse matching images. Replacement or
+ * destroy/recreate can change the name and start a new cache. This does not
+ * automatically share one repository across every container in the stage.
+ * The same defaults apply to inline Dockerfiles and Effect-native `main` builds.
+ *
+ * **Example:** Reuse builds across stages
+ * ```typescript
+ * export class Web extends Cloudflare.Container<Web>()("Web", {
+ *   context: `${import.meta.dirname}/context`,
+ *   publish: { repository: "web" },
+ * }) {}
+ * ```
+ *
+ * `repository: "web"` names the destination repository, not a source image or
+ * the container application. With the default registry host, Alchemy lowercases
+ * the name and expands it to `registry.cloudflare.com/<account-id>/web`.
+ * Supply only the repository name, without a registry host, account ID, tag,
+ * or digest. A build produces these references:
+ *
+ * ```text
+ * Published build:  registry.cloudflare.com/<account-id>/web:<build-hash>
+ * Build cache:      registry.cloudflare.com/<account-id>/web:buildcache
+ * Deployed image:   registry.cloudflare.com/<account-id>/web@sha256:<manifest-digest>
+ * ```
+ *
+ * The build hash identifies the inputs; the manifest digest identifies the
+ * published artifact. Applications and stages in the same account can use
+ * `publish: { repository: "web" }` to reuse matching published builds. Changed
+ * inputs produce another hash tag in the same repository. Builds targeting
+ * that repository import reusable layers from its shared `:buildcache` tag,
+ * including when full input hashes differ. This mutable tag points to the
+ * latest exported inline cache, not a combined cache of every historical
+ * image. Reusing a finished image does not move the layer-cache tag.
+ *
+ * Pin base images and downloaded dependencies: changes outside the build
+ * context cannot invalidate the input hash. Each stage still has its own
+ * Container application, runtime settings, and instances; only images and
+ * build layers are shared.
+ *
+ * **Example:** Publish an existing image into a named repository
+ * ```typescript
+ * export class Proxy extends Cloudflare.Container<Proxy>()("Proxy", {
+ *   image: "nginx:alpine",
+ *   publish: { repository: "web-proxy" },
+ * }) {}
+ * // Re-publishes nginx into registry.cloudflare.com/<account-id>/web-proxy
+ * // and deploys registry.cloudflare.com/<account-id>/web-proxy@sha256:<manifest-digest>.
+ * ```
+ *
+ * Remote images are re-published without building them. An image already in
+ * the target registry keeps its existing repository; `publish.repository`
+ * does not copy it into another one.
+ *
  * **Example:** Remote image (`image`)
  * ```typescript
  * // Alchemy pulls the public image and re-pushes it to Cloudflare's
@@ -358,16 +416,13 @@ export type Container<Id extends string = string> = Named<Id> & {
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the container program doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -377,18 +432,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -599,23 +643,24 @@ export type Container<Id extends string = string> = Named<Id> & {
  * @product Containers
  * @category Workers & Compute
  */
-export const Container: ResourceClassLike<ContainerApplication> & {
-  <DOShape = unknown, const Id extends string = string, PropsReq = never>(
-    id: Id,
-    props: ImageContainerProps<PropsReq>,
-  ): Container.Decl<Container<Id>, {}, Id, PropsReq, DOShape>;
-  <Self>(): {
-    <const Id extends string, PropsReq = never>(
+export const Container: ResourceClassLike<ContainerApplication> &
+  Pick<ResourceClass<ContainerApplication>, "ref"> & {
+    <DOShape = unknown, const Id extends string = string, PropsReq = never>(
       id: Id,
       props: ImageContainerProps<PropsReq>,
-    ): Container.Decl<Self, {}, Id, PropsReq>;
-  };
-  <Self, Shape>(): {
-    <const Id extends string>(
-      id: Id,
-    ): Container.Decl<Self, Shape, Id, Container.Application<Self>>;
-  };
-} = Object.assign(
+    ): Container.Decl<Container<Id>, {}, Id, PropsReq, DOShape>;
+    <Self>(): {
+      <const Id extends string, PropsReq = never>(
+        id: Id,
+        props: ImageContainerProps<PropsReq>,
+      ): Container.Decl<Self, {}, Id, PropsReq>;
+    };
+    <Self, Shape>(): {
+      <const Id extends string>(
+        id: Id,
+      ): Container.Decl<Self, Shape, Id, Container.Application<Self>>;
+    };
+  } = Object.assign(
   (...args: any[]) => {
     if (args.length === 0) {
       return (...args: any[]) => {
@@ -669,6 +714,15 @@ export const Container: ResourceClassLike<ContainerApplication> & {
   },
   {
     Type: ContainerTypeId,
+    // Read `ContainerPlatform` lazily: this module and ContainerPlatform.ts
+    // import each other, so it may not be initialized at module load.
+    ref: (id: string, options?: { stage?: string; stack?: string }) =>
+      (
+        ContainerPlatform as unknown as Pick<
+          ResourceClass<ContainerApplication>,
+          "ref"
+        >
+      ).ref(id, options),
   },
 ) as any;
 

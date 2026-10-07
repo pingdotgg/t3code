@@ -1,6 +1,8 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
+import { projectGroups } from "@/Railway/GraphQL.ts";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -35,32 +37,39 @@ const asGroupMap = (value: unknown): Record<string, { name?: string }> => {
   return out;
 };
 
+const readEnvironmentConfig = Query.fn((id: string, projectId: string) => ({
+  config: RailwayApi.environment({ id, projectId }).config,
+}));
+
+const readServiceGroup = Query.fn((id: string) => {
+  const service = RailwayApi.service({ id });
+  return { id: service.id, groupId: service.groupId };
+});
+
 const readConfigGroups = (environmentId: string, projectId: string) =>
-  railway.environment({ id: environmentId, projectId }).pipe(
+  readEnvironmentConfig(environmentId, projectId).pipe(
     Effect.map((env) => asGroupMap(env.config)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    Effect.catchTag("RailwayNotFound", () =>
       Effect.succeed({} as Record<string, { name?: string }>),
     ),
   );
 
 const readProjectGroups = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
-    Effect.map((project) =>
-      project.groups.edges
-        .map((edge) => edge.node)
-        .filter((group) => group.name != null && group.name.length > 0),
+  projectGroups(projectId, (group) => ({
+    id: group.id,
+    groupId: group.groupId,
+    name: group.name,
+  })).pipe(
+    Effect.map((groups) =>
+      groups.filter((group) => group.name != null && group.name.length > 0),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed([])),
   );
 
 const readService = (serviceId: string) =>
-  railway
-    .service({ id: serviceId })
-    .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed(undefined),
-      ),
-    );
+  readServiceGroup(serviceId).pipe(
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
+  );
 
 const waitUntilGroupGone = (
   projectId: string,
@@ -198,5 +207,15 @@ test.provider(
       );
       expect(groupGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:group",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

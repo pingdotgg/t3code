@@ -204,21 +204,15 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ ...themes, lightThemeId: "t3-chat" });
   });
 
-  it("persists the Material You layout independently of the selected theme", async () => {
-    await savePreferencesPatch({
-      lightThemeId: "material-you",
-      materialYouStyleLayoutEnabled: true,
-    });
-    await savePreferencesPatch({ lightThemeId: "t3-chat" });
-    await expect(loadPreferences()).resolves.toEqual({
-      lightThemeId: "t3-chat",
-      materialYouStyleLayoutEnabled: true,
-    });
-    await savePreferencesPatch({ materialYouStyleLayoutEnabled: false });
-    await expect(loadPreferences()).resolves.toEqual({
-      lightThemeId: "t3-chat",
-      materialYouStyleLayoutEnabled: false,
-    });
+  it.each([true, false])("drops the removed Android layout preference (%s)", async (enabled) => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        materialYouStyleLayoutEnabled: enabled,
+        lightThemeId: "t3-chat",
+      }),
+      10,
+    );
+    await expect(loadPreferences()).resolves.toEqual({ lightThemeId: "t3-chat" });
   });
 
   it("drops the removed theme transition preference", async () => {
@@ -238,24 +232,32 @@ describe("mobile connection storage", () => {
     expect(fallback.updatedAt).toEqual(expect.any(Number));
   });
 
-  it("persists thread list shelf expansion preferences", async () => {
+  it("persists thread list shelf preferences", async () => {
     await expect(
       savePreferencesPatch({
         threadListSettledShelfExpanded: false,
         threadListSnoozedShelfExpanded: true,
+        threadListWorkingShelfExpanded: true,
+        workingShelfEnabled: true,
       }),
     ).resolves.toEqual({
       threadListSettledShelfExpanded: false,
       threadListSnoozedShelfExpanded: true,
+      threadListWorkingShelfExpanded: true,
+      workingShelfEnabled: true,
     });
 
     await expect(loadPreferences()).resolves.toEqual({
       threadListSettledShelfExpanded: false,
       threadListSnoozedShelfExpanded: true,
+      threadListWorkingShelfExpanded: true,
+      workingShelfEnabled: true,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
       threadListSettledShelfExpanded: false,
       threadListSnoozedShelfExpanded: true,
+      threadListWorkingShelfExpanded: true,
+      workingShelfEnabled: true,
     });
   });
 

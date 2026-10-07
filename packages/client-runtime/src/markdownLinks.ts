@@ -14,6 +14,9 @@ const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+// A final dot between digits marks a version or model id (`glm-5.3`,
+// `Qwen2.5-Coder`), not an extension. `ls.1` and `libfoo.so.1` stay files.
+const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
@@ -176,6 +179,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .replace(/[/\\]+$/, "")
         .split(/[\\/]/)
         .at(-1) ?? "";
+    if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
   }
   return candidate;
@@ -261,6 +265,29 @@ export function formatFilePathPosition(position: FilePathPosition): string {
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
+/** Keeps filename and destination-path labels compact without discarding prose. */
+export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
+  const destination = parseMarkdownFileLink(href);
+  if (!destination) return false;
+  const normalize = (path: string) =>
+    path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const labelPosition = splitFilePathPosition(label.trim());
+  if (
+    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+  ) {
+    return false;
+  }
+  let labelPath = normalize(labelPosition.path);
+  let destinationPath = normalize(destination.path);
+  if (labelPath.length === 0) return true;
+  if (isWindowsAbsolutePath(destination.path)) {
+    labelPath = labelPath.toLowerCase();
+    destinationPath = destinationPath.toLowerCase();
+  }
+  return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+}
+
 export function isRelativeFilePath(path: string): boolean {
   return (
     RELATIVE_PATH_PREFIX_PATTERN.test(path) ||
@@ -336,6 +363,7 @@ export function workspaceRelativeFilePath(
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }

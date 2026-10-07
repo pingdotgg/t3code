@@ -37,7 +37,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import {
   DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
@@ -71,6 +71,13 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
+      /**
+       * Connect to this origin instead of the T3 Connect tunnel. The access
+       * token is not bound to an origin, and each proof is minted for the URL
+       * it signs, so a token from the relay also works on the environment's
+       * LAN or tailnet address.
+       */
+      readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpopHttp: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
@@ -132,14 +139,15 @@ export const make = Effect.gen(function* () {
     >
   >(new Map());
 
-  const authorizeBearer = Effect.fn("clientRuntime.connection.remote.authorizeBearer")(
+  /**
+   * Confirms a direct address still serves the expected environment before a
+   * credential is sent there. A saved LAN address can belong to another
+   * machine on a different network.
+   */
+  const verifyDirectEndpoint = Effect.fn("clientRuntime.connection.remote.verifyDirectEndpoint")(
     function* (input: {
-      readonly expectedEnvironmentId: Parameters<
-        RemoteEnvironmentAuthorization["Service"]["authorizeBearer"]
-      >[0]["expectedEnvironmentId"];
+      readonly expectedEnvironmentId: EnvironmentId;
       readonly httpBaseUrl: string;
-      readonly wsBaseUrl: string;
-      readonly bearerToken: string;
       readonly connectionMethod: ClientConnectionMethod;
     }) {
       const now = yield* Clock.currentTimeMillis;
@@ -169,6 +177,21 @@ export const make = Effect.gen(function* () {
           return next;
         });
       }
+      return descriptor;
+    },
+  );
+
+  const authorizeBearer = Effect.fn("clientRuntime.connection.remote.authorizeBearer")(
+    function* (input: {
+      readonly expectedEnvironmentId: Parameters<
+        RemoteEnvironmentAuthorization["Service"]["authorizeBearer"]
+      >[0]["expectedEnvironmentId"];
+      readonly httpBaseUrl: string;
+      readonly wsBaseUrl: string;
+      readonly bearerToken: string;
+      readonly connectionMethod: ClientConnectionMethod;
+    }) {
+      const descriptor = yield* verifyDirectEndpoint(input);
       const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
         wsBaseUrl: input.wsBaseUrl,
         httpBaseUrl: input.httpBaseUrl,
@@ -193,11 +216,15 @@ export const make = Effect.gen(function* () {
   );
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
-    function* (token: TokenStore.RemoteDpopAccessToken, timeoutMs?: number) {
+    function* (
+      token: TokenStore.RemoteDpopAccessToken,
+      timeoutMs?: number,
+      endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
+    ) {
       const ticketProof = yield* signer
         .createProof({
           method: "POST",
-          url: environmentEndpointUrl(token.endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
+          url: environmentEndpointUrl(endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
           accessToken: token.accessToken,
         })
         .pipe(
@@ -210,8 +237,8 @@ export const make = Effect.gen(function* () {
           ),
         );
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
-        wsBaseUrl: token.endpoint.wsBaseUrl,
-        httpBaseUrl: token.endpoint.httpBaseUrl,
+        wsBaseUrl: endpoint.wsBaseUrl,
+        httpBaseUrl: endpoint.httpBaseUrl,
         accessToken: token.accessToken,
         dpopProof: ticketProof,
         clientMetadata: presentation.metadata,
@@ -314,7 +341,6 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
         credential: bootstrap.credential,
         dpopProof: bootstrapProof,
-        scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
       }).pipe(
         Effect.mapError(mapRemoteDpopEnvironmentError),
@@ -449,10 +475,11 @@ export const make = Effect.gen(function* () {
 
   const httpAuthorization = (
     token: TokenStore.RemoteDpopAccessToken,
+    httpBaseUrl = token.endpoint.httpBaseUrl,
   ): AuthorizedRemoteHttpEnvironment => ({
     environmentId: token.environmentId,
     label: token.label,
-    httpBaseUrl: token.endpoint.httpBaseUrl,
+    httpBaseUrl,
     httpAuthorization: {
       _tag: "Dpop",
       accessToken: token.accessToken,
@@ -463,17 +490,36 @@ export const make = Effect.gen(function* () {
   const authorizeDpop = Effect.fn("clientRuntime.connection.remote.authorizeDpop")(function* (
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpop"]>[0],
   ) {
+    const endpoint = input.directEndpoint;
+    if (endpoint !== undefined) {
+      yield* verifyDirectEndpoint({
+        expectedEnvironmentId: input.expectedEnvironmentId,
+        httpBaseUrl: endpoint.httpBaseUrl,
+        connectionMethod: "direct",
+      });
+    }
+    const authorized = (token: TokenStore.RemoteDpopAccessToken, socketUrl: string) => ({
+      ...httpAuthorization(token, endpoint?.httpBaseUrl),
+      socketUrl,
+    });
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
       const cachedSocket = yield* createDpopSocketUrl(
         selected.token,
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+        endpoint,
       ).pipe(Effect.result);
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
-        return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
+        return authorized(selected.token, cachedSocket.success);
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
+        return yield* mapDpopSocketError(cachedSocket.failure);
+      }
+      // An unreachable direct address says nothing about the token, so keep
+      // it for the T3 Connect route rather than forcing a relay round trip.
+      // A rejected token falls through and is replaced like on the tunnel.
+      if (endpoint !== undefined && cachedSocket.failure._tag !== "EnvironmentAuthInvalidError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       selected = yield* getDpopToken({
@@ -481,15 +527,20 @@ export const make = Effect.gen(function* () {
         rejectedAccessToken: selected.token.accessToken,
       });
     }
-    const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
+    const socket = yield* createDpopSocketUrl(selected.token, undefined, endpoint).pipe(
+      Effect.result,
+    );
     if (Result.isFailure(socket)) {
-      yield* tokenLock.withPermits(1)(
-        removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
-      );
+      // A direct address that refuses the socket says nothing about the token.
+      if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
+        yield* tokenLock.withPermits(1)(
+          removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
+        );
+      }
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);
-    return { ...httpAuthorization(selected.token), socketUrl: socket.success };
+    return authorized(selected.token, socket.success);
   });
 
   return RemoteEnvironmentAuthorization.of({

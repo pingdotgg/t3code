@@ -1,15 +1,15 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   parseTailscaleMagicDnsName,
   resolveTailscaleAdvertisedEndpoints,
 } from "./tailscaleEndpointProvider.ts";
 
-const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
+const layerUnusedTailscaleExternalServices = Layer.mergeAll(
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("unexpected Tailscale HTTPS probe")),
@@ -93,7 +93,7 @@ describe("tailscale endpoint provider", () => {
           description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
         },
       ]);
-    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+    }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 
   it.effect("uses an injected magic DNS name reader instead of spawning tailscale", () =>
@@ -112,7 +112,7 @@ describe("tailscale endpoint provider", () => {
         endpoints.map((endpoint) => endpoint.httpBaseUrl),
         ["https://desktop.tail.ts.net/"],
       );
-    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+    }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 
   it.effect(
@@ -148,6 +148,6 @@ describe("tailscale endpoint provider", () => {
             description: "HTTPS endpoint served by Tailscale Serve.",
           },
         ]);
-      }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+      }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 });

@@ -202,14 +202,14 @@ gives you typed errors, composable retries, and Effect's `HttpServer`
 integration.
 
 Instead of declaring `env` bindings on the resource props, you bind
-resources in the Worker's Init phase using `yield*`:
+resources in the Worker's Construction phase using `yield*`:
 
 ```diff lang="typescript"
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Bucket } from "./bucket.ts";
 
 -export default {

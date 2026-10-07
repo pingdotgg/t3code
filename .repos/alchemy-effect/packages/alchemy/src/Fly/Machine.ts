@@ -9,24 +9,41 @@ import type {
 } from "@distilled.cloud/fly-io/machines";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+
+import type { Input } from "../Input.ts";
+import type { DiskSpec, MountedDisk, ServiceBinding } from "./MountVolume.ts";
+import type { Providers } from "./Providers.ts";
+
 import { deepEqual, isResolved } from "../Diff.ts";
 import * as Provider from "../Provider.ts";
 import { Resource, type ResourceBinding } from "../Resource.ts";
 import { App } from "./App.ts";
+import {
+  deploymentPolicy,
+  validateDeployment,
+  type MachineDeploy,
+  type MachineShutdown,
+  type MachineCheck,
+} from "./Deployment.ts";
 import { toEnvRecord } from "./hosted.ts";
+import {
+  sameContainerWorkload,
+  toFlyContainers,
+  validateMachineContainers,
+} from "./MachineContainers.ts";
 import {
   createFlyResourceName,
   diffMachineMetadata,
   sanitizeFlyAppName,
 } from "./Metadata.ts";
-import type { DiskSpec, MountedDisk, ServiceBinding } from "./MountVolume.ts";
-import type { Providers } from "./Providers.ts";
 import {
   deleteReplicaSet,
   listReplicaSets,
   observeReplicaSet,
   reconcileReplicas,
   resolveCount,
+  sameServices,
+  toFlyService,
   volumeIdsOf,
   type Replica,
   type ReplicaSet,
@@ -105,6 +122,40 @@ export interface MachinePort {
   endPort?: number;
 }
 
+/** A health check attached to a Fly service. */
+export interface MachineServiceCheck {
+  /** Check type. HTTP checks send a request; TCP checks open a connection. */
+  type: "http" | "tcp";
+  /** Port to check. Usually the service's {@link MachineService.internalPort}. */
+  port?: number;
+  /**
+   * Time between checks, such as `"15s"`.
+   * Fly caps service checks at `"60s"`; this cap does not apply to named Machine checks.
+   */
+  interval?: string;
+  /** Maximum time for a check, such as `"2s"`. */
+  timeout?: string;
+  /** Delay after the Machine starts before checks begin, such as `"30s"`. */
+  gracePeriod?: string;
+  /** HTTP method for an `http` check. */
+  method?: string;
+  /** Request path for an `http` check. */
+  path?: string;
+  /** Request protocol for an `http` check. */
+  protocol?: "http" | "https";
+  /** Headers sent by an `http` check. */
+  headers?: Array<{
+    /** Header name. */
+    name: string;
+    /** Header values. */
+    values: string[];
+  }>;
+  /** Hostname used to validate the certificate for an HTTPS check. */
+  tlsServerName?: string;
+  /** Skip certificate verification for an HTTPS check. */
+  tlsSkipVerify?: boolean;
+}
+
 export interface MachineService {
   /**
    * Proxy protocol (`tcp` or `udp`).
@@ -122,11 +173,84 @@ export interface MachineService {
   autostop?: "off" | "stop" | "suspend" | boolean;
   /** Minimum Machines to keep running for this service. */
   minMachinesRunning?: number;
+  /** Health checks for this service. */
+  checks?: MachineServiceCheck[];
 }
 
 export type MachineMount = DiskSpec;
 
-export interface MachineProps {
+/** Startup dependency on another named container in the same Machine. */
+export interface MachineContainerDependency {
+  /** Name of another container in this Machine. */
+  name: string;
+  /** Startup condition Fly waits for. */
+  condition?: "started" | "healthy" | "exited_successfully";
+}
+
+/** A native Pilot health check; timing fields are numeric seconds. */
+export interface MachineContainerHealthCheck {
+  /** Optional check name, unique within this container. */
+  name?: string;
+  /** Whether the check gates readiness or liveness. */
+  kind?: "readiness" | "liveness";
+  /** Seconds between checks. */
+  interval?: number;
+  /** Seconds before a check times out. */
+  timeout?: number;
+  /** Seconds after startup before checks begin. */
+  gracePeriod?: number;
+  /** Consecutive successes required to become healthy. */
+  successThreshold?: number;
+  /** Consecutive failures required to become unhealthy. */
+  failureThreshold?: number;
+  /** HTTP probe. Configure exactly one of HTTP, TCP, or exec. */
+  http?: {
+    /** Container-local port. */
+    port: number;
+    /** Request path. */
+    path?: string;
+    /** Request method. */
+    method?: string;
+    /** Request scheme. */
+    scheme?: "http" | "https";
+    /** Additional request headers. */
+    headers?: Array<{ name: string; values: string[] }>;
+    /** Hostname for TLS certificate verification. */
+    tlsServerName?: string;
+    /** Skip TLS certificate verification. */
+    tlsSkipVerify?: boolean;
+  };
+  /** TCP connection probe. */
+  tcp?: { port: number };
+  /** Process execution probe. */
+  exec?: { command: string[] };
+}
+
+/** One named container in a Machine replica. */
+export interface MachineContainer {
+  /** Stable name identifying this container within the group. */
+  name: string;
+  /** Docker image reference. Rolling deployments accept tags or digests. */
+  image: string;
+  /** Command override. */
+  cmd?: string[];
+  /** Entrypoint override. */
+  entrypoint?: string[];
+  /** Per-container environment variables; Fly applies these over Machine env. */
+  env?: Record<string, string>;
+  /** Other named containers that must reach a startup condition first. */
+  dependsOn?: MachineContainerDependency[];
+  /** Native Pilot checks for this container. Deployment readiness is configured separately. */
+  healthChecks?: MachineContainerHealthCheck[];
+}
+
+export interface MachinePropsBase {
+  /** Deployment strategy and readiness deadline. Defaults to in-place rolling updates. */
+  deploy?: MachineDeploy;
+  /** Graceful process shutdown. Defaults to SIGTERM / 30 seconds when blue/green is enabled. */
+  shutdown?: MachineShutdown;
+  /** Named readiness checks for workers without public services. */
+  checks?: Record<string, MachineCheck>;
   /**
    * Parent Fly App. Changing it replaces the Machine.
    */
@@ -134,6 +258,7 @@ export interface MachineProps {
   /**
    * Machine name. Unique per App. If omitted, a unique name is generated
    * from the stack, stage and logical ID. Changing it replaces the Machine.
+   * In blue/green mode this is a base for generation-qualified physical names.
    */
   name?: string;
   /**
@@ -144,17 +269,15 @@ export interface MachineProps {
    */
   region?: string;
   /**
-   * Number of Machines to keep running. Fly's proxy load-balances
-   * published `services` across them. Each replica gets its own
-   * Volume from every {@link mounts} group.
+   * Number of Machines to provision, including stopped/suspended idle capacity.
+   * Fly's proxy load-balances published `services` across available replicas.
+   * Blue/green checks a representative and the required running floor while
+   * preserving idle nonrepresentatives. Each replica gets its own Volume
+   * from every {@link mounts} group; attached volumes require rolling updates.
    *
    * @default 1
    */
   count?: number;
-  /**
-   * Docker image reference. Updated in place via `updateMachine`.
-   */
-  image: string;
   /**
    * Guest size. Defaults to shared-cpu-1x 256 MB.
    */
@@ -173,10 +296,6 @@ export interface MachineProps {
    * from `MountVolume` bindings.
    */
   mounts?: MachineMount[];
-  /**
-   * Init overrides (`cmd`, `entrypoint`, `exec`, swap, TTY).
-   */
-  init?: MachineInit;
   /**
    * User metadata. Alchemy ownership keys (`alchemy.stack` /
    * `alchemy.stage` / `alchemy.id` / `alchemy.type` /
@@ -200,10 +319,28 @@ export interface MachineProps {
    */
   skipLaunch?: boolean;
   /**
-   * Minimum app-secrets version the Machine must see.
+   * Minimum App-secrets version required by this Machine, not an immutable
+   * snapshot. Other writers can advance the shared vault. Secret changes are
+   * not automatically watched; change an explicit deployment input or floor
+   * when an out-of-band rotation requires reconciliation.
    */
   minSecretsVersion?: number;
 }
+
+export type MachineProps =
+  | (MachinePropsBase & {
+      /** Docker image reference. Rolling updates change the existing Machines. */
+      image: string;
+      containers?: never;
+      /** Process init overrides for a single-image Machine. */
+      init?: MachineInit;
+    })
+  | (MachinePropsBase & {
+      /** Named containers run together in every Machine replica. */
+      containers: MachineContainer[];
+      image?: never;
+      init?: never;
+    });
 
 export type MachineImageRef = {
   registry?: string;
@@ -216,13 +353,17 @@ export type Machine = Resource<
   "Fly.Machine",
   MachineProps,
   {
+    /** Whether recovery must finish an interrupted deployment. */
+    rolloutPending?: boolean;
     /** Parent Fly App name. */
     appName: string;
     /** Fly Machine id of replica 0. */
     machineId: string;
     /** Fly Machine ids of every replica. */
     machineIds: string[];
-    /** Machine name of replica 0 (unique per App). */
+    /** Logical base for generation-qualified Machine names. */
+    baseName?: string;
+    /** Machine name of replica 0 (unique per App). Changes during blue/green deployment. */
     name: string;
     /** Region the Machines are running in. */
     region: string;
@@ -236,11 +377,6 @@ export type Machine = Resource<
     imageRef: MachineImageRef | undefined;
     /** Observed guest size. */
     guest: MachineGuest | undefined;
-    /**
-     * Public `https://{appName}.fly.dev` URL when this Machine publishes
-     * a proxy service. `undefined` when no services are configured.
-     */
-    url: string | undefined;
     /** Number of Machines in the replica set. */
     count: number;
     /** Disks mounted on replica 0. */
@@ -253,11 +389,11 @@ export type Machine = Resource<
 >;
 
 /**
- * A Fly.Machine is a Firecracker VM running a container image.
+ * A Fly.Machine is a Firecracker VM running one image or a named container group.
  *
- * Prefer a {@link Service} when the program is Effect. A Service is
- * effectful, supports bindings, and scales with `count`. Alchemy builds
- * and pushes the image. Use `Fly.Machine` when you already have an image.
+ * Prefer a {@link Service} when the program is Effect. A Service is effectful, supports bindings,
+ * and scales with `count`. Alchemy builds and pushes the image. Use `Fly.Machine` when you already
+ * have an image.
  *
  * @see https://fly.io/docs/machines/api/machines-resource/
  *
@@ -280,7 +416,8 @@ export type Machine = Resource<
  *
  * ### Launch a Machine
  * The parent is an {@link App}. Pin a region and an image. Guest
- * defaults to shared-cpu 1× / 256 MB. `image` updates in place.
+ * defaults to shared-cpu 1× / 256 MB. Rolling updates `image` in place;
+ * blue/green prepares replacement Machines.
  *
  * **Example:** Nginx
  * ```typescript
@@ -294,6 +431,25 @@ export type Machine = Resource<
  * :::caution[Changing `app` replaces the Machine]
  * The new App gets a new Machine. The old one is deleted.
  * :::
+ *
+ * ### Run named containers
+ * Each replica contains the entire group. Container checks and dependencies
+ * control Pilot startup; configure Machine or service checks for deployment
+ * readiness. Rolling updates can restart the entire group when one image
+ * changes. Blue/green requires every named image to use an immutable
+ * `repository@sha256:` digest and cannot attach volumes. Alchemy replaces
+ * the entire group and applies readiness policy before retiring predecessors.
+ *
+ * **Example:** API and worker
+ * ```typescript
+ * const preview = yield* Fly.Machine("Preview", {
+ *   app: Site,
+ *   containers: [
+ *     { name: "api", image: apiImage, healthChecks: [{ http: { port: 3000, path: "/health" } }] },
+ *     { name: "worker", image: workerImage, dependsOn: [{ name: "api", condition: "healthy" }] },
+ *   ],
+ * });
+ * ```
  *
  * ### A stable name
  * Machine names are unique per App. Omit `name` and Alchemy generates
@@ -333,7 +489,8 @@ export type Machine = Resource<
  *
  * ### Guest size
  * `guest` is CPU kind, CPU count, and memory. Default is shared-cpu,
- * 1 CPU, 256 MB. Guest updates in place.
+ * 1 CPU, 256 MB. Rolling updates guest sizing in place; blue/green replaces
+ * the Machines.
  *
  * **Example:** Shared CPU
  * ```typescript
@@ -380,9 +537,9 @@ export type Machine = Resource<
  * ```
  *
  * ### Publish a proxy service
- * `services` publishes ports on Fly's proxy. `{app}.fly.dev` over IPv4
- * still needs an {@link IpAssignment} on the parent App. `url` is
- * `https://{appName}.fly.dev` when a proxy service is configured.
+ * `services` publishes ports on Fly's proxy. The App needs an
+ * {@link IpAssignment} before `{app}.fly.dev` answers. For a public
+ * endpoint without managing Apps and addresses, use a {@link Service}.
  *
  * Handlers are `http`, `tls`, `pg_tls`, and similar. Set `forceHttps`
  * to redirect HTTP to HTTPS. Use `startPort` / `endPort` for a
@@ -410,13 +567,61 @@ export type Machine = Resource<
  * });
  * ```
  *
+ * ### Service health checks
+ * Add HTTP or TCP `checks` to a service. Fly uses their results to
+ * determine whether the service is ready to receive traffic. With rolling
+ * updates, reconcile waits for each started replica's checks before updating
+ * the next replica. Missing or non-passing results are polled within
+ * `deploy.healthTimeout` (60 seconds by default), then fail deployment with
+ * `Fly.ReplicaChecksNotPassing`. Later replicas remain unchanged; earlier
+ * updates are not rolled back. A single rolling replica can be unavailable.
+ * Blue/green checks replacements before retiring the old set, with
+ * representative/floor readiness for idle capacity.
+ *
+ * **Example:** HTTP readiness check
+ * ```typescript
+ * const web = yield* Fly.Machine("Web", {
+ *   app: Site,
+ *   region: "iad",
+ *   image: "nginx:alpine",
+ *   services: [
+ *     {
+ *       protocol: "tcp",
+ *       internalPort: 80,
+ *       ports: [{ port: 80, handlers: ["http"] }],
+ *       checks: [
+ *         {
+ *           type: "http",
+ *           port: 80,
+ *           method: "GET",
+ *           path: "/",
+ *           protocol: "http",
+ *           interval: "15s",
+ *           timeout: "2s",
+ *           gracePeriod: "30s",
+ *           headers: [{ name: "X-Health-Check", values: ["alchemy"] }],
+ *         },
+ *       ],
+ *     },
+ *   ],
+ * });
+ * ```
+ *
  * ### Autostart and autostop
  * `autostart` starts the Machine when a request arrives. `autostop` is
  * `"off"`, `"stop"`, `"suspend"`, or a boolean. `minMachinesRunning`
  * keeps that many Machines up for the service.
  *
- * Autostop only stops Machines that already exist. It does not mint
- * new ones. Yield more Machine resources to size the pool.
+ * Autostop only affects Machines that already exist. Set `count` or declare
+ * more resources to size the pool. Stop boots a new process on autostart;
+ * suspend may resume memory or fall back to a cold start. Suspension is not
+ * SIGTERM shutdown and does not run ordinary shutdown finalizers.
+ *
+ * Blue/green supports both policies: it checks a representative and the
+ * required running floor while preserving idle nonrepresentatives. It
+ * restores the requested idle policy before retiring predecessors and
+ * checks any new instance created by restoration. A replacement does not
+ * inherit its suspended predecessor's process memory.
  *
  * **Example:** Stop when idle
  * ```typescript
@@ -438,12 +643,14 @@ export type Machine = Resource<
  * ```
  *
  * ### Scale up
- * Each Machine resource is one VM. Yield another Machine to add
- * capacity. Fly's proxy load-balances published `services` across
- * them.
+ * Each Machine resource runs one VM by default. Set `count` to manage
+ * several replicas together, or declare separate resources for Machines
+ * with different configuration. Fly's proxy load-balances published
+ * `services` across them.
  *
- * A {@link Service} still scales with `count`. That is one program,
- * many Machines.
+ * Both Machine and {@link Service} support `count`. Default rolling updates
+ * replicas sequentially; blue/green prepares replacements before retirement.
+ * Separate resources do not share an update order or App-wide lease lock.
  *
  * **Example:** Two Machines
  * ```typescript
@@ -559,7 +766,8 @@ export type Machine = Resource<
  * ### Skip launch
  * `skipLaunch: true` creates or updates the config without starting
  * the Machine. Default is `false`. Reconcile otherwise waits until
- * the Machine is `started`.
+ * the Machine is `started`, and until service checks are passing when
+ * the Machine has them.
  *
  * **Example:** Config only
  * ```typescript
@@ -588,9 +796,10 @@ export type Machine = Resource<
  * ```
  *
  * ### Secrets version
- * `minSecretsVersion` waits until the Machine has seen at least that
- * App secrets version. Use it after rotating a {@link Secret} if the
- * process must start with the new value.
+ * `minSecretsVersion` requires at least that App-secrets version, not an
+ * immutable snapshot. Machine leases do not serialize vault writers.
+ * After rotating a {@link Secret}, declare the required floor or another
+ * explicit rollout input; an out-of-band change alone does not watch/redeploy.
  *
  * **Example:** Wait for secrets
  * ```typescript
@@ -602,7 +811,41 @@ export type Machine = Resource<
  * });
  * ```
  *
+ * ### Blue/green deployments
+ * Prepare a healthy replacement set before retiring the current Machines.
+ * Physical IDs and names change; the App URL remains stable. Volumes,
+ * auto-destroy, and skipLaunch are incompatible. Autostop preserves idle
+ * nonrepresentatives while a representative passes checks. Raw images must
+ * handle their own shutdown signal and stop accepting background work.
+ *
+ * Retirement honors each predecessor's own signal and timeout. Native
+ * target leases do not exclude every simultaneous first deployment or
+ * snapshot; serialize CI for the same resource. See the
+ * [deployment guide](/fly/compute/deployments) for idle capacity, secret
+ * floors, recovery, and the limits of live-tested parity.
+ *
+ * **Example:** Private worker readiness
+ * ```typescript
+ * const worker = yield* Fly.Machine("Worker", {
+ *   app: Site,
+ *   image: "registry.example.com/worker:v2",
+ *   deploy: { strategy: "bluegreen", healthTimeout: "60 seconds" },
+ *   shutdown: { signal: "SIGTERM", timeout: "30 seconds" },
+ *   checks: {
+ *     ready: { type: "http", port: 3000, path: "/healthz", interval: "5s", timeout: "2s" },
+ *   },
+ * });
+ * ```
+ *
+ * Every published service needs its own service check. Before promotion, a
+ * failed candidate leaves the old generation serving. After possible promotion,
+ * potentially serving replacements are preserved rather than blindly deleted.
+ * Retry an interrupted deploy to finish promotion or retirement; destroy
+ * discovers unfinished owned generations.
+ * See the [deployment guide](/fly/compute/deployments) for recovery and limits.
+ *
  * @resource
+ * @product Machine
  */
 export const Machine = Resource<Machine>("Fly.Machine");
 
@@ -696,44 +939,19 @@ const toFlyRestart = (restart: MachineRestart): FlyMachineRestart => ({
   max_retries: restart.maxRetries,
 });
 
-const toFlyService = (service: MachineService): FlyMachineService => ({
-  protocol: service.protocol,
-  internal_port: service.internalPort,
-  autostart: service.autostart,
-  autostop:
-    typeof service.autostop === "boolean"
-      ? service.autostop
-        ? "stop"
-        : "off"
-      : service.autostop,
-  min_machines_running: service.minMachinesRunning,
-  ports: service.ports?.map((port) => ({
-    port: port.port,
-    handlers: port.handlers,
-    force_https: port.forceHttps,
-    start_port: port.startPort,
-    end_port: port.endPort,
-  })),
-});
-
 const desiredEnv = (
   props: MachineProps,
   bindingEnv: Record<string, any>,
-): Record<string, string> => ({
-  ...toEnv(props.env),
-  ...toEnv(bindingEnv),
-});
+): Record<string, string> => ({ ...toEnv(props.env), ...toEnv(bindingEnv) });
 
 const desiredMetadata = (
   props: MachineProps,
   alchemy: Record<string, string>,
-): Record<string, string> => ({
-  ...(props.metadata ?? {}),
-  ...alchemy,
-});
+): Record<string, string> => ({ ...(props.metadata ?? {}), ...alchemy });
 
 const buildConfig = (input: {
-  image: string;
+  image: string | undefined;
+  containers: FlyMachineConfig["containers"];
   guest: FlyMachineGuest;
   env: Record<string, string>;
   services: FlyMachineService[] | undefined;
@@ -744,6 +962,7 @@ const buildConfig = (input: {
   init: FlyMachineInit | undefined;
 }): FlyMachineConfig => ({
   image: input.image,
+  containers: input.containers,
   guest: input.guest,
   env: Object.keys(input.env).length > 0 ? input.env : undefined,
   services:
@@ -786,11 +1005,6 @@ const sameEnv = (
   desired: Record<string, string>,
 ) => deepEqual(compactRecord(observed), desired);
 
-const sameServices = (
-  observed: FlyMachineService[] | undefined,
-  desired: FlyMachineService[] | undefined,
-) => deepEqual(observed ?? [], desired ?? [], { stripNullish: true });
-
 const sameMounts = (
   observed: FlyMachineMount[] | undefined,
   desired: FlyMachineMount[],
@@ -808,12 +1022,12 @@ const sameRestart = (
 ) =>
   deepEqual(
     {
-      policy: observed?.policy,
-      max_retries: observed?.max_retries,
+      policy: observed?.policy ?? "on-failure",
+      max_retries: observed?.max_retries ?? 10,
     },
     {
-      policy: desired?.policy,
-      max_retries: desired?.max_retries,
+      policy: desired?.policy ?? "on-failure",
+      max_retries: desired?.max_retries ?? 10,
     },
     { stripNullish: true },
   );
@@ -841,7 +1055,8 @@ const metadataChanged = (
 const configDrifted = (
   machine: FlyMachine,
   desired: {
-    image: string;
+    image: string | undefined;
+    containers: FlyMachineConfig["containers"];
     guest: FlyMachineGuest;
     env: Record<string, string>;
     services: FlyMachineService[] | undefined;
@@ -854,7 +1069,11 @@ const configDrifted = (
 ) => {
   const config = machine.config;
   return (
-    !sameImage(machine, desired.image) ||
+    (desired.containers !== undefined
+      ? !sameContainerWorkload(config, desired.containers)
+      : desired.image === undefined ||
+        !sameImage(machine, desired.image) ||
+        (config?.containers?.length ?? 0) > 0) ||
     !sameGuest(config?.guest, desired.guest) ||
     !sameEnv(config?.env, desired.env) ||
     !sameServices(config?.services, desired.services) ||
@@ -868,16 +1087,17 @@ const configDrifted = (
 
 const toAttrs = (set: ReplicaSet): Machine["Attributes"] => ({
   appName: set.appName,
+  rolloutPending: set.rolloutPending,
   machineId: set.machineId,
   machineIds: set.machineIds,
   name: set.name,
+  baseName: set.baseName,
   region: set.region,
   state: set.state,
   instanceId: set.instanceId,
   privateIp: set.privateIp,
   imageRef: set.imageRef,
   guest: set.guest,
-  url: set.url,
   count: set.count,
   mounts: set.mounts,
   replicas: set.replicas,
@@ -891,18 +1111,94 @@ const machineIdsOf = (output: Machine["Attributes"] | undefined) =>
 
 export const MachineProvider = () =>
   Provider.succeed(Machine, {
-    stables: ["machineId", "name", "region", "appName"],
+    stables: ["region", "appName"],
     nuke: { dependsOn: ["Fly.App"] },
 
     diff: Effect.fn(function* ({ news, output }) {
-      if (news === undefined || !isResolved(news)) return undefined;
+      if (news === undefined) return;
+      if ("app" in news) {
+        const imageMode = {
+          image: news.image,
+          containers: news.containers,
+          init: news.init,
+        };
+        const imageModeResolved =
+          isResolved<Pick<MachineProps, "image" | "containers" | "init">>(
+            imageMode,
+          );
+        if (imageModeResolved) yield* validateMachineContainers(imageMode);
+        const settings: Input<
+          Pick<
+            MachineProps,
+            | "deploy"
+            | "shutdown"
+            | "checks"
+            | "services"
+            | "mounts"
+            | "skipLaunch"
+            | "autoDestroy"
+            | "restart"
+            | "containers"
+          >
+        > = {
+          deploy: news.deploy,
+          shutdown: news.shutdown,
+          checks: news.checks,
+          services: news.services,
+          mounts: news.mounts,
+          skipLaunch: news.skipLaunch,
+          autoDestroy: news.autoDestroy,
+          restart: news.restart,
+          containers: news.containers,
+        };
+        if (
+          imageModeResolved &&
+          isResolved<
+            Pick<
+              MachineProps,
+              | "deploy"
+              | "shutdown"
+              | "checks"
+              | "services"
+              | "mounts"
+              | "skipLaunch"
+              | "autoDestroy"
+              | "restart"
+              | "containers"
+            >
+          >(settings)
+        ) {
+          yield* validateDeployment(
+            yield* deploymentPolicy(settings.deploy, settings.shutdown),
+            {
+              services: settings.services?.map(toFlyService),
+              checks: settings.checks,
+              auto_destroy: settings.autoDestroy,
+              restart: settings.restart,
+              containers:
+                settings.containers === undefined
+                  ? undefined
+                  : toFlyContainers(settings.containers),
+            },
+            (settings.mounts?.length ?? 0) > 0,
+            settings.skipLaunch,
+          );
+        }
+      }
+      if (!isResolved(news))
+        return output?.rolloutPending
+          ? { action: "update" as const }
+          : undefined;
+      yield* validateMachineContainers(news);
       if (output === undefined) return undefined;
       const desiredAppName = appNameOf(news.app);
       const appChanged =
         desiredAppName !== undefined && desiredAppName !== output.appName;
       const desiredName =
-        news.name !== undefined ? sanitizeFlyAppName(news.name) : output.name;
-      const nameChanged = desiredName !== output.name;
+        news.name !== undefined
+          ? sanitizeFlyAppName(news.name)
+          : (output.baseName ?? output.name);
+      const nameChanged = desiredName !== (output.baseName ?? output.name);
       const desiredRegion = news.region ?? DEFAULT_REGION;
       const regionChanged = desiredRegion !== output.region;
       if (appChanged || nameChanged || regionChanged) {
@@ -912,16 +1208,22 @@ export const MachineProvider = () =>
           deleteFirst: nameChanged === false && appChanged === false,
         };
       }
-      return undefined;
+      return output.rolloutPending ? { action: "update" as const } : undefined;
     }),
 
-    read: Effect.fn(function* ({ id, olds, output }) {
+    read: Effect.fn(function* ({ id, fqn, instanceId, olds, output }) {
       const appName = appNameOf(olds?.app) ?? output?.appName;
-      const name = yield* resolveMachineName(id, olds?.name, output?.name);
+      const name = yield* resolveMachineName(
+        id,
+        olds?.name,
+        output?.baseName ?? output?.name,
+      );
       const found = yield* observeReplicaSet({
         appName,
         id,
         type: "Fly.Machine",
+        fqn,
+        resourceInstanceId: instanceId,
         machineIds: machineIdsOf(output),
         baseName: name,
       });
@@ -934,15 +1236,28 @@ export const MachineProvider = () =>
       return sets.map(toAttrs);
     }),
 
-    reconcile: Effect.fn(function* ({ id, news, output, bindings }) {
+    reconcile: Effect.fn(function* ({
+      id,
+      fqn,
+      instanceId,
+      news,
+      output,
+      bindings,
+    }) {
       const props = news;
+      yield* validateMachineContainers(props);
+      const policy = yield* deploymentPolicy(props.deploy, props.shutdown);
       const appName = appNameOf(props.app) ?? output?.appName;
       if (appName === undefined) {
         return yield* new MachineAppNotResolved({
           message: "Fly.Machine requires a resolved App with appName.",
         });
       }
-      const name = yield* resolveMachineName(id, props.name, output?.name);
+      const name = yield* resolveMachineName(
+        id,
+        props.name,
+        output?.baseName ?? output?.name,
+      );
       const region = props.region ?? output?.region ?? DEFAULT_REGION;
       const count = resolveCount(props.count);
       const skipLaunch = props.skipLaunch === true;
@@ -953,13 +1268,21 @@ export const MachineProvider = () =>
       const services = props.services?.map(toFlyService);
       const restart = props.restart ? toFlyRestart(props.restart) : undefined;
       const init = props.init ? toFlyInit(props.init) : undefined;
+      const containers =
+        props.containers === undefined
+          ? undefined
+          : toFlyContainers(props.containers);
 
       const set = yield* reconcileReplicas({
         id,
         type: "Fly.Machine",
+        fqn,
+        resourceInstanceId: instanceId,
+        policy,
+        checks: props.checks,
         appName,
         baseName: name,
-        region,
+        regions: [region],
         count,
         disks,
         skipLaunch,
@@ -971,6 +1294,7 @@ export const MachineProvider = () =>
         configDrifted: (machine, desired) =>
           configDrifted(machine, {
             image: props.image,
+            containers,
             guest,
             env,
             services,
@@ -983,6 +1307,7 @@ export const MachineProvider = () =>
         buildConfig: ({ mounts, metadata }) =>
           buildConfig({
             image: props.image,
+            containers,
             guest,
             env,
             services,
@@ -995,21 +1320,25 @@ export const MachineProvider = () =>
       }).pipe(
         Effect.catchTag("Fly.ReplicaNotCreated", (error) =>
           Effect.fail(
-            new MachineNotCreated({
-              name: error.name,
-              appName: error.appName,
-            }),
+            new MachineNotCreated({ name: error.name, appName: error.appName }),
           ),
         ),
       );
       return toAttrs(set);
     }),
 
-    delete: Effect.fn(function* ({ output }) {
+    delete: Effect.fn(function* ({ id, fqn, instanceId, olds, output, force }) {
+      const appName = output.appName ?? appNameOf(olds.app);
+      if (appName === undefined) return;
       yield* deleteReplicaSet({
-        appName: output.appName,
+        appName,
+        id,
+        type: "Fly.Machine",
+        fqn,
+        resourceInstanceId: instanceId,
         machineIds: machineIdsOf(output),
         volumeIds: volumeIdsOf(output),
+        force,
       });
     }),
   });

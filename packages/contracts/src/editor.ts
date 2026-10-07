@@ -24,6 +24,8 @@ export const EDITORS = [
     id: "cursor",
     label: "Cursor",
     commands: ["cursor"],
+    // File and workspace opens must target the IDE even when the Agents Window is active.
+    baseArgs: ["--classic"],
     launchStyle: "goto",
     remoteScheme: "cursor",
   },
@@ -57,7 +59,14 @@ export const EDITORS = [
     launchStyle: "direct-path",
     remoteScheme: "zed",
   },
-  { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    // `agy` is the standalone Antigravity CLI, not the IDE. The IDE bundle
+    // ships `antigravity-ide`, so it comes first for install-folder lookups.
+    commands: ["antigravity-ide", "agy-ide"],
+    launchStyle: "goto",
+  },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
   { id: "clion", label: "CLion", commands: ["clion"], launchStyle: "line-column" },

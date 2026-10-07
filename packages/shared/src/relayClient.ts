@@ -8,15 +8,15 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
@@ -103,7 +103,7 @@ const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 
 const trimmedString = (name: string) =>
-  Config.string(name).pipe(
+  Config.String(name).pipe(
     Config.option,
     Config.map(
       Option.flatMap((value) => {
@@ -316,7 +316,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           }),
       ),
     );
-    if (Encoding.encodeHex(checksum) !== asset.sha256) {
+    if (Hex.encode(checksum) !== asset.sha256) {
       return yield* new RelayClientInstallError({
         reason: "invalid_checksum",
         message: "Downloaded relay client checksum did not match the pinned release.",
@@ -331,9 +331,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
-        ),
+        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
@@ -381,15 +379,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
     yield* report("waiting_for_lock");
     yield* acquireInstallLock(lockPath).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        Effect.fail(
-          new RelayClientInstallError({
-            reason: "write_failed",
-            message: "Could not acquire the relay client installation lock.",
-            cause,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.fail(
+            new RelayClientInstallError({
+              reason: "write_failed",
+              message: "Could not acquire the relay client installation lock.",
+              cause,
+            }),
+          ),
+      }),
     );
     return yield* Effect.gen(function* () {
       const afterLock = yield* resolve;
@@ -445,16 +444,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
-      Effect.catch((cause) =>
-        cause instanceof RelayClientInstallError
-          ? Effect.fail(cause)
-          : Effect.fail(
-              new RelayClientInstallError({
-                reason: "write_failed",
-                message: "Could not install the relay client.",
-                cause,
-              }),
-            ),
+      Effect.catchIf(
+        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) =>
+          Effect.fail(
+            new RelayClientInstallError({
+              reason: "write_failed",
+              message: "Could not install the relay client.",
+              cause,
+            }),
+          ),
       ),
     );
   });

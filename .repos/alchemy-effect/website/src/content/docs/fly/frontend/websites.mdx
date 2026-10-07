@@ -1,6 +1,6 @@
 ---
 title: Websites
-description: Deploy Vite, Astro, Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Fly with first-class Website resources.
+description: Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Fly with first-class Website resources.
 sidebar:
   label: Overview
   order: 1
@@ -24,6 +24,9 @@ container integration on top.
 - [`Nextjs`](/fly/frontend/nextjs) — Next.js as a long-running
   Node process (`next build`, then `next({ dev: false })`). Not
   OpenNext.
+- [`Vinext`](/fly/frontend/vinext) — vinext (Next.js API on Vite)
+  as a long-running Node process (`vinext build`, then
+  `startProdServer`). Not the Cloudflare Worker path.
 - [`Nuxt`](/fly/frontend/nuxt) — Nuxt apps through nitro's Node
   server; your `nuxt.config.ts` loads natively. Do not set
   `nitro.preset`.
@@ -38,9 +41,8 @@ container integration on top.
   (React or Solid), built through your own `vite build`.
 - [`Waku`](/fly/frontend/waku) — Waku (React Server Components)
   on Node, with SSG pages served extensionless.
-- [`Octane`](/fly/frontend/octane) — OctaneJS SSR. Select
-  `node()` from `@alchemy.run/frontend-frameworks/octane/node-adapter`
-  in `octane.config.ts`.
+- [`Octane`](/fly/frontend/octane) — OctaneJS SSR. Alchemy wraps
+  native Node output; no hosting adapter is needed in `octane.config.ts`.
 - [`Foldkit`](/fly/frontend/foldkit) — client-only Foldkit SPA;
   deep links fall back to `index.html`.
 - [`Vocs`](/fly/frontend/vocs) — prerendered Vocs docs; extensionless
@@ -51,7 +53,7 @@ container integration on top.
 Each resource creates a `Fly.App` when you omit `app`, a
 `Fly.Service` on port 3000, and a `shared_v4`
 [`IpAssignment`](/fly/networking) so `{app}.fly.dev` answers.
-`domain` requests ACME via [`Certificate`](/fly/networking#certificates)
+`domain` requests ACME via [`Certificate`](/fly/networking#use-your-own-hostname)
 (existing DNS only for v1); `url` becomes `https://{domain}`.
 The return is `{ url, app, service, ip, certificate }` —
 everything except `url` is `undefined` under `alchemy dev`.
@@ -71,6 +73,7 @@ unchanged project skips the build.
 | SolidStart | `SolidStart` | [SolidStart](/fly/frontend/solidstart) |
 | Astro | `Astro` | [Astro](/fly/frontend/astro) |
 | Next.js | `Nextjs` | [Next.js](/fly/frontend/nextjs) |
+| vinext | `Vinext` | [vinext](/fly/frontend/vinext) |
 | Nuxt | `Nuxt` | [Nuxt](/fly/frontend/nuxt) |
 | SvelteKit | `SvelteKit` | [SvelteKit](/fly/frontend/sveltekit) |
 | Waku | `Waku` | [Waku](/fly/frontend/waku) |

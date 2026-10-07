@@ -16,7 +16,7 @@ import { pipe } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
 import * as Command from "../Command/index.ts";
 import { DockerLive } from "../Docker/Docker.ts";
@@ -504,11 +504,16 @@ export const providers = () =>
         EC2.RouteTable,
         EC2.RouteTableAssociation,
         EC2.SecurityGroup,
+        EC2.DefaultSecurityGroup,
         EC2.SecurityGroupRule,
         EC2.Snapshot,
         EC2.Subnet,
         EC2.Volume,
         EC2.VolumeAttachment,
+        EC2.ClientVpnEndpoint,
+        EC2.ClientVpnTargetNetworkAssociation,
+        EC2.ClientVpnAuthorizationRule,
+        EC2.ClientVpnRoute,
         EC2.Vpc,
         EC2.VpcEndpoint,
         EC2.VpcPeeringConnection,
@@ -530,7 +535,10 @@ export const providers = () =>
         EKS.FargateProfile,
         EKS.Nodegroup,
         EKS.PodIdentityAssociation,
+        ElastiCache.CacheCluster,
+        ElastiCache.ReplicationGroup,
         ElastiCache.ServerlessCache,
+        ElastiCache.SubnetGroup,
         ELBv2.Listener,
         ELBv2.ListenerCertificate,
         ELBv2.ListenerRule,
@@ -1264,47 +1272,60 @@ export const providers = () =>
           DevOpsGuru.ResourceCollectionProvider(),
           DevOpsGuru.ServiceIntegrationProvider(),
           flociDual(DynamoDB.Table, () => DynamoDB.TableProvider()),
-          flociDual(EC2.DhcpOptions, () => EC2.DhcpOptionsProvider()),
-          flociDual(EC2.EgressOnlyInternetGateway, () =>
-            EC2.EgressOnlyInternetGatewayProvider(),
+          // Keep this service-sized group nested: a flat mergeAll here exceeds
+          // Effect's variadic inference limit and silently drops tail layers.
+          Layer.mergeAll(
+            EC2.ClientVpnEndpointProvider(),
+            EC2.ClientVpnTargetNetworkAssociationProvider(),
+            EC2.ClientVpnAuthorizationRuleProvider(),
+            EC2.ClientVpnRouteProvider(),
+            EC2.DefaultSecurityGroupProvider(),
+            flociDual(EC2.DhcpOptions, () => EC2.DhcpOptionsProvider()),
+            flociDual(EC2.EgressOnlyInternetGateway, () =>
+              EC2.EgressOnlyInternetGatewayProvider(),
+            ),
+            flociDual(EC2.EIP, () => EC2.EIPProvider()),
+            flociDual(EC2.FlowLog, () => EC2.FlowLogProvider()),
+            flociDual(EC2.Instance, () => EC2.InstanceProvider()),
+            // Dual EC2 networking glue: local (floci) ECS services/tasks run
+            // inside an emulated VPC — a live VPC can't host local containers
+            // and local target groups can't reference a live vpcId.
+            flociDual(EC2.InternetGateway, () => EC2.InternetGatewayProvider()),
+            flociDual(EC2.KeyPair, () => EC2.KeyPairProvider()),
+            flociDual(EC2.NatGateway, () => EC2.NatGatewayProvider()),
+            flociDual(EC2.NetworkAclAssociation, () =>
+              EC2.NetworkAclAssociationProvider(),
+            ),
+            flociDual(EC2.NetworkAclEntry, () => EC2.NetworkAclEntryProvider()),
+            flociDual(EC2.NetworkAcl, () => EC2.NetworkAclProvider()),
+            flociDual(EC2.NetworkInterface, () =>
+              EC2.NetworkInterfaceProvider(),
+            ),
+            flociDual(EC2.NetworkInterfaceAttachment, () =>
+              EC2.NetworkInterfaceAttachmentProvider(),
+            ),
+            flociDual(EC2.PrefixList, () => EC2.PrefixListProvider()),
+            flociDual(EC2.Route, () => EC2.RouteProvider()),
+            flociDual(EC2.RouteTableAssociation, () =>
+              EC2.RouteTableAssociationProvider(),
+            ),
+            flociDual(EC2.RouteTable, () => EC2.RouteTableProvider()),
+            flociDual(EC2.SecurityGroup, () => EC2.SecurityGroupProvider()),
+            flociDual(EC2.SecurityGroupRule, () =>
+              EC2.SecurityGroupRuleProvider(),
+            ),
+            flociDual(EC2.Snapshot, () => EC2.SnapshotProvider()),
+            flociDual(EC2.Subnet, () => EC2.SubnetProvider()),
+            flociDual(EC2.Volume, () => EC2.VolumeProvider()),
+            flociDual(EC2.VolumeAttachment, () =>
+              EC2.VolumeAttachmentProvider(),
+            ),
+            flociDual(EC2.VpcEndpoint, () => EC2.VpcEndpointProvider()),
+            flociDual(EC2.VpcPeeringConnection, () =>
+              EC2.VpcPeeringConnectionProvider(),
+            ),
+            flociDual(EC2.Vpc, () => EC2.VpcProvider()),
           ),
-          flociDual(EC2.EIP, () => EC2.EIPProvider()),
-          flociDual(EC2.FlowLog, () => EC2.FlowLogProvider()),
-          flociDual(EC2.Instance, () => EC2.InstanceProvider()),
-          // Dual EC2 networking glue: local (floci) ECS services/tasks run
-          // inside an emulated VPC — a live VPC can't host local containers
-          // and local target groups can't reference a live vpcId.
-          flociDual(EC2.InternetGateway, () => EC2.InternetGatewayProvider()),
-          flociDual(EC2.KeyPair, () => EC2.KeyPairProvider()),
-          flociDual(EC2.NatGateway, () => EC2.NatGatewayProvider()),
-          flociDual(EC2.NetworkAclAssociation, () =>
-            EC2.NetworkAclAssociationProvider(),
-          ),
-          flociDual(EC2.NetworkAclEntry, () => EC2.NetworkAclEntryProvider()),
-          flociDual(EC2.NetworkAcl, () => EC2.NetworkAclProvider()),
-          flociDual(EC2.NetworkInterface, () => EC2.NetworkInterfaceProvider()),
-          flociDual(EC2.NetworkInterfaceAttachment, () =>
-            EC2.NetworkInterfaceAttachmentProvider(),
-          ),
-          flociDual(EC2.PrefixList, () => EC2.PrefixListProvider()),
-          flociDual(EC2.Route, () => EC2.RouteProvider()),
-          flociDual(EC2.RouteTableAssociation, () =>
-            EC2.RouteTableAssociationProvider(),
-          ),
-          flociDual(EC2.RouteTable, () => EC2.RouteTableProvider()),
-          flociDual(EC2.SecurityGroup, () => EC2.SecurityGroupProvider()),
-          flociDual(EC2.SecurityGroupRule, () =>
-            EC2.SecurityGroupRuleProvider(),
-          ),
-          flociDual(EC2.Snapshot, () => EC2.SnapshotProvider()),
-          flociDual(EC2.Subnet, () => EC2.SubnetProvider()),
-          flociDual(EC2.Volume, () => EC2.VolumeProvider()),
-          flociDual(EC2.VolumeAttachment, () => EC2.VolumeAttachmentProvider()),
-          flociDual(EC2.VpcEndpoint, () => EC2.VpcEndpointProvider()),
-          flociDual(EC2.VpcPeeringConnection, () =>
-            EC2.VpcPeeringConnectionProvider(),
-          ),
-          flociDual(EC2.Vpc, () => EC2.VpcProvider()),
           flociDual(ECR.Image, () => ECR.ImageProvider()),
           flociDual(ECR.RegistryPolicy, () => ECR.RegistryPolicyProvider()),
           flociDual(ECR.Repository, () => ECR.RepositoryProvider()),
@@ -1338,7 +1359,16 @@ export const providers = () =>
           EKS.FargateProfileProvider(),
           EKS.NodegroupProvider(),
           EKS.PodIdentityAssociationProvider(),
+          flociDual(ElastiCache.CacheCluster, () =>
+            ElastiCache.CacheClusterProvider(),
+          ),
+          flociDual(ElastiCache.ReplicationGroup, () =>
+            ElastiCache.ReplicationGroupProvider(),
+          ),
           ElastiCache.ServerlessCacheProvider(),
+          flociDual(ElastiCache.SubnetGroup, () =>
+            ElastiCache.SubnetGroupProvider(),
+          ),
           // Dual ELBv2: floci emulates ALBs with locally-resolvable DNS
           // (`*.elb.localhost.floci.io` → 127.0.0.1, host-routed on the
           // gateway port) so local ECS services are reachable behind a

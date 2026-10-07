@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or sign.
 import * as NodeCrypto from "node:crypto";
 import type {
   RelayEnvironmentLinkProofPayload,
@@ -106,7 +107,7 @@ const makeRequest = Effect.gen(function* () {
   };
 });
 
-function testLayer(input?: {
+function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
@@ -123,11 +124,11 @@ function testLayer(input?: {
         }),
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
           upsert: input?.upsert ?? (() => Effect.void),
-          listUsersForEnvironment: () => Effect.succeed([]),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
-          listPublicKeysForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
           getForUser: () => Effect.succeed(null),
+          findActiveManagedForEnvironment: () => Effect.succeed([]),
+          setHoldWebhooksWhileOffline: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
@@ -136,8 +137,9 @@ function testLayer(input?: {
           revokeForEnvironmentPublicKey: () => Effect.succeed(false),
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
+          reconcileOrigin: () => Effect.succeed("ready"),
           prepareDeprovision: () => Effect.succeed(null),
-          deprovision: input?.deprovision ?? (() => Effect.void),
+          deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision: () =>
             Effect.succeed({
@@ -166,7 +168,7 @@ describe("EnvironmentLinker", () => {
       expect(persistedEnvironmentId).toBe(payload.environmentId);
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: (input) =>
             Effect.sync(() => {
               persistedEnvironmentId = input.proof.environmentId;
@@ -235,7 +237,7 @@ describe("EnvironmentLinker", () => {
       expect(deprovisionedEnvironmentId).toBe("env-link-test");
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: (input) =>
             Effect.sync(() => {
               persistedEndpoint = input.endpoint.httpBaseUrl;
@@ -243,6 +245,7 @@ describe("EnvironmentLinker", () => {
           deprovision: (input) =>
             Effect.sync(() => {
               deprovisionedEnvironmentId = input.environmentId;
+              return true;
             }),
         }),
       ),
@@ -275,7 +278,7 @@ describe("EnvironmentLinker", () => {
       expect(persisted).toBe(false);
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           upsert: () =>
             Effect.sync(() => {
               persisted = true;
@@ -302,6 +305,6 @@ describe("EnvironmentLinker", () => {
           });
         }
       }
-    }).pipe(Effect.provide(testLayer({ consume: () => Effect.succeed(false) }))),
+    }).pipe(Effect.provide(layerTest({ consume: () => Effect.succeed(false) }))),
   );
 });

@@ -1,10 +1,10 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Option } from "effect"
-import * as EventJournal from "effect/unstable/eventlog/EventJournal"
-import * as SqlEventJournal from "effect/unstable/eventlog/SqlEventJournal"
-import { Reactivity } from "effect/unstable/reactivity"
-import * as SqlClient from "effect/unstable/sql/SqlClient"
+import * as EventJournal from "effect/eventlog/EventJournal"
+import * as SqlEventJournal from "effect/eventlog/SqlEventJournal"
+import { Reactivity } from "effect/reactivity"
+import * as SqlClient from "effect/sql/SqlClient"
 
 const makeJournal = Effect.gen(function*() {
   const sql = yield* SqliteClient.make({ filename: ":memory:" })
@@ -14,6 +14,35 @@ const makeJournal = Effect.gen(function*() {
 }).pipe(Effect.provide(Reactivity.layer))
 
 describe("SqlEventJournal", () => {
+  it.effect("preserves write callback error identity", () =>
+    Effect.gen(function*() {
+      const journal = yield* makeJournal
+      const error = new Error("callback failed")
+      const actual = yield* Effect.flip(journal.write({
+        event: "Repro",
+        primaryKey: "key",
+        payload: new Uint8Array([1]),
+        effect: () => Effect.fail(error)
+      }))
+      assert.strictEqual(actual, error)
+    }))
+
+  it.effect("preserves remote callback error identity", () =>
+    Effect.gen(function*() {
+      const journal = yield* makeJournal
+      yield* journal.write({
+        event: "Repro",
+        primaryKey: "key",
+        payload: new Uint8Array([1]),
+        effect: () => Effect.void
+      })
+      const error = new Error("callback failed")
+      const actual = yield* Effect.flip(
+        journal.withRemoteUncommited(EventJournal.makeRemoteIdUnsafe(), () => Effect.fail(error))
+      )
+      assert.strictEqual(actual, error)
+    }))
+
   it.effect("commits only after the write callback succeeds", () =>
     Effect.gen(function*() {
       const sql = yield* SqliteClient.make({ filename: ":memory:" })

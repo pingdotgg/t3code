@@ -43,6 +43,12 @@ export const DOCS_TABS: DocsTab[] = [
     slot: "primary",
   },
   {
+    label: "GCP",
+    href: "/gcp",
+    prefixes: ["/gcp", "/providers/gcp"],
+    slot: "primary",
+  },
+  {
     label: "Hetzner",
     href: "/hetzner",
     prefixes: ["/hetzner", "/providers/hetzner"],
@@ -103,12 +109,36 @@ export const DOCS_TABS: DocsTab[] = [
     hint: "repos · secrets · events",
   },
   {
+    label: "Git",
+    href: "/git",
+    prefixes: ["/git", "/providers/git"],
+    slot: "more",
+    category: "Source & CI",
+    hint: "self-hosted git · clone · push · pull requests",
+  },
+  {
+    label: "Stripe",
+    href: "/stripe",
+    prefixes: ["/stripe", "/providers/stripe"],
+    slot: "more",
+    category: "Payments",
+    hint: "products · prices · webhooks",
+  },
+  {
     label: "Docker",
     href: "/docker",
     prefixes: ["/docker", "/providers/docker"],
     slot: "more",
     category: "Containers",
     hint: "images · containers · networks",
+  },
+  {
+    label: "Kubernetes",
+    href: "/kubernetes",
+    prefixes: ["/kubernetes", "/providers/kubernetes"],
+    slot: "more",
+    category: "Containers",
+    hint: "deployments · jobs · manifests · helm",
   },
   {
     label: "SQL",
@@ -126,6 +156,14 @@ export const DOCS_TABS: DocsTab[] = [
     category: "Toolchain",
     hint: "build · dev · exec",
   },
+  {
+    label: "ACME",
+    href: "/acme",
+    prefixes: ["/acme", "/providers/acme"],
+    slot: "more",
+    category: "Certificates",
+    hint: "accounts · DNS-01 · certificate issuance",
+  },
   // A provider's reference pages belong to its hub tab (the prefixes
   // above claim /providers/{provider} first) — the Reference tab owns
   // only the directory landing plus providers without a hub.
@@ -136,6 +174,8 @@ export const DOCS_TABS: DocsTab[] = [
     slot: "end",
   },
   { label: "Blog", href: "/blog", prefixes: ["/blog"], slot: "end" },
+  // A marketing page, so it never becomes the active tab.
+  { label: "Compare", href: "/compare", prefixes: ["/compare"], slot: "end" },
 ];
 
 const matches = (pathname: string, prefix: string) =>

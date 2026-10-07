@@ -5,8 +5,8 @@ import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 // Fresh `workers.dev` URLs transiently 404 while the route propagates.
@@ -47,7 +47,6 @@ const getBodyWhenReady = (url: string, expected: string) =>
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
   state: Cloudflare.state(),
-  stage: "test",
 });
 
 const stack = beforeAll(deploy(Stack).pipe(Effect.tap(Console.log)), {

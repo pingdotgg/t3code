@@ -50,7 +50,7 @@ const primarySnapshot: DesktopBackendSnapshot = {
   restartScheduled: false,
 };
 
-const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
   backendConfig: Effect.succeed({
     port: 3773,
@@ -65,16 +65,17 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
-const backendConfigurationLayer = Layer.succeed(
+const layerBackendConfiguration = Layer.succeed(
   DesktopBackendConfiguration.DesktopBackendConfiguration,
   {
     resolvePrimary: Effect.die("unexpected resolvePrimary"),
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),
+    currentBootstrapToken: Effect.die("unexpected currentBootstrapToken"),
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 
-const netLayer = Layer.succeed(NetService.NetService, {
+const layerNet = Layer.succeed(NetService.NetService, {
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   hasListenerOnHost: () => Effect.succeed(false),
@@ -83,6 +84,29 @@ const netLayer = Layer.succeed(NetService.NetService, {
 } satisfies NetService.NetService["Service"]);
 
 describe("DesktopWslBackend", () => {
+  it.effect("does not discover or start WSL when local execution is disabled", () =>
+    Effect.gen(function* () {
+      const backend = yield* DesktopWslBackend.DesktopWslBackend;
+      yield* backend.reconcile;
+    }).pipe(
+      Effect.provide(
+        DesktopWslBackend.layer.pipe(
+          Layer.provide(Layer.mock(DesktopBackendPool.DesktopBackendPool, {})),
+          Layer.provide(layerBackendConfiguration),
+          Layer.provide(layerServerExposure),
+          Layer.provide(layerNet),
+          Layer.provide(Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment, {})),
+          Layer.provide(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              localEnvironmentEnabled: false,
+              wslBackendEnabled: true,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
   it.effect("clears the stored preflight error when a registered WSL backend becomes ready", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
     const primary = makeStubInstance({
@@ -95,7 +119,7 @@ describe("DesktopWslBackend", () => {
       label: "WSL (Ubuntu)",
       snapshot: primarySnapshot,
     });
-    const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+    const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
       get: (id) =>
         Effect.succeed(
           id === DesktopBackendPool.PRIMARY_INSTANCE_ID
@@ -137,10 +161,10 @@ describe("DesktopWslBackend", () => {
     }).pipe(
       Effect.provide(
         DesktopWslBackend.layer.pipe(
-          Layer.provideMerge(poolLayer),
-          Layer.provideMerge(backendConfigurationLayer),
-          Layer.provideMerge(serverExposureLayer),
-          Layer.provideMerge(netLayer),
+          Layer.provideMerge(layerPool),
+          Layer.provideMerge(layerBackendConfiguration),
+          Layer.provideMerge(layerServerExposure),
+          Layer.provideMerge(layerNet),
           Layer.provideMerge(
             DesktopAppSettings.layerTest({
               ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
@@ -181,9 +205,9 @@ describe("DesktopWslBackend", () => {
       Effect.provide(
         DesktopWslBackend.layer.pipe(
           Layer.provideMerge(DesktopBackendPool.layerTest([primary, wsl])),
-          Layer.provideMerge(backendConfigurationLayer),
-          Layer.provideMerge(serverExposureLayer),
-          Layer.provideMerge(netLayer),
+          Layer.provideMerge(layerBackendConfiguration),
+          Layer.provideMerge(layerServerExposure),
+          Layer.provideMerge(layerNet),
           Layer.provideMerge(
             DesktopAppSettings.layerTest({
               ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
