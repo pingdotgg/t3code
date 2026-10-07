@@ -2717,4 +2717,154 @@ describe("MessagesTimeline", () => {
       await act(() => renderer?.unmount());
     }
   });
+
+  describe("HTML renders", () => {
+    const htmlRenderEntry = {
+      id: "render-item",
+      kind: "html-render" as const,
+      createdAt: MESSAGE_CREATED_AT,
+      runId: null,
+      htmlRender: { attachmentId: "render-chart.html", title: "Quarterly chart", height: 320 },
+    };
+    const click = { nativeEvent: new Event("click") };
+    const buttons = (renderer: ReactTestRenderer, expanded: boolean) =>
+      renderer.root.findAll(
+        (node) => node.type === "button" && node.props["aria-expanded"] === expanded,
+      );
+    // The page reserves its frame's height; the title row that replaces it does not.
+    const pageFrames = (renderer: ReactTestRenderer) =>
+      renderer.root.findAll((node) => node.type === "div" && node.props.style?.height === 320);
+
+    it("minimizes a page to its title row and shows it again from that row", async () => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              routeThreadKey="environment-local:thread-html-toggle"
+              timelineEntries={[htmlRenderEntry]}
+            />,
+          );
+        });
+        expect(pageFrames(renderer!)).toHaveLength(1);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+
+        await act(() => buttons(renderer!, true)[0]!.props.onClick(click));
+        expect(pageFrames(renderer!)).toHaveLength(0);
+        const titleRow = buttons(renderer!, false)[0]!;
+        expect(JSON.stringify(renderer!.toJSON())).toContain("Quarterly chart");
+        // Opening the page elsewhere stays available while it is minimized.
+        expect(renderer!.root.findAllByProps({ "aria-label": "Open in panel" })).not.toHaveLength(
+          0,
+        );
+
+        await act(() => titleRow.props.onClick(click));
+        expect(pageFrames(renderer!)).toHaveLength(1);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    });
+
+    it("keeps a toggled page with its thread across an immediate thread switch", async () => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      // No frame runs and nothing scrolls, so only the toggle itself can save the state.
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      const toggledThreadKey = "environment-local:thread-html-toggled";
+      const otherThreadKey = "environment-local:thread-html-other";
+      const props = buildProps();
+      const timeline = (routeThreadKey: string) => (
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={routeThreadKey}
+          timelineEntries={[htmlRenderEntry]}
+        />
+      );
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(timeline(toggledThreadKey));
+        });
+        await act(() => buttons(renderer!, true)[0]!.props.onClick(click));
+
+        // The same item id in another thread is that thread's own page.
+        await act(() => renderer!.update(timeline(otherThreadKey)));
+        expect(pageFrames(renderer!)).toHaveLength(1);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+
+        await act(() => renderer!.update(timeline(toggledThreadKey)));
+        expect(pageFrames(renderer!)).toHaveLength(0);
+        expect(buttons(renderer!, false)).toHaveLength(1);
+
+        await act(() => buttons(renderer!, false)[0]!.props.onClick(click));
+        await act(() => renderer!.update(timeline(otherThreadKey)));
+        await act(() => renderer!.update(timeline(toggledThreadKey)));
+        expect(pageFrames(renderer!)).toHaveLength(1);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    });
+
+    it("keeps every page toggled before the timeline repaints", async () => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      const toggledThreadKey = "environment-local:thread-html-batched";
+      const otherThreadKey = "environment-local:thread-html-batched-other";
+      const props = buildProps();
+      const timelineEntries = [
+        htmlRenderEntry,
+        {
+          ...htmlRenderEntry,
+          id: "render-item-second",
+          htmlRender: { ...htmlRenderEntry.htmlRender, attachmentId: "render-table.html" },
+        },
+      ];
+      const timeline = (routeThreadKey: string) => (
+        <MessagesTimeline
+          {...props}
+          routeThreadKey={routeThreadKey}
+          timelineEntries={timelineEntries}
+        />
+      );
+      let renderer: ReactTestRenderer | undefined;
+      // One act is one commit, so every click lands before the first one repaints.
+      const clickAll = (expanded: boolean) =>
+        act(() => {
+          for (const button of buttons(renderer!, expanded)) button.props.onClick(click);
+        });
+      const switchAwayAndBack = async () => {
+        await act(() => renderer!.update(timeline(otherThreadKey)));
+        await act(() => renderer!.update(timeline(toggledThreadKey)));
+      };
+      try {
+        await act(() => {
+          renderer = create(timeline(toggledThreadKey));
+        });
+        expect(buttons(renderer!, true)).toHaveLength(2);
+
+        await clickAll(true);
+        expect(pageFrames(renderer!)).toHaveLength(0);
+        expect(buttons(renderer!, false)).toHaveLength(2);
+        await switchAwayAndBack();
+        expect(pageFrames(renderer!)).toHaveLength(0);
+        expect(buttons(renderer!, false)).toHaveLength(2);
+
+        await clickAll(false);
+        expect(pageFrames(renderer!)).toHaveLength(2);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+        await switchAwayAndBack();
+        expect(pageFrames(renderer!)).toHaveLength(2);
+        expect(buttons(renderer!, false)).toHaveLength(0);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    });
+  });
 });

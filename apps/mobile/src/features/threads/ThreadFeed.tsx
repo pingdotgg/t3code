@@ -185,9 +185,11 @@ import {
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
-import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
-import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
-import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import {
+  resolveHtmlRenderRowHeight,
+  resolveThreadFeedFixedItemSize,
+} from "./thread-feed-item-size";
+import { ThreadHtmlRender } from "./HtmlRenderWebView";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import {
   assetEnvironment,
@@ -1520,6 +1522,7 @@ function renderFeedEntry(
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
+    readonly collapsedHtmlRenders: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -1529,6 +1532,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onToggleHtmlRender: (entryId: string) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1593,6 +1597,9 @@ function renderFeedEntry(
         render={entry.render}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
+        collapsed={props.collapsedHtmlRenders[entry.id] ?? false}
+        onToggleCollapsed={() => props.onToggleHtmlRender(entry.id)}
+        rowSizing={props.workRowSizing}
       />
     );
   }
@@ -2219,13 +2226,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly expandedTurnIds: ReadonlySet<RunId>;
+    /** HTML render rows the reader minimized, by feed entry id. Every other render is shown. */
+    readonly collapsedHtmlRenders: Record<string, boolean>;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
     expandedWorkRows: {},
     expandedTurnIds: new Set(),
+    collapsedHtmlRenders: {},
   });
-  const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const {
+    copiedRowId,
+    expandedWorkGroups,
+    expandedWorkRows,
+    expandedTurnIds,
+    collapsedHtmlRenders,
+  } = interactionState;
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -2510,6 +2526,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       expandedWorkGroups,
       expandedWorkRows,
+      collapsedHtmlRenders,
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2526,6 +2543,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       expandedWorkGroups,
       expandedWorkRows,
+      collapsedHtmlRenders,
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2804,7 +2822,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (disclosureAnchorKeyRef.current !== null) {
       settleDisclosureAfterLayout();
     }
-  }, [expandedTurnIds, expandedWorkGroups, expandedWorkRows, settleDisclosureAfterLayout]);
+  }, [
+    expandedTurnIds,
+    expandedWorkGroups,
+    expandedWorkRows,
+    collapsedHtmlRenders,
+    settleDisclosureAfterLayout,
+  ]);
 
   const handleItemSizeChanged = useCallback(() => {
     if (disclosureAnchorKeyRef.current !== null) {
@@ -2887,6 +2911,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
+  const onToggleHtmlRender = useCallback(
+    (entryId: string) => {
+      suspendEndScrollMaintenanceForDisclosure(entryId);
+      setInteractionState((current) => ({
+        ...current,
+        collapsedHtmlRenders: {
+          ...current.collapsedHtmlRenders,
+          [entryId]: !(current.collapsedHtmlRenders[entryId] ?? false),
+        },
+      }));
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
+
   const onPressPreview = useCallback((source: FilePreviewSource) => {
     setExpandedFile((current) => current ?? source);
   }, []);
@@ -2912,7 +2950,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
       if (entry.type === "html-render") {
-        return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+        return resolveHtmlRenderRowHeight({
+          render: entry.render,
+          frameWidth: contentWidth,
+          collapsed: collapsedHtmlRenders[entry.id] ?? false,
+          workRowHeight: workRowSizing.fixedRowHeight,
+        });
       }
       if (workRowSizing.fixedRowHeight === undefined) {
         return undefined;
@@ -2947,7 +2990,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return undefined;
       }
     },
-    [contentWidth, expandedWorkRows, workRowSizing.fixedRowHeight],
+    [collapsedHtmlRenders, contentWidth, expandedWorkRows, workRowSizing.fixedRowHeight],
   );
   // HTML render rows' fixed heights follow the width, so a rotation or split
   // resize drops the cached sizes, as a text-size change does.
@@ -2979,6 +3022,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,
+            collapsedHtmlRenders,
             workRowSizing,
             workGroupScrollPositions,
             terminalAssistantMessageIds,
@@ -2988,6 +3032,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onToggleHtmlRender,
             onPressPreview,
             onPressVideo,
             markdownLinkHandlers,
@@ -3026,6 +3071,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,
+      collapsedHtmlRenders,
       workRowSizing,
       workGroupScrollPositions,
       terminalAssistantMessageIds,
@@ -3046,6 +3092,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onPressPreview,
       onPressVideo,
       onToggleTurnFold,
+      onToggleHtmlRender,
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,

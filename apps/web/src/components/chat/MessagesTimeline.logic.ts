@@ -595,6 +595,8 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
+      /** Minimized by the reader: a title row stands in for the page. */
+      collapsed: boolean;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -1206,6 +1208,8 @@ export function deriveMessagesTimelineRows(input: {
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
+  /** Row ids of HTML renders the reader minimized. */
+  collapsedHtmlRenderIds?: ReadonlySet<string>;
   isWorking: boolean;
   /**
    * The live work has no app run (a provider-native subagent thread), so
@@ -1622,6 +1626,7 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,
+        collapsed: input.collapsedHtmlRenderIds?.has(timelineEntry.id) ?? false,
       });
       continue;
     }
@@ -2039,7 +2044,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "html-render": {
       // Entries rebuild on any tool update; an equal page must keep its mounted frame.
       const bh = b as typeof a;
-      return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+      return (
+        a.createdAt === bh.createdAt &&
+        a.collapsed === bh.collapsed &&
+        htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender)
+      );
     }
 
     case "event":

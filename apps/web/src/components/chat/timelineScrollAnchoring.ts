@@ -151,6 +151,8 @@ export interface RememberedTimelinePosition {
     readonly runs: ReadonlySet<RunId>;
     readonly workGroups: ReadonlySet<string>;
     readonly attempts: ReadonlySet<RunAttemptId>;
+    /** Row ids of HTML renders the reader minimized; every other render is shown. */
+    readonly collapsedHtmlRenders: ReadonlySet<string>;
     readonly workGroupState: {
       scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
       expandedEntries: Set<string>;

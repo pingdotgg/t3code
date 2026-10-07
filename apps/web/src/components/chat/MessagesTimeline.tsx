@@ -327,6 +327,7 @@ interface TimelineRowSharedState {
   }) => void;
   onToggleTurnFold: (runId: RunId) => void;
   onToggleAttemptFold: (attemptId: RunAttemptId) => void;
+  onSetHtmlRenderCollapsed: (rowId: string, collapsed: boolean) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
@@ -586,6 +587,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
     () => rememberedPosition?.disclosures?.attempts ?? new Set(),
   );
+  const [collapsedHtmlRenderIds, setCollapsedHtmlRenderIds] = useState<ReadonlySet<string>>(
+    () => rememberedPosition?.disclosures?.collapsedHtmlRenders ?? new Set(),
+  );
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
     rememberedPosition?.atEnd === false ? null : listIdentityKey,
   );
@@ -599,6 +603,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
+  let paintedCollapsedHtmlRenderIds = collapsedHtmlRenderIds;
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
@@ -607,9 +612,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
+    paintedCollapsedHtmlRenderIds =
+      rememberedPosition?.disclosures?.collapsedHtmlRenders ?? new Set();
     setExpandedRunIds(paintedExpandedRunIds);
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedAttemptIds(paintedExpandedAttemptIds);
+    setCollapsedHtmlRenderIds(paintedCollapsedHtmlRenderIds);
   }
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
@@ -733,6 +741,61 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     },
     [suspendEndScrollMaintenanceForDisclosure],
   );
+  // What the position cache keeps for this thread besides its scroll anchor.
+  const disclosures = useMemo(
+    () => ({
+      runs: paintedExpandedRunIds,
+      workGroups: paintedExpandedWorkGroupIds,
+      attempts: paintedExpandedAttemptIds,
+      collapsedHtmlRenders: paintedCollapsedHtmlRenderIds,
+      workGroupState: workGroupViewState,
+    }),
+    [
+      paintedExpandedRunIds,
+      paintedExpandedWorkGroupIds,
+      paintedExpandedAttemptIds,
+      paintedCollapsedHtmlRenderIds,
+      workGroupViewState,
+    ],
+  );
+  // The latest value, so the toggle below reads it without changing identity.
+  // The toggle advances it before React commits, so toggles batched into one
+  // commit build on each other.
+  const disclosuresRef = useRef(disclosures);
+  useLayoutEffect(() => {
+    disclosuresRef.current = disclosures;
+  }, [disclosures]);
+  // The row passes its target state, so this callback (and the shared row
+  // context holding it) keeps its identity across toggles.
+  const onSetHtmlRenderCollapsed = useCallback(
+    (rowId: string, collapsed: boolean) => {
+      suspendEndScrollMaintenanceForDisclosure(rowId, collapsed);
+      const current = disclosuresRef.current;
+      if (current.collapsedHtmlRenders.has(rowId) === collapsed) return;
+      const collapsedHtmlRenders = new Set(current.collapsedHtmlRenders);
+      if (collapsed) {
+        collapsedHtmlRenders.add(rowId);
+      } else {
+        collapsedHtmlRenders.delete(rowId);
+      }
+      const next = { ...current, collapsedHtmlRenders };
+      disclosuresRef.current = next;
+      setCollapsedHtmlRenderIds(collapsedHtmlRenders);
+      // The scroll handler saves disclosures on the next frame. Save this one
+      // now, or a thread switch before that frame restores its old state.
+      rememberTimelinePosition(listIdentityKey, {
+        // A thread with no saved position opened at its end.
+        ...(readTimelinePosition(listIdentityKey) ?? {
+          rowId,
+          offsetWithinRow: 0,
+          scrollOffset: 0,
+          atEnd: true,
+        }),
+        disclosures: next,
+      });
+    },
+    [listIdentityKey, suspendEndScrollMaintenanceForDisclosure],
+  );
 
   // An in-session interrupt leaves its turn expanded so the user keeps their
   // place; the next turn (or a reload, since this is local state) folds it.
@@ -778,6 +841,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedRunIds,
         expandedAttemptIds,
         expandedWorkGroupIds,
+        collapsedHtmlRenderIds,
         isWorking,
         runlessWorkActive,
         activeTurnStartedAt,
@@ -801,6 +865,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     expandedRunIds,
     expandedAttemptIds,
     expandedWorkGroupIds,
+    collapsedHtmlRenderIds,
     isWorking,
     runlessWorkActive,
     activeTurnStartedAt,
@@ -1058,12 +1123,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
           scrollOffset: element.scrollTop,
           atEnd: isAtEnd,
-          disclosures: {
-            runs: paintedExpandedRunIds,
-            workGroups: paintedExpandedWorkGroupIds,
-            attempts: paintedExpandedAttemptIds,
-            workGroupState: workGroupViewState,
-          },
+          disclosures,
         });
       }
     }
@@ -1110,10 +1170,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
-    paintedExpandedRunIds,
-    paintedExpandedWorkGroupIds,
-    paintedExpandedAttemptIds,
-    workGroupViewState,
+    disclosures,
     rows,
     listIdentityKey,
     restoringThreadPosition,
@@ -1191,6 +1248,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
+      onSetHtmlRenderCollapsed,
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
@@ -1226,6 +1284,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
+      onSetHtmlRenderCollapsed,
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup,
@@ -2724,12 +2783,15 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
   const ctx = use(TimelineRowCtx);
 
   return (
-    <div className="min-w-0 px-1">
+    // The page lines up with reply text; its title row lines up with work rows.
+    <div className={row.collapsed ? "min-w-0" : "min-w-0 px-1"}>
       <HtmlRenderFrame
         // A recycled row must not keep another page's frozen frame.
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
+        collapsed={row.collapsed}
+        onCollapsedChange={(collapsed) => ctx.onSetHtmlRenderCollapsed(row.id, collapsed)}
         onOpen={ctx.onFileOpen}
       />
     </div>

@@ -8,6 +8,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
+import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -15,17 +16,16 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
+import type { deriveThreadWorkLogSizing } from "../../lib/layout";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { HTML_RENDER_ROW_BOTTOM_MARGIN } from "./thread-feed-item-size";
+import { WorkLogIconSlot, WorkLogLabel, WorkLogPressable } from "./work-log-layout";
 
-const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
-
-/** A render row is its frame's height plus spacing; the page's content never sizes it. */
-export function htmlRenderRowHeight(frameHeight: number) {
-  return frameHeight + ROW_BOTTOM_MARGIN;
-}
+const CONTROL_CLASS_NAME =
+  "h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-surface/80";
 
 function useHtmlRenderTheme() {
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
@@ -182,7 +182,13 @@ export function HtmlRenderWebView(props: {
   );
 }
 
-/** A completed `html_render` call in the thread feed: the page itself, at a fixed height. */
+/**
+ * A completed `html_render` call in the thread feed. Shown, it is the page
+ * itself at a fixed height, with minimize and open controls over its corner.
+ * Minimized, the page is unmounted and a title row stands in for it. The feed
+ * owns `collapsed` and sizes the row from it; the published page is the same
+ * either way.
+ */
 export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -190,20 +196,134 @@ export function ThreadHtmlRender(props: {
   /** The feed's content width; the frame's height follows the page's measured height there. */
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
+  readonly collapsed: boolean;
+  readonly onToggleCollapsed: () => void;
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
   const fileName = htmlRenderFileName(title);
+  const toggleCollapsed = () => {
+    void Haptics.selectionAsync();
+    props.onToggleCollapsed();
+  };
+  const open = () =>
+    navigation.navigate("ThreadAttachment", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.threadId),
+      attachmentId,
+      name: fileName,
+      mimeType: "text/html",
+      sizeBytes: "0",
+      htmlRender: "1",
+    });
+  const openSymbol = (
+    <SymbolView
+      name="arrow.up.left.and.arrow.down.right"
+      size={12}
+      tintColor={props.iconColor}
+      type="monochrome"
+    />
+  );
+
+  // The two roots are keyed apart so the title row and the page frame never
+  // share a native view across a toggle.
+  if (props.collapsed) {
+    return (
+      <View
+        key="collapsed"
+        className="flex-row items-center gap-1.5"
+        style={{ marginBottom: HTML_RENDER_ROW_BOTTOM_MARGIN }}
+      >
+        <View className="min-w-0 flex-1">
+          <WorkLogPressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: false }}
+            accessibilityLabel={title}
+            accessibilityHint="Double tap to show the page."
+            onPress={toggleCollapsed}
+            rowSizing={props.rowSizing}
+          >
+            <WorkLogIconSlot>
+              <SymbolView
+                name="chevron.right"
+                size={11}
+                tintColor={props.iconColor}
+                type="monochrome"
+              />
+            </WorkLogIconSlot>
+            <WorkLogLabel key={props.rowSizing.textSizeKey}>{title}</WorkLogLabel>
+          </WorkLogPressable>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${title}`}
+          // The title row's own slop ends where this one would begin.
+          hitSlop={{ top: 8, bottom: 8, right: 8 }}
+          className="h-7 w-7 items-center justify-center rounded-md active:bg-subtle"
+          onPress={open}
+        >
+          {openSymbol}
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View key="expanded" style={{ marginBottom: HTML_RENDER_ROW_BOTTOM_MARGIN }}>
+      <View style={{ height: htmlRenderFrameHeight(props.render, props.frameWidth) }}>
+        <ThreadHtmlRenderPage
+          environmentId={props.environmentId}
+          render={props.render}
+          fileName={fileName}
+        />
+        {/* Each control keeps 8pt of slop on its outer sides; the gap holds the inner ones apart. */}
+        <View className="absolute right-1.5 top-1.5 flex-row gap-3">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: true }}
+            accessibilityLabel={`Minimize ${title}`}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 5 }}
+            className={CONTROL_CLASS_NAME}
+            onPress={toggleCollapsed}
+          >
+            <SymbolView name="chevron.up" size={12} tintColor={props.iconColor} type="monochrome" />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${title}`}
+            hitSlop={{ top: 8, bottom: 8, left: 5, right: 8 }}
+            className={CONTROL_CLASS_NAME}
+            onPress={open}
+          >
+            {openSymbol}
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The mounted page: its signed URL, its WebView, and the loading and failure
+ * states that fill the same frame. It is mounted only while the render is
+ * shown, so showing it again starts from the current URL with a fresh retry.
+ */
+function ThreadHtmlRenderPage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly render: HtmlRenderReference;
+  readonly fileName: string;
+}) {
+  const { attachmentId, title } = props.render;
   const resource = useMemo(
     () => ({
       _tag: "attachment" as const,
       attachmentId,
-      fileName,
+      fileName: props.fileName,
       mimeType: "text/html",
       disposition: "inline" as const,
     }),
-    [attachmentId, fileName],
+    [attachmentId, props.fileName],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
   const refresh = useRefreshAssetUrl(props.environmentId, resource);
@@ -228,62 +348,36 @@ export function ThreadHtmlRender(props: {
     });
   };
 
+  if (uri !== null && !failed) {
+    return (
+      <HtmlRenderWebView
+        key={`${uri}:${attempt}`}
+        uri={uri}
+        title={title}
+        nested
+        onLoadError={handleLoadError}
+      />
+    );
+  }
+  if (failed || asset._tag === "Failure") {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Reload ${title}`}
+        className="flex-1 items-center justify-center"
+        onPress={() => {
+          retried.current = false;
+          setFailed(false);
+          if (uri === null) void refresh().then((next) => next !== null && setUri(next));
+        }}
+      >
+        <Text className="text-sm text-foreground-muted">Page unavailable</Text>
+      </Pressable>
+    );
+  }
   return (
-    <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
-      <View style={{ height }}>
-        {uri !== null && !failed ? (
-          <HtmlRenderWebView
-            key={`${uri}:${attempt}`}
-            uri={uri}
-            title={title}
-            nested
-            onLoadError={handleLoadError}
-          />
-        ) : failed || asset._tag === "Failure" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Reload ${title}`}
-            className="flex-1 items-center justify-center"
-            onPress={() => {
-              retried.current = false;
-              setFailed(false);
-              if (uri === null) void refresh().then((next) => next !== null && setUri(next));
-            }}
-          >
-            <Text className="text-sm text-foreground-muted">Page unavailable</Text>
-          </Pressable>
-        ) : (
-          <View className="flex-1 items-center justify-center">
-            <ActivityIndicator />
-          </View>
-        )}
-        {uri !== null && !failed ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
-            hitSlop={8}
-            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-surface/80"
-            onPress={() =>
-              navigation.navigate("ThreadAttachment", {
-                environmentId: String(props.environmentId),
-                threadId: String(props.threadId),
-                attachmentId,
-                name: fileName,
-                mimeType: "text/html",
-                sizeBytes: "0",
-                htmlRender: "1",
-              })
-            }
-          >
-            <SymbolView
-              name="arrow.up.left.and.arrow.down.right"
-              size={12}
-              tintColor={props.iconColor}
-              type="monochrome"
-            />
-          </Pressable>
-        ) : null}
-      </View>
+    <View className="flex-1 items-center justify-center">
+      <ActivityIndicator />
     </View>
   );
 }
