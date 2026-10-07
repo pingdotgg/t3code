@@ -19,21 +19,75 @@ export function getProjectScopeSelectionTarget(
   );
 }
 
+export function resolveProjectSubtitle(input: {
+  readonly workspaceRoot: string;
+  readonly environmentLabel?: string | null;
+}): string {
+  const root = input.workspaceRoot.trim();
+  const env = input.environmentLabel?.trim();
+  if (env && root) {
+    return `${env} · ${root}`;
+  }
+  return env || root;
+}
+
 export function filterProjectScopes(
   scopes: ReadonlyArray<HomeProjectScope>,
   searchText: string,
+  environmentLabels?: ReadonlyMap<EnvironmentId, string> | Record<string, string>,
 ): ReadonlyArray<HomeProjectScope> {
   const query = searchText.trim().toLowerCase();
   if (!query) return scopes;
+
+  const resolveEnvLabel = (envId: EnvironmentId): string | undefined => {
+    if (!environmentLabels) return undefined;
+    if (environmentLabels instanceof Map) {
+      return environmentLabels.get(envId);
+    }
+    return (environmentLabels as Record<string, string>)[envId];
+  };
+
   return scopes.filter(
     (scope) =>
       scope.title.toLowerCase().includes(query) ||
-      scope.projects.some(
-        (project) =>
+      scope.projects.some((project) => {
+        const envLabel = resolveEnvLabel(project.environmentId)?.toLowerCase();
+        return (
           project.title.toLowerCase().includes(query) ||
-          project.workspaceRoot.toLowerCase().includes(query),
-      ),
+          project.workspaceRoot.toLowerCase().includes(query) ||
+          (envLabel !== undefined && envLabel.includes(query))
+        );
+      }),
   );
+}
+
+export function filterProjectsInScope(
+  projects: ReadonlyArray<EnvironmentProject>,
+  scopeTitle: string,
+  searchText: string,
+  environmentLabels?: ReadonlyMap<EnvironmentId, string> | Record<string, string>,
+): ReadonlyArray<EnvironmentProject> {
+  const query = searchText.trim().toLowerCase();
+  if (!query || scopeTitle.toLowerCase().includes(query)) {
+    return projects;
+  }
+
+  const resolveEnvLabel = (envId: EnvironmentId): string | undefined => {
+    if (!environmentLabels) return undefined;
+    if (environmentLabels instanceof Map) {
+      return environmentLabels.get(envId);
+    }
+    return (environmentLabels as Record<string, string>)[envId];
+  };
+
+  return projects.filter((project) => {
+    const envLabel = resolveEnvLabel(project.environmentId)?.toLowerCase();
+    return (
+      project.title.toLowerCase().includes(query) ||
+      project.workspaceRoot.toLowerCase().includes(query) ||
+      (envLabel !== undefined && envLabel.includes(query))
+    );
+  });
 }
 
 function getOnlySelectableProject(
