@@ -30,8 +30,8 @@ a link. If none does, the banner shows **Report this issue**, which opens GitHub
 browser. T3 Code never posts anything for you.
 
 The link carries only a title made of fixed terms that name the kind of failure, such as "attachment
-read, turn start" (or just "Provider failure"), plus the provider name, model, runtime mode,
-operating system, and T3 Code version. It does not carry the error or the explanation. Choosing the
+read, turn start" (or just "Provider failure"), plus the provider name, runtime mode, operating
+system, and T3 Code version. It does not carry the error, the explanation, or the model name. Choosing the
 link copies the error message, **What happened**, and **Likely fix** to your clipboard, and the
 banner tells you when that worked. Check the details for anything private, then paste them into the
 form's "Actual behavior" field, which holds an instruction saying so. If the clipboard is

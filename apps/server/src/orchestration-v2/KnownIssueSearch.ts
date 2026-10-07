@@ -399,21 +399,24 @@ const make = Effect.gen(function* () {
       if (cached !== undefined && cached.expiresAt > now) return cached.candidates;
       if (now < pausedUntil) return none;
 
-      // Made before the lookup so that finding no search under way and starting one is not
-      // interrupted by another fiber.
       const mine = yield* Deferred.make<ReadonlyArray<KnownIssueCandidate>>();
-      const sharing = inFlight.get(query);
-      if (sharing !== undefined) return yield* Deferred.await(sharing);
-      inFlight.set(query, mine);
-      return yield* fetchCandidates(query).pipe(
-        // Cleared whether the search succeeded, failed, or was interrupted; those waiting on an
-        // interrupted search get no candidates rather than an interruption of their own.
-        Effect.onExit((exit) =>
-          Effect.sync(() => inFlight.delete(query)).pipe(
-            Effect.andThen(Deferred.succeed(mine, Exit.isSuccess(exit) ? exit.value : none)),
+      // Registering the search and installing its cleanup happen with interruption held off, so
+      // an interrupt can never leave a registered search that nothing will settle. Only the
+      // request and the wait for a shared search stay interruptible.
+      return yield* Effect.uninterruptibleMask((restore) => {
+        const sharing = inFlight.get(query);
+        if (sharing !== undefined) return restore(Deferred.await(sharing));
+        inFlight.set(query, mine);
+        return restore(fetchCandidates(query)).pipe(
+          // Cleared whether the search succeeded, failed, or was interrupted; those waiting on an
+          // interrupted search get no candidates rather than an interruption of their own.
+          Effect.onExit((exit) =>
+            Effect.sync(() => inFlight.delete(query)).pipe(
+              Effect.andThen(Deferred.succeed(mine, Exit.isSuccess(exit) ? exit.value : none)),
+            ),
           ),
-        ),
-      );
+        );
+      });
     },
   );
 

@@ -588,4 +588,25 @@ describe("KnownIssueSearch", () => {
       );
     }),
   );
+
+  it.effect("never strands later searches, wherever the first one is interrupted", () =>
+    Effect.gen(function* () {
+      const { run } = makeSearch(() => oneIssue(), { delay: "1 second" });
+      yield* run((search) =>
+        Effect.gen(function* () {
+          for (const yieldsBeforeInterrupt of [0, 1, 2, 3]) {
+            const leader = yield* Effect.forkChild(search());
+            for (let index = 0; index < yieldsBeforeInterrupt; index++) yield* Effect.yieldNow;
+            yield* Fiber.interrupt(leader);
+
+            const next = yield* Effect.forkChild(search());
+            yield* Effect.yieldNow;
+            yield* TestClock.adjust("1 second");
+            const result = yield* Fiber.join(next).pipe(Effect.timeout("5 seconds"));
+            assert.isAtMost(result.length, 1);
+          }
+        }),
+      );
+    }),
+  );
 });
