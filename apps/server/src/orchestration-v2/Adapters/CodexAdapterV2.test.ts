@@ -2349,6 +2349,145 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("stops a turn Codex reported started before its turn/start was abandoned", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "abandoned-registered-thread";
+      const nativeTurnId = "abandoned-registered-turn";
+      const prompt = "Run a command.";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "abandoned-registered-turn-start",
+        entries: [
+          // Codex reports the turn started but never answers turn/start.
+          ...preamble.slice(0, -2),
+          preamble.at(-1)!,
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: nativeTurnId },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+        ],
+      });
+      const interruptSent = yield* Deferred.make<void>();
+      const turnRegistered = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId
+            ? Deferred.succeed(turnRegistered, undefined)
+            : Effect.void,
+        (method) =>
+          method === "turn/interrupt"
+            ? Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      );
+      const starting = yield* harness.runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("abandoned-registered-attempt"),
+            text: prompt,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(turnRegistered);
+      assert.isFalse(yield* Deferred.isDone(interruptSent));
+      yield* Fiber.interrupt(starting);
+      yield* Deferred.await(interruptSent);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("keeps a newer start from adopting the turn of an abandoned start", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "abandoned-then-retried-thread";
+      const abandonedTurnId = "abandoned-turn";
+      const retriedTurnId = "retried-turn";
+      const prompt = "Run a command.";
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: abandonedTurnId,
+        prompt,
+      });
+      const firstStart = preamble.at(-3)!;
+      if (firstStart.type !== "expect_outbound") return yield* Effect.die("expected turn/start");
+      const retryFrame = { ...(firstStart.frame as object), id: 4 };
+      const transcript = makeCodexReplayTranscript({
+        scenario: "abandoned-turn-start-then-retry",
+        entries: [
+          ...preamble.slice(0, -2),
+          // The retry is sent before Codex gets to the abandoned start.
+          { type: "expect_outbound", label: "turn/start/retry", frame: retryFrame },
+          {
+            type: "emit_inbound",
+            label: "turn/started/abandoned",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: abandonedTurnId, status: "inProgress" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 5,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: abandonedTurnId },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 5, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "turn/start/retry",
+            frame: {
+              id: 4,
+              result: { turn: makeCodexReplayTurn({ id: retriedTurnId, status: "inProgress" }) },
+            },
+          },
+        ],
+      });
+      const registeredTurns: Array<string> = [];
+      const retriedTurnRegistered = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) => {
+        if (event.type !== "provider_turn.updated") return Effect.void;
+        const nativeId = event.providerTurn.nativeTurnRef?.nativeId;
+        if (nativeId == null || registeredTurns.includes(nativeId)) return Effect.void;
+        registeredTurns.push(nativeId);
+        return nativeId === retriedTurnId
+          ? Deferred.succeed(retriedTurnRegistered, undefined)
+          : Effect.void;
+      });
+      const turnInput = (attempt: string) =>
+        Effect.map(DateTime.now, (now) =>
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text: prompt,
+          }),
+        );
+      const starting = yield* harness.runtime
+        .startTurn(yield* turnInput("abandoned-attempt"))
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("500 millis");
+      yield* Fiber.interrupt(starting);
+      yield* harness.runtime.startTurn(yield* turnInput("retried-attempt"));
+      yield* Deferred.await(retriedTurnRegistered);
+      assert.deepEqual(registeredTurns, [retriedTurnId]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("settles Stop when a queued native turn fails before starting", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";
