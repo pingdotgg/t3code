@@ -41,10 +41,10 @@ in Settings.
 
 ## Move between turns
 
-In a thread, `mod+Alt+Up` jumps to the previous prompt and `mod+Alt+Down` to the
-next. From the middle of a reply, `mod+Alt+Up` returns to the prompt that started
-it. Change these under **Thread: Previous Turn** and **Thread: Next Turn** in
-Keybindings.
+To jump between prompts in a thread from the keyboard, bind **Thread: Previous
+Turn** and **Thread: Next Turn** in Keybindings, for example to `mod+Alt+Up` and
+`mod+Alt+Down`. They have no default shortcut. From the middle of a reply,
+Previous Turn returns to the prompt that started it.
 
 ## Copy pull request references
 

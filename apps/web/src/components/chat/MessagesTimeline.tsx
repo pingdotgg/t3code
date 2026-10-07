@@ -840,7 +840,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     },
     [listRef],
   );
-  const jumpToMinimapItem = useCallback(
+  const jumpToTurnItem = useCallback(
     (item: TimelineMinimapItem) => {
       onManualNavigation();
       cancelTurnJump();
@@ -924,12 +924,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         });
         const item = index === null ? undefined : minimapItems[index];
         if (!item) return false;
-        jumpToMinimapItem(item);
+        jumpToTurnItem(item);
         return true;
       },
     }),
     [
-      jumpToMinimapItem,
+      jumpToTurnItem,
       listRef,
       minimapItems,
       resolveTurnJumpScrollTop,
@@ -1522,7 +1522,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             hitStripWidth={minimapHitStripWidth}
             currentIndex={minimapCurrentIndex}
             stripMap={minimapStripMap}
-            onSelect={jumpToMinimapItem}
+            onSelect={(item) => {
+              onManualNavigation();
+              cancelTurnJump();
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: TIMELINE_TURN_JUMP_VIEW_OFFSET,
+              });
+            }}
           />
         </TooltipScrollDismissArea>
       </TimelineRowActivityCtx>
