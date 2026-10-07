@@ -70,6 +70,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -77,9 +78,11 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import {
   LegendList,
+  type LegendListMetrics,
   type LegendListRef,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
@@ -204,6 +207,9 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
+  resolveTimelineTurnJumpIndex,
+  resolveTimelineTurnJumpDurationMs,
+  easeTimelineTurnJump,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
@@ -215,6 +221,7 @@ import {
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
+  TIMELINE_TURN_JUMP_VIEW_OFFSET,
   type TimelineLatestRun,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
@@ -413,6 +420,11 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // Props (public API)
 // ---------------------------------------------------------------------------
 
+export interface MessagesTimelineTurnNavigationHandle {
+  /** Scrolls to the previous or next user prompt. False when there is none. */
+  jumpToTurn: (direction: "previous" | "next") => boolean;
+}
+
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
@@ -445,6 +457,7 @@ interface MessagesTimelineProps {
   footer?: ReactNode;
 
   listRef: React.RefObject<LegendListRef | null>;
+  turnNavigationRef?: Ref<MessagesTimelineTurnNavigationHandle>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
@@ -530,6 +543,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isPreparingWorktree = false,
   isCompacting = false,
   listRef,
+  turnNavigationRef,
   timelineEntries,
   latestRun,
   runningRunId = null,
@@ -813,6 +827,128 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  // Row positions start below the list header, but scroll counts from the
+  // very top; scrollToIndex adds the header back when it lands.
+  const listHeaderSizeRef = useRef(0);
+  const handleListMetricsChange = useCallback((metrics: LegendListMetrics) => {
+    listHeaderSizeRef.current = metrics.headerSize;
+  }, []);
+  const turnJumpRef = useRef<{ rowIndex: number; frame: number; cleanup: () => void } | null>(null);
+  const cancelTurnJump = useCallback(() => {
+    const jump = turnJumpRef.current;
+    if (!jump) return;
+    turnJumpRef.current = null;
+    cancelAnimationFrame(jump.frame);
+    jump.cleanup();
+  }, []);
+  // The list stays mounted across thread switches. Stop a jump before the next
+  // thread restores its position, or it keeps scrolling the reused node.
+  useLayoutEffect(() => cancelTurnJump, [cancelTurnJump, listIdentityKey]);
+  const resolveTurnJumpScrollTop = useCallback(
+    (rowIndex: number) => {
+      const state = listRef.current?.getState?.();
+      const top = state ? resolveTimelineRowTop(state, rowIndex) : null;
+      return top === null ? null : top + listHeaderSizeRef.current - TIMELINE_TURN_JUMP_VIEW_OFFSET;
+    },
+    [listRef],
+  );
+  const jumpToTurnItem = useCallback(
+    (item: TimelineMinimapItem) => {
+      onManualNavigation();
+      cancelTurnJump();
+      const node = listRef.current?.getScrollableNode?.();
+      const target = resolveTurnJumpScrollTop(item.rowIndex);
+      if (!node || target === null || prefersReducedMotion) {
+        void listRef.current?.scrollToIndex({
+          index: item.rowIndex,
+          animated: !prefersReducedMotion,
+          viewOffset: TIMELINE_TURN_JUMP_VIEW_OFFSET,
+        });
+        return;
+      }
+      // Driven by hand rather than native smooth scrolling, whose curve and
+      // duration vary by browser and lurch on long jumps.
+      const startScrollTop = node.scrollTop;
+      const durationMs = resolveTimelineTurnJumpDurationMs(target - startScrollTop);
+      const startTime = performance.now();
+      // A wheel, touch, or drag mid-jump hands control back to the reader.
+      const userInputEvents = ["wheel", "touchstart", "pointerdown"] as const;
+      for (const type of userInputEvents) {
+        node.addEventListener(type, cancelTurnJump, { passive: true });
+      }
+      const cleanup = () => {
+        for (const type of userInputEvents) {
+          node.removeEventListener(type, cancelTurnJump);
+        }
+      };
+      const step = (now: number) => {
+        const jump = turnJumpRef.current;
+        if (!jump) return;
+        const progress = Math.min(1, (now - startTime) / durationMs);
+        // Re-read each frame: rows measured on the way in can shift the target.
+        const liveTarget = resolveTurnJumpScrollTop(item.rowIndex) ?? target;
+        const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+        node.scrollTop = Math.min(
+          maxScrollTop,
+          Math.max(
+            0,
+            startScrollTop + (liveTarget - startScrollTop) * easeTimelineTurnJump(progress),
+          ),
+        );
+        if (progress < 1) {
+          jump.frame = requestAnimationFrame(step);
+          return;
+        }
+        turnJumpRef.current = null;
+        cleanup();
+      };
+      turnJumpRef.current = {
+        rowIndex: item.rowIndex,
+        frame: requestAnimationFrame(step),
+        cleanup,
+      };
+    },
+    [cancelTurnJump, listRef, onManualNavigation, prefersReducedMotion, resolveTurnJumpScrollTop],
+  );
+  useImperativeHandle(
+    turnNavigationRef,
+    () => ({
+      jumpToTurn: (direction) => {
+        const state = listRef.current?.getState?.();
+        if (!state || restoringThreadPosition || state.data !== rows) return false;
+        // Mid-jump, count from where the jump will land so quick presses chain.
+        const pendingScrollTop =
+          turnJumpRef.current === null
+            ? null
+            : resolveTurnJumpScrollTop(turnJumpRef.current.rowIndex);
+        // At the end every later prompt is already on screen; there is nowhere to go.
+        if (
+          pendingScrollTop === null &&
+          direction === "next" &&
+          resolveTimelineIsAtEnd(state) === true
+        ) {
+          return false;
+        }
+        const index = resolveTimelineTurnJumpIndex({
+          direction,
+          scrollTop: (pendingScrollTop ?? state.scroll ?? 0) - listHeaderSizeRef.current,
+          itemTops: minimapItems.map((item) => resolveTimelineRowTop(state, item.rowIndex)),
+        });
+        const item = index === null ? undefined : minimapItems[index];
+        if (!item) return false;
+        jumpToTurnItem(item);
+        return true;
+      },
+    }),
+    [
+      jumpToTurnItem,
+      listRef,
+      minimapItems,
+      resolveTurnJumpScrollTop,
+      restoringThreadPosition,
+      rows,
+    ],
+  );
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -1390,6 +1526,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
+            onMetricsChange={handleListMetricsChange}
             className={cn(
               "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
@@ -1405,10 +1542,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             stripMap={minimapStripMap}
             onSelect={(item) => {
               onManualNavigation();
+              cancelTurnJump();
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
                 animated: true,
-                viewOffset: 24,
+                viewOffset: TIMELINE_TURN_JUMP_VIEW_OFFSET,
               });
             }}
           />

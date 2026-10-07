@@ -31,6 +31,9 @@ import {
   shouldPreserveAssistantLineBreaks,
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
+  resolveTimelineTurnJumpIndex,
+  resolveTimelineTurnJumpDurationMs,
+  easeTimelineTurnJump,
   workEntryDisplayLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
@@ -4888,4 +4891,61 @@ describe("failed turn transcript", () => {
       });
     },
   );
+});
+
+describe("resolveTimelineTurnJumpIndex", () => {
+  // Prompts at 0, 1000 and 3000; a jump lands a prompt 24px below the top.
+  const itemTops = [0, 1000, 3000];
+
+  it("returns to the current turn's prompt before earlier ones", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: 3500, itemTops })).toBe(
+      2,
+    );
+  });
+
+  it("steps past the prompt a jump just landed on", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: 976, itemTops })).toBe(
+      0,
+    );
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 976, itemTops })).toBe(2);
+  });
+
+  it("goes to the next prompt below the anchor", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 200, itemTops })).toBe(1);
+  });
+
+  it("returns null past either end", () => {
+    expect(resolveTimelineTurnJumpIndex({ direction: "previous", scrollTop: -24, itemTops })).toBe(
+      null,
+    );
+    expect(resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 2976, itemTops })).toBe(
+      null,
+    );
+  });
+
+  it("skips prompts without a measured position", () => {
+    expect(
+      resolveTimelineTurnJumpIndex({ direction: "next", scrollTop: 0, itemTops: [0, null, 3000] }),
+    ).toBe(2);
+  });
+});
+
+describe("resolveTimelineTurnJumpDurationMs", () => {
+  it("grows with distance in either direction and stays bounded", () => {
+    const short = resolveTimelineTurnJumpDurationMs(100);
+    const long = resolveTimelineTurnJumpDurationMs(1600);
+    expect(short).toBeGreaterThanOrEqual(180);
+    expect(long).toBeGreaterThan(short);
+    expect(resolveTimelineTurnJumpDurationMs(-1600)).toBe(long);
+    expect(resolveTimelineTurnJumpDurationMs(1_000_000)).toBe(420);
+  });
+});
+
+describe("easeTimelineTurnJump", () => {
+  it("starts at 0, ends at 1, and front-loads the movement", () => {
+    expect(easeTimelineTurnJump(0)).toBe(0);
+    expect(easeTimelineTurnJump(1)).toBe(1);
+    expect(easeTimelineTurnJump(0.5)).toBeGreaterThan(0.8);
+    expect(easeTimelineTurnJump(2)).toBe(1);
+  });
 });

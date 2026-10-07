@@ -39,6 +39,13 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Move between turns
+
+To jump between prompts in a thread from the keyboard, bind **Thread: Previous
+Turn** and **Thread: Next Turn** in Keybindings, for example to `mod+Alt+Up` and
+`mod+Alt+Down`. They have no default shortcut. From the middle of a reply,
+Previous Turn returns to the prompt that started it.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

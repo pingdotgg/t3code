@@ -1484,6 +1484,47 @@ describe("composer and pull request shortcuts", () => {
     },
   );
 
+  it("ships turn navigation unbound", () => {
+    for (const command of ["thread.previousTurn", "thread.nextTurn"]) {
+      assert.isFalse(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command));
+    }
+  });
+
+  const turnBindings = compileResolvedKeybindingsConfig([
+    { key: "mod+alt+arrowup", command: "thread.previousTurn", when: "!terminalFocus" },
+    { key: "mod+alt+arrowdown", command: "thread.nextTurn", when: "!terminalFocus" },
+  ]);
+
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "jumps between turns with a custom Mod+Alt+Arrow binding outside the terminal on %s",
+    (platform) => {
+      for (const [key, command] of [
+        ["ArrowUp", "thread.previousTurn"],
+        ["ArrowDown", "thread.nextTurn"],
+      ] as const) {
+        const input = event({
+          key,
+          altKey: true,
+          metaKey: platform === "MacIntel",
+          ctrlKey: platform !== "MacIntel",
+        });
+        assert.strictEqual(
+          resolveShortcutCommand(input, turnBindings, {
+            platform,
+            context: { composerFocus: true },
+          }),
+          command,
+        );
+        assert.isNull(
+          resolveShortcutCommand(input, turnBindings, {
+            platform,
+            context: { terminalFocus: true },
+          }),
+        );
+      }
+    },
+  );
+
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
     it.each([
       ["s", "thread.settle"],

@@ -438,7 +438,11 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
-import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import {
+  MessagesTimeline,
+  type MessagesTimelineHistoryControls,
+  type MessagesTimelineTurnNavigationHandle,
+} from "./chat/MessagesTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
@@ -1959,6 +1963,7 @@ export default function ChatView(props: ChatViewProps) {
     LastInvokedScriptByProjectSchema,
   );
   const legendListRef = useRef<LegendListRef | null>(null);
+  const turnNavigationRef = useRef<MessagesTimelineTurnNavigationHandle>(null);
   const getTimelineScrollableNode = useCallback(
     () => legendListRef.current?.getScrollableNode() ?? null,
     [],
@@ -7946,6 +7951,21 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.previousTurn" || command === "thread.nextTurn") {
+        // Held keys repeat every ~30ms, which would blur through the whole thread.
+        if (
+          !event.repeat &&
+          !turnNavigationRef.current?.jumpToTurn(
+            command === "thread.previousTurn" ? "previous" : "next",
+          )
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "thread.settle") {
         if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
         event.preventDefault();
@@ -11291,6 +11311,7 @@ export default function ChatView(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
                 listRef={legendListRef}
+                turnNavigationRef={turnNavigationRef}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={
                   environmentById.get(
