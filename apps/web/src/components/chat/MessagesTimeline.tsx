@@ -1460,6 +1460,24 @@ function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
   return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
 }
 
+// Calls `onRelease` once no mouse button is held. A release outside the window
+// can skip `mouseup`, so the next button-free `mousemove` also counts. Returns a
+// function that stops listening.
+function onMouseButtonsReleased(onRelease: () => void): () => void {
+  const check = (event: globalThis.MouseEvent) => {
+    if (event.buttons !== 0) return;
+    stop();
+    onRelease();
+  };
+  const stop = () => {
+    window.removeEventListener("mouseup", check);
+    window.removeEventListener("mousemove", check);
+  };
+  window.addEventListener("mouseup", check);
+  window.addEventListener("mousemove", check);
+  return stop;
+}
+
 function TimelineMinimap({
   hasPersistentGutter,
   hitStripWidth,
@@ -1485,15 +1503,7 @@ function TimelineMinimap({
 
   useEffect(() => {
     if (!passThrough) return;
-    const endPassThrough = (event: globalThis.MouseEvent) => {
-      if (event.buttons === 0) setPassThrough(false);
-    };
-    window.addEventListener("mouseup", endPassThrough);
-    window.addEventListener("mousemove", endPassThrough);
-    return () => {
-      window.removeEventListener("mouseup", endPassThrough);
-      window.removeEventListener("mousemove", endPassThrough);
-    };
+    return onMouseButtonsReleased(() => setPassThrough(false));
   }, [passThrough]);
 
   const resolvedActiveIndex =
@@ -1641,14 +1651,11 @@ function TimelineMinimap({
                 return;
               }
               event.preventDefault();
+              if (pressedOnStripRef.current) return;
               pressedOnStripRef.current = true;
-              window.addEventListener(
-                "mouseup",
-                () => {
-                  pressedOnStripRef.current = false;
-                },
-                { once: true },
-              );
+              onMouseButtonsReleased(() => {
+                pressedOnStripRef.current = false;
+              });
             }}
             type="button"
           >
