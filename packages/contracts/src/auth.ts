@@ -562,7 +562,10 @@ export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Typ
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
-  /** Where the code goes: always a loopback address on the browser's machine. */
+  /**
+   * Where the code goes: a loopback address on the browser's machine (a CLI
+   * agent), or an https host (a hosted agent).
+   */
   redirectHost: Schema.String,
   environmentHost: Schema.String,
   /** Present when this browser's session may approve without a pairing code. */

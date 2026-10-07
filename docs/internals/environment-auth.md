@@ -27,9 +27,12 @@ vocabulary gives these grants a familiar meaning.
 
 Agents T3 Code did not launch sign in to `/mcp` through a narrow OAuth
 authorization-code server ([McpOAuth](../../apps/server/src/auth/McpOAuth.ts)).
-It accepts only loopback redirect URIs: an HTTPS redirect would let anyone send
-the owner an approval link that delivers the code to their own server. Client
-registration is stateless, so an unauthenticated caller cannot grow server
+It accepts loopback redirect URIs for agents on the user's machine and any
+HTTPS redirect for hosted agents (ChatGPT, bots). An HTTPS redirect means a
+link someone else sends the owner can deliver access to that someone, so the
+approval page names the host access goes to and approving stays the owner's
+call. Every client is public and proves itself with PKCE; a client that asks
+for a secret is registered without one. Client registration is stateless, so an unauthenticated caller cannot grow server
 state. Approval spends a one-time pairing code, or uses a browser session with
 `access:write`; proof-bound T3 Connect codes are refused without being spent.
 

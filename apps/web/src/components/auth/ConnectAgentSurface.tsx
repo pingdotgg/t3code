@@ -6,6 +6,7 @@ import {
   type AuthMcpAuthorizationRequest,
 } from "@t3tools/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,11 @@ const accessConfig: Record<
   },
   ...runtimeModeConfig,
 };
+
+/** A CLI agent's callback is a loopback address; a hosted agent's is its own server. */
+function redirectsToThisComputer(redirectHost: string): boolean {
+  return isLoopbackHost(new URL(`http://${redirectHost}`).hostname);
+}
 
 type Loaded =
   | { readonly status: "loading" }
@@ -188,8 +194,18 @@ export function ConnectAgentSurface() {
         }
       />
       <p className="mt-2 text-xs text-muted-foreground">
-        The name is chosen by the agent. Approval returns to {details.redirectHost} on the computer
-        that opened this page. Only approve a sign-in you just started.
+        {redirectsToThisComputer(details.redirectHost) ? (
+          <>
+            The name is chosen by the agent. Approval returns to {details.redirectHost} on the
+            computer that opened this page. Only approve a sign-in you just started.
+          </>
+        ) : (
+          <>
+            The name is chosen by the agent. Approval gives access to whoever runs{" "}
+            <span className="font-medium text-foreground">{details.redirectHost}</span>. Only
+            approve a sign-in you just started there.
+          </>
+        )}
       </p>
 
       <form
