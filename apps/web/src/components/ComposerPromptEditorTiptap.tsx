@@ -116,6 +116,16 @@ export interface ComposerPromptEditorProps {
    * literal character.
    */
   richTextEnabled?: boolean;
+  /**
+   * Set while a flip of `richTextEnabled` from the composer's shortcut is in
+   * flight. The flip remounts the editor, and the new instance takes the caret
+   * back at the stored cursor. Driven by the shortcut so that flipping the
+   * same setting from Settings does not pull focus into the composer; the
+   * editor clears it through `onFocusRestored`.
+   */
+  restoreFocusOnMount?: boolean;
+  /** Reports that a requested focus restore has been applied. */
+  onFocusRestored?: (() => void) | undefined;
   /** Draft records behind the prompt's context references, keyed by context id. */
   contextRecords: ComposerDraftContextRecords;
   /** Structured clipboard payload for the given referenced ids, or null to skip. */
@@ -1241,6 +1251,37 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     },
     [editor],
   );
+
+  // This editor was mounted by a rich text flip from the composer's shortcut,
+  // so take the caret back at the cursor the last one reported. Two things
+  // make this less direct than it looks. `useEditor` returns null on its first
+  // render and builds the instance in an effect, so the restore has to wait
+  // for the instance. And the instance can be rebuilt again right after, which
+  // replaces the focused DOM node and drops focus to the body — so this
+  // restores for whichever instance is current rather than only the first.
+  // The cursor is captured at mount so typing never drags the caret back.
+  const [restoreFocusCursor] = useState(() => (props.restoreFocusOnMount ? initialCursor : null));
+  const onFocusRestoredRef = useRef(props.onFocusRestored);
+  useEffect(() => {
+    onFocusRestoredRef.current = props.onFocusRestored;
+  });
+  useEffect(() => {
+    if (restoreFocusCursor === null || !editor) return;
+    // Not `focusAt`: that bails before placing the caret whenever the editor's
+    // text and the store's disagree, a guard against reporting stale text to
+    // the store. A restore reports nothing, so it places the caret directly
+    // against the document as it is, clamped by the same coordinate mapping.
+    const map = serializeEditorDoc(editor.state.doc);
+    const flat = collapsedToFlat(map, clampCollapsedComposerCursor(map.value, restoreFocusCursor));
+    editor.commands.setTextSelection(flatToPm(map, flat));
+    // ProseMirror's focus, not the DOM's: it writes the selection into the
+    // DOM. A raw `dom.focus()` leaves the DOM selection at the start, and the
+    // first chip node view to mount makes ProseMirror re-read it from there,
+    // which resets the caret and reports a cursor of 0 to the store.
+    editor.view.focus();
+    scrollTiptapCaretIntoView(editor);
+    onFocusRestoredRef.current?.();
+  }, [editor, restoreFocusCursor]);
 
   useImperativeHandle(
     editorRef,

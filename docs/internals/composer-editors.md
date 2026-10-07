@@ -25,3 +25,11 @@ Clipboard text must come from the Markdown serializer, not DOM text: chip labels
 the source and marker decorations are not content. Structured context records accompany
 that text when available. Paste completes trailing chip delimiters and adds a leading
 boundary when inserting a chip directly after text.
+
+The `composer.toggleRichText` shortcut remounts the editor, which drops focus.
+The restore is signalled by the shortcut rather than derived from the setting,
+because a flag set during render never reaches the child React mounts in that
+render. It waits for the `useEditor` instance, which arrives in an effect and
+can be rebuilt once more, and places the caret with ProseMirror's `view.focus()`.
+A raw DOM focus leaves the DOM selection at the start, and the first chip node
+view to mount then resets the caret to 0.

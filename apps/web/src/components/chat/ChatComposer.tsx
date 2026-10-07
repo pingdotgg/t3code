@@ -1130,6 +1130,10 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
+import { useClientSettingsHydrated, useUpdateClientSettings } from "../../hooks/useSettings";
+import { isElectron } from "../../env";
+import { isEditableFocused } from "../../lib/editableFocus";
+import { isPreviewFocused } from "../../lib/previewFocus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -2422,6 +2426,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasWrappedPrompt = useComposerMultilinePrompt(composerMenuAnchor);
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const updateClientSettings = useUpdateClientSettings();
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  // Flipping the setting remounts the editor, which drops focus. The flag
+  // tells the new instance that the user asked for this from the composer's
+  // shortcut and wants the caret back; changing the same setting from
+  // Settings leaves it alone. Rich text is a client setting rather than
+  // composer state, so both entry points drive the same switch.
+  const [pendingComposerFocusRestore, setPendingComposerFocusRestore] = useState(false);
+  const toggleComposerRichText = useCallback(() => {
+    // Before hydration the setting reads as its default, so flipping it could
+    // write the value the user already has and leave the restore armed.
+    if (!clientSettingsHydrated) return;
+    setPendingComposerFocusRestore(true);
+    void updateClientSettings({ composerRichTextEnabled: !settings.composerRichTextEnabled });
+  }, [clientSettingsHydrated, settings.composerRichTextEnabled, updateClientSettings]);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
     key: 0,
@@ -5640,6 +5659,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsStashMenuOpen(false);
   }, [prompt]);
 
+  // The composer's own way to flip rich text, so the caret comes back after
+  // the remount. The Settings panel flips the same setting without a restore.
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          editableFocus: isEditableFocused(event.target),
+          modelPickerOpen: isComposerModelPickerOpen,
+          isWeb: !isElectron,
+          isDesktop: isElectron,
+        },
+      });
+      if (command !== "composer.toggleRichText") return;
+      event.preventDefault();
+      event.stopPropagation();
+      // A held key auto-repeats keydown; one press is one flip.
+      if (event.repeat || isCommandPaletteOpen()) return;
+      toggleComposerRichText();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [isComposerModelPickerOpen, keybindings, terminalOpen, toggleComposerRichText]);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
@@ -7389,6 +7434,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
+                    restoreFocusOnMount={pendingComposerFocusRestore}
+                    onFocusRestored={() => setPendingComposerFocusRestore(false)}
                     value={
                       isComposerApprovalState
                         ? ""
