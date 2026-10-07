@@ -46,7 +46,19 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const jetbrains = editor.launchStyle === "line-column";
   const candidates: string[] = [];
 
-  if (platform === "darwin") {
+  if (editor.id === "github-desktop") {
+    // The `github` CLI is opt-in on macOS (Install Command Line Tool); the
+    // bundle always ships it. The Windows installer puts it on PATH.
+    if (platform === "darwin") {
+      for (const root of [...(home ? [path.join(home, "Applications")] : []), "/Applications"]) {
+        candidates.push(
+          path.join(root, "GitHub Desktop.app/Contents/Resources/app/static/github.sh"),
+        );
+      }
+    } else if (platform === "win32" && env.LOCALAPPDATA) {
+      candidates.push(path.join(env.LOCALAPPDATA, "GitHubDesktop/bin/github.bat"));
+    }
+  } else if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
     for (const root of roots) {
       // JetBrains Toolbox installs bundles named after the app and its version

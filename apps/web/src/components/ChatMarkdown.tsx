@@ -29,6 +29,7 @@ import {
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
   AuthPreviewOperateScope,
+  editorOpensFiles,
   type AssetResource,
   type EnvironmentId,
   type ScopedThreadRef,
@@ -2629,7 +2630,8 @@ function useChatMarkdownState({
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
   const availableEditors = serverConfig?.availableEditors ?? [];
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const fileEditors = useMemo(() => availableEditors.filter(editorOpensFiles), [availableEditors]);
+  const [preferredEditor] = usePreferredEditor(fileEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
