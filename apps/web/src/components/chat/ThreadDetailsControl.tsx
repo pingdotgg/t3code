@@ -11,10 +11,9 @@ import {
   THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
-  THREAD_DETAILS_PANEL_LINK_SPLIT_ACTION_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_CHECKS_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
+  THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
 } from "./threadDetailsPanelStyles";
 import { ChevronDownIcon } from "lucide-react";
@@ -24,10 +23,9 @@ const parts = {
   select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
   primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
   secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
-  action: THREAD_DETAILS_PANEL_LINK_SPLIT_ACTION_CLASS,
   "link-primary": THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
-  checks: THREAD_DETAILS_PANEL_SPLIT_CHECKS_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
+  meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,
 };
 
 /** Panel controls own their fixed density; toolbar controls use the standard Button variants. */
@@ -45,7 +43,7 @@ export function ThreadDetailsControl({
   panel?: boolean;
   part?: keyof typeof parts;
   multiline?: boolean;
-  tone?: "default" | "muted" | "destructive";
+  tone?: "default" | "muted" | "primary" | "destructive";
 }) {
   const control = useRender({
     defaultTagName: "button",
@@ -58,6 +56,7 @@ export function ThreadDetailsControl({
           parts[part],
           multiline && "h-auto min-h-8 py-0.75 disabled:opacity-100 sm:h-auto",
           tone === "muted" && "text-muted-foreground/70 hover:text-foreground/80",
+          tone === "primary" && "text-primary hover:text-primary",
           tone === "destructive" &&
             "text-destructive hover:text-destructive data-pressed:text-destructive",
           className,

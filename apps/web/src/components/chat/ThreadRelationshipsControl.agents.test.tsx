@@ -238,9 +238,10 @@ it("shows the matching child agent details and refreshes them when the agent set
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
   expect(text()).toContain("Checker");
-  expect(text()).toContain("2m 15s");
+  // A started agent's row shows only its compact time; the icon carries the status.
+  expect(text()).toContain("Checker 2m");
   expect(text()).not.toContain("(1)");
-  expect(text()).toContain("Done");
+  expect(text()).not.toContain("Done");
   expect(text()).not.toContain("running");
   expect(text()).not.toContain("Worker");
   await act(async () =>

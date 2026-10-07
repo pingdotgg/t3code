@@ -16,15 +16,29 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** Short form for tight rows: "45s", "12m", "1.5h", "14h". Rounds down. */
+export function formatCompactElapsedSeconds(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes >= 600) return `${Math.floor(minutes / 60)}h`;
+  return `${Math.floor(minutes / 6) / 10}h`;
+}
+
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
+ * `compact` drops the smaller unit for narrow rows such as Lineage.
  */
 export function AgentElapsed({
   agent,
+  compact = false,
 }: {
   agent: Pick<RuntimeSubagent, "status" | "startedAt" | "completedAt">;
+  compact?: boolean;
 }) {
+  const format = compact ? formatCompactElapsedSeconds : formatElapsedSeconds;
   const textRef = useRef<HTMLSpanElement>(null);
   const live = isOrchestrationV2WorkActive(agent.status);
   const startedAt = agent.startedAt;
@@ -40,15 +54,15 @@ export function AgentElapsed({
           { status: agent.status, startedAt, completedAt },
           Date.now(),
         );
-        textRef.current.textContent =
-          elapsedMs === null ? "" : formatElapsedSeconds(elapsedMs / 1000);
+        const text = elapsedMs === null ? "" : format(elapsedMs / 1000);
+        if (textRef.current.textContent !== text) textRef.current.textContent = text;
       }
     };
     update();
     if (!live) return;
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [live, startedAt, completedAt, agent.status]);
+  }, [live, startedAt, completedAt, agent.status, format]);
 
   const elapsedMs = deriveSubagentElapsedMs(agent, 0);
   if (elapsedMs === null) {
@@ -56,7 +70,7 @@ export function AgentElapsed({
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {formatElapsedSeconds(elapsedMs / 1000)}
+      {format(elapsedMs / 1000)}
     </span>
   );
 }
