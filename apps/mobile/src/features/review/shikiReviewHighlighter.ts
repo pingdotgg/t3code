@@ -50,9 +50,12 @@ const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePrefe
   REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
 );
 const REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD = 8;
-// Bounds each tokenizing task by characters, not lines, so long-line files
+// Bounds each tokenizing call by characters, not lines, so long-line files
 // still yield to touches and renders between short batches.
 const REVIEW_HIGHLIGHT_CHUNK_CHARACTERS = 2_000;
+// A yield waits for the next frame, so batches run back to back until about one
+// frame of work has passed instead of yielding after every batch.
+const REVIEW_HIGHLIGHT_YIELD_AFTER_MS = 16;
 const REVIEW_TOKENIZE_MAX_LINE_LENGTH = 1_000;
 const REVIEW_INITIAL_LANGUAGE_MODULES = [
   bashLanguage,
@@ -519,6 +522,7 @@ async function highlightLines(
   // template string that spans a batch boundary keeps its colors.
   let grammarState: GrammarState | undefined;
   let start = 0;
+  let sliceStartedAt = performance.now();
 
   while (start < sourceLines.length) {
     // A skipped line leaves its ending state unknown; resume from a fresh state.
@@ -551,8 +555,13 @@ async function highlightLines(
       start = end;
     }
 
-    if (sourceLines.length > REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD && start < sourceLines.length) {
+    if (
+      sourceLines.length > REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD &&
+      start < sourceLines.length &&
+      performance.now() - sliceStartedAt >= REVIEW_HIGHLIGHT_YIELD_AFTER_MS
+    ) {
       await waitForNextFrame();
+      sliceStartedAt = performance.now();
     }
   }
 
