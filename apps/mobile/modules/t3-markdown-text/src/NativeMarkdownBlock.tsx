@@ -10,6 +10,7 @@ import {
   nativeMarkdownNodePosition,
 } from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
+import { markdownTextDirection } from "./textDirection";
 import type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
@@ -46,6 +47,11 @@ function nodeText(node: MarkdownNode): string {
     return node.content;
   }
   return (node.children ?? []).map(nodeText).join("");
+}
+
+/** A block lays out in its own text's direction; one without letters inherits. */
+function blockDirection(node: MarkdownNode): "rtl" | "ltr" | "inherit" {
+  return markdownTextDirection(nodeText(node)) ?? "inherit";
 }
 
 function documentFor(node: MarkdownNode): MarkdownNode {
@@ -114,6 +120,8 @@ function HighlightedCodeText(props: {
       fontFamily: MONO_FONT_FAMILY,
       fontSize,
       lineHeight,
+      // Code reads left to right whatever language its strings and comments are in.
+      textAlign: "left" as const,
     }),
     [props.textStyle.codeColor, fontSize, lineHeight],
   );
@@ -159,6 +167,7 @@ function NativeCodeBlock(props: {
   return (
     <View
       style={{
+        direction: "ltr",
         backgroundColor: props.textStyle.codeBlockBackgroundColor,
         borderColor: props.textStyle.dividerColor,
         borderCurve: "continuous",
@@ -245,6 +254,7 @@ function NativeTable(props: {
   const rows = collectTableRows(props.node);
   return (
     <ScrollView
+      style={{ direction: blockDirection(props.node) }}
       horizontal
       bounces={false}
       nestedScrollEnabled={Platform.OS === "android"}
@@ -274,8 +284,8 @@ function NativeTable(props: {
                 key={nodeKey(cell, cellIndex)}
                 style={{
                   width: 160,
-                  borderLeftColor: props.textStyle.dividerColor,
-                  borderLeftWidth: cellIndex === 0 ? 0 : 1,
+                  borderStartColor: props.textStyle.dividerColor,
+                  borderStartWidth: cellIndex === 0 ? 0 : 1,
                   paddingHorizontal: 10,
                   paddingVertical: 8,
                 }}
@@ -447,13 +457,17 @@ function NativeList(props: {
         return (
           <View
             key={nodeKey(item, index)}
-            style={{ alignItems: "flex-start", flexDirection: "row" }}
+            style={{
+              alignItems: "flex-start",
+              direction: blockDirection(item),
+              flexDirection: "row",
+            }}
           >
             <View
               style={{
                 width: markerWidth,
                 height: props.textStyle.lineHeight,
-                marginRight: 6,
+                marginEnd: 6,
                 alignItems: ordered ? "flex-end" : "center",
                 justifyContent: "flex-start",
               }}
@@ -559,10 +573,11 @@ export function NativeMarkdownBlock(props: {
       return (
         <View
           style={{
-            borderLeftColor: props.textStyle.quoteMarkerColor,
-            borderLeftWidth: 2,
+            direction: blockDirection(props.node),
+            borderStartColor: props.textStyle.quoteMarkerColor,
+            borderStartWidth: 2,
             marginVertical: props.compact ? 4 : 0,
-            paddingLeft: 11,
+            paddingStart: 11,
             paddingVertical: 2,
             gap: 6,
           }}

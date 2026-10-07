@@ -1,6 +1,7 @@
 #include "T3MarkdownTextShadowNode.h"
 #include "T3MarkdownTextRunShadowNode.h"
 #import "T3ContextChip.h"
+#import "T3MarkdownTextDirection.h"
 #include <react/renderer/components/view/ViewShadowNode.h>
 #import <react/renderer/textlayoutmanager/RCTAttributedTextUtils.h>
 
@@ -169,6 +170,9 @@ Size T3MarkdownTextShadowNode::measureContent(
 
         if (props.textAlign == T3MarkdownTextRunTextAlign::Left) {
           textAttributes.alignment = TextAlignment::Left;
+          // An explicit left alignment (code) also reads left to right, so the content
+          // direction pass leaves it alone.
+          textAttributes.baseWritingDirection = WritingDirection::LeftToRight;
         } else if (props.textAlign == T3MarkdownTextRunTextAlign::Right) {
           textAttributes.alignment = TextAlignment::Right;
         } else if (props.textAlign == T3MarkdownTextRunTextAlign::Center) {
@@ -250,6 +254,7 @@ Size T3MarkdownTextShadowNode::measureContent(
         [RCTNSAttributedStringFromAttributedString(baseAttributedString) mutableCopy];
     applyParagraphStyles(convertedAttributedString, paragraphStyleRanges);
     applyAttachments(convertedAttributedString, attachmentRanges);
+    T3MarkdownTextApplyContentDirection(convertedAttributedString);
     // TextKit stacks a paragraph's extra line height above the glyphs. React Native's own
     // layout manager centres them with a baseline offset; do the same, after attachments
     // so chips shift with the words.

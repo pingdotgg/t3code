@@ -246,7 +246,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     </ContextChip>
   );
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
         <TooltipPopup side="top">{path}</TooltipPopup>
@@ -287,7 +287,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find((candidate) => candidate.name === skillName);
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
         kind="skill"
         icon={<SkillChipIcon />}
@@ -394,6 +394,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
+      dir="auto"
       className="inline-flex min-w-0 max-w-full select-none"
       contentEditable={false}
       spellCheck={false}
@@ -467,7 +468,7 @@ const ComposerContextReferenceExtension = Node.create({
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}
@@ -872,6 +873,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         { styling: richText },
       ),
       editable: !disabled,
+      // dir="auto" on every block, so each line lays out in its own script's
+      // direction (Arabic and Hebrew lines align right, code stays left).
+      textDirection: "auto",
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {

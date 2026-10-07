@@ -1130,7 +1130,7 @@ function MarkdownCodeBlock({
 
   if (diagram) {
     return (
-      <div className="my-[0.65rem]" data-language={language}>
+      <div className="my-[0.65rem]" dir="ltr" data-language={language}>
         {children}
         <div className="mt-0.5 flex items-center justify-between select-none">
           {leadingActions}
@@ -1143,6 +1143,7 @@ function MarkdownCodeBlock({
   return (
     <div
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      dir="ltr"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -2415,6 +2416,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind="mention"
               render={<a href={href} />}
+              // Own dir keeps a chip-led paragraph's direction on its text.
+              dir="auto"
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -2439,6 +2442,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               kind="mention"
               render={<button type="button" />}
               aria-label={`File options for ${label}`}
+              dir="auto"
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
@@ -2996,6 +3000,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
     const { headingLevelOffset } = use(ChatMarkdownRendererContext);
     return (
       <Tag
+        dir="auto"
         {...props}
         aria-level={headingLevelOffset > 0 ? Math.min(level + headingLevelOffset, 6) : undefined}
       />
@@ -3023,7 +3028,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+    return (
+      <p dir="auto" {...props}>
+        {renderSkillInlineMarkdownChildren(children, skills)}
+      </p>
+    );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =
@@ -3034,7 +3043,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
     // text under a colored title — which is how the host renders it.
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div role="note" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
         <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
           {alert.label}
@@ -3058,7 +3067,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const markerOffset =
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li dir="auto" {...props} data-task-marker-offset={markerOffset ?? undefined}>
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
@@ -3506,6 +3515,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
+  },
+  // Cells follow their own text; the stylesheet orders columns by the first header.
+  th: function MarkdownTableHeader({ node: _node, ...props }) {
+    return <th dir="auto" {...props} />;
+  },
+  td: function MarkdownTableCell({ node: _node, ...props }) {
+    return <td dir="auto" {...props} />;
   },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;

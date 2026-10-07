@@ -3,6 +3,7 @@
 #import "T3MarkdownTextComponentDescriptor.h"
 #import "T3MarkdownTextRun.h"
 #import "T3ContextChip.h"
+#import "T3MarkdownTextDirection.h"
 #import <React/RCTConversions.h>
 #import <objc/runtime.h>
 
@@ -416,6 +417,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
       convertedAttrString,
       _state->getData().attachmentRanges,
       _attachmentImages);
+  T3MarkdownTextApplyContentDirection(convertedAttrString);
   // Matches the shadow node so drawn lines sit where measurement put them.
   RCTApplyBaselineOffset(convertedAttrString);
   NSUInteger runLocation = 0;

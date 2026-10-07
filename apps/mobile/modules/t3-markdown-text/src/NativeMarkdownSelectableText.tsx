@@ -28,6 +28,7 @@ import {
 } from "./T3MarkdownTextSelectionModule";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { contextChipPresentation } from "./nativeMarkdownText";
+import { markdownTextDirection } from "./textDirection";
 
 export const MarkdownContextClipboardContext = createContext("");
 
@@ -204,6 +205,17 @@ export function NativeMarkdownSelectableText(props: {
     () => decodeComposerContextFragment(contextClipboardFragment)?.records ?? [],
     [contextClipboardFragment],
   );
+  // Android lays out each paragraph in its own direction, but aligns them all to the
+  // opposite side when the text's first letter disagrees with the view's direction. Matching
+  // the view to that letter lets every paragraph align to its own start. iOS does this
+  // per paragraph natively.
+  const androidDirection = useMemo(
+    () =>
+      Platform.OS === "android"
+        ? (markdownTextDirection(props.runs.map((run) => run.text).join("")) ?? undefined)
+        : undefined,
+    [props.runs],
+  );
   const containsInlineIcon = props.runs.some(
     (run) =>
       run.fileIcon != null ||
@@ -343,6 +355,7 @@ export function NativeMarkdownSelectableText(props: {
       selectionColor={props.textStyle.selectionColor}
       selectionHandleColor={props.textStyle.selectionHandleColor}
       style={{
+        direction: androidDirection,
         flexShrink: 1,
         minWidth: 0,
         color: props.textStyle.color,
