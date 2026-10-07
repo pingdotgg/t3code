@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { PreviewToolkit } from "./tools.ts";
 
@@ -60,6 +60,9 @@ it("exports exact object result schemas for preview actions", () => {
   const actionNames = [
     "preview_click",
     "preview_type",
+    "preview_hover",
+    "preview_drag",
+    "preview_upload",
     "preview_press",
     "preview_scroll",
     "preview_wait_for",

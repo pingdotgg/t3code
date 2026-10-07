@@ -7,6 +7,7 @@ import type {
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import {
   PullRequestProviderError,
@@ -101,22 +102,29 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
   };
 }
 
-/** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
+/** The tags that mean GitHub is out of reach for this account, rather than one request failing. */
 export function gitHubProviderFailure(
   error: GitHubPullRequestCli.GitHubPullRequestCliError,
 ): PullRequestProviderFailure {
-  if (error._tag === "GitHubCliUnavailableError") return { reason: "missing-tool" };
-  if (error._tag === "GitHubCliAuthenticationError") return { reason: "unauthenticated" };
-  if (error._tag === "GitHubCliRateLimitError")
-    return {
-      reason: "rate-limited",
-      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-    };
-  if (error._tag === "SourceControlRateLimitPausedError") {
-    return { reason: "rate-limited", retryAt: error.retryAt };
+  switch (error._tag) {
+    case "GitHubCliMissingError":
+      return { reason: "missing-tool" };
+    case "GitHubNotSignedInError":
+    case "GitHubHostDisabledError":
+    case "GitHubApiAuthenticationError":
+      return { reason: "unauthenticated" };
+    case "GitHubApiRateLimitError":
+      return {
+        reason: "rate-limited",
+        ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+      };
+    case "SourceControlRateLimitPausedError":
+      return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiNotFoundError":
+      return { reason: "not-found" };
+    default:
+      return { reason: "failed" };
   }
-  if (error._tag === "GitHubPullRequestNotFoundError") return { reason: "not-found" };
-  return { reason: "failed" };
 }
 
 /**
@@ -196,7 +204,7 @@ export const make = Effect.gen(function* () {
       provider: "github",
       operation,
       ...gitHubProviderFailure(error),
-      detail: error.detail,
+      detail: error.message,
       cause: error,
     });
 
@@ -224,7 +232,7 @@ export const make = Effect.gen(function* () {
                 .pipe(
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      error._tag === "GitHubCliRateLimitError" ||
+                      error._tag === "GitHubApiRateLimitError" ||
                       error._tag === "SourceControlRateLimitPausedError"
                         ? Effect.fail(error)
                         : Effect.succeed({
@@ -360,6 +368,11 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getPullRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
@@ -409,9 +422,11 @@ export const make = Effect.gen(function* () {
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
               reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+              editedAtById: new Map<string, string>(),
               reviewThreads: [],
               commentCount: 0,
               truncated: true,
+              reviewThreadsTruncated: true,
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
@@ -474,12 +489,14 @@ export const make = Effect.gen(function* () {
               // A comment out of `gh pr view --json` carries none of its own: that read
               // reports no reaction at all, so they arrive from the GraphQL page by node id.
               reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
             }))
             .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
           // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
           // are always whole and only the thread walk can stop short of the host.
           commentCount: pullRequest.comments.length + reviewThreads.commentCount,
           commentsTruncated: reviewThreads.truncated,
+          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
           reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
             ...thread,
             comments: thread.comments.map((comment) => ({
@@ -498,38 +515,34 @@ export const make = Effect.gen(function* () {
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
 
-    getViewerPermissions: (input) =>
-      Effect.all(
-        [
-          cli.getViewerAccess({ ...input, allowReserve: true }),
-          // Whether this viewer may update the branch is only on the comparison, and the
-          // comparison only resolves through the head ref the detail carries. A failure here
-          // withholds that one action rather than the whole answer, the way the detail path
-          // leaves the banner unknown.
-          input.includeUpdateBranch === false
-            ? Effect.succeed(false)
-            : cli.getPullRequestDetail(input).pipe(
-                Effect.flatMap((pullRequest) =>
-                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                    ? Effect.succeed(false)
-                    : cli
-                        .getPullRequestBaseComparison({
-                          ...input,
-                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                          allowReserve: true,
-                        })
-                        .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
-                ),
-                Effect.orElseSucceed(() => false),
-              ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.mapError(fail("getViewerPermissions")),
-        Effect.map(([access, canUpdateBranch]) =>
-          gitHubViewerPermissions({ ...access, canUpdateBranch }),
+    getViewerPermissions: (input) => {
+      const lightAccess = cli
+        .getViewerAccess({ ...input, allowReserve: true })
+        .pipe(Effect.map((access) => gitHubViewerPermissions(access)));
+      if (input.includeUpdateBranch === false) {
+        return lightAccess.pipe(Effect.mapError(fail("getViewerPermissions")));
+      }
+      // The core detail already carries the viewer's access, the merge settings, and the base
+      // comparison, so one read usually answers what used to take three. When that heavier read
+      // fails, the light access read still answers, withholding only update-branch.
+      return cli.getPullRequestDetail(input).pipe(
+        Effect.provideService(GitHubCli.AllowGitHubReserve, true),
+        Effect.map((pullRequest) =>
+          gitHubViewerPermissions({
+            ...pullRequest.viewerAccess,
+            canUpdateBranch:
+              pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
+          }),
         ),
-      ),
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "GitHubApiRateLimitError" &&
+            error._tag !== "SourceControlRateLimitPausedError",
+          () => lightAccess,
+        ),
+        Effect.mapError(fail("getViewerPermissions")),
+      );
+    },
 
     getDiff: (input) => cli.getPullRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
@@ -580,6 +593,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
           ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
           ...(input.expectedStackHeads === undefined
             ? {}

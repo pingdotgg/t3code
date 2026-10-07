@@ -8,7 +8,12 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
-import { OrchestrationProjectShell as ProjectShellSchema } from "@t3tools/contracts";
+import {
+  OrchestrationProjectShell as ProjectShellSchema,
+  OrchestrationV2ThreadShell as ThreadShellSchema,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -186,6 +191,57 @@ export function shellStreamItemsFromResumeSnapshot(input: {
   return shellStreamItemsFromInitialSnapshot(input).filter(
     (item) => item.resolvedRepositoryIdentityRoots !== undefined,
   );
+}
+
+const sameThreadShell = Schema.toEquivalence(ThreadShellSchema);
+
+/** How long an unchanged thread shell may go unsent on a live subscription. */
+const UNCHANGED_THREAD_SHELL_RESEND_MS = 5_000;
+
+/**
+ * Drop live `thread.updated` deltas whose shell matches the last one this
+ * subscription sent, apart from `updatedAt`. Every thread event bumps
+ * `updatedAt`, so tool output and streaming text alone used to send the full,
+ * otherwise unchanged shell once per batch.
+ *
+ * A skipped delta leaves the client cursor behind, and a resume replays the
+ * events after that cursor. So an unchanged shell is still sent once its last
+ * send is `UNCHANGED_THREAD_SHELL_RESEND_MS` old. That bounds both the replay
+ * and how stale the client's `updatedAt` can get.
+ */
+export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamItem, E, R>(
+  stream: Stream.Stream<A, E, R>,
+): Stream.Stream<A, E, R> {
+  return Stream.suspend(() => {
+    const lastSent = new Map<
+      OrchestrationV2ThreadShell["id"],
+      { readonly thread: OrchestrationV2ThreadShell; readonly sentAt: number }
+    >();
+    return stream.pipe(
+      Stream.filterEffect((item) =>
+        Effect.map(Clock.currentTimeMillis, (now) => {
+          if (item.kind === "thread.removed") {
+            lastSent.delete(item.threadId);
+            return true;
+          }
+          if (item.kind !== "thread.updated") return true;
+          const previous = lastSent.get(item.thread.id);
+          if (
+            previous !== undefined &&
+            now - previous.sentAt < UNCHANGED_THREAD_SHELL_RESEND_MS &&
+            sameThreadShell(
+              { ...item.thread, updatedAt: previous.thread.updatedAt },
+              previous.thread,
+            )
+          ) {
+            return false;
+          }
+          lastSent.set(item.thread.id, { thread: item.thread, sentAt: now });
+          return true;
+        }),
+      ),
+    );
+  });
 }
 
 /** Keep only the newest stored event per thread within a coalescing window. */

@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Array, Effect, Exit, Fiber, Latch, Number, Option, Pull, Random, Stream, SubscriptionRef } from "effect"
+import { Array, Cause, Effect, Exit, Fiber, Latch, Number, Option, Random, Stream, SubscriptionRef } from "effect"
 
 describe("SubscriptionRef", () => {
   it.effect("isSubscriptionRef", () =>
@@ -76,7 +76,7 @@ describe("SubscriptionRef", () => {
       yield* Fiber.interrupt(fiber1)
       const result1 = yield* Fiber.await(fiber1)
       const result2 = yield* Fiber.join(fiber2)
-      assert.isTrue(Exit.isFailure(result1) && Pull.isDoneCause(result1.cause))
+      assert.isTrue(Exit.isFailure(result1) && Cause.hasInterruptsOnly(result1.cause))
       assert.deepStrictEqual(result2, [1, 2])
     }))
 

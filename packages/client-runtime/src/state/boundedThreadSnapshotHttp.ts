@@ -3,7 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -53,7 +53,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
  * endpoint still means missing. Transient failures report `unavailable` so the
  * socket path remains a last resort for connectivity issues.
  */
-export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
+export const layer: Layer.Layer<
   ThreadSnapshotLoader.ThreadSnapshotLoader,
   never,
   HttpClient.HttpClient

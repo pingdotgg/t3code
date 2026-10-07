@@ -8,11 +8,13 @@ import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import {
   createProviderVersionAdvisory,
   makeTargetedProviderUpdateAction,
@@ -769,6 +771,122 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "falls back to the provider's own updater when no installer is proven",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-self-update-fallback");
+        const customPath = NodePath.join(tempDir, "tools", "package-tool");
+        writeExecutable(customPath);
+        const selfUpdating = makePackageManagedProviderMaintenanceResolver({
+          provider: driver("packageTool"),
+          npmPackageName: "@example/package-tool",
+          nativeUpdate: { args: ["update", "--self"] },
+        });
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: customPath,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(capabilities.update).toMatchObject({
+          executable: customPath,
+          args: ["update", "--self"],
+          lockKey: "packageTool-native",
+        });
+
+        // A mise install is pinned in mise's config, so it stays manual.
+        const misePath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0", "bin");
+        writeExecutable(NodePath.join(misePath, "package-tool"));
+        const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: NodePath.join(misePath, "package-tool"),
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(mise.update).toBeNull();
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-yarn-capabilities");
+      const link = linkIntoPackage(tempDir, "package-tool", [
+        ".config",
+        "yarn",
+        "global",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: link,
+        env: { PATH: "" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update).toMatchObject({
+        command: "yarn global add @example/package-tool@latest",
+        lockKey: "yarn-global",
+      });
+      expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0")?.args).toEqual([
+        "global",
+        "add",
+        "@example/package-tool@2.0.0",
+      ]);
+    }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "updates Volta installs only when Volta has the package",
+    () =>
+      Effect.gen(function* () {
+        const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-capabilities"), ".volta");
+        const shim = NodePath.join(voltaHome, "bin", "volta-shim");
+        writeExecutable(shim);
+        const link = NodePath.join(voltaHome, "bin", "package-tool");
+        NodeFS.symlinkSync(shim, link);
+        const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: link,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect((yield* resolve).update).toBeNull();
+        NodeFS.mkdirSync(
+          NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
+          { recursive: true },
+        );
+        expect((yield* resolve).update).toMatchObject({
+          command: "volta install @example/package-tool@latest",
+          lockKey: "volta",
+        });
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)("upgrades with the keg's own brew when brew is not on PATH", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-keg-brew");
+      const brewPath = NodePath.join(tempDir, "bin", "brew");
+      writeExecutable(brewPath);
+      const kegBinary = NodePath.join(tempDir, "Cellar", "package-tool", "1.0.0", "bin", "tool");
+      writeExecutable(kegBinary);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: kegBinary,
+        env: { PATH: "" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((_command, args) => (args[0] === "--prefix" ? `${tempDir}\n` : "{}")),
+        ),
+      );
+
+      expect(capabilities.update).toMatchObject({
+        executable: brewPath,
+        args: ["upgrade", "package-tool"],
+        lockKey: "homebrew",
+      });
+    }),
+  );
+
   it.effect("caches resolution until a fresh read is requested", () =>
     Effect.gen(function* () {
       let resolutions = 0;
@@ -783,6 +901,61 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(resolutions).toBe(1);
       yield* resolve({ fresh: true });
       yield* resolve();
+      expect(resolutions).toBe(2);
+    }),
+  );
+
+  it.effect("starts a fresh read instead of joining the resolution already running", () =>
+    Effect.gen(function* () {
+      const releaseStale = yield* Deferred.make<void>();
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Deferred.await(releaseStale).pipe(Effect.as(manualPackageTool))
+            : Effect.succeed(manualPackageTool);
+        }),
+      );
+
+      // An advisory read starts a resolution that is still running when the
+      // user clicks Update; the fresh read must not wait on or reuse it.
+      const advisory = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      const fresh = yield* Effect.forkChild(resolve({ fresh: true }), { startImmediately: true });
+      // The fresh read runs its own resolution, so it finishes while the stale
+      // one is still waiting.
+      expect(resolutions).toBe(2);
+      expect(fresh.pollUnsafe()).toBeDefined();
+      yield* Deferred.succeed(releaseStale, undefined);
+      expect(yield* Fiber.join(fresh)).toEqual(manualPackageTool);
+      yield* Fiber.join(advisory);
+    }),
+  );
+
+  it.effect("resolves again after the first read is interrupted", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Effect.never
+            : Deferred.await(release).pipe(Effect.as(manualPackageTool));
+        }),
+      );
+
+      const first = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      yield* Fiber.interrupt(first);
+
+      // The next read resolves again, and a reader that joined it keeps it
+      // running when the reader that started it goes away.
+      const owner = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      const waiter = yield* Effect.forkChild(resolve(), { startImmediately: true });
+      yield* Fiber.interrupt(owner);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(waiter)).toEqual(manualPackageTool);
+      expect(yield* resolve()).toEqual(manualPackageTool);
       expect(resolutions).toBe(2);
     }),
   );

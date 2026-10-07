@@ -92,7 +92,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -131,5 +134,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:magictransit", "live"],
+    timeout: 120_000,
+  },
 );

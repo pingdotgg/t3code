@@ -11,8 +11,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -27,7 +27,7 @@ import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
   enrichPiSnapshot,
-} from "../Layers/PiProvider.ts";
+} from "../PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -53,7 +53,8 @@ const DRIVER_KIND = ProviderDriverKind.make("pi");
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
-  nativeUpdate: null,
+  // Pi's updater covers its own installer and npm, pnpm, yarn, and bun globals.
+  nativeUpdate: { args: ["update", "--self"] },
 });
 
 export type PiDriverEnv =

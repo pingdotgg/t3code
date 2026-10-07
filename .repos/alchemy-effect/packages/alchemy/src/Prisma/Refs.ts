@@ -30,14 +30,9 @@ export const concreteIdsChanged = (
 ) => oldId !== undefined && newId !== undefined && newId !== oldId;
 
 const resolveId = (label: string, value: unknown) =>
-  Effect.gen(function* () {
-    if (typeof value === "string") return value;
-    if (Output.isOutput(value)) {
-      const accessor = yield* value as Output.Output<string>;
-      return yield* accessor;
-    }
-    return yield* Effect.fail(new Error(`Unable to resolve Prisma ${label}.`));
-  });
+  typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new Error(`Unable to resolve Prisma ${label}.`));
 
 export const unresolvedProjectIdOf = (project: string | Project | undefined) =>
   concreteIdOf(

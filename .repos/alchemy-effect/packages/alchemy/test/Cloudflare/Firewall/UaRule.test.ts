@@ -169,40 +169,58 @@ test.provider(
 
       yield* expectUaRuleGone(zoneId, initial.uaRuleId);
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (zone-scoped collection): UA rules live inside a
 // zone with no account-wide list, so `list()` enumerates every zone via
 // `listAllZones` and exhaustively paginates each. Deploy one rule and assert
 // it appears in the result, hydrated into the full `read` Attributes shape.
-test.provider("list enumerates UA rules across all zones", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates UA rules across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeUaRules(zoneId, [UA_LIST]);
+      yield* stack.destroy();
+      yield* purgeUaRules(zoneId, [UA_LIST]);
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.UaRule("ListUaRule", {
-          zoneId,
-          userAgent: UA_LIST,
-          mode: "block",
-          description: "alchemy ua rule list test",
-        }).pipe(adopt(true));
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.UaRule("ListUaRule", {
+            zoneId,
+            userAgent: UA_LIST,
+            mode: "block",
+            description: "alchemy ua rule list test",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.Firewall.UaRule);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Firewall.UaRule);
+      const all = yield* provider.list();
 
-    const found = all.find((r) => r.uaRuleId === deployed.uaRuleId);
-    expect(found).toBeDefined();
-    expect(found?.zoneId).toEqual(zoneId);
-    expect(found?.userAgent).toEqual(UA_LIST);
-    expect(found?.mode).toEqual("block");
+      const found = all.find((r) => r.uaRuleId === deployed.uaRuleId);
+      expect(found).toBeDefined();
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.userAgent).toEqual(UA_LIST);
+      expect(found?.mode).toEqual("block");
 
-    yield* stack.destroy();
-    yield* purgeUaRules(zoneId, [UA_LIST]);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* purgeUaRules(zoneId, [UA_LIST]);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );

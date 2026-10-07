@@ -10,7 +10,7 @@ import {
   Prompt,
   Response,
   Tool,
-} from "effect/unstable/ai";
+} from "effect/ai";
 import * as Binding from "../../Binding.ts";
 import type { ConverseRequest } from "./Converse.ts";
 import type { ConverseStreamRequest } from "./ConverseStream.ts";
@@ -111,7 +111,7 @@ export const withModelParameters =
 
 /**
  * Runtime binding that turns an Amazon Bedrock model into an
- * `effect/unstable/ai` {@link AiLanguageModel.LanguageModel} `Layer`, so any
+ * `effect/ai` {@link AiLanguageModel.LanguageModel} `Layer`, so any
  * Effect AI program (`LanguageModel.generateText`, `streamText`, `Chat`,
  * toolkits, ...) runs against Bedrock without code changes.
  *
@@ -134,7 +134,7 @@ export const withModelParameters =
  * ### Effect AI on Bedrock
  * **Example:** Generate Text
  * ```typescript
- * import { LanguageModel } from "effect/unstable/ai";
+ * import { LanguageModel } from "effect/ai";
  *
  * // init: bind the model and get a LanguageModel Layer
  * const model = yield* Bedrock.LanguageModel("us.amazon.nova-micro-v1:0", {
@@ -186,7 +186,7 @@ export const withModelParameters =
  * ### Tool Calling
  * **Example:** Call Tools with a Toolkit
  * ```typescript
- * import { Tool, Toolkit } from "effect/unstable/ai";
+ * import { Tool, Toolkit } from "effect/ai";
  * import * as Schema from "effect/Schema";
  *
  * const GetWeather = Tool.make("get_weather", {

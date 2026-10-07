@@ -16,7 +16,7 @@ import * as nodePath from "node:path";
 import * as os from "node:os";
 import { rolldown, RolldownMagicString, type RolldownLog } from "rolldown";
 
-describe("packageNameFromId", () => {
+describe("packageNameFromId", { tags: ["unit", "local"] }, () => {
   it("extracts a top-level package name", () => {
     expect(packageNameFromId("/proj/node_modules/effect/dist/Effect.js")).toBe(
       "effect",
@@ -50,97 +50,103 @@ describe("packageNameFromId", () => {
   });
 });
 
-describe("resolvePackageInfo (filesystem walk)", () => {
-  it("walks up to the nearest package.json", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
-    );
-    try {
-      const pkgDir = nodePath.join(root, "packages", "fancy-pkg");
-      nodeFs.mkdirSync(nodePath.join(pkgDir, "src", "deep"), {
-        recursive: true,
-      });
-      nodeFs.writeFileSync(
-        nodePath.join(pkgDir, "package.json"),
-        JSON.stringify({ name: "@scope/fancy-pkg", sideEffects: false }),
+describe(
+  "resolvePackageInfo (filesystem walk)",
+  { tags: ["unit", "local"] },
+  () => {
+    it("walks up to the nearest package.json", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
       );
-      const dir = nodePath.join(pkgDir, "src", "deep");
-      const cache = new Map<string, PackageInfo | null>();
-
-      const info = await resolvePackageInfo(dir, cache);
-      expect(info?.name).toBe("@scope/fancy-pkg");
-      expect(info?.sideEffects).toBe(false);
-      // Repeat hits the cache; result is identical and the visited dirs
-      // are populated.
-      expect((await resolvePackageInfo(dir, cache))?.name).toBe(
-        "@scope/fancy-pkg",
-      );
-      expect(cache.size).toBeGreaterThan(0);
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("caches results for sibling directories independently", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
-    );
-    try {
-      for (const [dir, name] of [
-        ["a", "pkg-a"],
-        ["b", "pkg-b"],
-      ] as const) {
-        nodeFs.mkdirSync(nodePath.join(root, dir, "src"), { recursive: true });
+      try {
+        const pkgDir = nodePath.join(root, "packages", "fancy-pkg");
+        nodeFs.mkdirSync(nodePath.join(pkgDir, "src", "deep"), {
+          recursive: true,
+        });
         nodeFs.writeFileSync(
-          nodePath.join(root, dir, "package.json"),
-          JSON.stringify({ name }),
+          nodePath.join(pkgDir, "package.json"),
+          JSON.stringify({ name: "@scope/fancy-pkg", sideEffects: false }),
         );
+        const dir = nodePath.join(pkgDir, "src", "deep");
+        const cache = new Map<string, PackageInfo | null>();
+
+        const info = await resolvePackageInfo(dir, cache);
+        expect(info?.name).toBe("@scope/fancy-pkg");
+        expect(info?.sideEffects).toBe(false);
+        // Repeat hits the cache; result is identical and the visited dirs
+        // are populated.
+        expect((await resolvePackageInfo(dir, cache))?.name).toBe(
+          "@scope/fancy-pkg",
+        );
+        expect(cache.size).toBeGreaterThan(0);
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
       }
-      const cache = new Map<string, PackageInfo | null>();
-      expect(
-        (await resolvePackageInfo(nodePath.join(root, "a", "src"), cache))
-          ?.name,
-      ).toBe("pkg-a");
-      expect(
-        (await resolvePackageInfo(nodePath.join(root, "b", "src"), cache))
-          ?.name,
-      ).toBe("pkg-b");
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it("returns null when no package.json is found upward", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
-    );
-    try {
-      expect(await resolvePackageInfo(root, new Map())).toBeNull();
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("never walks above a node_modules boundary", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
-    );
-    try {
-      // A stray package.json ABOVE node_modules must never be latched onto.
-      nodeFs.writeFileSync(
-        nodePath.join(root, "package.json"),
-        JSON.stringify({ name: "stray-parent" }),
+    it("caches results for sibling directories independently", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
       );
-      const dir = nodePath.join(root, "node_modules", "no-manifest", "dist");
-      nodeFs.mkdirSync(dir, { recursive: true });
-      expect(await resolvePackageInfo(dir, new Map())).toBeNull();
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
+      try {
+        for (const [dir, name] of [
+          ["a", "pkg-a"],
+          ["b", "pkg-b"],
+        ] as const) {
+          nodeFs.mkdirSync(nodePath.join(root, dir, "src"), {
+            recursive: true,
+          });
+          nodeFs.writeFileSync(
+            nodePath.join(root, dir, "package.json"),
+            JSON.stringify({ name }),
+          );
+        }
+        const cache = new Map<string, PackageInfo | null>();
+        expect(
+          (await resolvePackageInfo(nodePath.join(root, "a", "src"), cache))
+            ?.name,
+        ).toBe("pkg-a");
+        expect(
+          (await resolvePackageInfo(nodePath.join(root, "b", "src"), cache))
+            ?.name,
+        ).toBe("pkg-b");
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
 
-describe("collectPureAnchors", () => {
+    it("returns null when no package.json is found upward", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
+      );
+      try {
+        expect(await resolvePackageInfo(root, new Map())).toBeNull();
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("never walks above a node_modules boundary", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-resolve-pkg-"),
+      );
+      try {
+        // A stray package.json ABOVE node_modules must never be latched onto.
+        nodeFs.writeFileSync(
+          nodePath.join(root, "package.json"),
+          JSON.stringify({ name: "stray-parent" }),
+        );
+        const dir = nodePath.join(root, "node_modules", "no-manifest", "dist");
+        nodeFs.mkdirSync(dir, { recursive: true });
+        expect(await resolvePackageInfo(dir, new Map())).toBeNull();
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
+
+describe("collectPureAnchors", { tags: ["unit", "local"] }, () => {
   /** Applies the returned anchors to `code` with a plain string splice. */
   const apply = (code: string, anchors: number[]): string => {
     let out = code;
@@ -316,7 +322,7 @@ async function callOptions(
   await (optsHook as (...args: any[]) => unknown).call({} as any, opts);
 }
 
-describe("purePlugin", () => {
+describe("purePlugin", { tags: ["unit", "local"] }, () => {
   it("transforms only modules from matched packages", async () => {
     const plugin = purePlugin();
     const userCode = `const x = doThing();`;
@@ -432,7 +438,7 @@ describe("purePlugin", () => {
   });
 });
 
-describe("explicitly listed user package", () => {
+describe("explicitly listed user package", { tags: ["unit", "local"] }, () => {
   it.effect(
     "overrides moduleSideEffects when a listed package declares sideEffects: false",
     () =>
@@ -551,323 +557,331 @@ describe("explicitly listed user package", () => {
   );
 });
 
-describe("discarded-result calls (issue #949)", () => {
-  it("does NOT annotate entry-module expression-statement calls (route registrations)", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-pure-949-entry-"),
-    );
-    try {
-      nodeFs.writeFileSync(
-        nodePath.join(root, "package.json"),
-        JSON.stringify({ name: "my-app", type: "module" }),
+describe(
+  "discarded-result calls (issue #949)",
+  { tags: ["unit", "local"] },
+  () => {
+    it("does NOT annotate entry-module expression-statement calls (route registrations)", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-pure-949-entry-"),
       );
-      const entryPath = nodePath.join(root, "entry.ts");
-      const plugin = purePlugin({ packages: ["my-app"] });
-      await callOptions(plugin, { input: entryPath, cwd: root });
-
-      const code = [
-        `const app = new Hono();`,
-        `app.get("/", (c) => c.json({ code: "OK" }));`,
-        `export default { fetch: app.fetch };`,
-      ].join("\n");
-      const result = await callTransform(plugin, code, entryPath);
-      // `new Hono()` (bound to `app`) may be annotated; the discarded
-      // `app.get(...)` registration must NOT be.
-      if (result !== null) {
-        expect(codeOf(result)).not.toContain("/*#__PURE__*/ app.get");
-      }
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("does NOT annotate expression-statement calls in packages without an explicit sideEffects opt-in", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-pure-949-noopt-"),
-    );
-    try {
-      // No `sideEffects` field — the author never claimed purity.
-      nodeFs.writeFileSync(
-        nodePath.join(root, "package.json"),
-        JSON.stringify({ name: "my-app", type: "module" }),
-      );
-      const plugin = purePlugin({ packages: ["my-app"] });
-
-      // A NON-entry module of the user's package, imported for its side
-      // effects (`import "./routes.ts"`).
-      const code = [
-        `import { app } from "./app.ts";`,
-        `app.get("/r", () => "ok");`,
-        `export const x = makeX();`,
-      ].join("\n");
-      const result = await callTransform(
-        plugin,
-        code,
-        nodePath.join(root, "routes.ts"),
-      );
-      expect(result).not.toBeNull();
-      const out = codeOf(result);
-      // Bound calls stay tree-shakeable...
-      expect(out).toContain("/*#__PURE__*/ makeX()");
-      // ...but the discarded-result registration is preserved.
-      expect(out).not.toContain("/*#__PURE__*/ app.get");
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("leaves the entry app's package completely untouched when it is not listed, even with sideEffects: false", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-pure-949-unlisted-"),
-    );
-    try {
-      // The app declares `sideEffects: false` (commonly cargo-culted for
-      // downstream module pruning). Without an explicit `packages` entry
-      // this must not opt the app into any annotation — deleting its own
-      // top-level registrations under minification least of all.
-      nodeFs.writeFileSync(
-        nodePath.join(root, "package.json"),
-        JSON.stringify({ name: "my-app", type: "module", sideEffects: false }),
-      );
-      const plugin = purePlugin();
-      await callOptions(plugin, {
-        input: nodePath.join(root, "entry.ts"),
-        cwd: root,
-      });
-
-      // A NON-entry module of the app (the entry-module guard does not
-      // apply here) with a discarded-result route registration.
-      const code = [
-        `import { app } from "./app.ts";`,
-        `app.get("/r", () => "ok");`,
-        `export const x = makeX();`,
-      ].join("\n");
-      const result = await callTransform(
-        plugin,
-        code,
-        nodePath.join(root, "routes.ts"),
-      );
-      expect(result).toBeNull();
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("leaves the entry app's package untouched when it is not listed and declares no sideEffects field", async () => {
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-pure-949-unlisted-nosef-"),
-    );
-    try {
-      nodeFs.writeFileSync(
-        nodePath.join(root, "package.json"),
-        JSON.stringify({ name: "my-app", type: "module" }),
-      );
-      const plugin = purePlugin();
-      await callOptions(plugin, {
-        input: nodePath.join(root, "entry.ts"),
-        cwd: root,
-      });
-
-      const result = await callTransform(
-        plugin,
-        `import { app } from "./app.ts";\napp.get("/r", () => "ok");\nexport const x = makeX();`,
-        nodePath.join(root, "routes.ts"),
-      );
-      expect(result).toBeNull();
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("STILL annotates expression-statement calls in packages that declare sideEffects: false", async () => {
-    // effect ships `sideEffects: []` on purpose — full annotation there is
-    // intentional and must be preserved. Use a fake on-disk package to
-    // avoid depending on the real effect layout.
-    const root = nodeFs.mkdtempSync(
-      nodePath.join(os.tmpdir(), "alchemy-pure-949-optin-"),
-    );
-    try {
-      const pkgDir = nodePath.join(root, "node_modules", "fake-effect");
-      nodeFs.mkdirSync(pkgDir, { recursive: true });
-      nodeFs.writeFileSync(
-        nodePath.join(pkgDir, "package.json"),
-        JSON.stringify({ name: "fake-effect", sideEffects: false }),
-      );
-      const optIn = purePlugin({
-        packages: ["fake-effect"],
-        replaceDefaults: true,
-      });
-      const result = await callTransform(
-        optIn,
-        `registerGlobal();`,
-        nodePath.join(pkgDir, "dist", "index.js"),
-      );
-      expect(result).not.toBeNull();
-      expect(codeOf(result)).toContain("/*#__PURE__*/ registerGlobal()");
-    } finally {
-      nodeFs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it.effect(
-    "route registrations in the entry survive minify: true (end-to-end)",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-pure-949-e2e-",
-        });
-
-        // A user app package with NO sideEffects declaration — the exact
-        // shape from the issue (Hono-style discarded-return registration).
-        yield* fs.writeFileString(
-          path.join(root, "package.json"),
+      try {
+        nodeFs.writeFileSync(
+          nodePath.join(root, "package.json"),
           JSON.stringify({ name: "my-app", type: "module" }),
         );
-        const entry = path.join(root, "entry.ts");
-        yield* fs.writeFileString(
-          entry,
-          [
-            `import { app } from "./app.ts";`,
-            `import "./routes.ts";`,
-            `app.get("/", () => "ENTRY_ROUTE_MARKER");`,
-            `export default { fetch: (p: string) => app.handle(p) };`,
-          ].join("\n"),
+        const entryPath = nodePath.join(root, "entry.ts");
+        const plugin = purePlugin({ packages: ["my-app"] });
+        await callOptions(plugin, { input: entryPath, cwd: root });
+
+        const code = [
+          `const app = new Hono();`,
+          `app.get("/", (c) => c.json({ code: "OK" }));`,
+          `export default { fetch: app.fetch };`,
+        ].join("\n");
+        const result = await callTransform(plugin, code, entryPath);
+        // `new Hono()` (bound to `app`) may be annotated; the discarded
+        // `app.get(...)` registration must NOT be.
+        if (result !== null) {
+          expect(codeOf(result)).not.toContain("/*#__PURE__*/ app.get");
+        }
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("does NOT annotate expression-statement calls in packages without an explicit sideEffects opt-in", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-pure-949-noopt-"),
+      );
+      try {
+        // No `sideEffects` field — the author never claimed purity.
+        nodeFs.writeFileSync(
+          nodePath.join(root, "package.json"),
+          JSON.stringify({ name: "my-app", type: "module" }),
         );
-        yield* fs.writeFileString(
-          path.join(root, "app.ts"),
-          [
-            `type Handler = () => string;`,
-            `class Router {`,
-            `  routes: Record<string, Handler> = {};`,
-            `  get(p: string, h: Handler) { this.routes[p] = h; }`,
-            `  handle(p: string) { return this.routes[p]?.() ?? "404"; }`,
-            `}`,
-            `export const app = new Router();`,
-          ].join("\n"),
+        const plugin = purePlugin({ packages: ["my-app"] });
+
+        // A NON-entry module of the user's package, imported for its side
+        // effects (`import "./routes.ts"`).
+        const code = [
+          `import { app } from "./app.ts";`,
+          `app.get("/r", () => "ok");`,
+          `export const x = makeX();`,
+        ].join("\n");
+        const result = await callTransform(
+          plugin,
+          code,
+          nodePath.join(root, "routes.ts"),
         );
-        // Side-effect-imported module registering more routes — the same
-        // failure class beyond the entry file itself.
-        yield* fs.writeFileString(
-          path.join(root, "routes.ts"),
-          [
-            `import { app } from "./app.ts";`,
-            `app.get("/side", () => "SIDE_EFFECT_ROUTE_MARKER");`,
-          ].join("\n"),
-        );
+        expect(result).not.toBeNull();
+        const out = codeOf(result);
+        // Bound calls stay tree-shakeable...
+        expect(out).toContain("/*#__PURE__*/ makeX()");
+        // ...but the discarded-result registration is preserved.
+        expect(out).not.toContain("/*#__PURE__*/ app.get");
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
 
-        const bundle = yield* Effect.tryPromise({
-          try: () =>
-            rolldown({
-              input: entry,
-              cwd: root,
-              plugins: [purePlugin()],
-              treeshake: true,
-            }),
-          catch: (cause) => cause,
-        });
-        const { output } = yield* Effect.tryPromise({
-          try: () => bundle.generate({ format: "esm", minify: true }),
-          catch: (cause) => cause,
-        });
-        yield* Effect.tryPromise({
-          try: () => bundle.close(),
-          catch: (cause) => cause,
-        });
-
-        const code = output
-          .filter((c) => c.type === "chunk")
-          .map((c) => c.code)
-          .join("\n");
-        expect(code).toContain("ENTRY_ROUTE_MARKER");
-        expect(code).toContain("SIDE_EFFECT_ROUTE_MARKER");
-
-        yield* fs.remove(root, { recursive: true });
-      }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect(
-    "registrations in a REACHABLE module of an unlisted sideEffects:false app survive minify: true (issue #1020 end-to-end)",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-pure-1020-e2e-",
-        });
-
-        // The exact production shape from issue #1020: the app declares
-        // `sideEffects: false`, and route registrations live in a
-        // non-entry module whose EXPORT is used — so the module is
-        // reachable (rolldown's native package-sideEffects pruning does
-        // not apply) and only statement deletion could lose the routes.
-        // Note a side-effect-ONLY import (`import "./routes.ts"`) under
-        // `sideEffects: false` is legitimately pruned by rolldown itself;
-        // that is the field's documented module-level meaning and out of
-        // this plugin's hands.
-        yield* fs.writeFileString(
-          path.join(root, "package.json"),
+    it("leaves the entry app's package completely untouched when it is not listed, even with sideEffects: false", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-pure-949-unlisted-"),
+      );
+      try {
+        // The app declares `sideEffects: false` (commonly cargo-culted for
+        // downstream module pruning). Without an explicit `packages` entry
+        // this must not opt the app into any annotation — deleting its own
+        // top-level registrations under minification least of all.
+        nodeFs.writeFileSync(
+          nodePath.join(root, "package.json"),
           JSON.stringify({
             name: "my-app",
             type: "module",
             sideEffects: false,
           }),
         );
-        const entry = path.join(root, "entry.ts");
-        yield* fs.writeFileString(
-          entry,
-          [
-            `import { findRoute } from "./routes.ts";`,
-            `export default { fetch: (p: string) => findRoute(p) };`,
-          ].join("\n"),
-        );
-        yield* fs.writeFileString(
-          path.join(root, "routes.ts"),
-          [
-            `type Handler = () => string;`,
-            `class Router {`,
-            `  routes: Record<string, Handler> = {};`,
-            `  on(p: string, h: Handler) { this.routes[p] = h; }`,
-            `  find(p: string) { return this.routes[p]?.() ?? "404"; }`,
-            `}`,
-            `const matcher = new Router();`,
-            `matcher.on("/gw", () => "GATEWAY_ROUTE_MARKER");`,
-            `export const findRoute = (p: string) => matcher.find(p);`,
-          ].join("\n"),
-        );
+        const plugin = purePlugin();
+        await callOptions(plugin, {
+          input: nodePath.join(root, "entry.ts"),
+          cwd: root,
+        });
 
-        const bundle = yield* Effect.tryPromise({
-          try: () =>
-            rolldown({
-              input: entry,
-              cwd: root,
-              plugins: [purePlugin()],
-              treeshake: true,
+        // A NON-entry module of the app (the entry-module guard does not
+        // apply here) with a discarded-result route registration.
+        const code = [
+          `import { app } from "./app.ts";`,
+          `app.get("/r", () => "ok");`,
+          `export const x = makeX();`,
+        ].join("\n");
+        const result = await callTransform(
+          plugin,
+          code,
+          nodePath.join(root, "routes.ts"),
+        );
+        expect(result).toBeNull();
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("leaves the entry app's package untouched when it is not listed and declares no sideEffects field", async () => {
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-pure-949-unlisted-nosef-"),
+      );
+      try {
+        nodeFs.writeFileSync(
+          nodePath.join(root, "package.json"),
+          JSON.stringify({ name: "my-app", type: "module" }),
+        );
+        const plugin = purePlugin();
+        await callOptions(plugin, {
+          input: nodePath.join(root, "entry.ts"),
+          cwd: root,
+        });
+
+        const result = await callTransform(
+          plugin,
+          `import { app } from "./app.ts";\napp.get("/r", () => "ok");\nexport const x = makeX();`,
+          nodePath.join(root, "routes.ts"),
+        );
+        expect(result).toBeNull();
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("STILL annotates expression-statement calls in packages that declare sideEffects: false", async () => {
+      // effect ships `sideEffects: []` on purpose — full annotation there is
+      // intentional and must be preserved. Use a fake on-disk package to
+      // avoid depending on the real effect layout.
+      const root = nodeFs.mkdtempSync(
+        nodePath.join(os.tmpdir(), "alchemy-pure-949-optin-"),
+      );
+      try {
+        const pkgDir = nodePath.join(root, "node_modules", "fake-effect");
+        nodeFs.mkdirSync(pkgDir, { recursive: true });
+        nodeFs.writeFileSync(
+          nodePath.join(pkgDir, "package.json"),
+          JSON.stringify({ name: "fake-effect", sideEffects: false }),
+        );
+        const optIn = purePlugin({
+          packages: ["fake-effect"],
+          replaceDefaults: true,
+        });
+        const result = await callTransform(
+          optIn,
+          `registerGlobal();`,
+          nodePath.join(pkgDir, "dist", "index.js"),
+        );
+        expect(result).not.toBeNull();
+        expect(codeOf(result)).toContain("/*#__PURE__*/ registerGlobal()");
+      } finally {
+        nodeFs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it.effect(
+      "route registrations in the entry survive minify: true (end-to-end)",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectory({
+            prefix: "alchemy-pure-949-e2e-",
+          });
+
+          // A user app package with NO sideEffects declaration — the exact
+          // shape from the issue (Hono-style discarded-return registration).
+          yield* fs.writeFileString(
+            path.join(root, "package.json"),
+            JSON.stringify({ name: "my-app", type: "module" }),
+          );
+          const entry = path.join(root, "entry.ts");
+          yield* fs.writeFileString(
+            entry,
+            [
+              `import { app } from "./app.ts";`,
+              `import "./routes.ts";`,
+              `app.get("/", () => "ENTRY_ROUTE_MARKER");`,
+              `export default { fetch: (p: string) => app.handle(p) };`,
+            ].join("\n"),
+          );
+          yield* fs.writeFileString(
+            path.join(root, "app.ts"),
+            [
+              `type Handler = () => string;`,
+              `class Router {`,
+              `  routes: Record<string, Handler> = {};`,
+              `  get(p: string, h: Handler) { this.routes[p] = h; }`,
+              `  handle(p: string) { return this.routes[p]?.() ?? "404"; }`,
+              `}`,
+              `export const app = new Router();`,
+            ].join("\n"),
+          );
+          // Side-effect-imported module registering more routes — the same
+          // failure class beyond the entry file itself.
+          yield* fs.writeFileString(
+            path.join(root, "routes.ts"),
+            [
+              `import { app } from "./app.ts";`,
+              `app.get("/side", () => "SIDE_EFFECT_ROUTE_MARKER");`,
+            ].join("\n"),
+          );
+
+          const bundle = yield* Effect.tryPromise({
+            try: () =>
+              rolldown({
+                input: entry,
+                cwd: root,
+                plugins: [purePlugin()],
+                treeshake: true,
+              }),
+            catch: (cause) => cause,
+          });
+          const { output } = yield* Effect.tryPromise({
+            try: () => bundle.generate({ format: "esm", minify: true }),
+            catch: (cause) => cause,
+          });
+          yield* Effect.tryPromise({
+            try: () => bundle.close(),
+            catch: (cause) => cause,
+          });
+
+          const code = output
+            .filter((c) => c.type === "chunk")
+            .map((c) => c.code)
+            .join("\n");
+          expect(code).toContain("ENTRY_ROUTE_MARKER");
+          expect(code).toContain("SIDE_EFFECT_ROUTE_MARKER");
+
+          yield* fs.remove(root, { recursive: true });
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect(
+      "registrations in a REACHABLE module of an unlisted sideEffects:false app survive minify: true (issue #1020 end-to-end)",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectory({
+            prefix: "alchemy-pure-1020-e2e-",
+          });
+
+          // The exact production shape from issue #1020: the app declares
+          // `sideEffects: false`, and route registrations live in a
+          // non-entry module whose EXPORT is used — so the module is
+          // reachable (rolldown's native package-sideEffects pruning does
+          // not apply) and only statement deletion could lose the routes.
+          // Note a side-effect-ONLY import (`import "./routes.ts"`) under
+          // `sideEffects: false` is legitimately pruned by rolldown itself;
+          // that is the field's documented module-level meaning and out of
+          // this plugin's hands.
+          yield* fs.writeFileString(
+            path.join(root, "package.json"),
+            JSON.stringify({
+              name: "my-app",
+              type: "module",
+              sideEffects: false,
             }),
-          catch: (cause) => cause,
-        });
-        const { output } = yield* Effect.tryPromise({
-          try: () => bundle.generate({ format: "esm", minify: true }),
-          catch: (cause) => cause,
-        });
-        yield* Effect.tryPromise({
-          try: () => bundle.close(),
-          catch: (cause) => cause,
-        });
+          );
+          const entry = path.join(root, "entry.ts");
+          yield* fs.writeFileString(
+            entry,
+            [
+              `import { findRoute } from "./routes.ts";`,
+              `export default { fetch: (p: string) => findRoute(p) };`,
+            ].join("\n"),
+          );
+          yield* fs.writeFileString(
+            path.join(root, "routes.ts"),
+            [
+              `type Handler = () => string;`,
+              `class Router {`,
+              `  routes: Record<string, Handler> = {};`,
+              `  on(p: string, h: Handler) { this.routes[p] = h; }`,
+              `  find(p: string) { return this.routes[p]?.() ?? "404"; }`,
+              `}`,
+              `const matcher = new Router();`,
+              `matcher.on("/gw", () => "GATEWAY_ROUTE_MARKER");`,
+              `export const findRoute = (p: string) => matcher.find(p);`,
+            ].join("\n"),
+          );
 
-        const code = output
-          .filter((c) => c.type === "chunk")
-          .map((c) => c.code)
-          .join("\n");
-        expect(code).toContain("GATEWAY_ROUTE_MARKER");
+          const bundle = yield* Effect.tryPromise({
+            try: () =>
+              rolldown({
+                input: entry,
+                cwd: root,
+                plugins: [purePlugin()],
+                treeshake: true,
+              }),
+            catch: (cause) => cause,
+          });
+          const { output } = yield* Effect.tryPromise({
+            try: () => bundle.generate({ format: "esm", minify: true }),
+            catch: (cause) => cause,
+          });
+          yield* Effect.tryPromise({
+            try: () => bundle.close(),
+            catch: (cause) => cause,
+          });
 
-        yield* fs.remove(root, { recursive: true });
-      }).pipe(Effect.provide(NodeServices.layer)),
-  );
-});
+          const code = output
+            .filter((c) => c.type === "chunk")
+            .map((c) => c.code)
+            .join("\n");
+          expect(code).toContain("GATEWAY_ROUTE_MARKER");
 
-describe("Bundle.build with purePlugin", () => {
+          yield* fs.remove(root, { recursive: true });
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  },
+);
+
+describe("Bundle.build with purePlugin", { tags: ["unit", "local"] }, () => {
   it.effect(
     "drops unused exports from a workspace-linked TS package (no node_modules)",
     () =>

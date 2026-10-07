@@ -3,15 +3,10 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { NodeWS } from "@effect/platform-node/NodeSocket"
 import { assert, describe, expect, it } from "@effect/vitest"
 import { ByteSize, Effect, Option } from "effect"
+import * as Deferred from "effect/Deferred"
 import * as Duration from "effect/Duration"
 import * as Fiber from "effect/Fiber"
 import { constVoid } from "effect/Function"
-import * as Latch from "effect/Latch"
-import * as Layer from "effect/Layer"
-import * as ManagedRuntime from "effect/ManagedRuntime"
-import * as Schema from "effect/Schema"
-import * as Stream from "effect/Stream"
-import * as Tracer from "effect/Tracer"
 import {
   Cookies,
   FetchHttpClient,
@@ -27,10 +22,16 @@ import {
   HttpServerResponse,
   Multipart,
   UrlParams
-} from "effect/unstable/http"
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError"
-import * as NetAddress from "effect/unstable/net/NetAddress"
-import { Socket } from "effect/unstable/socket"
+} from "effect/http"
+import * as HttpApiError from "effect/http-api/HttpApiError"
+import * as Latch from "effect/Latch"
+import * as Layer from "effect/Layer"
+import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as NetAddress from "effect/net/NetAddress"
+import * as Schema from "effect/Schema"
+import { Socket } from "effect/socket"
+import * as Stream from "effect/Stream"
+import * as Tracer from "effect/Tracer"
 import * as Buffer from "node:buffer"
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
@@ -47,6 +48,45 @@ const IdParams = Schema.Struct({
 const todoResponse = HttpServerResponse.schemaJson(Todo)
 
 describe("HttpServer", () => {
+  it.effect("keeps routes isolated between independent servers", () =>
+    Effect.gen(function*() {
+      const publicServer = Http.createServer()
+      const internalServer = Http.createServer()
+
+      const Health = Layer.effectDiscard(
+        Effect.flatMap(HttpRouter.HttpRouter, (router) =>
+          router.add("GET", "/health", HttpServerResponse.text("healthy")))
+      )
+      const publicApp = Layer.mergeAll(
+        HttpRouter.add("GET", "/public", HttpServerResponse.text("public")),
+        Health
+      )
+      const internalApp = Layer.mergeAll(
+        HttpRouter.add("GET", "/internal", HttpServerResponse.text("internal")),
+        Health
+      )
+
+      yield* Layer.mergeAll(
+        HttpRouter.serve(publicApp, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.provide(NodeHttpServer.layer(() =>
+            publicServer, { port: 0 }))
+        ),
+        HttpRouter.serve(internalApp, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.provide(NodeHttpServer.layer(() => internalServer, { port: 0 }))
+        )
+      ).pipe(Layer.build)
+
+      const status = (port: number, path: string) =>
+        Effect.promise(() => fetch("http://localhost:" + port + path).then((response) => response.status))
+
+      assert.strictEqual(yield* status(tcpPort(publicServer), "/public"), 200)
+      assert.strictEqual(yield* status(tcpPort(internalServer), "/internal"), 200)
+      assert.strictEqual(yield* status(tcpPort(publicServer), "/health"), 200)
+      assert.strictEqual(yield* status(tcpPort(internalServer), "/health"), 200)
+      assert.strictEqual(yield* status(tcpPort(publicServer), "/internal"), 404)
+      assert.strictEqual(yield* status(tcpPort(internalServer), "/public"), 404)
+    }))
+
   it.effect("schema", () =>
     Effect.gen(function*() {
       yield* HttpRouter.add(
@@ -921,6 +961,51 @@ describe("HttpServer", () => {
       expect(plain.extensions).not.toContain("permessage-deflate")
     }).pipe(Effect.scoped, Effect.provide(layerTestWebsocket)))
 
+  for (
+    const [name, exit, code] of [
+      ["success", "success", 1000],
+      ["interrupt", "interrupt", 1001],
+      ["failure", "failure", 1011],
+      ["defect", "defect", 1011],
+      ["explicit close before failure", "explicit", 4400]
+    ] as const
+  ) {
+    it.effect(`closes a WebSocket with the handler's ${name} code`, () =>
+      Effect.gen(function*() {
+        const opened = yield* Deferred.make<void>()
+        yield* HttpRouter.add(
+          "GET",
+          "/ws",
+          Effect.gen(function*() {
+            const request = yield* HttpServerRequest.HttpServerRequest
+            const socket = yield* request.upgrade
+            yield* socket.reader
+            yield* Deferred.await(opened)
+            if (exit === "explicit") {
+              const writer = yield* socket.writer
+              yield* writer.write(new Socket.CloseEvent(4400, "handler closed"))
+            }
+            if (exit === "interrupt") return yield* Effect.interrupt
+            if (exit === "failure" || exit === "explicit") return yield* Effect.fail(new Error("handler failed"))
+            if (exit === "defect") return yield* Effect.die(new Error("handler defect"))
+            return HttpServerResponse.empty()
+          })
+        ).pipe((layer) => HttpRouter.serve(layer), Layer.build)
+        const server = yield* HttpServer.HttpServer
+        const port = (server.address as NetAddress.InetAddress).port
+        const actual = yield* Effect.callback<number, Error>((resume) => {
+          const ws = new NodeWS.WebSocket(`ws://127.0.0.1:${port}/ws`)
+          ws.on("open", () => {
+            Effect.runSync(Deferred.succeed(opened, undefined))
+          })
+          ws.on("close", (code) => resume(Effect.succeed(code)))
+          ws.on("error", (error) => resume(Effect.fail(error)))
+          return Effect.sync(() => ws.close())
+        })
+        assert.strictEqual(actual, code)
+      }).pipe(Effect.timeout("5 seconds"), Effect.provide(layerTestWebsocket)), 10000)
+  }
+
   it.effect("an upgrade connection reset by the peer does not crash the process", () =>
     Effect.gen(function*() {
       yield* HttpRouter.add("GET", "/", HttpServerResponse.text("ok")).pipe(
@@ -957,6 +1042,54 @@ describe("HttpServer", () => {
       const response = yield* HttpClient.get("/")
       expect(response.status).toEqual(200)
     }).pipe(Effect.provide(layerTestWebsocket)))
+
+  it.effect("fails refused websocket handshakes without hanging shutdown", () =>
+    Effect.gen(function*() {
+      const outcome = yield* Deferred.make<Socket.SocketError | undefined>()
+      yield* HttpRouter.add(
+        "GET",
+        "/ws",
+        Effect.gen(function*() {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          const socket = yield* request.upgrade
+          const error = yield* Effect.scoped(socket.reader).pipe(
+            Effect.match({ onFailure: (error) => error, onSuccess: () => undefined })
+          )
+          yield* Deferred.succeed(outcome, error)
+          return HttpServerResponse.empty()
+        })
+      ).pipe(
+        HttpRouter.serve,
+        Layer.build
+      )
+      const server = yield* HttpServer.HttpServer
+      const port = (server.address as NetAddress.InetAddress).port
+
+      const status = yield* Effect.callback<number | undefined, Error>((resume) => {
+        const req = Http.request({
+          hostname: "127.0.0.1",
+          port,
+          agent: false,
+          path: "/ws",
+          method: "GET",
+          headers: {
+            Connection: "Upgrade",
+            Upgrade: "websocket",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version": "12" // Unsupported version forces handshake rejection.
+          }
+        })
+        req.on("response", (res) => {
+          res.resume()
+          res.on("end", () => resume(Effect.succeed(res.statusCode)))
+        })
+        req.on("error", (error) => resume(Effect.fail(error)))
+        req.end()
+        return Effect.sync(() => req.destroy())
+      })
+      assert.strictEqual(status, 400)
+      assert.isTrue(Socket.SocketError.is(yield* Deferred.await(outcome)))
+    }).pipe(Effect.provide(layerTestWebsocket), Effect.scoped))
 
   it.effect("does not write the HTTP response to an upgraded connection", () =>
     Effect.gen(function*() {

@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -22,7 +22,7 @@ import {
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 import {
@@ -53,7 +53,7 @@ vi.mock("./relayClientInstallDialog", () => ({
 }));
 
 const createProof = vi.fn(() => Effect.succeed("dpop-proof"));
-const dpopSignerLayer = Layer.succeed(
+const layerDpopSigner = Layer.succeed(
   ManagedRelay.ManagedRelayDpopSigner,
   ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("thumbprint"),
@@ -61,18 +61,18 @@ const dpopSignerLayer = Layer.succeed(
   }),
 );
 
-function relayLayer() {
-  const http = remoteHttpClientLayer(globalThis.fetch);
+function layerRelay() {
+  const layerHttp = layerRemoteHttpClient(globalThis.fetch);
   return Layer.mergeAll(
-    http,
+    layerHttp,
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
-    }).pipe(Layer.provideMerge(dpopSignerLayer), Layer.provide(http)),
+    }).pipe(Layer.provideMerge(layerDpopSigner), Layer.provide(layerHttp)),
   );
 }
 
-function registryLayer(options?: {
+function layerRegistry(options?: {
   readonly status?: { readonly status: "available"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
@@ -119,8 +119,8 @@ function registryLayer(options?: {
   );
 }
 
-function services(options?: Parameters<typeof registryLayer>[0]) {
-  return Layer.mergeAll(relayLayer(), registryLayer(options));
+function layerServices(options?: Parameters<typeof layerRegistry>[0]) {
+  return Layer.mergeAll(layerRelay(), layerRegistry(options));
 }
 
 function withServices<A, E>(
@@ -131,9 +131,9 @@ function withServices<A, E>(
     | ManagedRelay.ManagedRelayClient
     | EnvironmentRegistry.EnvironmentRegistry
   >,
-  options?: Parameters<typeof registryLayer>[0],
+  options?: Parameters<typeof layerRegistry>[0],
 ) {
-  return effect.pipe(Effect.provide(services(options)));
+  return effect.pipe(Effect.provide(layerServices(options)));
 }
 
 function bodyText(body: BodyInit | null | undefined): string {
@@ -240,7 +240,6 @@ describe("web cloud link environment client", () => {
         "http://127.0.0.1:3000/api/connect/preferences",
       );
       expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
         publishAgentActivity: true,
       });
@@ -290,7 +289,6 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
         "http://127.0.0.1:3000/api/connect/link-proof",
       );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(bodyText(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
         challenge: "challenge",
         endpoint: {
@@ -341,11 +339,9 @@ describe("web cloud link environment client", () => {
         }),
       );
 
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
         managedTunnelsEnabled: false,
       });
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(bodyText(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
         endpoint: { providerKind: "manual" },
       });

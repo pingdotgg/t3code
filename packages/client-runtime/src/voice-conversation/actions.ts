@@ -17,8 +17,8 @@ import {
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { AsyncResult } from "effect/unstable/reactivity";
-import type { AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
+import type { AtomRegistry } from "effect/reactivity";
 import type { EnvironmentProject, EnvironmentThreadShell } from "../state/shell.ts";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import type { createServerEnvironmentAtoms } from "../state/server.ts";

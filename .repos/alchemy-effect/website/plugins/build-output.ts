@@ -1,8 +1,10 @@
+import { SOCIAL_REDIRECTS } from "../src/social-redirects.ts";
 import type { AstroIntegration } from "astro";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rewriteForPagefind } from "./pagefind-ignore-noise.ts";
+import { rewriteReferenceLinks } from "../src/reference-links.ts";
 
 /** Populated before the sitemap integration runs. */
 export const noindexPaths = new Set();
@@ -78,7 +80,7 @@ export function buildOutputChecks(): AstroIntegration {
             path.join(distPath, htmlFile.slice(1)),
             "utf8",
           );
-          const html = rewriteForPagefind(before);
+          const html = rewriteForPagefind(rewriteReferenceLinks(before));
           if (noindexRegex.test(html)) {
             noindexPaths.add(
               htmlFile.endsWith("/index.html")
@@ -97,6 +99,7 @@ export function buildOutputChecks(): AstroIntegration {
             if (exists === undefined) {
               const clean = link.replace(/\/$/, "");
               exists =
+                Object.hasOwn(SOCIAL_REDIRECTS, clean) ||
                 paths.has(clean) ||
                 paths.has(clean + "/index.html") ||
                 paths.has(clean + ".html") ||

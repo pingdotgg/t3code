@@ -6,7 +6,7 @@ import * as quicksight from "@distilled.cloud/aws/quicksight";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import QuickSightBindingsFunctionLive, {
   QuickSightBindingsFunction,
 } from "./bindings-handler";
@@ -39,7 +39,10 @@ test.provider(
         "AccessDeniedException",
       ]).toContain(error._tag);
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:quicksight", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -66,7 +69,10 @@ test.provider(
         "UnsupportedUserEditionException",
       ]).toContain(error._tag);
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:quicksight", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -88,7 +94,10 @@ test.provider(
         "UnsupportedUserEditionException",
       ]).toContain(error._tag);
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:quicksight", "live"],
+    timeout: 60_000,
+  },
 );
 
 const sharedStack = Core.scratchStack(testOptions, "QuickSightBindings");
@@ -100,118 +109,131 @@ const get = (path: string) =>
 const post = (path: string) =>
   HttpClient.post(`${baseUrl}${path}`).pipe(Effect.flatMap((r) => r.json));
 
-describe("QuickSight Bindings (E2E)", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      if (!SUBSCRIBED) return;
-      yield* Effect.logInfo("QuickSight E2E setup: destroying previous run");
-      yield* sharedStack.destroy();
+describe(
+  "QuickSight Bindings (E2E)",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:quicksight",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        if (!SUBSCRIBED) return;
+        yield* Effect.logInfo("QuickSight E2E setup: destroying previous run");
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo(
-        "QuickSight E2E setup: deploying data source + dataset + dashboard + Lambda",
-      );
-      const { functionUrl } = yield* sharedStack.deploy(
+        yield* Effect.logInfo(
+          "QuickSight E2E setup: deploying data source + dataset + dashboard + Lambda",
+        );
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* QuickSightBindingsFunction;
+          }).pipe(Effect.provide(QuickSightBindingsFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+
+        // Readiness probe — fresh function URLs take seconds to serve 200s.
+        yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(60),
+            ]),
+          }),
+        );
+      }),
+      { timeout: 300_000 },
+    );
+    afterAll(
+      Effect.gen(function* () {
+        if (!SUBSCRIBED) return;
+        yield* sharedStack.destroy();
+      }),
+      { timeout: 300_000 },
+    );
+
+    test.provider.skipIf(!SUBSCRIBED)(
+      "all 9 capabilities initialize in the runtime",
+      () =>
         Effect.gen(function* () {
-          return yield* QuickSightBindingsFunction;
-        }).pipe(Effect.provide(QuickSightBindingsFunctionLive)),
-      );
-
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-
-      // Readiness probe — fresh function URLs take seconds to serve 200s.
-      yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.retry({
-          schedule: Schedule.max([
-            Schedule.fixed("2 seconds"),
-            Schedule.recurs(60),
-          ]),
+          const response = (yield* get("/bindings")) as any;
+          expect(response.bound).toHaveLength(9);
         }),
-      );
-    }),
-    { timeout: 300_000 },
-  );
-  afterAll(
-    Effect.gen(function* () {
-      if (!SUBSCRIBED) return;
-      yield* sharedStack.destroy();
-    }),
-    { timeout: 300_000 },
-  );
+    );
 
-  test.provider.skipIf(!SUBSCRIBED)(
-    "all 9 capabilities initialize in the runtime",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/bindings")) as any;
-        expect(response.bound).toHaveLength(9);
-      }),
-  );
+    test.provider.skipIf(!SUBSCRIBED)(
+      "ListIngestions reads the bound dataset's refresh history",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/ingestions")) as any;
+          expect(typeof response.count).toBe("number");
+        }),
+    );
 
-  test.provider.skipIf(!SUBSCRIBED)(
-    "ListIngestions reads the bound dataset's refresh history",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/ingestions")) as any;
-        expect(typeof response.count).toBe("number");
-      }),
-  );
+    test.provider.skipIf(!SUBSCRIBED)(
+      "CreateIngestion + DescribeIngestion + CancelIngestion round-trip",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* post("/ingestion")) as any;
+          // DIRECT_QUERY dataset → typed 400; SPICE dataset → started + status.
+          if (response.started) {
+            expect(typeof response.id).toBe("string");
+          } else {
+            expect([
+              "InvalidParameterValueException",
+              "ResourceNotFoundException",
+            ]).toContain(response.error);
+          }
+        }),
+    );
 
-  test.provider.skipIf(!SUBSCRIBED)(
-    "CreateIngestion + DescribeIngestion + CancelIngestion round-trip",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* post("/ingestion")) as any;
-        // DIRECT_QUERY dataset → typed 400; SPICE dataset → started + status.
-        if (response.started) {
-          expect(typeof response.id).toBe("string");
-        } else {
-          expect([
-            "InvalidParameterValueException",
-            "ResourceNotFoundException",
-          ]).toContain(response.error);
-        }
-      }),
-  );
+    test.provider.skipIf(!SUBSCRIBED)(
+      "snapshot-job describe bindings surface the typed not-found",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* get("/snapshot-job/typed-not-found")) as any;
+          expect(response.describe).toBe(true);
+          expect(response.result).toBe(true);
+        }),
+    );
 
-  test.provider.skipIf(!SUBSCRIBED)(
-    "snapshot-job describe bindings surface the typed not-found",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* get("/snapshot-job/typed-not-found")) as any;
-        expect(response.describe).toBe(true);
-        expect(response.result).toBe(true);
-      }),
-  );
+    test.provider.skipIf(!SUBSCRIBED)(
+      "StartDashboardSnapshotJob starts (or typed-rejects) a PDF export",
+      () =>
+        Effect.gen(function* () {
+          const response = (yield* post("/snapshot-job")) as any;
+          if (response.started) {
+            expect(typeof response.jobId).toBe("string");
+          } else {
+            expect(typeof response.error).toBe("string");
+          }
+        }),
+    );
 
-  test.provider.skipIf(!SUBSCRIBED)(
-    "StartDashboardSnapshotJob starts (or typed-rejects) a PDF export",
-    () =>
-      Effect.gen(function* () {
-        const response = (yield* post("/snapshot-job")) as any;
-        if (response.started) {
-          expect(typeof response.jobId).toBe("string");
-        } else {
-          expect(typeof response.error).toBe("string");
-        }
-      }),
-  );
-
-  test.provider.skipIf(!SUBSCRIBED)(
-    "embed-URL bindings reach the API with the injected account id",
-    () =>
-      Effect.gen(function* () {
-        const registered = (yield* get("/embed-url")) as any;
-        expect(typeof registered.typed).toBe("string");
-        const anonymous = (yield* get("/embed-url-anon")) as any;
-        expect(
-          anonymous.ok === true || typeof anonymous.error === "string",
-        ).toBe(true);
-      }),
-  );
-});
+    test.provider.skipIf(!SUBSCRIBED)(
+      "embed-URL bindings reach the API with the injected account id",
+      () =>
+        Effect.gen(function* () {
+          const registered = (yield* get("/embed-url")) as any;
+          expect(typeof registered.typed).toBe("string");
+          const anonymous = (yield* get("/embed-url-anon")) as any;
+          expect(
+            anonymous.ok === true || typeof anonymous.error === "string",
+          ).toBe(true);
+        }),
+    );
+  },
+);

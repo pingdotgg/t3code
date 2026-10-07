@@ -215,6 +215,7 @@ export interface Deployment extends Resource<
  * ```
  *
  * @resource
+ * @product Compute
  */
 export const Deployment = Resource<Deployment>("Prisma.Deployment");
 

@@ -21,7 +21,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY ?? 4));

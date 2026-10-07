@@ -141,7 +141,10 @@ testSaas(
       const gone = yield* findByHostname(zoneId, HOST_DEFAULT);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:customhostname", "live"],
+    timeout: 120_000,
+  },
 );
 
 testSaas(
@@ -196,31 +199,39 @@ testSaas(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:customhostname", "live"],
+    timeout: 120_000,
+  },
 );
 
 // `list()` fans out over every zone in the account and skips zones without
 // the SaaS entitlement (typed `SaasQuotaNotAllocated`/`Forbidden`). Without
 // the entitlement on any zone the result is a well-typed empty array — this
 // read-only assertion runs ungated and proves the per-zone skip path.
-test.provider("list returns a well-typed array of custom hostnames", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list returns a well-typed array of custom hostnames",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.CustomHostname.CustomHostname,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.CustomHostname.CustomHostname,
+      );
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const item of all) {
-      expect(typeof item.customHostnameId).toBe("string");
-      expect(typeof item.zoneId).toBe("string");
-      expect(typeof item.hostname).toBe("string");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const item of all) {
+        expect(typeof item.customHostnameId).toBe("string");
+        expect(typeof item.zoneId).toBe("string");
+        expect(typeof item.hostname).toBe("string");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:customhostname", "live"],
+  },
 );
 
 // Entitlement-gated: deploy a custom hostname and assert `list()` enumerates
@@ -259,7 +270,10 @@ testSaas(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:customhostname", "live"],
+    timeout: 120_000,
+  },
 );
 
 testSaas(
@@ -307,5 +321,8 @@ testSaas(
       const gone = yield* findByHostname(zoneId, HOST_REPLACE_B);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:customhostname", "live"],
+    timeout: 180_000,
+  },
 );
