@@ -71,8 +71,16 @@ In **Settings → Scheduled tasks**, choose **On webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
 [T3 Connect](remote-access.md) managed tunnel; after you save the task, copy
-its URL from the editor. Without one, the editor shows only the URL's path.
+its URL from the editor. Without one, combine the path shown in the editor
+with your server's HTTP origin. Use localhost and the server's port for a process
+on the same machine, or a reachable Tailscale or LAN address for another machine.
+T3 Connect is not required for these direct requests.
 **Rotate** replaces the URL and the old one stops working.
+
+You can also ask an agent to create a webhook task in its current thread and pass
+the URL to a background process. A request starts another turn in that thread,
+or queues a follow-up if the agent is already working. The process must keep
+running after the agent's turn ends, and the server must be reachable.
 
 The prompt decides what the agent sees. Placeholders pull values out of the
 request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,

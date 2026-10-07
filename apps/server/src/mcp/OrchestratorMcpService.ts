@@ -237,8 +237,8 @@ function scheduledTaskWorkspaceStrategy(
 
 /**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
- * run it: a webhook's URL carries the secret that starts the task's runs, so
- * only such a caller sees it.
+ * run it: a webhook's URL and path carry the secret that starts the task's runs, so
+ * only such a caller sees them.
  */
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
@@ -251,8 +251,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
-    // A bare path is not a URL anyone can call, so agents never get one to share.
     ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
+    ...(task.webhook === undefined || !mayRun ? {} : { webhookPath: task.webhook.path }),
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),

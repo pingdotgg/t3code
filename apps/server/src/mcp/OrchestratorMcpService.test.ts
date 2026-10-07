@@ -1590,7 +1590,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       lastRunError: null,
       runCount: 0,
       webhook: {
-        path: "/hooks/scheduled-task/secret",
+        path: "/api/hooks/scheduled-task/secret",
         url: "https://t3.example/hooks/secret",
         hasSecret: false,
       },
@@ -1636,7 +1636,29 @@ describe("OrchestratorMcpService provider resolution", () => {
         ),
       );
 
-    it.effect("hides a webhook URL from a caller below the task's modes", () =>
+    it.effect("lists and updates a direct webhook without a managed tunnel", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const direct = task({
+          webhook: { path: "/api/hooks/scheduled-task/secret", url: null, hasSecret: false },
+        });
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service([direct], null, upserted)),
+        );
+        const listed = yield* mcp.listScheduledTasks(supervisedClient, { projectId });
+        assert.equal(listed.tasks[0]?.webhookPath, direct.webhook?.path);
+        assert.equal(listed.tasks[0]?.webhookUrl, undefined);
+        const updated = yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: direct.id,
+          enabled: false,
+        });
+        assert.equal(updated.webhookPath, direct.webhook?.path);
+        assert.equal(updated.webhookUrl, undefined);
+        assert.equal(yield* Ref.get(upserted), 1);
+      }),
+    );
+
+    it.effect("hides webhook URLs and paths from a caller below the task's modes", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
         const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
@@ -1656,10 +1678,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           listed.tasks.map((summary) => summary.webhookUrl),
           [undefined, "https://t3.example/hooks/secret"],
         );
+        assert.deepEqual(
+          listed.tasks.map((summary) => summary.webhookPath),
+          [undefined, "/api/hooks/scheduled-task/secret"],
+        );
       }),
     );
 
-    it.effect("hides a webhook URL from a thread whose turn has ended", () =>
+    it.effect("hides webhook URLs and paths from a thread whose turn has ended", () =>
       Effect.gen(function* () {
         const callerId = ThreadId.make("thread:scheduled-ended");
         const shell = liveThreadShell(callerId, { activeRunId: null });
@@ -1706,10 +1732,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         );
         assert.equal(listed.tasks[0]?.webhookUrl, undefined);
+        assert.equal(listed.tasks[0]?.webhookPath, undefined);
       }),
     );
 
-    it.effect("never shows a read-only client a webhook URL", () =>
+    it.effect("never shows a read-only client webhook URLs or paths", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
         const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
@@ -1725,6 +1752,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(service([task({})], null, upserted)),
         );
         assert.equal(listed.tasks[0]?.webhookUrl, undefined);
+        assert.equal(listed.tasks[0]?.webhookPath, undefined);
       }),
     );
 
@@ -1743,6 +1771,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         const listed = yield* mcp.listScheduledTasks(supervisedClient, { projectId });
         assert.equal(listed.tasks[0]?.webhookUrl, undefined);
+        assert.equal(listed.tasks[0]?.webhookPath, undefined);
         const error = yield* mcp
           .updateScheduledTask(supervisedClient, {
             scheduledTaskId: bound.id,
@@ -1803,6 +1832,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+        assert.equal(updated.webhookPath, undefined);
       }),
     );
   });

@@ -441,8 +441,9 @@ const client = McpSchema.McpServerClient.of({
 /** Build a persisted-looking ScheduledTask from an upsert input for the in-memory stub. */
 function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask {
   const timestamp = IsoDateTime.make("2026-07-01T09:00:00.000Z");
+  const id = input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId ?? "stub"}`);
   return {
-    id: input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId ?? "stub"}`),
+    id,
     title: input.title,
     prompt: input.prompt,
     enabled: input.enabled,
@@ -475,6 +476,15 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
     lastRunStatus: "never",
     lastRunError: null,
     runCount: 0,
+    ...(input.schedule.type === "webhook"
+      ? {
+          webhook: {
+            path: `/api/hooks/${encodeURIComponent(id)}/test-token`,
+            url: null,
+            hasSecret: input.schedule.signature != null,
+          },
+        }
+      : {}),
   };
 }
 
@@ -1545,6 +1555,23 @@ describe("orchestrator MCP toolkit", () => {
               deleted: true,
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            // Without a managed tunnel, agents still receive the direct path
+            // through the MCP output schema and bind the webhook to this thread.
+            const webhookCall = yield* invoke("schedule_task", {
+              prompt: "Investigate the simulation failure: {{body.error}}",
+              schedule: { type: "webhook" },
+              clientRequestId: "schedule-local-webhook",
+            });
+            expect(webhookCall.isError).toBe(false);
+            const storedWebhook = (yield* Ref.get(scheduledStore))[0]!;
+            expect(webhookCall.structuredContent).toMatchObject({
+              scheduledTaskId: storedWebhook.id,
+              boundThreadId: parentThreadId,
+              webhookPath: `/api/hooks/${encodeURIComponent(storedWebhook.id)}/test-token`,
+            });
+            expect(webhookCall.structuredContent).not.toHaveProperty("webhookUrl");
+            yield* invoke("delete_scheduled_task", { scheduledTaskId: storedWebhook.id });
 
             // OpenCode 1.15 has emitted this exact nested-object-as-JSON-string
             // shape. Decode it at the MCP boundary rather than failing a task
