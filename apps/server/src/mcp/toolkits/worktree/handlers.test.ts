@@ -16,6 +16,7 @@ import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdap
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 import * as WorktreeToolkitHandlers from "./handlers.ts";
 import { WorktreeToolkit } from "./tools.ts";
@@ -104,7 +105,7 @@ it.effect.each([
                   providerSessionId: "local-session",
                 },
             client: test.explicit
-              ? { sessionId: "client", label: "fixture", runtimeModeCeiling: "full-access" }
+              ? { sessionId: "client", label: "fixture", access: "full-access" }
               : undefined,
             capabilities: new Set<McpInvocationContext.McpCapability>([
               "orchestration",
@@ -127,8 +128,7 @@ it.effect.each([
         );
     }).pipe(
       Effect.provide(
-        McpServer.toolkit(WorktreeToolkit).pipe(
-          Layer.provide(WorktreeToolkitHandlers.layer),
+        McpHttpServer.toolkitRegistration(WorktreeToolkit, WorktreeToolkitHandlers.layer).pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(dependencies),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -59,6 +60,7 @@ function layerFor(input: {
         }),
       ),
     ),
+    Layer.provideMerge(NodeCrypto.layer),
   );
 }
 
@@ -80,7 +82,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
     });
     assert.deepEqual(diffCheckpoints.mock.calls[0]?.[0], {
       cwd: "/repo",
-      fromCheckpointRef: checkpointRefForScopeOrdinal({
+      fromCheckpointRef: yield* checkpointRefForScopeOrdinal({
         scopeId: firstScopeId,
         ordinalWithinScope: 0,
       }),

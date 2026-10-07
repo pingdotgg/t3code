@@ -7,6 +7,7 @@ import {
   ThreadId,
   type DeviceServiceState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -135,6 +136,7 @@ const fixture = Effect.fn("fixture")(function* (
     undefined,
     installTool,
   ).pipe(
+    Effect.provide(NodeCrypto.layer),
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettings.ServerSettingsService,
@@ -482,6 +484,7 @@ it.effect.each(["shutdown", "close"] as const)(
         }),
       );
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
         Effect.provideService(HttpClient.HttpClient, http),
       );
       const input = { threadId, deviceId, platform: "ios" as const };
@@ -574,6 +577,7 @@ it.effect.each([
         }),
       );
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
         Effect.provideService(HttpClient.HttpClient, http),
       );
       yield* service.list;

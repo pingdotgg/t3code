@@ -46,8 +46,10 @@ import {
   latestProviderTurnForAttempt,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
+  ProviderInteractionMode,
   type ProviderSessionId,
   RunId,
+  RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
   type TurnItemId,
@@ -86,6 +88,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
   emptyProjection,
@@ -187,6 +190,22 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+/** The command's thread runs above the modes its sender may touch (see `DispatchModeLimit`). */
+export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
+  "OrchestratorThreadAboveModeLimitError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    mode: Schema.Literals(["runtime", "interaction"]),
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} now runs in ${this.runtimeMode}/${this.interactionMode} mode, above what this caller may change.`;
+  }
+}
+
 export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
   "OrchestratorCommandPreviouslyRejectedError",
   {
@@ -236,6 +255,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -3418,6 +3438,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /** Fails when a limited sender's command would touch a thread running above its limit. */
+  const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
+    function* (
+      command: OrchestrationV2ServerCommand,
+      threadId: ThreadId,
+      modes: {
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      },
+    ) {
+      const limit = yield* DispatchModeLimit;
+      const exceeded = limit === undefined ? undefined : exceededDispatchModeLimit(limit, modes);
+      if (limit === undefined || exceeded === undefined) return;
+      const refusal = {
+        threadId,
+        mode: exceeded,
+        runtimeMode: modes.runtimeMode,
+        interactionMode: modes.interactionMode,
+      };
+      if (limit.refused !== undefined) yield* Ref.set(limit.refused, refusal);
+      return yield* new OrchestratorThreadAboveModeLimitError({
+        commandId: command.commandId,
+        ...refusal,
+      });
+    },
+  );
+
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -3448,6 +3495,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    // The source is not under this command's lock, so check the modes this
+    // command copies, not an earlier read the source's user could outrun.
+    yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
 
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 
@@ -3536,6 +3586,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    // The source is not under this command's lock, so check the modes this
+    // command copies, not an earlier read the source's user could outrun.
+    yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
     const targetProjection = yield* projectionStore
       .getThreadRecords(command.targetThreadId, ["contextTransfers"])
       .pipe(
@@ -10420,6 +10473,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
+    // A limited sender checked these modes before dispatching; the thread's
+    // user may have raised them since, and only here can they not change.
+    const limit = yield* DispatchModeLimit;
+    if (limit !== undefined) {
+      // A fork or merge-back source is not under this lock: its dispatch
+      // checks the copy it reads instead.
+      const threadId = commandThreadId(command);
+      const shell = yield* projectionStore
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
@@ -10439,6 +10505,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {
+          // Refused like the check above: nothing recorded, so the same command
+          // can go through once the thread's user lowers it again.
+          if (cause._tag === "OrchestratorThreadAboveModeLimitError") return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({
