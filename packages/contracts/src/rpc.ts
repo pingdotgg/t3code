@@ -353,6 +353,11 @@ import {
   PluginRemoveResult,
 } from "./pluginCatalog.ts";
 import {
+  PluginSettingsInput,
+  PluginSettingsUpdateInput,
+  PluginSettingsValues,
+} from "./pluginSettings.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -535,6 +540,9 @@ export const WS_METHODS = {
   pluginsDisable: "plugins.disable",
   pluginsRemove: "plugins.remove",
   pluginsResume: "plugins.resume",
+  // Plugin setting values (gated on the `pluginSettings` environment capability)
+  pluginsSettingsSubscribe: "plugins.settings.subscribe",
+  pluginsSettingsUpdate: "plugins.settings.update",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1866,7 +1874,10 @@ const WsPluginsDisableRpc = Rpc.make(WS_METHODS.pluginsDisable, {
   error: pluginRpcError,
 });
 
-/** Disables and forgets the installation; the directory is left untouched. */
+/**
+ * Disables and forgets the installation and deletes its saved settings and
+ * storage. The directory is left untouched.
+ */
 const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
   payload: PluginInstallationInput,
   success: PluginRemoveResult,
@@ -1877,6 +1888,21 @@ const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
 const WsPluginsResumeRpc = Rpc.make(WS_METHODS.pluginsResume, {
   payload: PluginInstallationInput,
   success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** The installation's saved values now, then after every change; fails `not-found` once it is removed. */
+const WsPluginsSettingsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSettingsSubscribe, {
+  payload: PluginSettingsInput,
+  success: PluginSettingsValues,
+  error: pluginRpcError,
+  stream: true,
+});
+
+/** Saves or clears values; all changes are checked before any is saved. Never echoes a secret. */
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsValues,
   error: pluginRpcError,
 });
 
@@ -1988,6 +2014,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsDisableRpc,
   WsPluginsRemoveRpc,
   WsPluginsResumeRpc,
+  WsPluginsSettingsSubscribeRpc,
+  WsPluginsSettingsUpdateRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

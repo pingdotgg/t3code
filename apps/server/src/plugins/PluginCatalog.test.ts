@@ -159,6 +159,7 @@ const makeStubSupervisor = Effect.gen(function* () {
         registrations.has(pluginId) ? Option.some({ _tag: "idle" as const }) : Option.none(),
       ),
     subscribe: PubSub.subscribe(events),
+    serveHostMethod: () => Effect.void,
   });
   return { service, registrations, invoked, holds };
 });

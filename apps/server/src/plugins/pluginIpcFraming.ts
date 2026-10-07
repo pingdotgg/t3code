@@ -16,6 +16,9 @@ export const DEFAULT_PLUGIN_IPC_MAX_BYTES = 1024 * 1024;
 /** Largest per-message bound the server may be configured with. */
 export const PLUGIN_IPC_MAX_BYTES_LIMIT = 16 * 1024 * 1024;
 
+/** Host calls one child may have waiting for an answer; the child and the server refuse more. */
+export const PLUGIN_MAX_HOST_CALLS = 16;
+
 /**
  * Bounds the bytes of complete lines a reader holds before handling them.
  * `hold` pauses the source once `maxBytes` are held; `release` resumes it

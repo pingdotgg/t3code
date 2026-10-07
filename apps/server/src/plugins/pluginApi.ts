@@ -53,8 +53,32 @@ export type PluginEventHandler = (
   event: PluginEvent,
   context: PluginHandlerContext,
 ) => void | Promise<void>;
+/**
+ * Reads the settings declared under `settings` in the manifest. Present with
+ * the `settings` capability.
+ */
+interface PluginSettingsApi {
+  /**
+   * The saved value of a declared setting, else its default, else undefined.
+   * A secret resolves to its saved text. Rejects for an undeclared key.
+   */
+  get(key: string): Promise<string | number | boolean | undefined>;
+}
 
-interface PluginProposedApi {
+/**
+ * Small JSON values the plugin keeps between runs, private to this
+ * installation and deleted when it is removed. Bounded: keys up to 128
+ * characters, values up to 64 KiB of JSON, 256 keys and 1 MiB in total; a
+ * write past a bound rejects. Present with the `settings` capability.
+ */
+interface PluginStorageApi {
+  get(key: string): Promise<PluginJson | undefined>;
+  set(key: string, value: PluginJson): Promise<void>;
+  delete(key: string): Promise<void>;
+  keys(): Promise<ReadonlyArray<string>>;
+}
+
+export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
    * plugin; names starting with `t3.` are reserved.
@@ -69,6 +93,8 @@ interface PluginProposedApi {
    * and ignore event types you do not know.
    */
   onEvent(handler: PluginEventHandler): PluginDisposable;
+  readonly settings: PluginSettingsApi | undefined;
+  readonly storage: PluginStorageApi | undefined;
 }
 
 export interface PluginContext {

@@ -76,6 +76,7 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PluginInstallations.ts";
 import Migration0062 from "./Migrations/062_PluginEventCursors.ts";
+import Migration0063 from "./Migrations/063_PluginSettings.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -152,6 +153,7 @@ export const migrationEntries = [
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
   [61, "PluginInstallations", Migration0061],
   [62, "PluginEventCursors", Migration0062],
+  [63, "PluginSettings", Migration0063],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -22,6 +22,17 @@
  * point reaches a caller. The supervisor owns a stopping process until it has
  * exited, even if the caller that disabled it goes away.
  *
+ * A plugin can also call the server: capabilities serve host methods (such
+ * as `settings.get`) with `serveHostMethod`, and the supervisor runs each
+ * call off the child's read loop, at most `PLUGIN_MAX_HOST_CALLS` at a time
+ * per child. Host calls belong to the generation that made them: once it is
+ * revoked or its process exits, new calls are refused, calls being served
+ * are interrupted (disable returns only after they have ended), and no
+ * result reaches the child. Answers wait while the child has more than
+ * `maxMessageBytes` of earlier messages unread, and so does the read loop
+ * before it takes the next call, so a child that stops reading stops being
+ * read instead of growing the server's write buffer.
+ *
  * Plugins are trusted OS-user code. The process boundary protects the
  * server's availability, not its data.
  */
@@ -44,6 +55,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   decodePluginChildMessage,
@@ -56,6 +68,7 @@ import {
   DEFAULT_PLUGIN_IPC_MAX_BYTES,
   PLUGIN_IPC_FD,
   PLUGIN_IPC_MAX_BYTES_LIMIT,
+  PLUGIN_MAX_HOST_CALLS,
   makeLineDecoder,
   makeReadBudget,
 } from "./pluginIpcFraming.ts";
@@ -199,6 +212,24 @@ export type PluginInvokeError =
   | PluginBusyError
   | PluginPayloadTooLargeError;
 
+/** A host method's refusal; `message` reaches the plugin, so it must not carry secrets. */
+export class PluginHostCallError extends Schema.TaggedError<PluginHostCallError>()(
+  "PluginHostCallError",
+  { message: Schema.String },
+) {}
+
+/**
+ * Serves one host method for the plugin whose registration made the call.
+ * The call is interrupted when that generation is revoked; a method that
+ * writes runs `admitted` right before committing, after any wait.
+ */
+export type PluginHostMethod = (call: {
+  readonly registration: PluginRegistration;
+  readonly input: Schema.Json;
+  /** Fails once the calling generation is revoked or its process has exited. */
+  readonly admitted: Effect.Effect<void, PluginHostCallError>;
+}) => Effect.Effect<Schema.Json, PluginHostCallError>;
+
 export type PluginSupervisorEvent =
   | { readonly _tag: "StateChanged"; readonly pluginId: PluginId; readonly state: PluginHostState }
   | {
@@ -243,6 +274,14 @@ interface Child {
   stderrTail: string;
   /** V8 reported reaching the heap limit; its message can scroll out of the tail. */
   outOfMemory: boolean;
+  /** Host calls from this child still being served. */
+  hostCalls: number;
+  /** Owns the fibers serving this child's host calls; closed on revocation and exit. */
+  readonly hostWork: Scope.Closeable;
+  /** One host-call answer at a time waits for the child to read earlier messages. */
+  readonly replies: Semaphore.Semaphore;
+  /** Set while answers wait for the child to read; logged once per episode. */
+  backedUp: boolean;
 }
 
 interface Entry {
@@ -257,6 +296,7 @@ interface Entry {
 }
 
 const STDERR_TAIL_BYTES = 4096;
+const STOPPED_MESSAGE = "The plugin was stopped.";
 // A grandchild that inherited stderr can hold it open after the plugin exits.
 const DRAIN_TIMEOUT = Duration.millis(250);
 
@@ -316,6 +356,11 @@ export class PluginSupervisor extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Answers plugins' `method` calls with `handler` until the scope closes. One handler per method. */
+    readonly serveHostMethod: (
+      method: string,
+      handler: PluginHostMethod,
+    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/plugins/PluginSupervisor") {}
 
@@ -350,6 +395,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
   if (invocation.entrypoint === undefined) childEnvironment.NODE_OPTIONS = heapFlag;
 
   const entries = new Map<PluginId, Entry>();
+  const hostMethods = new Map<string, PluginHostMethod>();
   /** Every child process not yet exited, including ones whose plugin was disabled. */
   const children = new Set<Child>();
   /** Completes once a disabled plugin's processes have all exited. */
@@ -418,6 +464,125 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     );
   });
 
+  const hasRoom = (child: Child) =>
+    child.channel.destroyed || child.channel.writableLength < maxMessageBytes;
+
+  /** Waits until the child has read enough of what was sent to it, or can no longer read. */
+  const awaitRoom = (child: Child) =>
+    Effect.suspend(() => {
+      if (hasRoom(child) || child.stopping) return Effect.void;
+      const waiting = Effect.callback<void>((resume) => {
+        const channel = child.channel;
+        const done = () => {
+          cleanup();
+          resume(Effect.void);
+        };
+        const cleanup = () => {
+          channel.off("drain", done);
+          channel.off("close", done);
+        };
+        channel.on("drain", done);
+        channel.on("close", done);
+        if (hasRoom(child)) done();
+        return Effect.sync(cleanup);
+      }).pipe(Effect.raceFirst(Deferred.await(child.exited)));
+      if (child.backedUp) return waiting;
+      child.backedUp = true;
+      return Effect.logWarning("Plugin is not reading the server's answers; waiting", {
+        pluginId: child.pluginId,
+        unreadBytes: child.channel.writableLength,
+      }).pipe(Effect.andThen(waiting));
+    }).pipe(Effect.ensuring(Effect.sync(() => (child.backedUp = !hasRoom(child)))));
+
+  const hostCallFailed = (requestId: number, message: string): PluginHostMessage => ({
+    _tag: "HostCallFailed",
+    requestId,
+    message: message.slice(0, 2000),
+  });
+
+  /** Sends a host call's answer to a live child; a revoked generation only learns it was stopped. */
+  const sendAnswer = (child: Child, requestId: number, answer: PluginHostMessage) => {
+    if (!isAlive(child)) return;
+    if (child.stopping) {
+      // Never wait for a stopping child; it is killed if it does not exit.
+      if (hasRoom(child)) write(child, hostCallFailed(requestId, STOPPED_MESSAGE));
+      return;
+    }
+    const unsent = write(child, answer);
+    if (unsent)
+      write(
+        child,
+        hostCallFailed(
+          requestId,
+          unsent._tag === "tooLarge"
+            ? `The answer exceeds ${maxMessageBytes} bytes.`
+            : "The answer is not JSON.",
+        ),
+      );
+  };
+
+  const answer = (child: Child, requestId: number, message: PluginHostMessage) =>
+    child.replies.withPermit(
+      awaitRoom(child).pipe(
+        Effect.andThen(Effect.sync(() => sendAnswer(child, requestId, message))),
+      ),
+    );
+
+  const outcomeMessage = (
+    requestId: number,
+    outcome: Exit.Exit<Schema.Json, PluginHostCallError>,
+  ): PluginHostMessage =>
+    Exit.isSuccess(outcome)
+      ? { _tag: "HostCallSucceeded", requestId, value: outcome.value }
+      : hostCallFailed(
+          requestId,
+          Exit.findErrorOption(outcome).pipe(
+            Option.match({
+              onNone: () => "The server could not answer.",
+              onSome: (error) => error.message,
+            }),
+          ),
+        );
+
+  /** Whether host calls from `child` may still start or commit. */
+  const isAdmitted = (entry: Entry, child: Child) =>
+    !entry.removed && !child.stopping && entry.child === child && isAlive(child);
+
+  /** Runs a host call outside the read loop, owned by the child's generation. */
+  const serveHostCall = (
+    entry: Entry,
+    child: Child,
+    requestId: number,
+    method: string,
+    input: Schema.Json,
+  ) => {
+    const refuse = (message: string) =>
+      answer(child, requestId, hostCallFailed(requestId, message));
+    if (!isAdmitted(entry, child)) return refuse(STOPPED_MESSAGE);
+    const handler = hostMethods.get(method);
+    if (!handler) return refuse(`This server has no method "${method}".`);
+    if (child.hostCalls >= PLUGIN_MAX_HOST_CALLS)
+      return refuse(`${PLUGIN_MAX_HOST_CALLS} calls to the server are already in flight.`);
+    child.hostCalls++;
+    const admitted = Effect.suspend(() =>
+      isAdmitted(entry, child)
+        ? Effect.void
+        : Effect.fail(new PluginHostCallError({ message: STOPPED_MESSAGE })),
+    );
+    return Effect.suspend(() =>
+      handler({ registration: entry.registration, input, admitted }),
+    ).pipe(
+      Effect.exit,
+      Effect.flatMap((outcome) => answer(child, requestId, outcomeMessage(requestId, outcome))),
+      Effect.onInterrupt(() =>
+        Effect.sync(() => sendAnswer(child, requestId, hostCallFailed(requestId, STOPPED_MESSAGE))),
+      ),
+      Effect.ensuring(Effect.sync(() => child.hostCalls--)),
+      Effect.forkIn(child.hostWork, { startImmediately: true }),
+      Effect.asVoid,
+    );
+  };
+
   const handleLine = Effect.fnUntraced(function* (entry: Entry, child: Child, line: string) {
     const decoded = decodePluginChildMessage(line);
     if (Exit.isFailure(decoded)) return kill(child, "sent a malformed IPC message.");
@@ -467,6 +632,10 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         return;
       case "Deactivated":
         return;
+      case "HostCall":
+        // A child that does not read its answers is not read either.
+        yield* awaitRoom(child);
+        return yield* serveHostCall(entry, child, message.requestId, message.method, message.input);
     }
   });
 
@@ -476,6 +645,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     code: number | null,
     signal: string | null,
   ) {
+    // Host work of a dead process ends before anything else can run for this plugin.
+    yield* Scope.close(child.hostWork, Exit.void);
     // Anything still unread from the dead process is discarded, including a stderr
     // that a process it started still holds open after the drain timeout.
     child.channel.destroy();
@@ -530,6 +701,10 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       killReason: undefined,
       stderrTail: "",
       outOfMemory: false,
+      hostCalls: 0,
+      hostWork: Scope.forkUnsafe(fibers, "parallel"),
+      replies: Semaphore.makeUnsafe(1),
+      backedUp: false,
     };
     // Stream errors follow the child's death; its exit carries the outcome. A
     // child that drops fd 3 but lives on is killed when a call cannot settle.
@@ -655,6 +830,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         apiVersion: manifest.apiVersion,
         entryPath,
         proposedApi: manifest.proposedApi,
+        capabilities: manifest.capabilities,
         maxMessageBytes,
       });
       const activated = yield* Deferred.await(child.ready).pipe(
@@ -778,6 +954,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     const child = entry.child;
     if (!child || Deferred.isDoneUnsafe(child.exited)) return;
     revokeChild(entry, child);
+    // The revoked generation's host work ends before its plugin is asked to deactivate.
+    yield* Scope.close(child.hostWork, Exit.void);
     write(child, { _tag: "Deactivate" });
     const exited = yield* Deferred.await(child.exited).pipe(Effect.timeoutOption(stopGrace));
     if (Option.isNone(exited)) {
@@ -865,6 +1043,14 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     invoke,
     state: (pluginId) => Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
     subscribe: PubSub.subscribe(events),
+    serveHostMethod: (method, handler) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          if (hostMethods.has(method)) throw new Error(`Host method ${method} is already served.`);
+          hostMethods.set(method, handler);
+        }),
+        () => Effect.sync(() => hostMethods.delete(method)),
+      ),
   });
 });
 

@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PLUGIN_TOOL_LIMITS, PluginToolDeclaration } from "./pluginTools.ts";
+import { PluginSettingsDeclaration } from "./pluginSettingFields.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -67,6 +68,8 @@ export const PluginManifest = Schema.Struct({
       Schema.isMaxLength(PLUGIN_TOOL_LIMITS.maxToolsPerPlugin),
     ),
   ),
+  /** Fields users can set for this plugin; needs the `settings` capability. */
+  settings: Schema.optionalKey(PluginSettingsDeclaration),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

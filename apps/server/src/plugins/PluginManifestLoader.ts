@@ -2,9 +2,11 @@ import {
   PLUGIN_API_VERSION,
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
+  type PluginInstallationId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +18,7 @@ import { preparePluginTools } from "./pluginToolDeclarations.ts";
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
 const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
   PLUGIN_EVENTS_CAPABILITY,
+  PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
 ]);
 
@@ -39,6 +42,8 @@ export interface PluginRegistration {
   readonly directory: string;
   /** Real path of the entry module, inside `directory`. */
   readonly entryPath: string;
+  /** The catalogue installation this registration runs, set when the catalogue enables it. */
+  readonly installationId?: PluginInstallationId;
 }
 
 /** Declared tools need the capability and the proposed `handle` API, and must compile. */
@@ -94,6 +99,14 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
     return yield* fail(`the "${PLUGIN_EVENTS_CAPABILITY}" capability needs "proposedApi": true.`);
   const toolProblem = checkTools(manifest);
   if (toolProblem !== undefined) return yield* fail(toolProblem);
+  const hasSettings = manifest.capabilities.includes(PLUGIN_SETTINGS_CAPABILITY);
+  if (manifest.settings !== undefined && !hasSettings)
+    return yield* fail(
+      `it declares settings without the "${PLUGIN_SETTINGS_CAPABILITY}" capability.`,
+    );
+  // The settings API is still proposed, so it only exists with the opt-in.
+  if (hasSettings && !manifest.proposedApi)
+    return yield* fail(`the "${PLUGIN_SETTINGS_CAPABILITY}" capability needs "proposedApi": true.`);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
