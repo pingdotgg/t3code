@@ -58,7 +58,7 @@ const fakeAppImage = (canMount = true) => {
     appImage,
     [
       "#!/bin/sh",
-      'if [ "$1" = --appimage-extract ]; then cp -R ' + `'${image}'` + " squashfs-root; exit 0; fi",
+      `if [ "$1" = --appimage-extract ]; then cp -R '${image}' squashfs-root; exit 0; fi`,
       '[ "$1" = --appimage-mount ] || exit 9',
       '[ -n "$APPIMAGE_EXTRACT_AND_RUN" ] && exit 8',
       canMount ? `echo '${image}'` : 'echo "Cannot mount AppImage"; exit 1',
@@ -166,5 +166,16 @@ describe("renderCliShim", () => {
     );
     expect(bare).toEqual([]);
     expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.t3\\bin\\t3.cmd"');
+  });
+
+  it("switches the Windows console to UTF-8 only when a path needs it", () => {
+    const ascii = renderCliShim({
+      target: { kind: "windows", executable: "C:\\T3\\T3 Code.exe", entry: "C:\\T3\\bin.mjs" },
+      shimPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
+      t3Home: "C:\\Users\\me\\.t3",
+    });
+    // A Ctrl-C that ends the batch would leave the console switched.
+    expect(ascii).not.toContain("chcp");
+    expect(ascii.split("\r\n")).toContain("exit /b %t3_exit%");
   });
 });

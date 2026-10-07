@@ -45,26 +45,36 @@ export const renderCliShim = (input: {
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
+    const utf8 = [target.executable, target.entry, input.shimPath, input.t3Home].some((value) =>
+      [...value].some((character) => character.codePointAt(0)! > 0x7f),
+    );
+    const restore = utf8 ? ["chcp %t3_codepage% >nul"] : [];
     return [
       "@echo off",
       `rem ${MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
-      // The file is UTF-8; read the paths below in UTF-8, then restore the console's code page.
-      `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
-      "chcp 65001 >nul",
+      // The file is UTF-8. Only a non-ASCII path needs the console switched to
+      // UTF-8 to read it; a Ctrl-C that ends the batch skips the restore, so the
+      // switch is left out for the common all-ASCII install.
+      ...(utf8
+        ? [
+            `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
+            "chcp 65001 >nul",
+          ]
+        : []),
       `set "T3CODE_CLI_PATH=${cmdText(input.shimPath)}"`,
       `if not defined T3CODE_HOME set "T3CODE_HOME=${cmdText(input.t3Home)}"`,
       'set "ELECTRON_RUN_AS_NODE=1"',
       // A goto, not a parenthesized block: "Program Files (x86)" would close the block early.
       `if exist ${cmdWord(target.executable)} goto run`,
-      "chcp %t3_codepage% >nul",
+      ...restore,
       `echo ${MOVED} 1>&2`,
       "exit /b 127",
       ":run",
       `${cmdWord(target.executable)} ${cmdWord(target.entry)} %*`,
       'set "t3_exit=%ERRORLEVEL%"',
-      "chcp %t3_codepage% >nul",
+      ...restore,
       "exit /b %t3_exit%",
       "",
     ].join("\r\n");
