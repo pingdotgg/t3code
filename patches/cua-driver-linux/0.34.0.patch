@@ -1,0 +1,997 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-sdk/src/embedded.rs b/libs/cua-driver/rust/crates/cua-driver-sdk/src/embedded.rs
+index 1883e39..d599610 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-sdk/src/embedded.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-sdk/src/embedded.rs
+@@ -860,6 +860,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
+                 | "PROGRAMDATA"
+                 | "DISPLAY"
+                 | "WAYLAND_DISPLAY"
++                | "CUA_DRIVER_RS_ENABLE_WAYLAND"
+                 | "XDG_RUNTIME_DIR"
+                 | "XDG_SESSION_TYPE"
+                 | "DBUS_SESSION_BUS_ADDRESS"
+@@ -1306,6 +1307,41 @@ mod tests {
+             .any(|variable| variable.value == "forged-lock"));
+     }
+ 
++    #[test]
++    fn wayland_backend_opt_in_reaches_embedded_driver() {
++        let name = "CUA_DRIVER_RS_ENABLE_WAYLAND";
++        assert!(allowed_environment_name(name));
++        let inherited = [(name.to_owned(), "1".to_owned())];
++        let values = merge_safe_environment(inherited.clone(), &[]);
++        assert!(values
++            .iter()
++            .any(|variable| variable.name == name && variable.value == "1"));
++
++        // Hosts can opt in without changing their own process environment.
++        let enabled = EmbeddedEnvironmentVariable {
++            name: name.into(),
++            value: "1".into(),
++        };
++        let values = merge_safe_environment(std::iter::empty(), &[enabled]);
++        assert!(values
++            .iter()
++            .any(|variable| variable.name == name && variable.value == "1"));
++
++        // An explicit opt-out still wins over the inherited opt-in.
++        let disabled = EmbeddedEnvironmentVariable {
++            name: name.into(),
++            value: "0".into(),
++        };
++        let values = merge_safe_environment(inherited, &[disabled]);
++        assert!(values
++            .iter()
++            .any(|variable| variable.name == name && variable.value == "0"));
++        assert!(!allowed_environment_name("LD_PRELOAD"));
++        assert!(!allowed_environment_name(
++            "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
++        ));
++    }
++
+     #[test]
+     fn interactive_linux_session_environment_is_inherited() {
+         let values = merge_safe_environment(
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/overlay.rs b/libs/cua-driver/rust/crates/platform-linux/src/overlay.rs
+index 1d35cd5..06035e6 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/overlay.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/overlay.rs
+@@ -483,12 +483,51 @@ fn start_shell_helper_idle_watch() {
+     });
+ }
+ 
++// GNOME's helper cursor is a stage actor, not a child of the target window.
++// Until the helper can bind it to a surface, only desktop actions may draw it.
++#[cfg(target_os = "linux")]
++static SHELL_HELPER_DESKTOP_ACTIONS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
++
++#[cfg(target_os = "linux")]
++fn shell_helper_action_visible(actions: &mut HashMap<String, bool>, msg: &OverlayMsg) -> bool {
++    match msg {
++        OverlayMsg::Cmd(command) => {
++            match &command.cmd {
++                OverlayCommand::BeginAction { target, .. } => {
++                    actions.insert(
++                        command.key.clone(),
++                        target.is_some_and(|target| target.as_str() == "desktop"),
++                    );
++                }
++                OverlayCommand::EndAction(_) => {
++                    actions.remove(&command.key);
++                }
++                _ => {}
++            }
++            actions.get(&command.key).copied().unwrap_or(false)
++        }
++        OverlayMsg::Remove(key) | OverlayMsg::Revive(key) => {
++            actions.remove(key);
++            false
++        }
++        OverlayMsg::Wake => false,
++    }
++}
++
+ #[cfg(target_os = "linux")]
+ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
+     let backend = wayland_overlay_backend();
+     match backend {
+         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
+             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
++            let visible = {
++                let mut actions = SHELL_HELPER_DESKTOP_ACTIONS.lock().unwrap();
++                shell_helper_action_visible(actions.get_or_insert_with(HashMap::new), msg)
++            };
++            if !visible {
++                crate::wayland::shell_helper::hide_cursor();
++                return backend;
++            }
+             if shell_helper_surface_event(msg, Instant::now()) {
+                 if let OverlayMsg::Cmd(command) = msg {
+                     dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
+@@ -533,6 +572,9 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
+         }
+         OverlayCommand::EndAction(action) if semantic => {
+             crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
++            // The foreground transaction has restored the user's app. Leaving
++            // the stage-wide cursor visible would attribute input to that app.
++            crate::wayland::shell_helper::hide_cursor();
+         }
+         OverlayCommand::SetSessionLabel(label) if semantic => {
+             crate::wayland::shell_helper::set_session_label(
+@@ -5323,6 +5365,37 @@ fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<Overlay
+ mod shell_helper_surface_tests {
+     use super::*;
+ 
++    #[test]
++    fn window_actions_do_not_draw_a_stage_cursor_over_other_apps() {
++        let mut actions = HashMap::new();
++        let begin = |target| {
++            OverlayMsg::Cmd(KeyedOverlayCommand {
++                key: "probe".into(),
++                cmd: OverlayCommand::BeginAction {
++                    action: CursorAction::Click,
++                    delivery: None,
++                    target: Some(target),
++                },
++            })
++        };
++        assert!(!shell_helper_action_visible(
++            &mut actions,
++            &begin(cua_driver_contract::cursor::CursorTarget::Ax)
++        ));
++        assert!(!shell_helper_action_visible(&mut actions, &cmd("probe")));
++        assert!(shell_helper_action_visible(
++            &mut actions,
++            &begin(cua_driver_contract::cursor::CursorTarget::Desktop)
++        ));
++        assert!(shell_helper_action_visible(&mut actions, &cmd("probe")));
++        let end = OverlayMsg::Cmd(KeyedOverlayCommand {
++            key: "probe".into(),
++            cmd: OverlayCommand::EndAction(CursorAction::Click),
++        });
++        assert!(!shell_helper_action_visible(&mut actions, &end));
++        assert!(!shell_helper_action_visible(&mut actions, &cmd("probe")));
++    }
++
+     fn cmd(key: &str) -> OverlayMsg {
+         OverlayMsg::Cmd(KeyedOverlayCommand {
+             key: key.to_owned(),
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs b/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
+index ca0dec4..464c322 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs
+@@ -1337,7 +1337,12 @@ impl Tool for GetWindowStateTool {
+                 window_overlays(pid, xid)
+             };
+             let screenshot = if should_capture {
+-                let captured = if overlays.covers_window {
++                let preview = if !want_tree && max_dim > 0 && crate::wayland::is_wayland() {
++                    crate::wayland::shell_helper::screenshot_window_preview(xid, pid, max_dim)
++                } else { None };
++                let captured = if let Some((png, width, height)) = preview {
++                    Ok((png, Some((width, height))))
++                } else if overlays.covers_window {
+                     overlays
+                         .window_rect
+                         .ok_or_else(|| anyhow::anyhow!("window geometry unavailable"))
+@@ -1345,12 +1350,16 @@ impl Tool for GetWindowStateTool {
+                             crate::capture::screenshot_root_region_png(x, y, w, h)
+                         })
+                         .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
++                        .map(|png| (png, None))
+                 } else {
+-                    crate::wayland::screenshot_dispatch_with_pid(xid, pid)
++                    crate::wayland::screenshot_dispatch_with_pid(xid, pid).map(|png| (png, None))
+                 };
+                 match captured {
+-                    Ok(raw) => {
+-                        let (orig_w, orig_h) = crate::capture::png_dimensions_pub(&raw)?;
++                    Ok((raw, original_size)) => {
++                        let (orig_w, orig_h) = match original_size {
++                            Some(size) => size,
++                            None => crate::capture::png_dimensions_pub(&raw)?,
++                        };
+                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
+                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
+                         // An explicit per-call max_image_dimension (0 = native)
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+index a2691a0..4ab3a74 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+@@ -17,8 +17,7 @@
+ //!    handshake → connection.seat events → seat.bind(capabilities) →
+ //!    device.frame + emulate events.
+ //! 4. Public API sends commands over a crossbeam-channel and blocks
+-//!    until the worker reports the request was flushed to the EIS
+-//!    server.
++//!    until EIS acknowledges the preceding input through ei_connection.sync.
+ //!
+ //! Persistence: ashpd `PersistMode::ExplicitlyRevoked` keeps the user's consent
+ //! until they revoke it in desktop settings. The restore token is stored at
+@@ -607,6 +606,16 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
+             pending = still;
+         }
+ 
++        state.pending_sync.retain(|_, (reply, sent)| {
++            if sent.elapsed() < std::time::Duration::from_secs(5) {
++                return true;
++            }
++            let _ = reply.send(Err(anyhow::anyhow!(
++                "EIS did not acknowledge input within 5s; delivery is unknown"
++            )));
++            false
++        });
++
+         // The handle_command path may have queued frame() requests; flush
+         // them once per loop iteration so the EIS server sees them.
+         if let Some(ctx) = state.context.as_ref() {
+@@ -620,6 +629,8 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
+ #[derive(Default)]
+ struct EisState {
+     context: Option<reis::ei::Context>,
++    connection: Option<reis::ei::Connection>,
++    pending_sync: HashMap<reis::ei::Callback, (Sender<anyhow::Result<()>>, std::time::Instant)>,
+     seats: HashMap<reis::ei::Seat, SeatData>,
+     devices: HashMap<reis::ei::Device, DeviceData>,
+     sequence: u32,
+@@ -737,17 +748,25 @@ impl EisState {
+                     handshake.finish();
+                 }
+             }
+-            Event::Connection(_conn, ev) => match ev {
+-                reis::ei::connection::Event::Seat { seat } => {
+-                    self.seats.insert(seat, SeatData::default());
++            Event::Callback(callback, reis::ei::callback::Event::Done { .. }) => {
++                if let Some((reply, _)) = self.pending_sync.remove(&callback) {
++                    let _ = reply.send(Ok(()));
+                 }
+-                // The EIS server pings to check liveness; failing to answer
+-                // makes it drop the connection. Mirror reis's examples.
+-                reis::ei::connection::Event::Ping { ping } => {
+-                    ping.done(0);
++            }
++            Event::Connection(conn, ev) => {
++                self.connection = Some(conn);
++                match ev {
++                    reis::ei::connection::Event::Seat { seat } => {
++                        self.seats.insert(seat, SeatData::default());
++                    }
++                    // The EIS server pings to check liveness; failing to answer
++                    // makes it drop the connection. Mirror reis's examples.
++                    reis::ei::connection::Event::Ping { ping } => {
++                        ping.done(0);
++                    }
++                    _ => {}
+                 }
+-                _ => {}
+-            },
++            }
+             Event::Seat(seat, ev) => {
+                 let data = self.seats.entry(seat.clone()).or_default();
+                 match ev {
+@@ -945,33 +964,36 @@ impl EisState {
+ 
+     fn handle_command(&mut self, cmd: Cmd) {
+         let result = self.run_command(&cmd);
+-        // Send the reply on whichever channel this command carries.
+-        match cmd {
+-            Cmd::WaitReady { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::Click { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::MoveAbsolute { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::Scroll { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::TypeText { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::PressKey { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::KeySequence { reply, .. } => {
+-                let _ = reply.send(result);
+-            }
+-            Cmd::Drag { reply, .. } => {
+-                let _ = reply.send(result);
++        let needs_sync = !matches!(cmd, Cmd::WaitReady { .. });
++        let reply = match cmd {
++            Cmd::WaitReady { reply, .. }
++            | Cmd::Click { reply, .. }
++            | Cmd::MoveAbsolute { reply, .. }
++            | Cmd::Scroll { reply, .. }
++            | Cmd::TypeText { reply, .. }
++            | Cmd::PressKey { reply, .. }
++            | Cmd::KeySequence { reply, .. }
++            | Cmd::Drag { reply, .. } => reply,
++            Cmd::Shutdown => return,
++        };
++        if result.is_ok() && needs_sync {
++            if let (Some(connection), Some(context)) = (&self.connection, &self.context) {
++                // A socket flush is not delivery. Hold the caller's focus guard
++                // until EIS acknowledges all preceding input frames.
++                let callback = connection.sync(1);
++                if let Err(error) = context.flush() {
++                    let _ = reply.send(Err(error.into()));
++                    return;
++                }
++                self.pending_sync
++                    .insert(callback, (reply, std::time::Instant::now()));
++            } else {
++                let _ = reply.send(Err(anyhow::anyhow!(
++                    "EIS connection unavailable for input acknowledgement"
++                )));
+             }
+-            Cmd::Shutdown => {}
++        } else {
++            let _ = reply.send(result);
+         }
+     }
+ 
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/mod.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/mod.rs
+index 0909579..86d050e 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/mod.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/mod.rs
+@@ -1044,17 +1044,13 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
+             window.visible,
+         );
+     }
+-    if let Some(window) = shell_helper::list_windows(None)
+-        .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
+-    {
+-        return attested_wayland_crop(
++    if shell_helper::available() {
++        // GetRects proves geometry, not occlusion. Cropping the Shell stage can
++        // return a covering app (and uses physical pixels with logical bounds).
++        return Err(surface_identity_unproven(
+             xid,
+-            window.x,
+-            window.y,
+-            window.width,
+-            window.height,
+-            window.is_on_screen,
+-        );
++            "GNOME stage capture cannot attest an individual window; use desktop capture",
++        ));
+     }
+     Err(surface_identity_unproven(
+         xid,
+@@ -1106,6 +1102,14 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
+             )
+         });
+     }
++    if is_wayland() && shell_helper::available() {
++        return shell_helper::screenshot_window(xid, pid).ok_or_else(|| {
++            surface_identity_unproven(
++                xid,
++                "GNOME window capture requires WinRects API 9 and an available window",
++            )
++        });
++    }
+     screenshot_window_bytes_with_dispatch(
+         is_wayland(),
+         xid,
+@@ -3490,6 +3494,11 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+                 }
+             };
+         }
++        // A verified GNOME helper already supplies exact IDs and ownership.
++        // Do not probe unrelated compositor protocols for every preview frame.
++        if let Some(ws) = shell_helper::list_windows(filter_pid) {
++            return listed_windows(ws);
++        }
+         if let Some(ws) = kwin_helper::list_window_infos() {
+             return listed_windows(apply_pid_filter(ws, filter_pid));
+         }
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
+index 111b4ed..8483142 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
+@@ -18,12 +18,11 @@
+ //!
+ //! Everything here is **best-effort**: if the extension isn't installed/enabled
+ //! the calls return `None` / no-op and callers keep the prior behaviour (no
+-//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess so
+-//! there's no zbus blocking-feature or async-context coupling — the calls are
+-//! infrequent (once per `get_window_state`, a few per click).
++//! screen coords, no Wayland cursor). Reuses one session-bus connection on a
++//! dedicated runtime; preview frames do not spawn subprocesses or poll for exit.
+ 
+ use std::os::unix::fs::{MetadataExt, PermissionsExt};
+-use std::process::Command;
++mod transport;
+ use std::time::Duration;
+ 
+ use crate::x11::WindowInfo;
+@@ -36,6 +35,7 @@ const DBUS_PATH: &str = "/org/freedesktop/DBus";
+ const DBUS_IFACE: &str = "org.freedesktop.DBus";
+ const BROWSER_HELPER_API_VERSION: u32 = 4;
+ const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
++const WINDOW_CAPTURE_API_VERSION: u32 = 9;
+ 
+ #[derive(Debug, Clone)]
+ struct ShellWindow {
+@@ -85,30 +85,7 @@ fn gdbus_call_to(
+     args: &[String],
+     timeout: Duration,
+ ) -> Option<String> {
+-    let mut cmd = Command::new("gdbus");
+-    cmd.arg("call")
+-        .arg("--session")
+-        .arg("--dest")
+-        .arg(destination)
+-        .arg("--object-path")
+-        .arg(object_path)
+-        .arg("--method")
+-        .arg(method);
+-    for a in args {
+-        cmd.arg(a);
+-    }
+-    // gdbus is local IPC; cap it so a wedged shell can't stall the caller.
+-    let child = cmd
+-        .stdin(std::process::Stdio::null())
+-        .stdout(std::process::Stdio::piped())
+-        .stderr(std::process::Stdio::null())
+-        .spawn()
+-        .ok()?;
+-    let out = wait_timeout(child, timeout)?;
+-    if !out.status.success() {
+-        return None;
+-    }
+-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
++    transport::call(destination, object_path, method, args, timeout)
+ }
+ 
+ /// Resolve the helper's immutable unique bus name and prove that it is hosted
+@@ -210,6 +187,42 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
+             .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
+ }
+ 
++/// Capture the exact compositor actor without activating it. Older helpers
++/// cannot prove window pixels, so callers must not fall back to stage crops.
++pub fn screenshot_window(id: u64, pid: Option<u32>) -> Option<Vec<u8>> {
++    let id = u32::try_from(id).ok()?;
++    let owner = shell_owner_with_min_version(Some(WINDOW_CAPTURE_API_VERSION))?;
++    let raw = gdbus_call_to(
++        &owner,
++        PATH,
++        &format!("{IFACE}.CaptureWindow"),
++        &[id.to_string(), pid.unwrap_or(0).to_string()],
++        Duration::from_secs(5),
++    )?;
++    decode_capture(&raw)
++}
++
++/// Preview-sized pixels plus the original action-frame dimensions.
++/// API 9 helpers fall back to the existing full-size capture path.
++pub fn screenshot_window_preview(id: u64, pid: u32, max_dimension: u32) -> Option<(Vec<u8>, u32, u32)> {
++    let id = u32::try_from(id).ok()?;
++    let owner = shell_owner_with_min_version(Some(10))?;
++    let raw = gdbus_call_to(
++        &owner, PATH, &format!("{IFACE}.CaptureWindowPreview"),
++        &[id.to_string(), pid.to_string(), max_dimension.to_string()],
++        Duration::from_secs(5),
++    )?;
++    let png = decode_capture(&raw)?;
++    let tail = &raw[raw.rfind('\'')? + 1..];
++    let dims: Vec<u32> = tail.split(',').filter_map(|part|
++        part.trim().trim_end_matches(')').trim().trim_start_matches("uint32 ").parse().ok()
++    ).collect();
++    match dims.as_slice() {
++        [width, height] if *width > 0 && *height > 0 => Some((png, *width, *height)),
++        _ => None,
++    }
++}
++
+ /// Capture the GNOME stage through the compositor helper.
+ ///
+ /// Mutter does not expose wlroots screencopy protocols, and its one-shot
+@@ -247,53 +260,6 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
+     B64.decode(&raw[start..end]).ok()
+ }
+ 
+-/// `Child::wait` with a deadline (no extra crates). Kills + reaps on timeout.
+-fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
+-    use std::io::Read;
+-
+-    // Drain stdout while the child is running. Capture() returns a base64 PNG
+-    // that readily exceeds a pipe's ~64 KiB capacity; waiting for exit before
+-    // reading deadlocks the child on a full pipe and turns a healthy Shell
+-    // response into a false timeout.
+-    let stdout = child.stdout.take()?;
+-    let reader = std::thread::spawn(move || {
+-        let mut stdout = stdout;
+-        let mut bytes = Vec::new();
+-        stdout.read_to_end(&mut bytes).ok()?;
+-        Some(bytes)
+-    });
+-    let deadline = std::time::Instant::now() + dur;
+-    let status = loop {
+-        match child.try_wait() {
+-            Ok(Some(status)) => break status,
+-            Ok(None) => {
+-                if std::time::Instant::now() >= deadline {
+-                    let _ = child.kill();
+-                    let status = child.wait().ok()?;
+-                    let _ = reader.join();
+-                    if !status.success() {
+-                        return None;
+-                    }
+-                    return None;
+-                }
+-                std::thread::sleep(Duration::from_millis(15));
+-            }
+-            Err(_) => {
+-                let _ = child.kill();
+-                let _ = child.wait();
+-                let _ = reader.join();
+-                return None;
+-            }
+-        }
+-    };
+-    let stdout = reader.join().ok().flatten()?;
+-    Some(std::process::Output {
+-        status,
+-        stdout,
+-        stderr: Vec::new(),
+-    })
+-}
+-
+ /// Screen origin of the compositor frame backing `pid`.
+ ///
+ /// `screenshot_window_dispatch` crops the Shell stage to this same frame
+@@ -643,9 +609,9 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn bundled_helper_v8_uses_host_owned_modifier_badge_chips() {
++    fn bundled_helper_uses_host_owned_modifier_badge_chips() {
+         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
+-        assert!(EXTENSION_SOURCE.contains("return 8;"));
++        assert!(EXTENSION_SOURCE.contains("return 10;"));
+         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
+         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
+         assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
+@@ -670,7 +636,7 @@ mod tests {
+         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
+         let metadata: serde_json::Value =
+             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
+-        assert_eq!(metadata["version"], 8);
++        assert_eq!(metadata["version"], 10);
+ 
+         for action in [
+             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",
+diff --git a/libs/cua-driver/wayland-helper/winrects@cua/extension.js b/libs/cua-driver/wayland-helper/winrects@cua/extension.js
+index 743acc2..cbc2888 100644
+--- a/libs/cua-driver/wayland-helper/winrects@cua/extension.js
++++ b/libs/cua-driver/wayland-helper/winrects@cua/extension.js
+@@ -3,16 +3,20 @@ import GLib from 'gi://GLib';
+ import Shell from 'gi://Shell';
+ import St from 'gi://St';
+ import Clutter from 'gi://Clutter';
++import Cogl from 'gi://Cogl';
+ import Cairo from 'cairo';
+ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+ 
+ Gio._promisify(Shell.Screenshot.prototype, 'screenshot');
++Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+ 
+ const IFACE = `<node><interface name="org.cua.WinRects">
+ <method name="GetVersion"><arg type="u" direction="out" name="version"/></method>
+ <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
+ <method name="Capture"><arg type="s" direction="out" name="png_base64"/></method>
++<method name="CaptureWindow"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="s" direction="out" name="png_base64"/></method>
++<method name="CaptureWindowPreview"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="u" direction="in" name="max_dimension"/><arg type="s" direction="out" name="png_base64"/><arg type="u" direction="out" name="width"/><arg type="u" direction="out" name="height"/></method>
+ <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
+ <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
+ <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
+@@ -680,6 +684,7 @@ function drawBadgeChip(cr, glyph, filled, fillColor) {
+ 
+ export default class WinRectsExtension extends Extension {
+   enable() {
++    this._captureClones = new Map();
+     this._impl = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
+     this._impl.export(Gio.DBus.session, '/org/cua/WinRects');
+     this._nameId = Gio.bus_own_name(
+@@ -822,6 +827,11 @@ export default class WinRectsExtension extends Extension {
+     });
+   }
+   disable() {
++    for (const entry of this._captureClones.values()) {
++      GLib.source_remove(entry.timeout);
++      entry.clone.destroy();
++    }
++    this._captureClones.clear();
+     if (this._frameId) {
+       GLib.source_remove(this._frameId);
+       this._frameId = 0;
+@@ -851,7 +861,7 @@ export default class WinRectsExtension extends Extension {
+     }
+   }
+   GetVersion() {
+-    return 8;
++    return 10;
+   }
+   GetRects() {
+     const actors = global.get_window_actors();
+@@ -891,6 +901,96 @@ export default class WinRectsExtension extends Extension {
+     }
+     return JSON.stringify(out);
+   }
++  CaptureWindowAsync([id, pid], invocation) {
++    return this._captureWindow(id, pid, 0, invocation);
++  }
++  CaptureWindowPreviewAsync([id, pid, maxDimension], invocation) {
++    if (maxDimension < 1 || maxDimension > 4096) {
++      invocation.return_dbus_error('org.cua.WinRects.InvalidSize', 'Invalid preview size');
++      return;
++    }
++    return this._captureWindow(id, pid, maxDimension, invocation);
++  }
++  async _captureWindow(id, pid, maxDimension, invocation) {
++    let stream;
++    try {
++      if (Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
++        throw new Error('Desktop is unavailable');
++      const actor = global.get_window_actors().find(
++        candidate => candidate.meta_window?.get_stable_sequence() === id);
++      const window = actor?.meta_window;
++      if (!window || (pid !== 0 && window.get_pid() !== pid) || window.minimized)
++        throw new Error('Target window is unavailable');
++      // A mapped clone keeps Mutter from suspending a fully covered source.
++      // It paints no pixels and expires when capture requests stop.
++      let entry = this._captureClones.get(id);
++      if (entry) GLib.source_remove(entry.timeout);
++      else {
++        const clone = new Clutter.Clone({source: actor, opacity: 0, width: 1, height: 1, reactive: false});
++        global.stage.add_child(clone);
++        entry = {clone, timeout: 0};
++        this._captureClones.set(id, entry);
++      }
++      entry.timeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
++        entry.clone.destroy();
++        this._captureClones.delete(id);
++        return GLib.SOURCE_REMOVE;
++      });
++      // Snapshot this actor, never the stage. Covered windows retain their own
++      // content; neither activation nor a desktop crop is needed.
++      const frame = window.get_frame_rect();
++      const buffer = window.get_buffer_rect();
++      const scale = actor.get_resource_scale();
++      const content = actor.paint_to_content(null);
++      const texture = content?.get_texture();
++      if (!texture || !Number.isFinite(scale) || scale <= 0)
++        throw new Error('Window content is unavailable');
++      const x = Math.round((frame.x - buffer.x) * scale);
++      const y = Math.round((frame.y - buffer.y) * scale);
++      const width = Math.round(frame.width * scale);
++      const height = Math.round(frame.height * scale);
++      if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
++          x + width > texture.get_width() || y + height > texture.get_height())
++        throw new Error('Window content does not match its frame');
++      stream = Gio.MemoryOutputStream.new_resizable();
++      let captureTexture = texture;
++      let captureX = x, captureY = y, captureWidth = width, captureHeight = height;
++      if (maxDimension > 0 && Math.max(width, height) > maxDimension) {
++        const ratio = maxDimension / Math.max(width, height);
++        captureWidth = Math.max(1, Math.round(width * ratio));
++        captureHeight = Math.max(1, Math.round(height * ratio));
++        const context = global.stage.get_context().get_backend().get_cogl_context();
++        captureTexture = Cogl.Texture2D.new_with_size(context, captureWidth, captureHeight);
++        const framebuffer = Cogl.Offscreen.new_with_texture(captureTexture);
++        framebuffer.allocate();
++        framebuffer.set_viewport(0, 0, captureWidth, captureHeight);
++        framebuffer.orthographic(0, 0, captureWidth, captureHeight, -1, 1);
++        const pipeline = Cogl.Pipeline.new(context);
++        pipeline.set_layer_texture(0, texture);
++        framebuffer.draw_textured_rectangle(pipeline, 0, 0, captureWidth, captureHeight,
++          x / texture.get_width(), y / texture.get_height(),
++          (x + width) / texture.get_width(), (y + height) / texture.get_height());
++        framebuffer.finish();
++        captureX = 0;
++        captureY = 0;
++      }
++      await Shell.Screenshot.composite_to_stream(
++        captureTexture, captureX, captureY, captureWidth, captureHeight, 1, null, 0, 0, 1, stream);
++      stream.close(null);
++      if (Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
++        throw new Error('Desktop became unavailable');
++      if (stream.get_data_size() > 32 * 1024 * 1024)
++        throw new Error('Window capture is too large');
++      const encoded = GLib.base64_encode(stream.steal_as_bytes().get_data());
++      invocation.return_value(maxDimension > 0
++        ? new GLib.Variant('(suu)', [encoded, width, height])
++        : new GLib.Variant('(s)', [encoded]));
++    } catch (error) {
++      invocation.return_dbus_error('org.cua.WinRects.CaptureFailed', String(error));
++    } finally {
++      if (stream && !stream.is_closed()) stream.close(null);
++    }
++  }
+   async CaptureAsync(_params, invocation) {
+     try {
+       const shooter = new Shell.Screenshot();
+diff --git a/libs/cua-driver/wayland-helper/winrects@cua/metadata.json b/libs/cua-driver/wayland-helper/winrects@cua/metadata.json
+index 3faf86b..a2843ca 100644
+--- a/libs/cua-driver/wayland-helper/winrects@cua/metadata.json
++++ b/libs/cua-driver/wayland-helper/winrects@cua/metadata.json
+@@ -3,5 +3,5 @@
+   "name": "WinRects",
+   "description": "Expose window geometry, capture, cursor, and verified activation for cua-driver on Wayland.",
+   "shell-version": ["45", "46", "47", "48", "49", "50"],
+-  "version": 8
++  "version": 10
+ }
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper/transport.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper/transport.rs
+new file mode 100644
+index 0000000..a054366
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper/transport.rs
+@@ -0,0 +1,262 @@
++//! Persistent session-bus transport for synchronous compositor helpers.
++//! A separate runtime also serves callers already inside Tokio without nested block_on.
++use std::sync::{mpsc, OnceLock};
++use std::time::Duration;
++use tokio::sync::Mutex;
++use zbus::{Connection, Message};
++
++static CONNECTION: Mutex<Option<Connection>> = Mutex::const_new(None);
++
++fn runtime() -> &'static tokio::runtime::Runtime {
++    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
++    RUNTIME.get_or_init(|| {
++        tokio::runtime::Builder::new_multi_thread()
++            .worker_threads(1)
++            .enable_all()
++            .build()
++            .expect("compositor D-Bus runtime")
++    })
++}
++
++pub(super) fn call(
++    destination: &str,
++    path: &str,
++    method: &str,
++    args: &[String],
++    timeout: Duration,
++) -> Option<String> {
++    let destination = destination.to_owned();
++    let path = path.to_owned();
++    let method = method.to_owned();
++    let args = args.to_vec();
++    let (tx, rx) = mpsc::sync_channel(1);
++    runtime().spawn(async move {
++        let result = tokio::time::timeout(timeout, async {
++            let connection = {
++                let mut shared = CONNECTION.lock().await;
++                if shared.is_none() {
++                    *shared = Some(Connection::session().await.ok()?);
++                }
++                shared.as_ref()?.clone()
++            };
++            invoke(&connection, &destination, &path, &method, &args).await
++        })
++        .await
++        .ok()
++        .flatten();
++        // A failed or timed-out call may mean the session bus disconnected.
++        // Reconnect on the next call; never replay a possibly applied mutation.
++        if result.is_none() {
++            CONNECTION.lock().await.take();
++        }
++        let _ = tx.send(result);
++    });
++    rx.recv_timeout(timeout + Duration::from_millis(100))
++        .ok()
++        .flatten()
++}
++
++// Preserve the small textual reply contract consumed by shell_helper's existing
++// parsers. Bodies on the wire are typed; strings are never shell or GVariant code.
++async fn invoke(
++    connection: &Connection,
++    destination: &str,
++    path: &str,
++    method: &str,
++    args: &[String],
++) -> Option<String> {
++    let (interface, member) = method.rsplit_once('.')?;
++    macro_rules! send {
++        ($body:expr) => {
++            connection
++                .call_method(Some(destination), path, Some(interface), member, &$body)
++                .await
++                .ok()?
++        };
++    }
++    let reply: Message = match (member, args) {
++        (
++            "GetNameOwner"
++            | "GetConnectionUnixProcessID"
++            | "GetConnectionUnixUser"
++            | "SetCursorColor"
++            | "SetSessionLabel",
++            [value],
++        ) => send!((value.as_str(),)),
++        ("GetRects" | "GetVersion" | "Capture" | "HideCursor", []) => send!(()),
++        ("Activate", [id]) => send!((id.parse::<u32>().ok()?,)),
++        ("MoveCursor" | "ClickPulse", [x, y]) => {
++            send!((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?))
++        }
++        ("CaptureWindow", [id, pid]) => send!((id.parse::<u32>().ok()?, pid.parse::<u32>().ok()?)),
++        ("CaptureWindowPreview", [id, pid, max]) => send!((
++            id.parse::<u32>().ok()?,
++            pid.parse::<u32>().ok()?,
++            max.parse::<u32>().ok()?
++        )),
++        ("SetCursorState", [action, delivery, target, active]) => send!((
++            action.as_str(),
++            delivery.as_str(),
++            target.as_str(),
++            active.parse::<bool>().ok()?
++        )),
++        _ => return None,
++    };
++    let body = reply.body();
++    match member {
++        "GetRects" => body.deserialize::<String>().ok(),
++        "GetNameOwner" | "Capture" | "CaptureWindow" => {
++            Some(format!("('{}',)", body.deserialize::<String>().ok()?))
++        }
++        "GetVersion" | "GetConnectionUnixProcessID" | "GetConnectionUnixUser" => {
++            Some(format!("(uint32 {},)", body.deserialize::<u32>().ok()?))
++        }
++        "Activate" => Some(format!("({},)", body.deserialize::<bool>().ok()?)),
++        "CaptureWindowPreview" => {
++            let (png, width, height) = body.deserialize::<(String, u32, u32)>().ok()?;
++            Some(format!("('{png}', uint32 {width}, uint32 {height})"))
++        }
++        _ => {
++            body.deserialize::<()>().ok()?;
++            Some("()".into())
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::io::BufRead;
++    use std::process::{Child, Command, Stdio};
++
++    struct PrivateBus(Child);
++    impl Drop for PrivateBus {
++        fn drop(&mut self) {
++            let _ = self.0.kill();
++            let _ = self.0.wait();
++        }
++    }
++    struct Helper;
++    #[zbus::interface(name = "org.cua.WinRects")]
++    impl Helper {
++        fn get_version(&self) -> u32 {
++            10
++        }
++        fn get_rects(&self) -> String {
++            r#"[{"title":"Joe's window","pid":42}]"#.into()
++        }
++        fn capture_window_preview(
++            &self,
++            id: u32,
++            pid: u32,
++            max: u32,
++        ) -> zbus::fdo::Result<(String, u32, u32)> {
++            if id != 7 || pid != 42 || max != 800 {
++                return Err(zbus::fdo::Error::InvalidArgs("wrong target".into()));
++            }
++            Ok(("cG5n".into(), 1600, 900))
++        }
++        fn activate(&self, id: u32) -> bool {
++            id == 7
++        }
++        fn set_cursor_state(
++            &self,
++            action: &str,
++            delivery: &str,
++            target: &str,
++            active: bool,
++        ) -> zbus::fdo::Result<()> {
++            if (action, delivery, target, active) != ("observe", "", "window", false) {
++                return Err(zbus::fdo::Error::InvalidArgs("wrong state".into()));
++            }
++            Ok(())
++        }
++    }
++
++    #[tokio::test]
++    async fn typed_roundtrips_on_one_private_connection() {
++        let mut bus = PrivateBus(
++            Command::new("dbus-daemon")
++                .args(["--session", "--nofork", "--print-address=1"])
++                .stdout(Stdio::piped())
++                .spawn()
++                .expect("private test bus"),
++        );
++        let mut address = String::new();
++        std::io::BufReader::new(bus.0.stdout.take().unwrap())
++            .read_line(&mut address)
++            .unwrap();
++        let service = zbus::connection::Builder::address(address.trim())
++            .unwrap()
++            .name("org.cua.WinRects")
++            .unwrap()
++            .serve_at("/org/cua/WinRects", Helper)
++            .unwrap()
++            .build()
++            .await
++            .unwrap();
++        let client = zbus::connection::Builder::address(address.trim())
++            .unwrap()
++            .build()
++            .await
++            .unwrap();
++        let call = |method: &'static str, args: Vec<String>| {
++            let client = client.clone();
++            async move {
++                invoke(
++                    &client,
++                    "org.cua.WinRects",
++                    "/org/cua/WinRects",
++                    &format!("org.cua.WinRects.{method}"),
++                    &args,
++                )
++                .await
++            }
++        };
++        for _ in 0..3 {
++            assert_eq!(
++                call("GetVersion", vec![]).await.as_deref(),
++                Some("(uint32 10,)")
++            );
++            assert_eq!(
++                call("GetRects", vec![]).await.as_deref(),
++                Some(r#"[{"title":"Joe's window","pid":42}]"#)
++            );
++            let raw = call(
++                "CaptureWindowPreview",
++                vec!["7".into(), "42".into(), "800".into()],
++            )
++            .await
++            .unwrap();
++            assert_eq!(super::super::decode_capture(&raw), Some(b"png".to_vec()));
++            assert_eq!(raw, "('cG5n', uint32 1600, uint32 900)");
++        }
++        assert_eq!(
++            call("Activate", vec!["7".into()]).await.as_deref(),
++            Some("(true,)")
++        );
++        assert_eq!(
++            call("Activate", vec!["8".into()]).await.as_deref(),
++            Some("(false,)")
++        );
++        assert_eq!(
++            call(
++                "SetCursorState",
++                vec!["observe".into(), "".into(), "window".into(), "false".into()]
++            )
++            .await
++            .as_deref(),
++            Some("()")
++        );
++        assert_eq!(
++            call(
++                "CaptureWindowPreview",
++                vec!["7".into(), "43".into(), "800".into()]
++            )
++            .await,
++            None
++        );
++        assert_eq!(call("Activate", vec!["-1".into()]).await, None);
++        drop(service);
++    }
++}
