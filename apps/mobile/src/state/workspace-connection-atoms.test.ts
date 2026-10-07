@@ -52,6 +52,7 @@ describe("workspace connection subscriptions", () => {
     const shell = Atom.make<EnvironmentShellSummary>({
       hasSnapshot: true,
       hasSynchronizingShell: false,
+      synchronizingStage: null,
       hasCachedShell: false,
       hasLiveShell: true,
       firstError: null,

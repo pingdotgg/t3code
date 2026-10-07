@@ -59,8 +59,10 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
 export class ShellSnapshotLoader extends Context.Service<
   ShellSnapshotLoader,
   {
+    /** `onResponse` runs once the server answers, before the body is decoded. */
     readonly load: (
       prepared: PreparedConnection,
+      options?: { readonly onResponse?: Effect.Effect<void> },
     ) => Effect.Effect<Option.Option<OrchestrationV2ShellSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
@@ -76,10 +78,18 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
     return ShellSnapshotLoader.of({
-      load: (prepared: PreparedConnection) =>
-        fetchEnvironmentShellSnapshot({ prepared, signer, remoteAuthorization }).pipe(
+      load: (prepared, options) => {
+        const onResponse = options?.onResponse;
+        // A rejected credential is retried, so only a success means decoding starts.
+        const client =
+          onResponse === undefined
+            ? httpClient
+            : HttpClient.tap(httpClient, (response) =>
+                response.status < 400 ? onResponse : Effect.void,
+              );
+        return fetchEnvironmentShellSnapshot({ prepared, signer, remoteAuthorization }).pipe(
           Effect.map(Option.some<OrchestrationV2ShellSnapshot>),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(HttpClient.HttpClient, client),
           Effect.catchCause((cause) =>
             Effect.logWarning(
               "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
@@ -88,7 +98,8 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
               Effect.as(Option.none<OrchestrationV2ShellSnapshot>()),
             ),
           ),
-        ),
+        );
+      },
     });
   }),
 );

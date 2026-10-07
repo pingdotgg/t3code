@@ -9,6 +9,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
+    pendingShellStage: null,
     hasReadyEnvironment: true,
     hasConnectingEnvironment: false,
     connectingEnvironments: [],
@@ -78,6 +79,22 @@ describe("workspace connection status", () => {
       label: "Syncing threads...",
       showsProgress: true,
     });
+  });
+
+  it("names the stage a slow sync is on once the title asks for it", () => {
+    const label = (
+      pendingShellStage: WorkspaceState["pendingShellStage"],
+      showSyncStage: boolean,
+    ) =>
+      workspaceConnectionStatusPresentation(
+        workspaceState({ hasPendingShellSnapshot: true, pendingShellStage }),
+        { showSyncStage },
+      )?.label;
+
+    expect(label("waiting", false)).toBe("Syncing threads...");
+    expect(label("waiting", true)).toBe("Waiting for server...");
+    expect(label("reading", true)).toBe("Reading threads...");
+    expect(label("catchingUp", true)).toBe("Catching up...");
   });
 
   it("distinguishes initial shell loading from cached catch-up", () => {

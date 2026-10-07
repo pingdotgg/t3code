@@ -28,6 +28,7 @@ function environmentEntry(environmentId: EnvironmentId, label: string) {
 
 function shellState(input: {
   readonly status: EnvironmentShellState["status"];
+  readonly syncStage?: EnvironmentShellState["syncStage"];
   readonly updatedAt?: string;
   readonly error?: string;
   readonly snapshotSequence?: number;
@@ -49,6 +50,7 @@ function shellState(input: {
             archivedThreads: [],
           }),
     status: input.status,
+    syncStage: input.syncStage ?? "waiting",
     error: input.error === undefined ? Option.none() : Option.some(input.error),
   };
 }
@@ -105,6 +107,7 @@ describe("environment shell projections", () => {
     expect(summary).toEqual({
       hasSnapshot: true,
       hasSynchronizingShell: true,
+      synchronizingStage: "waiting",
       hasCachedShell: true,
       hasLiveShell: false,
       firstError: "Retrying.",
@@ -161,6 +164,7 @@ describe("environment shell projections", () => {
       expect(setCatalog([])).toEqual({
         hasSnapshot: false,
         hasSynchronizingShell: false,
+        synchronizingStage: null,
         hasCachedShell: false,
         hasLiveShell: false,
         firstError: null,
@@ -215,6 +219,26 @@ describe("environment shell projections", () => {
       unsubscribe();
       harness.registry.dispose();
     }
+  });
+
+  it("reports the least advanced stage among synchronizing environments", () => {
+    const harness = makeHarness();
+    const setStage = (
+      environmentId: EnvironmentId,
+      status: EnvironmentShellState["status"],
+      syncStage: EnvironmentShellState["syncStage"],
+    ) => {
+      harness.registry.set(
+        harness.shellStateAtom(environmentId),
+        shellState({ status, syncStage, updatedAt: "2026-06-01T00:00:00.000Z" }),
+      );
+      return harness.registry.get(harness.summaryAtom).synchronizingStage;
+    };
+
+    expect(setStage(ENVIRONMENT_ID, "synchronizing", "catchingUp")).toBe("waiting");
+    expect(setStage(OTHER_ENVIRONMENT_ID, "synchronizing", "reading")).toBe("reading");
+    expect(setStage(OTHER_ENVIRONMENT_ID, "live", "catchingUp")).toBe("catchingUp");
+    expect(setStage(ENVIRONMENT_ID, "live", "catchingUp")).toBeNull();
   });
 
   it("preserves server-config map identity until a config reference changes", () => {

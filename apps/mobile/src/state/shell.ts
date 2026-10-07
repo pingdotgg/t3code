@@ -24,6 +24,7 @@ export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
 const EMPTY_ENVIRONMENT_SHELL_STATE_ATOM = Atom.make<EnvironmentShellState>({
   snapshot: Option.none(),
   status: "empty",
+  syncStage: "waiting",
   error: Option.none(),
 });
 
