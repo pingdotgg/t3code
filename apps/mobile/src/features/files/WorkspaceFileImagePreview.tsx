@@ -5,7 +5,8 @@ import { FilePreviewLoading } from "./FilePreviewFeedback";
 import { EmptyState } from "../../components/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { PresentationSource } from "../../components/NativePresentation";
-import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { useMediaActions } from "../../state/mediaActions";
+import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 
 function ResolvedWorkspaceFileImagePreview(props: {

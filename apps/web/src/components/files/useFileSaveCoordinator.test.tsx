@@ -4,13 +4,22 @@ import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { writeFile, confirmFile } = vi.hoisted(() => ({
+const { writeFile, confirmFile, readScope, getUnsavedFile } = vi.hoisted(() => ({
   writeFile: vi.fn(),
   confirmFile: vi.fn(),
+  readScope: vi.fn(),
+  getUnsavedFile: vi.fn(),
 }));
 vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: {} } }));
+vi.mock("~/state/session", () => ({
+  readEnvironmentScope: readScope,
+  useEnvironmentScope: readScope,
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }));
-vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
+vi.mock("./projectFilesQueryState", () => ({
+  confirmProjectFileQueryData: confirmFile,
+  getUnsavedProjectFileQueryData: getUnsavedFile,
+}));
 
 import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -54,6 +63,8 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   confirmFile.mockReset();
+  readScope.mockReset().mockReturnValue(true);
+  getUnsavedFile.mockReset().mockReturnValue(null);
   onPendingChange.mockReset();
 });
 
@@ -122,6 +133,57 @@ describe("file-save React lifecycle", () => {
     await vi.runAllTimersAsync();
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(writeFile.mock.calls[0]![0].input.contents).toBe("pending edit");
+  });
+
+  it.each([false, true])(
+    "keeps edits pending after permission is revoked before a React update (unmount: %s)",
+    async (unmount) => {
+      mount();
+      changeHandler()("pending edit");
+      readScope.mockReturnValue(false);
+      if (unmount) {
+        await act(async () => renderer!.unmount());
+        renderer = null;
+      }
+      await vi.runAllTimersAsync();
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(confirmFile).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", true);
+    },
+  );
+
+  it("resumes an unsaved draft when write permission returns after effect replay", async () => {
+    readScope.mockReturnValue(false);
+    getUnsavedFile.mockReturnValue({ contents: "pending draft" });
+    mount();
+    await vi.runAllTimersAsync();
+    expect(writeFile).not.toHaveBeenCalled();
+
+    readScope.mockReturnValue(true);
+    act(() =>
+      renderer!.update(
+        <StrictMode>
+          <FileSurface {...defaultProps} />
+        </StrictMode>,
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { cwd: "/workspace", relativePath: "file.txt", contents: "pending draft" },
+    });
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
+  it("recovers an existing draft once after StrictMode setup replay", async () => {
+    getUnsavedFile.mockReturnValue({ contents: "reopened draft" });
+    mount();
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { cwd: "/workspace", relativePath: "file.txt", contents: "reopened draft" },
+    });
+    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
   it.each([

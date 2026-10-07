@@ -2,6 +2,7 @@ import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
+  AssetCreateUrlInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
@@ -9,11 +10,12 @@ import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  AuthReviewWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
   type AuthEnvironmentScope,
@@ -131,15 +133,15 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsSearchContents]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsSearchEntries]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsWriteFile]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsWriteFile]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
-  [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,
+  [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -154,8 +156,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
-  [WS_METHODS.reviewGetDiffPreview]: AuthReviewWriteScope,
-  [WS_METHODS.reviewGetDiffFileContents]: AuthReviewWriteScope,
+  [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
   [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
   [WS_METHODS.terminalAttach]: AuthTerminalOperateScope,
   [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
@@ -227,6 +229,16 @@ const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
+  if (method === WS_METHODS.assetsCreateUrl) {
+    const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
+    return [
+      resource._tag === "workspace-file" ||
+      resource._tag === "media-file" ||
+      resource._tag === "draft-workspace-file"
+        ? AuthFilesystemReadScope
+        : AuthOrchestrationReadScope,
+    ];
+  }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   const guarded = clientRpcRequiredScopes(method, payload);
   if (guarded.length > 0) return guarded;

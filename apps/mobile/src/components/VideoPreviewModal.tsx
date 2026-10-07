@@ -5,7 +5,8 @@ import { ActivityIndicator, Keyboard, Modal, Pressable, View } from "react-nativ
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { useMediaActions, type MediaActionsSource } from "../lib/mediaActions";
+import { useMediaActions } from "../state/mediaActions";
+import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import {
   mediaVideoPreviewUri,
   mediaVideoThumbnailKey,

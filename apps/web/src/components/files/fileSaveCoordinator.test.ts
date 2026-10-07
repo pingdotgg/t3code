@@ -93,6 +93,31 @@ describe("FileSaveCoordinator", () => {
     expect(persist).toHaveBeenCalledWith("unsaved");
   });
 
+  it.each([false, true])(
+    "keeps an edit pending after write permission is removed (closing=%s)",
+    async (closeEditor) => {
+      vi.useFakeTimers();
+      let canWrite = true;
+      const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+      const onPendingChange = vi.fn();
+      const coordinator = new FileSaveCoordinator({
+        debounceMs: 500,
+        canPersist: () => canWrite,
+        persist,
+        onPendingChange,
+        onConfirmed: vi.fn(),
+      });
+
+      coordinator.change("unsaved");
+      canWrite = false;
+      if (closeEditor) coordinator.dispose();
+      await vi.runAllTimersAsync();
+
+      expect(persist).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith(true);
+    },
+  );
+
   it("flushes an edit made while a write was in flight when the editor closes", async () => {
     vi.useFakeTimers();
     const inFlight = deferred();

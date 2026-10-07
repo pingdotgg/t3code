@@ -1,36 +1,53 @@
+import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
 import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
-import type { MediaReference } from "@t3tools/client-runtime/media-reference";
-import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  type AuthSessionState,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
-import { useRefreshAssetUrl } from "../state/assets";
-import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
-import type { FileBackedComposerAttachment } from "./composerImages";
-import { copyTextWithHaptic } from "./copyTextWithHaptic";
-import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
+import { useRefreshAssetUrl } from "./assets";
+import { appAtomRegistry } from "./atom-registry";
+import { useEnvironmentQuery } from "./query";
+import { environmentSession } from "./session";
+import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
+import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 
-/** Authored source metadata is kept separate from temporary preview/download URLs. */
-export type MediaActionsSource = {
-  readonly reference?: MediaReference;
-  readonly name: string;
-  readonly mimeType: string;
-  /** Anchors the iOS share sheet to the view that opened the menu. */
-  readonly sourceIdentifier?: string;
-} & (
-  | { readonly uri: string }
-  | { readonly attachment: FileBackedComposerAttachment }
-  | {
-      readonly environmentId: EnvironmentId;
-      readonly threadId?: ThreadId;
-      readonly resource: AssetResource;
-    }
-);
+/** An explicit action may ask the server while its grant is still unresolved. */
+function allowsHostMedia(session: Pick<AuthSessionState, "authenticated" | "scopes"> | null) {
+  return (
+    session === null ||
+    (session.authenticated && session.scopes?.includes(AuthFilesystemReadScope) === true)
+  );
+}
+
+function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
+  if (environmentId === null) return true;
+  const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
+  return result._tag !== "Failure" && allowsHostMedia(Option.getOrNull(AsyncResult.value(result)));
+}
 
 export function useMediaActions(source: MediaActionsSource | undefined, onOpenFile?: () => void) {
   const navigation = useNavigation();
+  const hostEnvironmentId =
+    source &&
+    "resource" in source &&
+    (source.resource._tag === "workspace-file" || source.resource._tag === "media-file")
+      ? source.environmentId
+      : null;
+  const fileSession = useEnvironmentQuery(
+    hostEnvironmentId === null ? null : environmentSession.sessionStateAtom(hostEnvironmentId),
+  );
+  const canReadMedia =
+    hostEnvironmentId === null ||
+    (fileSession.error === null && fileSession.data !== null && allowsHostMedia(fileSession.data));
   const refresh = useRefreshAssetUrl(
     source && "environmentId" in source ? source.environmentId : null,
     source && "resource" in source ? source.resource : null,
@@ -40,11 +57,11 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   useEffect(() => () => controller.current?.abort(), []);
 
   const share = () => {
-    if (!source || controller.current) return;
+    if (!source || controller.current || !canReadHostMedia(hostEnvironmentId)) return;
     const request = new AbortController();
     controller.current = request;
     setSharing(true);
-    void (async () => {
+    return (async () => {
       if ("attachment" in source) {
         const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
         if (!preview) return;
@@ -56,7 +73,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
         return;
       }
       const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
-      if (request.signal.aborted) return;
+      if (request.signal.aborted || !canReadHostMedia(hostEnvironmentId)) return;
       if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
       const input = {
         attachment: { name: source.name, mimeType: source.mimeType },
@@ -120,7 +137,9 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                 {
                   id: "open-file" as const,
                   title: "Open in file viewer",
+                  disabled: !canReadMedia,
                   run: () => {
+                    if (!canReadHostMedia(hostEnvironmentId)) return;
                     onOpenFile?.();
                     navigation.navigate("ThreadFile", {
                       environmentId: String(source.environmentId),
@@ -135,7 +154,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             id: "save" as const,
             title: sharing ? "Opening share sheet…" : "Save or share",
             run: share,
-            disabled: sharing,
+            disabled: sharing || !canReadMedia,
           },
         ]
       : [];

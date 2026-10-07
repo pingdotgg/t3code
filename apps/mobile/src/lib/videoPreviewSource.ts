@@ -2,7 +2,7 @@ import type { AssetResource, ChatFileAttachment, EnvironmentId } from "@t3tools/
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { DraftComposerFileAttachment } from "./composerImages";
-import type { MediaActionsSource } from "./mediaActions";
+import type { MediaActionsSource } from "./mediaActionsSource";
 
 export type MediaVideoPreviewSource = {
   readonly type: "media";

@@ -32,6 +32,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
   type DesktopWslState,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -100,7 +101,7 @@ import {
 } from "./settings/ThemePreviewCircles";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
-import { filesystemEnvironment } from "../state/filesystem";
+import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -1160,11 +1161,14 @@ function OpenCommandPaletteDialog(props: {
   );
   const relativePathNeedsActiveProject =
     isExplicitRelativeProjectPath(query.trim()) && currentProjectCwdForBrowse === null;
-  const browseQuery = useEnvironmentQuery(
+  const browseAccess = useFilesystemReadAccess(browseEnvironmentId);
+  const hasBrowseTarget =
     isBrowsing &&
-      browsePath.directoryPath.length > 0 &&
-      browseEnvironmentId !== null &&
-      !relativePathNeedsActiveProject
+    browsePath.directoryPath.length > 0 &&
+    browseEnvironmentId !== null &&
+    !relativePathNeedsActiveProject;
+  const browseQuery = useEnvironmentQuery(
+    browseAccess.canReadFiles && hasBrowseTarget
       ? filesystemEnvironment.browse({
           environmentId: browseEnvironmentId,
           input: {
@@ -1175,7 +1179,11 @@ function OpenCommandPaletteDialog(props: {
       : null,
   );
   const browseResult = browseQuery.data;
-  const isBrowsePending = browseQuery.isPending;
+  const isBrowsePending = hasBrowseTarget && (browseAccess.isPending || browseQuery.isPending);
+  const browseAccessError =
+    hasBrowseTarget && !browseAccess.isPending && !browseAccess.canReadFiles
+      ? (browseAccess.error ?? "This connection cannot browse host folders.")
+      : null;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
     () =>
@@ -1202,7 +1210,10 @@ function OpenCommandPaletteDialog(props: {
       const environment = environments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
-      if (!canPreloadBrowsePath(environment?.connection.phase)) {
+      if (
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
+        !canPreloadBrowsePath(environment?.connection.phase)
+      ) {
         return;
       }
 
@@ -2992,6 +3003,7 @@ function OpenCommandPaletteDialog(props: {
   const willCreateProjectPath =
     canSubmitBrowsePath &&
     !isBrowsePending &&
+    browseAccessError === null &&
     query.trim().length > 0 &&
     !hasHighlightedBrowseItem &&
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
@@ -3510,6 +3522,15 @@ function OpenCommandPaletteDialog(props: {
               </span>
             </span>
           </div>
+        </div>
+      ) : null}
+      {browseAccessError ? (
+        <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">
+          {browseAccessError}
+        </div>
+      ) : isBrowsePending && browseResult === null ? (
+        <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
+          Loading folders...
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults

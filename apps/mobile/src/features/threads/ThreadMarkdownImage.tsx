@@ -13,7 +13,8 @@ import { AppText as Text } from "../../components/AppText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/NativePresentation";
-import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { useMediaActions } from "../../state/mediaActions";
+import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
