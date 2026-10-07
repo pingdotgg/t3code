@@ -1,9 +1,13 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeOS from "node:os";
+import * as NodeUtil from "node:util";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redactable from "effect/Redactable";
 import * as Path from "effect/Path";
 import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
@@ -135,6 +139,25 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
     return { requests, spans };
   });
 
+/** Logs one warning through the server logger and returns what its console printed. */
+const printThroughConsole = (fields: object) =>
+  Effect.gen(function* () {
+    const printed: Array<string> = [];
+    const testConsole = {
+      ...globalThis.console,
+      log: (...args: ReadonlyArray<unknown>) => {
+        printed.push(NodeUtil.format(...args));
+      },
+    } satisfies Console.Console;
+    yield* Effect.logWarning("pull request watch check failed", fields).pipe(
+      Effect.provide(
+        ServerLogger.layer.pipe(Layer.provide(layerConfig({})), Layer.provide(layerCollector([]))),
+      ),
+      Effect.provideService(Console.Console, testConsole),
+    );
+    return printed.join("\n");
+  });
+
 describe("ServerLoggerLive", () => {
   it.effect("exports log records to the configured logs endpoint", () =>
     Effect.gen(function* () {
@@ -226,6 +249,49 @@ describe("ServerLoggerLive", () => {
       assert.include(requests[0]?.body ?? "", "server logger under test");
       assert.lengthOf(spans, 1);
       assert.lengthOf(spans[0]?.events ?? [], 0);
+    }),
+  );
+
+  it.effect("prints a cause passed as a log field instead of collapsing it", () =>
+    Effect.gen(function* () {
+      const output = yield* printThroughConsole({
+        threadId: "thread-1",
+        cause: Cause.fail(new Error("gh: HTTP 502 from api.github.com")),
+      });
+
+      assert.include(output, "threadId: 'thread-1'");
+      assert.include(output, "gh: HTTP 502 from api.github.com");
+      assert.notInclude(output, "[Object]");
+    }),
+  );
+
+  it.effect("leaves getters uncalled while printing a cause field", () =>
+    Effect.gen(function* () {
+      const output = yield* printThroughConsole({
+        cause: Cause.fail(new Error("upstream refused")),
+        get detail(): string {
+          throw new Error("getter must not run");
+        },
+      });
+
+      assert.include(output, "upstream refused");
+      assert.notInclude(output, "getter must not run");
+    }),
+  );
+
+  it.effect("leaves a message with its own redaction hook to that hook", () =>
+    Effect.gen(function* () {
+      const output = yield* printThroughConsole({
+        token: "secret-token-value",
+        cause: Cause.fail(new Error("upstream refused")),
+        [Redactable.symbolRedactable](this: { readonly cause: unknown }) {
+          return { token: "<redacted>", cause: Cause.isCause(this.cause) ? "cause" : "missing" };
+        },
+      });
+
+      assert.include(output, "token: '<redacted>'");
+      assert.include(output, "cause: 'cause'");
+      assert.notInclude(output, "secret-token-value");
     }),
   );
 });
