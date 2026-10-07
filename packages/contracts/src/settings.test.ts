@@ -94,6 +94,15 @@ describe("storage cleanup settings", () => {
 });
 
 describe("ClientSettings rich text composer", () => {
+  it("keeps math opt-in across legacy settings, patches, and persistence", () => {
+    expect(decodeClientSettings({}).mathRenderingEnabled).toBe(false);
+    const preference = { mathRenderingEnabled: true };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+    expect(decodeClientSettingsPatch({ mathRenderingEnabled: false })).toEqual({
+      mathRenderingEnabled: false,
+    });
+  });
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
     expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(true);

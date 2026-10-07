@@ -342,4 +342,19 @@ describe("serializeRenderedMarkdownFragment", () => {
       "Hello World (Document template)",
     );
   });
+
+  it("copies equations once as LaTeX alongside surrounding prose", () => {
+    const math = new FakeElement("SPAN", ["chat-markdown-math"], {
+      "data-markdown-copy": "$$x^2$$",
+    }).append(new FakeElement("SPAN").append(new FakeText("x2")), new FakeText("x^2"));
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("Use "), math, new FakeText(" here.")),
+      new FakeElement("DIV", ["chat-markdown-math"], {
+        "data-markdown-copy": "$$\n\\frac{1}{2}\n$$\n\n",
+      }).append(new FakeText("12")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "Use $$x^2$$ here.\n\n$$\n\\frac{1}{2}\n$$",
+    );
+  });
 });

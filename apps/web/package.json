@@ -48,6 +48,7 @@
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
+    "katex": "~0.16.47",
     "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
     "mermaid": "^11.17.2",
@@ -59,6 +60,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "tailwind-merge": "^3.4.0",
     "unbash": "^5.0.0",
     "zustand": "^5.0.11"

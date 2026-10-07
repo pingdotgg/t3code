@@ -21,6 +21,14 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Equations in messages
+
+On web and desktop, enable **Settings → General → Render LaTeX math** to typeset
+`$$x^2$$` inline or equations with `$$` on separate lines. This preference is off by
+default and saved on each device or browser. Single-dollar text stays literal.
+Wide equations scroll horizontally; selecting an equation copies its LaTeX source.
+Markdown file previews use the same preference. Mobile keeps its native renderer.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.

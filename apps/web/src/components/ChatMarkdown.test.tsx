@@ -9,6 +9,8 @@ import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
+const mathPreference = vi.hoisted(() => ({ enabled: false }));
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
@@ -17,7 +19,9 @@ vi.mock("../hooks/useSettings", async (importOriginal) => {
   return {
     ...actual,
     useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
+      select
+        ? select({ ...settings, mathRenderingEnabled: mathPreference.enabled })
+        : { ...settings, mathRenderingEnabled: mathPreference.enabled },
   };
 });
 vi.mock("./ui/tooltip", async () => {
@@ -72,6 +76,94 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown math", () => {
+  it.each([true, false])("renders opted-in math with parseRawHtml=%s", async (parseRawHtml) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = String.raw`Inline $$x^2$$ and prices $5 and $3.
+
+$$
+\begin{aligned}
+P(\text{lunch}) &= \frac{\text{cheese}^2}{1 + \text{meetings}} \\
+x &\leq 2.5
+\end{aligned}
+$$
+
+Code: \`$$literal$$\` and **bold**.`.replaceAll("\\`", "`");
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd={undefined} text={text} parseRawHtml={parseRawHtml} />);
+      });
+      expect(renderer!.root.findAllByProps({ className: "chat-markdown-math" })).toHaveLength(0);
+      mathPreference.enabled = true;
+      await act(async () => {
+        renderer!.update(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            parseRawHtml={parseRawHtml}
+            lineBreaks={!parseRawHtml}
+          />,
+        );
+        await import("./chat/MathTypeset");
+      });
+      const output = JSON.stringify(renderer!.toJSON());
+      expect(output).toContain('encoding=\\"application/x-tex\\"');
+      expect(output).toContain("katex-display");
+      expect(output).toContain("$5 and $3");
+      expect(renderer!.root.findAllByType("code").map((code) => code.children.join(""))).toContain(
+        "$$literal$$",
+      );
+      expect(renderer!.root.findAllByType("strong")).toHaveLength(1);
+      expect(output).toContain('"bold"');
+      expect(renderer!.root.findAllByType("pre")).toHaveLength(0);
+      mathPreference.enabled = false;
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} parseRawHtml={parseRawHtml} />);
+      });
+      expect(JSON.stringify(renderer!.toJSON())).not.toContain("katex-display");
+    } finally {
+      mathPreference.enabled = false;
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("recovers from incomplete and invalid streamed equations without typesetting code fences", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mathPreference.enabled = true;
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd={undefined} text="$$\\frac{" isStreaming />);
+        await import("./chat/MathTypeset");
+      });
+      expect(JSON.stringify(renderer!.toJSON())).toContain("$$");
+      await act(async () => {
+        renderer!.update(
+          <ChatMarkdown
+            cwd={undefined}
+            text={"$$\n\\frac{1}{2}\n$$\n\n```text\n$$not math$$\n```"}
+            isStreaming
+          />,
+        );
+        await getSyntaxHighlighterPromise("text");
+      });
+      expect(JSON.stringify(renderer!.toJSON())).toContain("katex-display");
+      expect(renderer!.root.findAllByProps({ "data-language": "text" })).toHaveLength(1);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text="$$\\unknowncommand$$" />);
+      });
+      expect(JSON.stringify(renderer!.toJSON())).toContain("unknowncommand");
+      expect(JSON.stringify(renderer!.toJSON())).not.toContain("katex-display");
+    } finally {
+      mathPreference.enabled = false;
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
