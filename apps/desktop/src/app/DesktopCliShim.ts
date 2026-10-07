@@ -125,6 +125,14 @@ export const renderCliShim = (input: {
   ].join("\n");
 };
 
+/** Where the packaged app keeps its launcher: `<T3 home>/bin/t3`, `t3.cmd` on Windows. */
+export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
+  environment.path.join(
+    environment.baseDir,
+    "bin",
+    environment.platform === "win32" ? "t3.cmd" : "t3",
+  );
+
 /**
  * Writes the packaged app's launcher to `<T3 home>/bin` and returns its path
  * for the backend's T3CODE_CLI_PATH. Development builds run from a checkout
@@ -136,7 +144,7 @@ export const install = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = environment.path;
   const windows = environment.platform === "win32";
-  const shimPath = path.join(environment.baseDir, "bin", windows ? "t3.cmd" : "t3");
+  const shimPath = launcherPath(environment);
   const entry = path.join(environment.serverRoot, SERVER_ENTRY);
   const target: CliShimTarget = windows
     ? { kind: "windows", executable: process.execPath, entry }
