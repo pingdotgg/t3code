@@ -7565,42 +7565,60 @@ export default function ChatView(props: ChatViewProps) {
     onOpenRelatedThread,
   ]);
   // Settled, snoozed, and woke are thread state, not composer actions: each
-  // gets one quiet line above the composer instead of a banner. A woken
+  // gets one quiet line after the last message instead of a banner. A woken
   // thread announces itself here, not just in the sidebar pill. Dismissing
   // marks the wake as seen (same acknowledgment as the pill); sending a
   // message clears it as a side effect of the send path.
-  const threadStatusLine = activeThreadSnoozed ? (
-    <ThreadStatusLine
-      icon={<AlarmClockIcon />}
-      label={
-        activeThreadShell?.snoozedUntil
-          ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
-          : "Snoozed"
-      }
-      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
-      actionDisabled={!canOperateThread || isUnsnoozing}
-      onAction={() => void handleUnsnoozeActiveThread()}
-    />
-  ) : activeThreadSettled ? (
-    <ThreadStatusLine
-      icon={<CheckCircle2Icon />}
-      label={
-        activeThreadShell?.settledAt
-          ? `Settled ${formatRelativeTimeLabel(activeThreadShell.settledAt)}`
-          : "Settled"
-      }
-      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
-      actionDisabled={!canOperateThread || isUnsettling}
-      onAction={() => void handleUnsettleActiveThread()}
-    />
-  ) : activeThreadWokeVisible ? (
-    <ThreadStatusLine
-      icon={<AlarmClockIcon />}
-      label="Woke from snooze"
-      actionLabel="Dismiss"
-      onAction={acknowledgeActiveThreadWoke}
-    />
-  ) : null;
+  // Memoized: it is the timeline's list footer, and a new element re-renders that footer.
+  // nowMinute keeps the relative time fresh.
+  const threadStatusLine = useMemo(() => {
+    void nowMinute;
+    return activeThreadSnoozed ? (
+      <ThreadStatusLine
+        icon={<AlarmClockIcon />}
+        label={
+          activeThreadShell?.snoozedUntil
+            ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
+            : "Snoozed"
+        }
+        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+        actionDisabled={!canOperateThread || isUnsnoozing}
+        onAction={() => void handleUnsnoozeActiveThread()}
+      />
+    ) : activeThreadSettled ? (
+      <ThreadStatusLine
+        icon={<CheckCircle2Icon />}
+        label={
+          activeThreadShell?.settledAt
+            ? `Settled ${formatRelativeTimeLabel(activeThreadShell.settledAt)}`
+            : "Settled"
+        }
+        actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+        actionDisabled={!canOperateThread || isUnsettling}
+        onAction={() => void handleUnsettleActiveThread()}
+      />
+    ) : activeThreadWokeVisible ? (
+      <ThreadStatusLine
+        icon={<AlarmClockIcon />}
+        label="Woke from snooze"
+        actionLabel="Dismiss"
+        onAction={acknowledgeActiveThreadWoke}
+      />
+    ) : null;
+  }, [
+    acknowledgeActiveThreadWoke,
+    activeThreadSettled,
+    activeThreadShell?.settledAt,
+    activeThreadShell?.snoozedUntil,
+    activeThreadSnoozed,
+    activeThreadWokeVisible,
+    canOperateThread,
+    handleUnsettleActiveThread,
+    handleUnsnoozeActiveThread,
+    isUnsettling,
+    isUnsnoozing,
+    nowMinute,
+  ]);
   const activeThreadHasCompactableConversation = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "user_message" &&
@@ -11271,6 +11289,7 @@ export default function ChatView(props: ChatViewProps) {
                 {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={
@@ -11415,7 +11434,6 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    {threadStatusLine}
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
