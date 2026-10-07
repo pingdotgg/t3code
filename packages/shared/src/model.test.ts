@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
-
+import {
+  CustomModelEntry,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   applyClaudePromptEffortPrefix,
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -21,6 +26,8 @@ import {
   normalizeModelSlug,
   modelSelectionsEqual,
 } from "./model.ts";
+
+const decodeCustomModelEntry = Schema.decodeUnknownSync(CustomModelEntry);
 
 it("keeps the Codex catalog display formatting", () => {
   expect(formatCodexModelName("gpt-5.3-codex-spark")).toBe("GPT-5.3-Codex-Spark");
@@ -301,6 +308,24 @@ describe("readCustomModelEntries", () => {
       name: "X",
       capabilities,
     });
+  });
+
+  it("preserves a custom context allowance through settings round trips", () => {
+    const setting = { slug: "custom-gpt", contextWindowTokens: 872_000 };
+    const entries = readCustomModelEntries([setting]);
+    expect(entries).toEqual([{ ...setting, name: "custom-gpt", capabilities: null }]);
+    expect(entries.map(toCustomModelSetting)).toEqual([setting]);
+    expect(decodeCustomModelEntry(setting)).toEqual(setting);
+  });
+
+  it("rejects invalid context allowances on the wire and drops them when reading opaque settings", () => {
+    for (const contextWindowTokens of [0, 8_191, 1_000_001, 872_000.5, "872000", NaN]) {
+      const setting = { slug: "custom-gpt", contextWindowTokens };
+      expect(() => decodeCustomModelEntry(setting)).toThrow();
+      expect(readCustomModelEntries([setting])).toEqual([
+        { slug: "custom-gpt", name: "custom-gpt", capabilities: null },
+      ]);
+    }
   });
 });
 

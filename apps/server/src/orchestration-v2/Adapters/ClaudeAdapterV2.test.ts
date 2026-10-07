@@ -60,6 +60,8 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { scopeClaudeModelCatalog } from "../../provider/ClaudeModelCatalog.ts";
+import { SYNTHETIC_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.testFixtures.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -71,8 +73,9 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
-const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
-const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const DEFAULT_CLAUDE_SETTINGS = decodeClaudeSettings({});
+const AUTO_COMPACT_CLAUDE_SETTINGS = decodeClaudeSettings({
   autoCompactWindow: "300000",
 });
 const CLAUDE_TEST_MODEL_SELECTION = {
@@ -159,6 +162,199 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it("applies each selected custom model's context allowance to query startup", () => {
+    const settings = decodeClaudeSettings({
+      customModels: [
+        { slug: "gpt-synthetic-large", contextWindowTokens: 872_000 },
+        { slug: "gpt-synthetic-small", contextWindowTokens: 272_000 },
+      ],
+    });
+    const modelCatalog = scopeClaudeModelCatalog(
+      SYNTHETIC_CLAUDE_MODEL_CATALOG,
+      settings.customModels,
+    );
+    const querySettingsFor = (model: string) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model,
+        },
+        modelCatalog,
+        nativeThreadId: `native-${model}`,
+        resume: false,
+        cwd: "/workspace",
+        settings,
+        environment: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: "500000" },
+      });
+
+    const large = querySettingsFor("gpt-synthetic-large");
+    const small = querySettingsFor("gpt-synthetic-small");
+    const unknown = querySettingsFor("gpt-synthetic-unknown");
+
+    assert.deepNestedInclude(large.settings, {
+      env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: "872000" },
+    });
+    assert.deepNestedInclude(small.settings, {
+      env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000" },
+    });
+    assert.notProperty(unknown.settings ?? {}, "env");
+    assert.equal(unknown.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "500000");
+  });
+
+  it("uses a declared custom allowance and retains the default when none is declared", () => {
+    const customModel = "gpt-synthetic-active";
+    const modelCatalog = scopeClaudeModelCatalog(SYNTHETIC_CLAUDE_MODEL_CATALOG, [
+      { slug: customModel, contextWindowTokens: 272_000 },
+    ]);
+    const usage = { input_tokens: 100, output_tokens: 10 };
+    const selection = (model: string): ModelSelection => ({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model,
+    });
+
+    assert.equal(
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        usage,
+        selection(customModel),
+        "2026-10-07T00:00:00.000Z",
+        modelCatalog,
+      ).maxTokens,
+      272_000,
+    );
+    assert.equal(
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        usage,
+        selection("gpt-synthetic-unknown"),
+        "2026-10-07T00:00:00.000Z",
+        modelCatalog,
+      ).maxTokens,
+      200_000,
+    );
+  });
+
+  it("rejects a settings-file path instead of discarding it for a custom allowance", () => {
+    const model = "gpt-synthetic-large";
+    const modelCatalog = scopeClaudeModelCatalog(SYNTHETIC_CLAUDE_MODEL_CATALOG, [
+      { slug: model, contextWindowTokens: 872_000 },
+    ]);
+
+    assert.throws(
+      () =>
+        ClaudeAdapterV2.makeClaudeQueryOptions({
+          modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+          modelCatalog,
+          nativeThreadId: "native-settings-file",
+          resume: false,
+          cwd: "/workspace",
+          sdkSettings: "/workspace/claude-settings.json",
+        }),
+      TypeError,
+      /settings-file paths cannot be combined with a custom context allowance/,
+    );
+  });
+
+  it("preserves object settings and environment when applying a custom allowance", () => {
+    const model = "gpt-synthetic-large";
+    const modelCatalog = scopeClaudeModelCatalog(SYNTHETIC_CLAUDE_MODEL_CATALOG, [
+      { slug: model, contextWindowTokens: 872_000 },
+    ]);
+    const sdkSettings = {
+      env: { ROUTER_OPTION: "enabled", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "200000" },
+      alwaysThinkingEnabled: false,
+    };
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+      modelCatalog,
+      nativeThreadId: "native-object-settings",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+      sdkSettings,
+    });
+
+    assert.deepNestedInclude(options.settings, {
+      env: { ROUTER_OPTION: "enabled", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "872000" },
+      alwaysThinkingEnabled: false,
+      autoCompactWindow: 300_000,
+    });
+    assert.equal(sdkSettings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "200000");
+  });
+
+  it("preserves a settings-file path when no custom allowance applies", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-settings-file",
+      resume: false,
+      cwd: "/workspace",
+      sdkSettings: "/workspace/claude-settings.json",
+    });
+
+    assert.equal(options.settings, "/workspace/claude-settings.json");
+  });
+
+  it.each(["claude-haiku-4-5", "claude-opus-4-5"])(
+    "retains the native 200k limit when the built-in catalog profile omits capacity: %s",
+    (model) => {
+      const catalog = {
+        models: [
+          {
+            model: {
+              slug: model,
+              name: model,
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+            runtime: {},
+            compatibility: {},
+          },
+        ],
+      };
+      const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 100, output_tokens: 10 },
+        { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+        "2026-10-07T00:00:00.000Z",
+        catalog,
+      );
+      assert.equal(usage.maxTokens, 200_000);
+    },
+  );
+
+  it.each([
+    "claude-synthetic-router-model",
+    "claude",
+    "anthropic/claude-opus-4-8",
+    "us.anthropic.claude-sonnet-4-5-v1:0",
+    "my-gateway/CLAUDE-opus-5-5",
+    "claude-sonnet-4-5@20250929",
+    "default",
+    "best",
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku",
+    "opusplan",
+    "gpt-synthetic-router[1m]",
+    "gpt-synthetic-router[1m]-deployment",
+    "gpt-synthetic-router[1M]-deployment",
+  ])("rejects custom allowances for runtime-controlled model identifiers: %s", (model) => {
+    const modelCatalog = scopeClaudeModelCatalog(SYNTHETIC_CLAUDE_MODEL_CATALOG, [
+      { slug: model, contextWindowTokens: 872_000 },
+    ]);
+    const plan = ClaudeAdapterV2.claudeSelectionTransition(modelCatalog, {
+      current: CLAUDE_TEST_MODEL_SELECTION,
+      target: {
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        model,
+      },
+      sessionCapabilities: ClaudeAdapterV2.ClaudeProviderCapabilitiesV2,
+    });
+
+    assert.equal(plan.type, "reject");
+    if (plan.type === "reject") {
+      assert.match(plan.reason, /non-Claude model identifiers/);
+    }
+  });
+
   it.each([false, true])("requests thinking summaries with resume=%s", (resume) => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,

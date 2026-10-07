@@ -102,15 +102,23 @@ export function scopeClaudeModelCatalog(
   const builtInSlugs = new Set(builtInModels.map((entry) => entry.model.slug));
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
-    if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
+    if (
+      (!entry.capabilities && entry.contextWindowTokens === undefined) ||
+      builtInSlugs.has(entry.slug)
+    ) {
+      continue;
+    }
     customCatalogModels.push({
       model: {
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: entry.capabilities,
+        capabilities: entry.capabilities ?? EMPTY_CAPABILITIES,
       },
-      runtime: {},
+      runtime:
+        entry.contextWindowTokens === undefined
+          ? {}
+          : { fixedContextWindowTokens: entry.contextWindowTokens },
       compatibility: {},
     });
   }
@@ -258,4 +266,12 @@ export function resolveClaudeCatalogContextWindowTokens(
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
   return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
+}
+
+export function resolveClaudeCatalogCustomContextWindowTokens(
+  catalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection | undefined,
+): number | undefined {
+  const entry = resolveClaudeCatalogModel(catalog, modelSelection?.model);
+  return entry?.model.isCustom ? entry.runtime.fixedContextWindowTokens : undefined;
 }

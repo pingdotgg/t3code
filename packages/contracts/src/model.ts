@@ -136,6 +136,10 @@ export const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.optional(ModelCapabilities),
+  /** Verified context allowance for a custom model used through Claude Code. */
+  contextWindowTokens: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 8_192, maximum: 1_000_000 })),
+  ),
 });
 export type CustomModelEntry = typeof CustomModelEntry.Type;
 

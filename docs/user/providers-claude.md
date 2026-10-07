@@ -53,6 +53,62 @@ You can also send `/compact` in an existing conversation. Web and desktop offer
 a large older thread. See [commands and skills](./composer.md#commands-and-skills)
 for using composer commands.
 
+### Custom models behind a router
+
+A router's model may support more context than Claude Code recognizes from its
+name. First add your custom non-Claude model in **Settings > Providers** for the
+Claude instance that connects to your router.
+
+On that environment's machine, open `~/.t3/userdata/settings.json`. If the server
+uses a custom data directory through `T3CODE_HOME` or `--base-dir`, open
+`userdata/settings.json` inside that directory instead. For a remote environment,
+edit the file on the server, rather than on the device running the client.
+
+Find your Claude instance under `providerInstances`, then its
+`config.customModels` array. Add `contextWindowTokens` to the matching model entry
+as shown below, keeping the other settings and model entries. If your model is
+stored as a string, replace that string with an object using the same ID as
+`slug`. The value must be an integer from `8192` to `1000000`:
+
+```json
+{
+  "slug": "my-router-model",
+  "name": "My router model",
+  "contextWindowTokens": 872000
+}
+```
+
+Save the file while that Claude instance is idle: changing its settings replaces
+the instance and interrupts any turn running on it. A non-integer or out-of-range
+allowance makes the instance unavailable until you correct the value.
+
+After saving, select that custom model and send a message. T3 reloads the settings
+and applies the allowance when it starts the model's next turn. The model editor
+preserves the allowance when you change the model's name or options; the allowance
+itself is configured in the settings file. Saving model edits from an older
+client also preserves the saved allowance for the same model ID. To remove the
+allowance, delete `contextWindowTokens` from that entry in the settings file.
+
+Use a limit verified for your router, account, and model. The number above is an
+example, not a default or a guarantee of provider capacity. Leave the field absent
+to use Claude Code's normal model handling. Built-in Claude models retain their
+own context settings. A custom entry that reuses a built-in catalog slug is
+ignored. Claude Code controls capacity for Claude identifiers, including
+provider-prefixed IDs such as `anthropic/claude-opus-4-8`, native aliases
+such as `default`, `best`, `fable`, `opus`, `sonnet`, `haiku`, and `opusplan`, and
+model IDs containing `[1m]` anywhere, in any casing.
+T3 reports an error if a custom allowance is selected for those identifiers.
+
+T3 applies the custom allowance whenever it starts the selected model, including
+after switching models within the same Claude provider. It keeps automatic
+compaction enabled and honors your separate **Auto-compact after** setting. If
+Claude Code cannot start the selected model with that allowance, the switch
+reports an error instead of continuing with an incorrect limit.
+
+The context meter uses the selected model's declared allowance. Custom models
+without an allowance retain the existing 200,000-token fallback. Switching back
+to one of those models clears the custom allowance and restores that fallback.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

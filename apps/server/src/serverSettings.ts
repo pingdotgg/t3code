@@ -11,6 +11,7 @@
  * @module ServerSettings
  */
 import {
+  CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -53,6 +54,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -218,13 +220,106 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances, usageLimitSources, bitbucket, github };
 }
 
+const isCustomModelSettings = Schema.is(Schema.Array(CustomModelSetting));
+
+/** Older clients omit allowances when serializing their custom-model editor rows. */
+function preserveCustomModelContextWindows(
+  current: unknown,
+  next: ReadonlyArray<CustomModelSetting>,
+): ReadonlyArray<CustomModelSetting> {
+  const previous = new Map(
+    readCustomModelEntries(current).map((entry) => [entry.slug, entry.contextWindowTokens]),
+  );
+  return next.map((entry) => {
+    if (typeof entry !== "string" && entry.contextWindowTokens !== undefined) return entry;
+    const slug = typeof entry === "string" ? entry.trim() : entry.slug.trim();
+    const contextWindowTokens = previous.get(slug);
+    if (contextWindowTokens === undefined) return entry;
+    return typeof entry === "string"
+      ? { slug: entry, contextWindowTokens }
+      : { ...entry, contextWindowTokens };
+  });
+}
+
+function preserveClaudeInstanceContextWindows(
+  current: ServerSettings,
+  instanceId: ProviderInstanceId,
+  instance: ProviderInstanceConfig,
+): ProviderInstanceConfig {
+  const previous = current.providerInstances[instanceId];
+  const config = instance.config;
+  if (
+    instance.driver !== "claudeAgent" ||
+    (previous !== undefined && previous.driver !== instance.driver) ||
+    config === null ||
+    typeof config !== "object" ||
+    !("customModels" in config) ||
+    !isCustomModelSettings(config.customModels)
+  ) {
+    return instance;
+  }
+  const previousConfig = previous?.config;
+  const previousModels =
+    previous === undefined && instanceId === "claudeAgent"
+      ? current.providers.claudeAgent.customModels
+      : previousConfig !== null &&
+          typeof previousConfig === "object" &&
+          "customModels" in previousConfig
+        ? previousConfig.customModels
+        : undefined;
+  return {
+    ...instance,
+    config: {
+      ...config,
+      customModels: preserveCustomModelContextWindows(previousModels, config.customModels),
+    },
+  };
+}
+
+function applySettingsPatch(current: ServerSettings, patch: ServerSettingsPatch): ServerSettings {
+  const next = applyServerSettingsPatch(current, patch);
+  return {
+    ...next,
+    providers:
+      patch.providers?.claudeAgent?.customModels === undefined
+        ? next.providers
+        : {
+            ...next.providers,
+            claudeAgent: {
+              ...next.providers.claudeAgent,
+              customModels: preserveCustomModelContextWindows(
+                current.providers.claudeAgent.customModels,
+                next.providers.claudeAgent.customModels,
+              ),
+            },
+          },
+    providerInstances:
+      patch.providerInstances === undefined
+        ? next.providerInstances
+        : Object.fromEntries(
+            Object.entries(next.providerInstances).map(([instanceId, instance]) => [
+              instanceId,
+              preserveClaudeInstanceContextWindows(
+                current,
+                ProviderInstanceId.make(instanceId),
+                instance,
+              ),
+            ]),
+          ),
+  };
+}
+
 export function applyProviderInstanceMutation(
   settings: ServerSettings,
   mutation: ProviderInstanceMutation,
 ): ServerSettings {
   const providerInstances = { ...settings.providerInstances };
   if (mutation.operation === "upsert" || mutation.operation === "create") {
-    providerInstances[mutation.instanceId] = mutation.instance;
+    providerInstances[mutation.instanceId] = preserveClaudeInstanceContextWindows(
+      settings,
+      mutation.instanceId,
+      mutation.instance,
+    );
   } else {
     delete providerInstances[mutation.instanceId];
   }
@@ -330,7 +425,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       getSettings,
       updateSettings: (patch) =>
         updateTestSettings((currentSettings) =>
-          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+          Effect.succeed(applySettingsPatch(currentSettings, patch)),
         ),
       updateProviderInstance: (mutation, patch = {}) =>
         updateTestSettings((currentSettings) =>
@@ -340,7 +435,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
               mutation,
               "test settings",
             );
-            const patched = applyServerSettingsPatch(currentSettings, patch);
+            const patched = applySettingsPatch(currentSettings, patch);
             return applyProviderInstanceMutation(patched, mutation);
           }),
         ),
@@ -1370,14 +1465,12 @@ const make = Effect.gen(function* () {
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
-      updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
-      ),
+      updateAndPersistSettings((current) => Effect.succeed(applySettingsPatch(current, patch))),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
         Effect.gen(function* () {
           yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
-          const patched = applyServerSettingsPatch(current, patch);
+          const patched = applySettingsPatch(current, patch);
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),

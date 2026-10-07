@@ -98,8 +98,10 @@ import {
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
-  resolveClaudeCatalogContextWindow,
+  type ClaudeModelCatalog,
   resolveClaudeCatalogContextWindowTokens,
+  resolveClaudeCatalogCustomContextWindowTokens,
+  scopeClaudeModelCatalog,
 } from "../../provider/ClaudeModelCatalog.ts";
 import {
   boundProviderEventForLogging,
@@ -119,7 +121,11 @@ import { mcpToolPresentation, normalizeMcpText } from "../../provider/McpToolPre
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
-import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import {
+  type ProviderSelectionTransitionInput,
+  type ProviderSelectionTransitionPlan,
+  turnScopedSelectionTransition,
+} from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
@@ -137,14 +143,38 @@ import {
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
+const CLAUDE_CONTEXT_WINDOW_ENV = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+const CLAUDE_NATIVE_MODEL_ID =
+  /claude-|^(?:claude|default|best|fable|opus|sonnet|haiku|opusplan)$|\[1m\]/i;
 
-function claudeContextWindow(modelSelection: ModelSelection): number | null {
+function claudeContextWindow(
+  modelCatalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection,
+): number | null {
+  const resolved = resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection);
+  if (resolved !== undefined) return resolved;
   if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
     return 1_000_000;
   }
-  return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
-    ? 1_000_000
-    : 200_000;
+  return 200_000;
+}
+
+function claudeCustomContextWindowSelectionIssue(
+  modelCatalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection,
+): string | undefined {
+  return resolveClaudeCatalogCustomContextWindowTokens(modelCatalog, modelSelection) !==
+    undefined && CLAUDE_NATIVE_MODEL_ID.test(modelSelection.model)
+    ? "Custom contextWindowTokens is supported only for non-Claude model identifiers; Claude identifiers (including provider-prefixed IDs), native aliases and IDs containing [1m] use Claude Code's native context window."
+    : undefined;
+}
+
+export function claudeSelectionTransition(
+  modelCatalog: ClaudeModelCatalog,
+  input: ProviderSelectionTransitionInput,
+): ProviderSelectionTransitionPlan {
+  const issue = claudeCustomContextWindowSelectionIssue(modelCatalog, input.target);
+  return issue === undefined ? turnScopedSelectionTransition() : { type: "reject", reason: issue };
 }
 
 export function claudeProviderTurnTokenUsage(
@@ -156,6 +186,7 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
+  modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
 ) {
   const inputTokens =
     usage.input_tokens +
@@ -164,7 +195,7 @@ export function claudeProviderTurnTokenUsage(
   const outputTokens = usage.output_tokens;
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens: claudeContextWindow(modelSelection),
+    maxTokens: claudeContextWindow(modelCatalog, modelSelection),
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
@@ -803,6 +834,7 @@ export const layerQueryRunner: Layer.Layer<
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
+  readonly modelCatalog?: ClaudeModelCatalog;
   readonly nativeThreadId: string;
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
@@ -827,7 +859,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
-  const compiledSelection = compileClaudeModelSelection(input.modelSelection);
+  const modelCatalog = input.modelCatalog ?? BUNDLED_CLAUDE_MODEL_CATALOG;
+  const compiledSelection = compileClaudeModelSelection(input.modelSelection, modelCatalog);
   const {
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
@@ -853,11 +886,37 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
-  const effectiveQuerySettings =
-    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+  const customContextWindow = resolveClaudeCatalogCustomContextWindowTokens(
+    modelCatalog,
+    input.modelSelection,
+  );
+  if (customContextWindow !== undefined && typeof input.sdkSettings === "string") {
+    throw new TypeError(
+      "Custom contextWindowTokens requires SDK settings as an object; settings-file paths cannot be combined with a custom context allowance.",
+    );
+  }
+  const contextWindowSettings =
+    customContextWindow === undefined
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
+          env: {
+            ...(typeof querySettings === "object" &&
+            querySettings !== null &&
+            typeof querySettings.env === "object" &&
+            querySettings.env !== null
+              ? querySettings.env
+              : {}),
+            [CLAUDE_CONTEXT_WINDOW_ENV]: String(customContextWindow),
+          },
+        } as ClaudeSdkSettings);
+  const effectiveQuerySettings =
+    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+      ? contextWindowSettings
+      : ({
+          ...(typeof contextWindowSettings === "object" && contextWindowSettings !== null
+            ? contextWindowSettings
+            : {}),
           autoCompactWindow: Number(input.settings.autoCompactWindow),
         } as ClaudeSdkSettings);
   const options: ClaudeAgentSdkQueryOptions = {
@@ -3006,6 +3065,7 @@ export interface ClaudeAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
+  readonly modelCatalog?: ClaudeModelCatalog;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
@@ -3020,6 +3080,10 @@ export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const modelCatalog = scopeClaudeModelCatalog(
+    adapterOptions.modelCatalog ?? BUNDLED_CLAUDE_MODEL_CATALOG,
+    adapterOptions.settings.customModels,
+  );
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
@@ -3050,9 +3114,20 @@ export function makeClaudeAdapterV2(
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
     getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    planSelectionTransition: (input) =>
+      Effect.succeed(claudeSelectionTransition(modelCatalog, input)),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
+        const initialSelectionIssue = claudeCustomContextWindowSelectionIssue(
+          modelCatalog,
+          input.modelSelection,
+        );
+        if (initialSelectionIssue !== undefined) {
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail: initialSelectionIssue,
+          });
+        }
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
         const session = providerSession({
@@ -5798,7 +5873,7 @@ export function makeClaudeAdapterV2(
                   completedAt: null,
                   tokenUsage: {
                     usedTokens: afterTokenCount,
-                    maxTokens: claudeContextWindow(context.input.modelSelection),
+                    maxTokens: claudeContextWindow(modelCatalog, context.input.modelSelection),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -5946,6 +6021,7 @@ export function makeClaudeAdapterV2(
                     message.message.usage,
                     context.input.modelSelection,
                     DateTime.formatIso(now),
+                    modelCatalog,
                   ),
                 },
               });
@@ -7052,7 +7128,20 @@ export function makeClaudeAdapterV2(
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
+          const selectionIssue = claudeCustomContextWindowSelectionIssue(
+            modelCatalog,
+            turnInput.modelSelection,
+          );
+          if (selectionIssue !== undefined) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: selectionIssue,
+            });
+          }
+          const compiledSelection = compileClaudeModelSelection(
+            turnInput.modelSelection,
+            modelCatalog,
+          );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
@@ -7122,6 +7211,7 @@ export function makeClaudeAdapterV2(
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
+            modelCatalog,
             nativeThreadId,
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
@@ -7325,7 +7415,8 @@ export function makeClaudeAdapterV2(
                 : yield* makeClaudeUserMessageWithAttachments({
                     text: applyClaudePromptEffortPrefix(
                       turnInput.message.text,
-                      compileClaudeModelSelection(turnInput.modelSelection).promptEffort,
+                      compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
+                        .promptEffort,
                     ),
                     attachments: turnInput.message.attachments,
                     attachmentsDir,
@@ -7534,7 +7625,8 @@ export function makeClaudeAdapterV2(
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
+                compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                  .promptEffort,
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
@@ -7611,7 +7703,9 @@ export function makeClaudeAdapterV2(
           providerSessionId: input.providerSessionId,
           providerSession: session,
           getModelContextWindow: (selection) =>
-            resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
+            claudeCustomContextWindowSelectionIssue(modelCatalog, selection) === undefined
+              ? resolveClaudeCatalogContextWindowTokens(modelCatalog, selection)
+              : undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.gen(function* () {
             // Session capability: any native thread with pending work pins idle.
@@ -7925,7 +8019,7 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<ClaudeAdapterV2Options, "modelCatalog" | "scopedLimitNames" | "onUsageLimits"> = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

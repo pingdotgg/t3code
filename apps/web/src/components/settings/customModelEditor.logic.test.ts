@@ -19,6 +19,20 @@ const draft = (overrides: Partial<CustomModelDraft>): CustomModelDraft => ({
 });
 
 describe("customModelEditor.logic", () => {
+  it("preserves the context allowance when editing a custom model's label", () => {
+    const definition = {
+      slug: "custom-gpt",
+      name: "Custom GPT",
+      capabilities: null,
+      contextWindowTokens: 872_000,
+    };
+    const reopened = draftFromDefinition(definition);
+    expect(definitionFromDraft({ ...reopened, name: "Renamed GPT" })).toEqual({
+      ...definition,
+      name: "Renamed GPT",
+    });
+  });
+
   it("round-trips a definition through the draft, marking the current value as default", () => {
     const definition = definitionFromDraft(
       draft({

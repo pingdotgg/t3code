@@ -358,6 +358,7 @@ export interface CustomModelDefinition {
   readonly slug: string;
   readonly name: string;
   readonly capabilities: ModelCapabilities | null;
+  readonly contextWindowTokens?: number;
 }
 
 const decodeCustomModelCapabilities = Schema.decodeUnknownOption(ModelCapabilities);
@@ -378,7 +379,12 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
       typeof raw === "string"
         ? { slug: raw }
         : raw !== null && typeof raw === "object"
-          ? (raw as { slug?: unknown; name?: unknown; capabilities?: unknown })
+          ? (raw as {
+              slug?: unknown;
+              name?: unknown;
+              capabilities?: unknown;
+              contextWindowTokens?: unknown;
+            })
           : null;
     if (!record) continue;
     const slug = normalizeCustomModelSlug(typeof record.slug === "string" ? record.slug : null);
@@ -396,6 +402,12 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
       capabilities: capabilities
         ? createModelCapabilities({ optionDescriptors: capabilities.optionDescriptors ?? [] })
         : null,
+      ...(typeof record.contextWindowTokens === "number" &&
+      Number.isInteger(record.contextWindowTokens) &&
+      record.contextWindowTokens >= 8_192 &&
+      record.contextWindowTokens <= 1_000_000
+        ? { contextWindowTokens: record.contextWindowTokens }
+        : {}),
     });
   }
   return entries;
@@ -408,10 +420,14 @@ export function readCustomModelEntries(value: unknown): CustomModelDefinition[] 
 export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelSetting {
   const descriptors = entry.capabilities?.optionDescriptors ?? [];
   const name = entry.name !== entry.slug ? entry.name : undefined;
-  if (!name && descriptors.length === 0) return entry.slug;
+  if (!name && descriptors.length === 0 && entry.contextWindowTokens === undefined)
+    return entry.slug;
   return {
     slug: entry.slug,
     ...(name ? { name } : {}),
+    ...(entry.contextWindowTokens !== undefined
+      ? { contextWindowTokens: entry.contextWindowTokens }
+      : {}),
     ...(descriptors.length > 0
       ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
       : {}),

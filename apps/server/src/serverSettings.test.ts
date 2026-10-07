@@ -439,6 +439,207 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect.each(["patch", "upsert"])(
+    "preserves custom context allowances through older-client %s edits and persistence",
+    (route) =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const instanceId = ProviderInstanceId.make("claude_router");
+        const driver = ProviderDriverKind.make("claudeAgent");
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId,
+          instance: {
+            driver,
+            config: {
+              customModels: [
+                { slug: "router-model", contextWindowTokens: 872_000 },
+                { slug: "string-model", contextWindowTokens: 272_000 },
+                { slug: "removed-model", contextWindowTokens: 120_000 },
+              ],
+            },
+          },
+        });
+
+        const instance = {
+          driver,
+          config: {
+            customModels: [
+              { slug: "router-model", name: "Renamed model" },
+              "string-model",
+              "new-model",
+            ],
+          },
+        };
+        const next = yield* route === "patch"
+          ? serverSettings.updateSettings({ providerInstances: { [instanceId]: instance } })
+          : serverSettings.updateProviderInstance({ operation: "upsert", instanceId, instance });
+        const expected = [
+          { slug: "router-model", name: "Renamed model", contextWindowTokens: 872_000 },
+          { slug: "string-model", contextWindowTokens: 272_000 },
+          "new-model",
+        ];
+        assert.deepEqual(next.providerInstances[instanceId]?.config, { customModels: expected });
+        const persisted = yield* decodeServerSettingsJson(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+        );
+        assert.deepEqual(persisted.providerInstances[instanceId]?.config, {
+          customModels: expected,
+        });
+
+        const changed = yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver,
+            config: { customModels: [{ slug: "router-model", contextWindowTokens: 65_536 }] },
+          },
+        });
+        assert.deepEqual(changed.providerInstances[instanceId]?.config, {
+          customModels: [{ slug: "router-model", contextWindowTokens: 65_536 }],
+        });
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: { driver, config: { customModels: [] } },
+        });
+        const restored = yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: { driver, config: { customModels: ["router-model"] } },
+        });
+        assert.deepEqual(restored.providerInstances[instanceId]?.config, {
+          customModels: ["router-model"],
+        });
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "preserves legacy custom allowances when an older client migrates the default instance",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          providers: {
+            claudeAgent: { customModels: [{ slug: "router-model", contextWindowTokens: 872_000 }] },
+          },
+        });
+        const edited = yield* serverSettings.updateSettings({
+          providers: {
+            claudeAgent: { customModels: [{ slug: "router-model", name: "Renamed model" }] },
+          },
+        });
+        assert.deepEqual(edited.providers.claudeAgent.customModels, [
+          { slug: "router-model", name: "Renamed model", contextWindowTokens: 872_000 },
+        ]);
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const migrated = yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { customModels: ["router-model"] },
+          },
+        });
+        assert.deepEqual(migrated.providerInstances[instanceId]?.config, {
+          customModels: [{ slug: "router-model", contextWindowTokens: 872_000 }],
+        });
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "keeps saved context allowances scoped to their provider and validates explicit values",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("claude_router");
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { customModels: [{ slug: "router-model", contextWindowTokens: 872_000 }] },
+          },
+        });
+        const otherId = ProviderInstanceId.make("claude_other");
+        const changed = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { customModels: ["router-model"] },
+            },
+            [otherId]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { customModels: ["router-model"] },
+            },
+          },
+        });
+        assert.deepEqual(changed.providerInstances[instanceId]?.config, {
+          customModels: ["router-model"],
+        });
+        assert.deepEqual(changed.providerInstances[otherId]?.config, {
+          customModels: ["router-model"],
+        });
+
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId: otherId,
+          instance: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { customModels: [{ slug: "router-model", contextWindowTokens: 524_288 }] },
+          },
+        });
+        const invalid = [{ slug: "router-model", contextWindowTokens: 100 }];
+        const updated = yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId: otherId,
+          instance: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { customModels: invalid },
+          },
+        });
+        assert.deepEqual(updated.providerInstances[otherId]?.config, { customModels: invalid });
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("clears an allowance removed directly from the settings file", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("claude_router");
+      yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId,
+        instance: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: [{ slug: "router-model", contextWindowTokens: 872_000 }] },
+        },
+      });
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providerInstances: {
+            [instanceId]: { driver: "claudeAgent", config: { customModels: ["router-model"] } },
+          },
+        }),
+      );
+      const reloaded = yield* Effect.gen(function* () {
+        const fresh = yield* ServerSettingsModule.ServerSettingsService;
+        return yield* fresh.getSettings;
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+        ),
+      );
+      assert.deepEqual(reloaded.providerInstances[instanceId]?.config, {
+        customModels: ["router-model"],
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("creates provider instances atomically without overwriting a concurrent add", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

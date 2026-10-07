@@ -8,6 +8,7 @@ import {
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
+  resolveClaudeCatalogCustomContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
@@ -241,5 +242,18 @@ describe("Claude model catalog", () => {
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next", "claude-custom-tuned"],
     );
+  });
+
+  it("appends context-only custom models with fixed capacity", () => {
+    const catalog = scopeClaudeModelCatalog(resolveClaudeModelCatalog(manifest()), [
+      { slug: "gpt-synthetic-router", contextWindowTokens: 872_000 },
+    ]);
+    const selection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "gpt-synthetic-router",
+    };
+
+    assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, selection), 872_000);
+    assert.strictEqual(resolveClaudeCatalogCustomContextWindowTokens(catalog, selection), 872_000);
   });
 });
