@@ -211,6 +211,9 @@ export function UsagePage() {
   });
 
   const timeline = useMemo(() => timelineFor(window), [window]);
+  const canReadDiagnostics = selectedEnvironments.some(
+    (environment) => environment.canReadDiagnostics,
+  );
   const selectedModel =
     selectedModelKey === null
       ? undefined
@@ -421,7 +424,7 @@ export function UsagePage() {
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
           aria-busy={isRefreshing}
-          disabled={isRefreshing}
+          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -493,7 +496,7 @@ export function UsagePage() {
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
           aria-busy={isRefreshing}
-          disabled={isRefreshing}
+          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -561,6 +564,15 @@ export function UsagePage() {
                   ) : null
                 }
               />
+            ) : !isPending && !canReadDiagnostics ? (
+              <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
+                {selectedEnvironments.map((environment) => (
+                  <p key={environment.environmentId}>
+                    {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
+                    {environment.error}
+                  </p>
+                ))}
+              </div>
             ) : (
               <>
                 {(isPending ? [] : sourceMessages).map((message) => (
@@ -901,7 +913,9 @@ function UsageCoverageNotice({
   return (
     <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
-        <span key={environment.environmentId}>{environment.label} could not report usage.</span>
+        <span key={environment.environmentId}>
+          {environment.label}: {environment.error}
+        </span>
       ))}
       {offline.map((environment) => (
         <span key={environment.environmentId}>{offlineNotice(environment)}</span>

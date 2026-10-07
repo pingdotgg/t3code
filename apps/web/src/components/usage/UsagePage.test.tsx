@@ -56,6 +56,7 @@ const environments = [
     environmentId: EnvironmentId.make("test-environment"),
     label: "Test environment",
     isPending: false,
+    canReadDiagnostics: true,
     error: null,
     summary: {
       contractVersion: USAGE_CONTRACT_VERSION,

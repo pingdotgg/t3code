@@ -37,6 +37,7 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
     environmentId: EnvironmentId.make(id),
     label: id,
     isPending: cost === null,
+    canReadDiagnostics: true,
     error: null,
     needsCursorKeychainAccess: false,
     readByDay: false,

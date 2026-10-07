@@ -8,6 +8,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageBucket,
@@ -17,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -40,11 +42,13 @@ import {
   trimSavedUsage,
 } from "./savedUsage";
 import { serverEnvironment } from "./server";
+import { environmentSession, readEnvironmentScope } from "./session";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
+  readonly canReadDiagnostics: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
   readonly needsCursorKeychainAccess: boolean;
@@ -157,6 +161,34 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       })),
     );
     for (const [index, [environmentId, presentation]] of [...presentations].entries()) {
+      const label = labels[index] ?? presentation.entry.target.label;
+      const offline = UNREACHABLE.has(presentation.connection.phase);
+      const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
+      const session = Option.getOrNull(AsyncResult.value(sessionResult));
+      const access = resolveUsageAccess({
+        connectionPhase: presentation.connection.phase,
+        session,
+        hasSessionError: sessionResult._tag === "Failure",
+      });
+      // A connected environment this connection may not read reports why.
+      // Offline, saved usage still shows unless the known session denies it.
+      const denied = offline
+        ? session !== null && !access.canReadDiagnostics
+        : !access.canReadDiagnostics;
+      if (denied) {
+        statuses.push({
+          environmentId,
+          label,
+          ...access,
+          readByDay: false,
+          offline: false,
+          savedAt: null,
+          window: input,
+          summary: null,
+          needsCursorKeychainAccess: false,
+        });
+        continue;
+      }
       let window = input;
       let result = get(serverEnvironment.usageSummary({ environmentId, input }));
       let readByDay = false;
@@ -165,7 +197,6 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackInput }));
         readByDay = true;
       }
-      const offline = UNREACHABLE.has(presentation.connection.phase);
       let summary = Option.getOrNull(AsyncResult.value(result));
       // Offline, the page keeps what this session read last, or else what
       // this browser saved the last time the environment answered.
@@ -186,8 +217,9 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       }
       statuses.push({
         environmentId,
-        label: labels[index] ?? presentation.entry.target.label,
+        label,
         isPending: !offline && result.waiting,
+        canReadDiagnostics: true,
         error:
           !offline && result._tag === "Failure" ? "This environment could not report usage." : null,
         readByDay,
@@ -324,7 +356,15 @@ export function useUsage(
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
-        environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
+        // Only environments this connection may read; the others report a
+        // permission error instead of a stale or failed rescan.
+        environmentIds: selectedEnvironments
+          .filter(
+            (environment) =>
+              environment.canReadDiagnostics &&
+              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+          )
+          .map(({ environmentId }) => environmentId),
         input: target,
       });
     },

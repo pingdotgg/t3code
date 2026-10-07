@@ -2,10 +2,16 @@
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import type { Browser, BrowserContext } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
+
+// Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
+const requirePlaywright = NodeModule.createRequire(import.meta.url);
+const loadPlaywright = () =>
+  requirePlaywright("playwright-core") as typeof import("playwright-core");
 
 interface Options {
   readonly profilesDir: string;
@@ -54,7 +60,7 @@ export class ServerBrowserContexts {
   private sharedBrowser() {
     if (!this.browser) {
       const launched = this.launchOptions().then(async (options) => {
-        const { chromium } = await import("playwright-core");
+        const { chromium } = loadPlaywright();
         const browser = await this.launch(options, () => chromium.launch(options));
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
@@ -104,7 +110,7 @@ export class ServerBrowserContexts {
     }
     const directory = this.profileDirectory(profileId);
     const options = await this.launchOptions();
-    const { chromium } = await import("playwright-core");
+    const { chromium } = loadPlaywright();
     await NodeFSP.mkdir(directory, { recursive: true });
     return this.launch(options, () =>
       chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
@@ -133,7 +139,7 @@ export class ServerBrowserContexts {
    * serves. The page keeps the desktop's storage, size, and window.
    */
   async connectDesktopPage(endpoint: string) {
-    const { chromium } = await import("playwright-core");
+    const { chromium } = loadPlaywright();
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 15_000 });
     const page = browser.contexts().flatMap((context) => context.pages())[0];
     if (!page) {
