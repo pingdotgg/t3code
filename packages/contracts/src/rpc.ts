@@ -358,6 +358,12 @@ import {
   PluginSettingsValues,
 } from "./pluginSettings.ts";
 import {
+  PluginActionError,
+  PluginActionInvokeInput,
+  PluginActionInvokeResult,
+  PluginActionsSnapshot,
+} from "./pluginActions.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -543,6 +549,10 @@ export const WS_METHODS = {
   // Plugin setting values (gated on the `pluginSettings` environment capability)
   pluginsSettingsSubscribe: "plugins.settings.subscribe",
   pluginsSettingsUpdate: "plugins.settings.update",
+
+  // Plugin actions (gated on the `pluginActions` environment capability)
+  pluginActionsSubscribe: "pluginActions.subscribe",
+  pluginActionsInvoke: "pluginActions.invoke",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1906,6 +1916,23 @@ const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
   error: pluginRpcError,
 });
 
+const pluginActionRpcError = Schema.Union([PluginActionError, EnvironmentAuthorizationError]);
+
+/** The actions of every enabled plugin now, then a fresh list after every change. */
+const WsPluginActionsSubscribeRpc = Rpc.make(WS_METHODS.pluginActionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginActionsSnapshot,
+  error: pluginActionRpcError,
+  stream: true,
+});
+
+/** Runs one listed action against its target; starts the plugin if it is not running. */
+const WsPluginActionsInvokeRpc = Rpc.make(WS_METHODS.pluginActionsInvoke, {
+  payload: PluginActionInvokeInput,
+  success: PluginActionInvokeResult,
+  error: pluginActionRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2016,6 +2043,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsResumeRpc,
   WsPluginsSettingsSubscribeRpc,
   WsPluginsSettingsUpdateRpc,
+  WsPluginActionsSubscribeRpc,
+  WsPluginActionsInvokeRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

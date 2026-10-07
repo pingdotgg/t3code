@@ -28,6 +28,7 @@ import { PluginHostState } from "./plugin.ts";
 import { PluginEventDeliveryState } from "./pluginEvents.ts";
 import { PluginToolDeclaration } from "./pluginTools.ts";
 import { PluginSettingsFieldList } from "./pluginSettingFields.ts";
+import { PluginActionDeclaration } from "./pluginActions.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -54,6 +55,8 @@ const PluginInstallationManifest = Schema.Struct({
   tools: Schema.optionalKey(ForwardCompatibleArray(PluginToolDeclaration)),
   /** Declared settings fields (`settings` capability); absent when the plugin has none. */
   settings: Schema.optionalKey(PluginSettingsFieldList),
+  /** The declared actions, when there are any. Unknown shapes from a newer server are dropped. */
+  actions: Schema.optionalKey(ForwardCompatibleArray(PluginActionDeclaration)),
 });
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 

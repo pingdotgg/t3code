@@ -66,6 +66,7 @@ import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
 import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
+import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
@@ -590,6 +591,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
+  // Resolves action targets from the orchestrator's threads and projects.
+  PluginActions.layer,
   // The orchestrator's own event sink, so commits wake event delivery.
   PluginEventFeed.layer().pipe(
     Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),

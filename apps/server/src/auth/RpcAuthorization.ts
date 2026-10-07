@@ -132,6 +132,10 @@ export const RPC_REQUIRED_SCOPES = {
   // configures code that runs as the server's OS user, so it takes the administrative scope.
   [WS_METHODS.pluginsSettingsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthAccessWriteScope,
+  // Running an action the administrator already enabled is ordinary operation, like starting a
+  // turn; it cannot change what code runs.
+  [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

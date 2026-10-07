@@ -222,6 +222,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server stores plugin setting values and secrets (`plugins.settings.*`). Absent on
       older servers, so clients must not call or subscribe to those methods. */
   pluginSettings: Schema.optionalKey(Schema.Boolean),
+  /** Server lists and runs plugin actions (`pluginActions.*`). Absent on older
+      servers, so clients must not call or subscribe to those methods. */
+  pluginActions: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

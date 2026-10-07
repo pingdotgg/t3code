@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PLUGIN_TOOL_LIMITS, PluginToolDeclaration } from "./pluginTools.ts";
 import { PluginSettingsDeclaration } from "./pluginSettingFields.ts";
+import { PLUGIN_ACTIONS_MAX_PER_PLUGIN, PluginActionDeclaration } from "./pluginActions.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -70,6 +71,10 @@ export const PluginManifest = Schema.Struct({
   ),
   /** Fields users can set for this plugin; needs the `settings` capability. */
   settings: Schema.optionalKey(PluginSettingsDeclaration),
+  /** Commands for clients to offer; needs the `actions` capability (see PluginActions). */
+  actions: Schema.optionalKey(
+    Schema.Array(PluginActionDeclaration).check(Schema.isMaxLength(PLUGIN_ACTIONS_MAX_PER_PLUGIN)),
+  ),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

@@ -16,6 +16,12 @@ import type { PluginEvent as PluginEventSchema } from "@t3tools/contracts";
  * stops; `deactivate` then gets a short grace period before the process is
  * killed. Members under `context.proposed` exist only when the manifest sets
  * `proposedApi: true` and may change without an API version bump.
+ *
+ * Actions (capability `actions`): each action the manifest declares runs the
+ * handler registered as `context.proposed.handle("action:<name>", handler)`.
+ * Its input is `{ action, target }`, with `target` as described by
+ * `PluginActionTargetContext` in PluginActions.ts. Return `{ message }` to
+ * show the user a short result, or throw to report a failure.
  */
 export type PluginJson =
   | null

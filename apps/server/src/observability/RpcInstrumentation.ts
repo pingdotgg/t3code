@@ -99,6 +99,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pluginsResume]: "plugins",
   [WS_METHODS.pluginsSettingsSubscribe]: "plugins",
   [WS_METHODS.pluginsSettingsUpdate]: "plugins",
+  [WS_METHODS.pluginActionsSubscribe]: "plugins",
+  [WS_METHODS.pluginActionsInvoke]: "plugins",
   [WS_METHODS.scheduledTasksRotateWebhookToken]: "scheduledTasks",
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: "scheduledTasks",
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: "scheduledTasks",

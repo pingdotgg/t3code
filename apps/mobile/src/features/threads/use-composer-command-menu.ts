@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PluginAction,
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
@@ -48,6 +49,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
+import {
+  type PluginActionContext,
+  pluginActionsAt,
+} from "@t3tools/client-runtime/state/pluginActions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
@@ -169,6 +175,29 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
+/**
+ * Slash entries for the plugin actions matching `query` (lowercase) by name or title.
+ * They run when picked, so they are offered anywhere in the message.
+ */
+export function buildPluginActionSlashItems(
+  actions: ReadonlyArray<PluginAction>,
+  query: string,
+  context: PluginActionContext,
+): ComposerCommandItem[] {
+  return pluginActionsAt(actions, "composer-slash", context)
+    .filter(
+      ({ action }) => action.name.includes(query) || action.title.toLowerCase().includes(query),
+    )
+    .map(({ action, target }) => ({
+      id: `plugin-action:${action.id}`,
+      type: "plugin-action" as const,
+      action,
+      target,
+      label: `/${action.name}`,
+      description: `${action.title} · ${action.pluginName}`,
+    }));
+}
+
 /** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
@@ -176,6 +205,7 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
+  projectId,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
@@ -195,6 +225,8 @@ export function useComposerCommandMenu({
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
+  /** The project plugin actions with a project target run on; required so no composer drops them. */
+  readonly projectId: ProjectId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
@@ -360,6 +392,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const pluginActions = usePluginActions(environmentId);
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
@@ -412,7 +445,11 @@ export function useComposerCommandMenu({
           description: skill.shortDescription ?? skill.description ?? "",
         }));
 
-      return [...commandItems, ...skillItems];
+      return [
+        ...commandItems,
+        ...skillItems,
+        ...buildPluginActionSlashItems(pluginActions, q, { threadId: currentThreadId, projectId }),
+      ];
     }
 
     if (trigger.kind === "skill") {
@@ -532,6 +569,8 @@ export function useComposerCommandMenu({
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
+    pluginActions,
+    projectId,
     pullRequestSearch.entries,
     projectCwd,
     selectedProviderStatus,
@@ -612,6 +651,14 @@ export function useComposerCommandMenu({
         return;
       }
 
+      if (item.type === "plugin-action") {
+        if (environmentId === null) return;
+        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+        setSelection({ start: cleared.cursor, end: cleared.cursor });
+        onChangeDraftMessage(cleared.text);
+        void runPluginAction({ environmentId, action: item.action, target: item.target });
+        return;
+      }
       if (
         item.type === "provider-slash-command" &&
         item.command.name === USAGE_LIMITS_COMMAND.name &&
@@ -640,6 +687,7 @@ export function useComposerCommandMenu({
     },
     [
       draftMessage,
+      environmentId,
       ownerKey,
       items,
       onChangeDraftMessage,

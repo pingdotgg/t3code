@@ -126,6 +126,7 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
+import * as PluginActions from "./plugins/PluginActions.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1228,6 +1229,7 @@ const layerWsRpc = (
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pluginCatalog = yield* PluginCatalog.PluginCatalog;
       const pluginSettings = yield* PluginSettings.PluginSettings;
+      const pluginActions = yield* PluginActions.PluginActions;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2069,6 +2071,8 @@ const layerWsRpc = (
         [WS_METHODS.pluginsSettingsSubscribe]: (input) =>
           pluginSettings.subscribe(input.installationId),
         [WS_METHODS.pluginsSettingsUpdate]: (input) => pluginSettings.update(input),
+        [WS_METHODS.pluginActionsSubscribe]: (_input) => pluginActions.subscribe,
+        [WS_METHODS.pluginActionsInvoke]: (input) => pluginActions.invoke(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),

@@ -490,6 +490,8 @@ export function NewTaskDraftScreen(props: {
     draftMessage: flow.prompt,
     ownerKey: flow.draftKey,
     environmentId: selectedProject?.environmentId ?? null,
+    // Project actions run on the selected project; a draft has no thread yet.
+    projectId: selectedProject?.id ?? null,
     threadShells: useThreadShells(),
     pullRequestProjectId: selectedEnvironmentServerConfig?.environment.capabilities.pullRequests
       ? (selectedProject?.id ?? null)
