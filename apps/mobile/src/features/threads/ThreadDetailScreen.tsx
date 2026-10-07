@@ -10,7 +10,7 @@ import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
-import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
+import { useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -66,7 +66,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
-  type ViewInstance,
+  type LayoutChangeEvent,
 } from "react-native";
 import {
   KeyboardController,
@@ -75,11 +75,14 @@ import {
 } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
+  measure,
+  runOnUI,
   FadeInDown,
   FadeOut,
   ReduceMotion,
   useAnimatedReaction,
   useAnimatedStyle,
+  useAnimatedRef,
   useDerivedValue,
   useSharedValue,
   withTiming,
@@ -137,7 +140,7 @@ import {
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
-  COMPOSER_LAYOUT_TRANSITION,
+  useComposerLayoutTransition,
   COMPOSER_TRANSITION_DURATION_MS,
   ThreadComposer,
 } from "./ThreadComposer";
@@ -415,6 +418,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   });
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  const composerResizeBoundaryRef = useAnimatedRef<View>();
+  const composerResizeActive = useSharedValue(false);
+  const composerLayoutTransition = useComposerLayoutTransition(composerResizeActive);
   // A provider-native subagent shows status instead of a composer.
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
   // Entering edit mode from the queue sheet should land in a ready composer,
@@ -427,7 +433,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [editingRunId]);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
-  const composerOverlayRef = useRef<ViewInstance>(null);
+  const composerOverlayRef = useAnimatedRef<View>();
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
@@ -692,12 +698,75 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // its end-scroll math matches the real resting position.
   const nativeInsetOvercount =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios" ? insets.bottom : 0;
-  const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
-    listRef,
-    composerOverlayRef,
+  const contentInsetEndAdjustment = useSharedValue(
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
-    -nativeInsetOvercount,
-    Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
+  );
+  const composerMeasured = useSharedValue(false);
+  const composerOverlayLayoutHeight = useSharedValue(0);
+  const composerInsetDuration = Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0;
+  const reportComposerHeight = useCallback(
+    (rawHeight: number) => {
+      "worklet";
+      composerOverlayLayoutHeight.set(rawHeight);
+      // The resizer owns this inset while dragging or expanded, including
+      // keyboard movement. Layout reports only refresh its chrome measurements.
+      if (composerResizeActive.value) return;
+      const height = Math.max(0, rawHeight - nativeInsetOvercount);
+      contentInsetEndAdjustment.set(
+        composerMeasured.value && composerInsetDuration > 0
+          ? withTiming(height, {
+              duration: composerInsetDuration,
+              reduceMotion: ReduceMotion.System,
+            })
+          : height,
+      );
+      composerMeasured.set(true);
+    },
+    [
+      composerResizeActive,
+      nativeInsetOvercount,
+      contentInsetEndAdjustment,
+      composerMeasured,
+      composerOverlayLayoutHeight,
+      composerInsetDuration,
+    ],
+  );
+  const onComposerLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      runOnUI(reportComposerHeight)(event.nativeEvent.layout.height);
+    },
+    [reportComposerHeight],
+  );
+  useLayoutEffect(() => {
+    runOnUI(() => {
+      const overlay = measure(composerOverlayRef);
+      if (overlay) reportComposerHeight(overlay.height);
+    })();
+  }, [composerOverlayRef, reportComposerHeight]);
+  useAnimatedReaction(
+    () => composerResizeActive.value,
+    (active, wasActive) => {
+      if (!active && wasActive) {
+        // A final layout report may have arrived before the resizer released
+        // ownership, especially when switching drafts or hiding the composer.
+        const overlay = measure(composerOverlayRef);
+        if (overlay) reportComposerHeight(overlay.height);
+      }
+    },
+  );
+  const composerResizeInset = useMemo(
+    () => ({
+      height: contentInsetEndAdjustment,
+      containerRef: composerOverlayRef,
+      layoutHeight: composerOverlayLayoutHeight,
+      adjustment: -nativeInsetOvercount,
+    }),
+    [
+      contentInsetEndAdjustment,
+      composerOverlayRef,
+      composerOverlayLayoutHeight,
+      nativeInsetOvercount,
+    ],
   );
   // The expanded questionnaire is an absolute overlay on iOS, so it never
   // changes the measured overlay height (that constancy is what keeps the
@@ -1119,7 +1188,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   return (
-    <View className="flex-1">
+    <View ref={composerResizeBoundaryRef} collapsable={false} className="flex-1">
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {showContent ? (
         <View
@@ -1220,7 +1289,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
             <Animated.View
-              layout={COMPOSER_LAYOUT_TRANSITION}
+              layout={composerLayoutTransition}
               pointerEvents="box-none"
               style={[
                 {
@@ -1420,6 +1489,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : (
                     <>
                       <ThreadComposer
+                        resizeEnabled={!composerSlotHidden}
+                        resizeBoundaryRef={composerResizeBoundaryRef}
+                        resizeActive={composerResizeActive}
+                        resizeInset={composerResizeInset}
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}

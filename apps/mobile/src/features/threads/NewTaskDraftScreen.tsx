@@ -23,7 +23,7 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
-import Animated from "react-native-reanimated";
+import Animated, { useAnimatedRef, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -40,6 +40,10 @@ import {
   type ComposerEditorHandle,
   type ComposerTextPaste,
 } from "../../components/ComposerEditor";
+import {
+  ResizableComposerInput,
+  useComposerResizeContainer,
+} from "../../components/ResizableComposerInput";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import {
   composerContextSendBlockReason,
@@ -67,7 +71,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
-import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
+import { useComposerLayoutTransition, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -200,6 +204,10 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const composerResizeBoundaryRef = useAnimatedRef<View>();
+  const composerResizeContainer = useComposerResizeContainer();
+  const composerResizeActive = useSharedValue(false);
+  const composerLayoutTransition = useComposerLayoutTransition(composerResizeActive);
   const {
     consumeShare,
     getShare,
@@ -1423,7 +1431,13 @@ export function NewTaskDraftScreen(props: {
     );
   };
   const promptEditor = (
-    <>
+    <ResizableComposerInput
+      resizeActive={composerResizeActive}
+      active
+      key={flow.draftKey}
+      boundaryRef={composerResizeBoundaryRef}
+      container={composerResizeContainer}
+    >
       <ComposerEditor
         draftKey={flow.draftKey}
         environmentId={selectedProject.environmentId}
@@ -1465,14 +1479,18 @@ export function NewTaskDraftScreen(props: {
         placeholder="Ask anything…"
         singleLineCentered={false}
         contentInsetVertical={0}
-        style={{
-          minHeight: 72,
-          maxHeight: 160,
-          paddingVertical: 4,
-        }}
+        style={
+          Platform.OS === "ios"
+            ? { flex: 1, paddingVertical: 4 }
+            : {
+                minHeight: 72,
+                maxHeight: 160,
+                paddingVertical: 4,
+              }
+        }
         textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
       />
-    </>
+    </ResizableComposerInput>
   );
 
   const closeNewTask = () => {
@@ -1624,6 +1642,9 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View
+      ref={composerResizeContainer.ref}
+      onLayout={composerResizeContainer.onLayout}
+      collapsable={false}
       className={
         Platform.OS === "android" ? "bg-sheet-solid px-[12px] pt-1" : "bg-sheet px-[12px] pt-1"
       }
@@ -1686,12 +1707,13 @@ export function NewTaskDraftScreen(props: {
       ) : null}
 
       <ComposerSurface
+        resizeActive={composerResizeActive}
         style={{
           borderRadius: 26,
           minHeight: 140,
           overflow: "hidden",
           paddingBottom: 6,
-          paddingTop: 14,
+          paddingTop: Platform.OS === "ios" ? 0 : 14,
         }}
       >
         {stripAttachments.length > 0 ? (
@@ -1730,7 +1752,7 @@ export function NewTaskDraftScreen(props: {
         <View className="px-[14px]">{promptEditor}</View>
         <View className="h-1" />
 
-        <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} collapsable={false}>
+        <Animated.View layout={composerLayoutTransition} collapsable={false}>
           <ComposerDictationToolbar showsDictation={isVoiceInputPresented}>
             <ComposerToolbarRow
               paddingBottom={0}
@@ -1864,7 +1886,7 @@ export function NewTaskDraftScreen(props: {
   }
 
   return (
-    <View className="flex-1 bg-sheet" collapsable={false}>
+    <View ref={composerResizeBoundaryRef} className="flex-1 bg-sheet" collapsable={false}>
       <NativeStackScreenOptions
         options={{
           headerBackVisible: false,
@@ -1887,7 +1909,7 @@ export function NewTaskDraftScreen(props: {
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >
         <Animated.View
-          layout={COMPOSER_LAYOUT_TRANSITION}
+          layout={composerLayoutTransition}
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
         >
