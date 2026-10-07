@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-02T19:45:00Z",
+  "updatedAt": "2026-10-03T15:17:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -97,7 +97,17 @@
       "gpt-daybreak-red-latest"
     ],
     "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5"],
-    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
+    "antigravity": [
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-low",
+      "claude-opus-5-5-high",
+      "claude-opus-5-5-medium",
+      "claude-opus-5-5-low",
+      "claude-sonnet-5-5-high",
+      "claude-sonnet-5-5-medium",
+      "claude-sonnet-5-5-low"
+    ]
   },
   "providers": {
     "claudeAgent": {
@@ -814,6 +824,36 @@
         {
           "slug": "gemini-3.8-flash-low",
           "name": "Gemini 3.8 Flash (Low)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-opus-5-5-high",
+          "name": "Claude Opus 5.5 (High)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-opus-5-5-medium",
+          "name": "Claude Opus 5.5 (Medium)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-opus-5-5-low",
+          "name": "Claude Opus 5.5 (Low)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-sonnet-5-5-high",
+          "name": "Claude Sonnet 5.5 (High)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-sonnet-5-5-medium",
+          "name": "Claude Sonnet 5.5 (Medium)",
+          "status": "current"
+        },
+        {
+          "slug": "claude-sonnet-5-5-low",
+          "name": "Claude Sonnet 5.5 (Low)",
           "status": "current"
         }
       ]
