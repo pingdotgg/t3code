@@ -2891,6 +2891,7 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
+      cwd,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
