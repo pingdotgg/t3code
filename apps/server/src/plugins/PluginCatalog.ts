@@ -34,7 +34,8 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
-import type * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -85,6 +86,12 @@ type Inspection =
       readonly source: PluginSource;
     }
   | { readonly _tag: "failed"; readonly reason: string };
+
+/**
+ * How long a call waits for startup to re-register enabled plugins before it
+ * proceeds without them, matching the supervisor's default activation timeout.
+ */
+const STARTUP_RESTORE_WAIT = Duration.seconds(10);
 
 /** What one admission attempt of `invoke` found. */
 type Admission =
@@ -180,6 +187,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const notify = PubSub.publish(changes, undefined).pipe(Effect.asVoid);
   // Counts changes a snapshot can show, so a step that changed nothing tells no one.
   let revision = 0;
+  // Completes when startup has tried to re-register every enabled installation.
+  const restored = yield* Deferred.make<void>();
 
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -565,6 +574,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const invoke: PluginCatalog["Service"]["invoke"] = Effect.fn("PluginCatalog.invoke")(
     function* (installationId, handler, input, options) {
+      // A call right after a restart waits for its installation to be registered again.
+      yield* Deferred.await(restored).pipe(Effect.timeoutOption(STARTUP_RESTORE_WAIT));
       const installation = yield* find(installationId);
       const registered = installation.registered;
       if (registered === undefined)
@@ -661,7 +672,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         ),
       { discard: true },
     ),
-  ).pipe(Effect.forkScoped);
+  ).pipe(Effect.ensuring(Deferred.succeed(restored, undefined)), Effect.forkScoped);
 
   return PluginCatalog.of({
     list,

@@ -670,6 +670,33 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
         }),
       ),
     );
+
+    it.effect("holds a call made during startup until the plugin is registered again", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { before, installationId } = yield* enabledInStub();
+          yield* Scope.close(before, Exit.void);
+
+          const stub = yield* makeStubSupervisor;
+          const registering = yield* makeHold;
+          stub.holds.enable = registering;
+          const after = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+          // Runs before the catalogue's finalizers, so a failing test can still close its scope.
+          yield* Effect.addFinalizer(() => Deferred.succeed(registering.release, undefined));
+          yield* Deferred.await(registering.reached);
+          const calling = yield* after
+            .invoke(installationId, "ping", null)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          expect(calling.pollUnsafe()).toBeUndefined();
+
+          yield* Deferred.succeed(registering.release, undefined);
+          const [directory] = [...stub.registrations.values()].map((r) => r.directory);
+          expect(yield* Fiber.join(calling)).toBe(directory);
+          expect(stub.invoked).toEqual([directory]);
+        }),
+      ),
+    );
   });
 
   describe("server restart", () => {
