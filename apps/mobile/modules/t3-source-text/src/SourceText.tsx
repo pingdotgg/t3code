@@ -41,7 +41,9 @@ export function SourceText({ style, children, nativeTextRef, ...props }: SourceT
       />
     );
   });
-  if (isAncestor) return <>{runs}</>;
+  if (isAncestor) {
+    return <TextAncestorContext.Provider value={contextValue}>{runs}</TextAncestorContext.Provider>;
+  }
   return (
     <TextAncestorContext.Provider value={contextValue}>
       <T3SourceTextNativeComponent allowFontScaling selectable {...props} style={flattenedStyle}>
