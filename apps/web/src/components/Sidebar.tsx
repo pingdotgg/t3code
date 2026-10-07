@@ -601,12 +601,12 @@ function SnoozeMenuButton(props: {
           // the snooze item: nested, a press-drag-release over it would also
           // fire the snooze item, and arrow keys could not reach it.
           return (
-            // The remove button is shown on row hover, keyboard highlight, and
-            // touch (no hover). Its opacity is set here because MenuItem owns
-            // its own effects.
+            // The remove button takes no space until the row is hovered, a
+            // row item is keyboard-highlighted, or on touch (no hover). Its
+            // size is set here because MenuItem owns its own effects.
             <div
               key={preset.id}
-              className="flex items-center [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
+              className="flex items-center [&>[data-favorite-remove]]:w-0 [&>[data-favorite-remove]]:overflow-hidden [&>[data-favorite-remove]]:px-0 [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:w-7 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:w-7 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:w-7 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
             >
               {item}
               <MenuItem
@@ -615,7 +615,7 @@ function SnoozeMenuButton(props: {
                 aria-label={`Remove ${preset.label} from favorites`}
                 label={`Remove ${preset.label} from favorites`}
                 variant="ghost"
-                className="size-7 min-h-7 w-7 justify-center"
+                className="h-7 min-h-7 justify-center"
                 onClick={(event) => {
                   event.stopPropagation();
                   updateSnoozeFavorites(
