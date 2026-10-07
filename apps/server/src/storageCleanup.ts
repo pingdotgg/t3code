@@ -305,9 +305,10 @@ export const make = Effect.gen(function* () {
         if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
           return;
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const disposablePaths =
-          Option.getOrUndefined(yield* projectFiles.load(worktreePath))?.worktreeDisposablePaths ??
-          [];
+        const loadDisposablePaths = projectFiles
+          .load(worktreePath)
+          .pipe(Effect.map((file) => Option.getOrUndefined(file)?.worktreeDisposablePaths ?? []));
+        const disposablePaths = yield* loadDisposablePaths;
         const ignored = yield* git.execute({
           operation: "StorageCleanup.ignoredFiles",
           cwd: worktreePath,
@@ -425,7 +426,8 @@ export const make = Effect.gen(function* () {
           args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
           maxOutputBytes: 64 * 1024,
         });
-        if (!storageCleanupIgnoredDisposable(finalIgnored, disposablePaths)) return;
+        // An ignored t3.json can change without dirtying the worktree.
+        if (!storageCleanupIgnoredDisposable(finalIgnored, yield* loadDisposablePaths)) return;
         const current = resolveWorktreeCleanup(
           yield* settingsService.getSettings,
           thread.projectId,
