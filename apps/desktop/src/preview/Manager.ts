@@ -598,6 +598,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  /**
+   * The main-frame failure of each guest's current load, by webContents id.
+   * Watched from attach, because a guest starts loading before registerWebview
+   * installs its tab's listeners.
+   */
+  const guestLoadFailures = new Map<
+    number,
+    { readonly url: string; readonly code: number; readonly description: string }
+  >();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1447,8 +1456,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           Effect.andThen(SynchronizedRef.get(tabsRef)),
           Effect.tap((tabs) =>
             Effect.sync(() => {
-              const serverTab = tabs.get(tabId)?.serverTab;
-              if (serverTab) browserHost.loadFailed(serverTab, { url, code, description });
+              const tab = tabs.get(tabId);
+              // A replaced guest's failure is not the current page's.
+              if (tab?.serverTab && tab.webContentsId === wc.id) {
+                browserHost.loadFailed(tab.serverTab, { url, code, description });
+              }
             }),
           ),
         ),
@@ -1885,11 +1897,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ] as const;
         }
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+        const failure = guestLoadFailures.get(webContentsId);
         const { favicon: _favicon, ...currentWithoutFavicon } = current;
         const next: PreviewTabState = {
           ...currentWithoutFavicon,
           webContentsId,
-          navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+          navStatus:
+            failure && (pendingUrl === null || pendingUrl === failure.url)
+              ? { kind: "LoadFailed", title: wc.getTitle(), ...failure }
+              : pendingUrl === null
+                ? computeNavStatus(wc)
+                : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
@@ -1969,8 +1987,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    wc.on("did-start-loading", () => guestLoadFailures.delete(webContentsId));
+    wc.on("did-fail-load", (_event, code, description, validatedUrl, isMainFrame) => {
+      if (code === -3 || !isMainFrame) return;
+      guestLoadFailures.set(webContentsId, {
+        url: validatedUrl || wc.getURL(),
+        code,
+        description,
+      });
+    });
     // A guest destroyed before any tab claims it has no other cleanup path.
     wc.once("destroyed", () => {
+      guestLoadFailures.delete(webContentsId);
       runFork(detachControlSession(webContentsId));
     });
     // Runs detached from the attach event, so nothing may escape. registerWebview

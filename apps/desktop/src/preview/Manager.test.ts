@@ -2824,6 +2824,55 @@ describe("PreviewManager", () => {
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
+  effectIt.effect("tells the server about a load that failed before the tab registered", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped,
+      );
+      const capturePage = vi.fn(async () => ({
+        toPNG: () => Buffer.from("png"),
+        toJPEG: () => Buffer.from("jpeg"),
+        getSize: () => ({ width: 100, height: 80 }),
+      }));
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      const contents = Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+        isDevToolsOpened: () => false,
+        getUserAgent: () => "Electron",
+        once: vi.fn(),
+        on: (event: string, listener: (...args: unknown[]) => void) => {
+          listeners.set(event, listener);
+        },
+      });
+      fromId.mockReturnValue(contents);
+      // Let the reader subscribe, so it hears events rather than the announcement replay.
+      yield* Effect.yieldNow;
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.createTab("tab_1", { serverTab });
+      // The guest attaches and fails its first load before the renderer registers it.
+      yield* manager.prepareWebview(contents as never);
+      listeners.get("did-fail-load")!(
+        {},
+        -202,
+        "ERR_CERT_AUTHORITY_INVALID",
+        "https://device.local/",
+        true,
+      );
+      yield* manager.registerWebview("tab_1", 42);
+      expect(yield* Queue.take(lines)).toContain('"type":"attached"');
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({
+        type: "loadFailed",
+        ...serverTab,
+        url: "https://device.local/",
+        code: -202,
+        description: "ERR_CERT_AUTHORITY_INVALID",
+      });
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
   effectIt.effect("tells the server why a tab it renders natively failed to load", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.DesktopBrowserHost;

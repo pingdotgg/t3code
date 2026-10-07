@@ -309,8 +309,11 @@ interface ServerTab {
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   loading: boolean;
-  /** Why the latest main-frame navigation this server saw failed; null once another starts. */
-  loadError: PreviewAutomationLoadError | null;
+  /**
+   * Why the latest main-frame navigation this server saw failed, null while it
+   * has not failed, and undefined until the server sees a navigation at all.
+   */
+  loadError: PreviewAutomationLoadError | null | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -754,7 +757,7 @@ const make = Effect.gen(function* () {
       colorScheme: "system",
       zoomFactor: 1,
       loading: false,
-      loadError: null,
+      loadError: undefined,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1103,7 +1106,7 @@ const make = Effect.gen(function* () {
    */
   const loadErrorOf = async (tab: ServerTab) => {
     if (!tab.page.url().startsWith("chrome-error://")) return undefined;
-    if (tab.loadError || !tab.desktop) return tab.loadError ?? undefined;
+    if (tab.loadError !== undefined || !tab.desktop) return tab.loadError ?? undefined;
     const reported = await Effect.runPromise(
       desktopChannel.loadFailure({ threadId: tab.threadId, tabId: tab.tabId }),
     );

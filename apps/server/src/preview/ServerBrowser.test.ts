@@ -1092,15 +1092,24 @@ it.live("reports a desktop tab's load failure from before the server connected",
       const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       yield* browser.attachViewer(viewerInput(opened.tabId, false));
       // The desktop's first load failed while no server listened to the page.
-      desktopConnections[0]!.context.page.url = () => "chrome-error://chromewebdata/";
+      const page = desktopConnections[0]!.context.page;
+      page.url = () => "chrome-error://chromewebdata/";
       desktopLoadFailures.set(opened.tabId, certificateError);
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "status",
-        input: {},
-        tabId: PreviewTabId.make(opened.tabId),
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "status",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        });
+      expect((yield* status()).loadError).toEqual(certificateError);
+      // A navigation the server sees supersedes it, even before the error page goes.
+      page.emit("request", {
+        url: () => "https://device.local/retry",
+        isNavigationRequest: () => true,
+        frame: () => page,
       });
-      expect(status.loadError).toEqual(certificateError);
+      expect((yield* status()).loadError).toBeUndefined();
     }),
   ).pipe(Effect.provide(layer)),
 );
