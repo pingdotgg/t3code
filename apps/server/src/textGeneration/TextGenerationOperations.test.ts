@@ -61,6 +61,25 @@ describe("fromRunner explainProviderFailure", () => {
     }),
   );
 
+  it.effect("keeps a bounded reply well formed when the cut falls inside an emoji", () =>
+    Effect.gen(function* () {
+      // The summary is cut at 597 units, which is mid-pair in this text.
+      const run = (() =>
+        Effect.succeed({
+          summary: `${"a".repeat(596)}😀${"b".repeat(100)}`,
+          likelyFix: `${"a".repeat(896)}😀${"b".repeat(100)}`,
+        })) as unknown as Runner;
+      const result = yield* fromRunner("test", run).explainProviderFailure({
+        context: "x",
+        modelSelection,
+      });
+      assert.isTrue(result.summary.isWellFormed());
+      assert.isTrue(result.likelyFix.isWellFormed());
+      assert.isAtMost(result.summary.length, 600);
+      assert.isAtMost(result.likelyFix.length, 900);
+    }),
+  );
+
   const knownIssues = [
     { number: 12, title: "Codex binary not found", state: "open" },
     { number: 40, title: "Session hangs", state: "closed" },

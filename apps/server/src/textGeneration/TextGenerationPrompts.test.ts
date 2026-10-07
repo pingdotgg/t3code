@@ -8,9 +8,11 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
+  limitSection,
   normalizeCliError,
   sanitizeThreadTitle,
   toJsonSchemaObject,
+  truncateOnCodePoint,
 } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -441,5 +443,35 @@ describe("buildProviderFailureExplanationPrompt", () => {
 
     expect(result.prompt.length).toBeLessThan(14_000);
     expect(result.prompt).toContain("[truncated]");
+  });
+});
+
+describe("truncateOnCodePoint", () => {
+  it("never ends inside a surrogate pair", () => {
+    // Index 77 falls between the two halves of the emoji.
+    const text = `${"word ".repeat(15)}x😀 tail`;
+    expect(text.slice(0, 77).isWellFormed()).toBe(false);
+    const cut = truncateOnCodePoint(text, 77);
+    expect(cut.isWellFormed()).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual(77);
+    expect(text.startsWith(cut)).toBe(true);
+    expect(() => encodeURIComponent(cut)).not.toThrow();
+  });
+
+  it("handles every cut point of an emoji run", () => {
+    const text = `Failed ${"😀".repeat(1_000)}`;
+    for (let max = 0; max < 60; max += 1) {
+      const cut = truncateOnCodePoint(text, max);
+      expect(cut.isWellFormed()).toBe(true);
+      expect(cut.length).toBeLessThanOrEqual(max);
+    }
+  });
+
+  it("keeps short text whole", () => {
+    expect(truncateOnCodePoint("short 😀", 20)).toBe("short 😀");
+  });
+
+  it("keeps limited sections well formed", () => {
+    expect(limitSection(`Failed ${"😀".repeat(1_000)}`, 4_096).isWellFormed()).toBe(true);
   });
 });

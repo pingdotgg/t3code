@@ -3,9 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canExplainThreadError,
+  copyReportDetails,
   explanationLink,
   explanationStateFromFailure,
   explanationStateFromResult,
+  REPORT_DETAILS_COPIED_NOTE,
+  reportDetailsText,
   THREAD_ERROR_CHANGED_MESSAGE,
   threadErrorExplanationKey,
 } from "./ThreadErrorExplanation.logic";
@@ -38,6 +41,7 @@ describe("explanationStateFromResult", () => {
   it("shows the explanation under the error it answers", () => {
     expect(explanationStateFromResult("spawn codex ENOENT", result)).toEqual({
       kind: "ready",
+      failureMessage: "spawn codex ENOENT",
       summary: "The binary is missing.",
       likelyFix: "Install it.",
       link: {
@@ -146,5 +150,52 @@ describe("explanationLink", () => {
         reportUrl,
       }),
     ).toEqual({ kind: "report", label: "Report this issue", url: reportUrl });
+  });
+});
+
+describe("report details", () => {
+  it("holds the error and the whole explanation, which the link leaves out", () => {
+    expect(
+      reportDetailsText({
+        failureMessage: "spawn codex ENOENT",
+        summary: "The binary is missing.",
+        likelyFix: "Install it.",
+      }),
+    ).toBe(
+      [
+        "Error message:",
+        "spawn codex ENOENT",
+        "",
+        "What happened (explained by a text generation model, so it may be wrong):",
+        "The binary is missing.",
+        "",
+        "Likely fix (same caveat):",
+        "Install it.",
+      ].join("\n"),
+    );
+    expect(REPORT_DETAILS_COPIED_NOTE).toBe(
+      "Error details copied. Check them, then paste them into the form.",
+    );
+  });
+
+  it("reports a successful copy", async () => {
+    const copied: Array<string> = [];
+    await expect(
+      copyReportDetails("details", async (text) => void copied.push(text)),
+    ).resolves.toBe(true);
+    expect(copied).toEqual(["details"]);
+  });
+
+  it("reports a failed copy without throwing, so the link still opens", async () => {
+    await expect(
+      copyReportDetails("details", async () => {
+        throw new Error("denied");
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      copyReportDetails("details", () => {
+        throw new Error("unavailable");
+      }),
+    ).resolves.toBe(false);
   });
 });

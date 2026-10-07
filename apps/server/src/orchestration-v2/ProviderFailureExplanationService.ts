@@ -305,10 +305,7 @@ const make = Effect.gen(function* () {
           : { number: knownIssue.number, title: knownIssue.title, url: knownIssue.url },
       reportUrl: buildProviderFailureReportUrl({
         failureMessage: failure.message,
-        summary: explanation.summary,
         driver,
-        providerInstanceId,
-        model,
         runtimeMode: shell.runtimeMode,
         platform,
         serverVersion: packageJson.version,

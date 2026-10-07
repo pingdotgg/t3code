@@ -3,49 +3,37 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   buildProviderFailureReportUrl,
   MAX_REPORT_URL_CHARS,
-  titleFromFailure,
+  REPORT_ACTUAL_INSTRUCTION,
+  reportTitleFromFailure,
 } from "./ProviderFailureReportLink.ts";
 
 const base = {
-  failureMessage: "The provider could not start this turn: Failed to read attachment 'a-b'.",
-  summary: "The attachment file is missing.",
+  failureMessage:
+    "The provider could not start this turn: Failed to read attachment '/Users/alex/secret/notes.txt' for buildhost token correcthorse.",
   driver: "codex",
-  providerInstanceId: "codex",
-  model: "gpt-5.1-codex",
   runtimeMode: "full-access",
   platform: "darwin arm64",
   serverVersion: "0.0.46",
 } as const;
 
-const parse = (url: string) => {
-  const parsed = new URL(url);
-  return { parsed, params: parsed.searchParams };
-};
+const parse = (url: string) => new URL(url);
 
 describe("buildProviderFailureReportUrl", () => {
-  it("opens the bug form with the template's field ids filled in", () => {
+  it("opens the bug form with only safe, structured fields", () => {
     const url = buildProviderFailureReportUrl(base)!;
-    const { parsed, params } = parse(url);
+    const parsed = parse(url);
+    const params = parsed.searchParams;
 
     assert.equal(parsed.origin + parsed.pathname, "https://github.com/pingdotgg/t3code/issues/new");
     assert.equal(params.get("template"), "bug_report.yml");
     assert.equal(
       params.get("title"),
-      "[Bug]: The provider could not start this turn: Failed to read attachment.",
+      "[Bug]: Provider failure: start turn failed read attachment token",
     );
-    assert.equal(
-      params.get("actual"),
-      [
-        "Error message:",
-        "The provider could not start this turn: Failed to read attachment 'a-b'.",
-        "",
-        "What happened (explained by a text generation model, so it may be wrong):",
-        "The attachment file is missing.",
-      ].join("\n"),
-    );
+    assert.equal(params.get("actual"), REPORT_ACTUAL_INSTRUCTION);
     assert.equal(
       params.get("environment"),
-      "Provider: codex, Model: gpt-5.1-codex, Runtime mode: full-access, OS: darwin arm64",
+      "Provider: codex, Runtime mode: full-access, OS: darwin arm64",
     );
     assert.equal(params.get("version"), "0.0.46");
     assert.sameMembers(
@@ -54,71 +42,97 @@ describe("buildProviderFailureReportUrl", () => {
     );
   });
 
-  it("percent-encodes every value so the form reads them back exactly", () => {
-    const url = buildProviderFailureReportUrl({
-      ...base,
-      failureMessage: "Bad & broken: 100% #1 =x\nsecond line é",
-    })!;
-    assert.notInclude(url, " ");
-    assert.notInclude(url, "\n");
-    assert.include(url, "%26");
-    assert.include(url, "%23");
-    assert.include(parse(url).params.get("actual")!, "Bad & broken: 100% #1 =x\nsecond line é");
+  it("carries none of the error text, and no model text", () => {
+    const decoded = decodeURIComponent(buildProviderFailureReportUrl(base)!);
+    for (const leaked of [
+      "/Users",
+      "alex",
+      "secret",
+      "notes.txt",
+      "buildhost",
+      "correcthorse",
+      "could not",
+      "Failed to read",
+    ]) {
+      assert.notInclude(decoded, leaked);
+    }
+  });
+
+  it("falls back to a generic title when too few vocabulary words match", () => {
+    assert.equal(
+      reportTitleFromFailure("Invalid API_KEY: correcthorse"),
+      "[Bug]: Provider failure",
+    );
+    const { searchParams } = parse(
+      buildProviderFailureReportUrl({ ...base, failureMessage: "Invalid API_KEY: correcthorse" })!,
+    );
+    assert.equal(searchParams.get("title"), "[Bug]: Provider failure");
   });
 
   it("omits the version when the server does not know it", () => {
-    const { params } = parse(buildProviderFailureReportUrl({ ...base, serverVersion: null })!);
-    assert.isFalse(params.has("version"));
-  });
-
-  it("names the instance when the driver is unknown", () => {
-    const { params } = parse(
-      buildProviderFailureReportUrl({
-        ...base,
-        driver: null,
-        providerInstanceId: "my-codex",
-        model: null,
-      })!,
+    assert.isFalse(
+      parse(buildProviderFailureReportUrl({ ...base, serverVersion: null })!).searchParams.has(
+        "version",
+      ),
     );
-    assert.include(params.get("environment"), "Provider: my-codex, Model: unknown");
   });
 
-  it("caps the link length by shortening the actual-behavior text first", () => {
+  it("names only a known driver", () => {
+    const environment = (driver: string | null) =>
+      parse(buildProviderFailureReportUrl({ ...base, driver })!).searchParams.get("environment");
+    assert.include(environment("claudeAgent"), "Provider: claude,");
+    assert.include(environment("my-private-driver"), "Provider: unknown,");
+    assert.include(environment(null), "Provider: unknown,");
+  });
+
+  it("percent-encodes values, so the form reads them back exactly", () => {
+    const url = buildProviderFailureReportUrl({ ...base, serverVersion: "a&b #1 é" })!;
+    assert.notInclude(url, " ");
+    assert.include(url, "%26");
+    assert.equal(parse(url).searchParams.get("version"), "a&b #1 é");
+    assert.equal(
+      parse(url).searchParams.get("environment"),
+      "Provider: codex, Runtime mode: full-access, OS: darwin arm64",
+    );
+  });
+
+  // encodeURIComponent throws on a lone surrogate; construction must never throw.
+  it("builds a link even when a value holds a lone surrogate or an emoji", () => {
+    for (const serverVersion of ["\ud83d", "1.0-😀", "\ude00x"]) {
+      const url = buildProviderFailureReportUrl({ ...base, serverVersion });
+      assert.isString(url);
+      assert.isTrue(decodeURIComponent(url!).isWellFormed());
+    }
+  });
+
+  it("builds a link for failure text with emoji at any cut point", () => {
+    for (const failureMessage of [
+      `${"word ".repeat(15)}x😀 tail`,
+      `Failed ${"😀".repeat(1_000)}`,
+      `Failed ${"😀".repeat(5_001)} attachment`,
+    ]) {
+      const url = buildProviderFailureReportUrl({ ...base, failureMessage });
+      assert.isString(url);
+      assert.isTrue(decodeURIComponent(url!).isWellFormed());
+    }
+  });
+
+  it("returns null, never throws, when no link of a usable length exists", () => {
     const url = buildProviderFailureReportUrl({
       ...base,
-      failureMessage: `Failure ${"é&".repeat(20_000)}`,
-      summary: "s".repeat(5_000),
-    })!;
-    const { params } = parse(url);
-
-    assert.isAtMost(url.length, MAX_REPORT_URL_CHARS);
-    assert.isTrue(params.get("actual")!.endsWith("..."));
-    assert.isTrue(params.get("title")!.startsWith("[Bug]: Failure"));
-    assert.isAtMost(params.get("title")!.length, 7 + 80);
-    assert.equal(params.get("version"), "0.0.46");
-    assert.include(params.get("environment"), "Runtime mode: full-access");
+      serverVersion: "v".repeat(MAX_REPORT_URL_CHARS),
+    });
+    assert.isNull(url);
   });
 });
 
-describe("titleFromFailure", () => {
-  it("drops ids, paths, URLs, quoted values, and T3 guidance", () => {
+describe("reportTitleFromFailure", () => {
+  it("uses only vocabulary words, in order, at most six", () => {
     assert.equal(
-      titleFromFailure(
-        "Failed to read '/Users/alex/.env' from https://example.com/x for 3f2b8c1e-aaaa-4bbb-8ccc-0123456789ab at provider-turn:abc. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+      reportTitleFromFailure(
+        "Connection reset by buildhost: stream closed, timeout, session crashed, permission denied, sandbox killed",
       ),
-      "Failed to read from for at",
+      "[Bug]: Provider failure: connection reset stream closed timeout session",
     );
-  });
-
-  it("drops bearer credentials and digit-bearing keys", () => {
-    const title = titleFromFailure("Rejected Bearer sk-ant-api03-abcdef by Anthropic (status 429)");
-    assert.notInclude(title, "sk-ant");
-    assert.notInclude(title, "abcdef");
-  });
-
-  it("cuts a long message to a title length", () => {
-    const title = titleFromFailure(`Failure ${"word ".repeat(100)}`);
-    assert.isAtMost(title.length, 80);
-    assert.isTrue(title.endsWith("..."));
   });
 });

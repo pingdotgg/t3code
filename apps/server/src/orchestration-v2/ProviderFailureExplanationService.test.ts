@@ -519,13 +519,14 @@ describe("ProviderFailureExplanationService", () => {
         const url = new URL(result.reportUrl!);
         assert.equal(url.origin + url.pathname, "https://github.com/pingdotgg/t3code/issues/new");
         assert.equal(url.searchParams.get("template"), "bug_report.yml");
-        assert.equal(url.searchParams.get("title"), "[Bug]: spawn codex ENOENT");
-        assert.include(url.searchParams.get("actual"), "spawn codex ENOENT");
-        assert.include(url.searchParams.get("actual"), "The binary is missing.");
-        assert.include(
-          url.searchParams.get("environment"),
-          "Provider: codex, Model: gpt-5.1-codex",
-        );
+        assert.equal(url.searchParams.get("title"), "[Bug]: Provider failure");
+        // The error and the explanation reach GitHub only if the user pastes them.
+        assert.include(url.searchParams.get("actual"), "Paste the error and explanation");
+        assert.notInclude(result.reportUrl!, "ENOENT");
+        assert.notInclude(result.reportUrl!, "binary");
+        assert.include(url.searchParams.get("environment"), "Provider: codex, Runtime mode:");
+        // A model name can be custom, so it stays out of the link.
+        assert.notInclude(result.reportUrl!, "gpt-5.1-codex");
         assert.include(url.searchParams.get("environment"), "Runtime mode: full-access");
         assert.include(url.searchParams.get("environment"), "OS: freebsd x64");
         assert.isTrue(url.searchParams.has("version"));
@@ -555,6 +556,20 @@ describe("ProviderFailureExplanationService", () => {
         assert.equal(result.summary, "The binary is missing.");
         assert.isNull(result.knownIssue);
         assert.isString(result.reportUrl);
+      }),
+    );
+
+    it.effect("still explains, with no link, when a failure message cuts mid-emoji", () =>
+      Effect.gen(function* () {
+        for (const message of [`${"word ".repeat(15)}x😀 tail`, `Failed ${"😀".repeat(1_000)}`]) {
+          const harness = makeHarness({ lastError: message, candidates, generate: naming(null) });
+          const result = yield* explain().pipe(Effect.provide(harness.layer));
+
+          assert.equal(result.summary, "The binary is missing.");
+          assert.equal(result.failureMessage, message);
+          assert.isString(result.reportUrl);
+          assert.isTrue(decodeURIComponent(result.reportUrl!).isWellFormed());
+        }
       }),
     );
   });

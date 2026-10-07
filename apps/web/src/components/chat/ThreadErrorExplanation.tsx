@@ -5,12 +5,16 @@ import {
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { InlineButton } from "../ui/button";
 import {
+  copyReportDetails,
   explanationStateFromFailure,
   explanationStateFromResult,
+  REPORT_DETAILS_COPIED_NOTE,
+  reportDetailsText,
   type ThreadErrorExplanationState,
 } from "./ThreadErrorExplanation.logic";
 
@@ -36,6 +40,7 @@ export function ThreadErrorExplanation({
   const explainProviderFailure = useAtomCommand(orchestrationEnvironment.explainProviderFailure, {
     reportFailure: false,
   });
+  const [detailsCopied, setDetailsCopied] = useState(false);
   const explain = async () => {
     setState({ kind: "pending" });
     const result = await explainProviderFailure({
@@ -67,9 +72,21 @@ export function ThreadErrorExplanation({
         <InlineButton
           className="self-start [--inline-button-text-align:start] [--inline-button-white-space:normal]"
           render={<a href={state.link.url} target="_blank" rel="noopener noreferrer" />}
+          // The link still opens: the details only go to the clipboard, where the user checks them.
+          onClick={
+            state.link.kind === "report"
+              ? () =>
+                  void copyReportDetails(reportDetailsText(state), (text) =>
+                    writeTextToClipboard(text, "error details"),
+                  ).then(setDetailsCopied)
+              : undefined
+          }
         >
           {state.link.label}
         </InlineButton>
+      ) : null}
+      {state.kind === "ready" && state.link?.kind === "report" && detailsCopied ? (
+        <p>{REPORT_DETAILS_COPIED_NOTE}</p>
       ) : null}
       {state.kind === "pending" ? <p>Explaining…</p> : null}
       {state.kind === "failed" ? <p>Couldn't explain this error: {state.message}</p> : null}

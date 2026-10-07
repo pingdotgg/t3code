@@ -60,10 +60,49 @@ export type ThreadErrorExplanationState =
   | { readonly kind: "failed"; readonly message: string }
   | {
       readonly kind: "ready";
+      readonly failureMessage: string;
       readonly summary: string;
       readonly likelyFix: string;
       readonly link: ThreadErrorExplanationLink | null;
     };
+
+/**
+ * What the report link leaves out on purpose: the error and the explanation are
+ * copied to the clipboard instead, so the user checks them for anything private
+ * before pasting them into the form.
+ */
+export function reportDetailsText(details: {
+  readonly failureMessage: string;
+  readonly summary: string;
+  readonly likelyFix: string;
+}): string {
+  return [
+    "Error message:",
+    details.failureMessage,
+    "",
+    "What happened (explained by a text generation model, so it may be wrong):",
+    details.summary,
+    "",
+    "Likely fix (same caveat):",
+    details.likelyFix,
+  ].join("\n");
+}
+
+export const REPORT_DETAILS_COPIED_NOTE =
+  "Error details copied. Check them, then paste them into the form.";
+
+/** Copies without ever blocking the link: a failed or unavailable clipboard is just not copied. */
+export async function copyReportDetails(
+  text: string,
+  write: (text: string) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await write(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const THREAD_ERROR_CHANGED_MESSAGE = "The error changed before it could be explained.";
 
@@ -79,6 +118,7 @@ export function explanationStateFromResult(
   return result.failureMessage === displayedError
     ? {
         kind: "ready",
+        failureMessage: result.failureMessage,
         summary: result.summary,
         likelyFix: result.likelyFix,
         link: explanationLink(result),
