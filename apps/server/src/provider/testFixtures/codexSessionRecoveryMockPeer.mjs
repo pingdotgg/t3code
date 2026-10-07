@@ -42,7 +42,7 @@ NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "turn/start": {
       const turn = {
         ...fixture.responses.turnStart.turn,
-        id: `turn-${nextTurnId++}`,
+        id: `turn-${process.pid}-${nextTurnId++}`,
       };
       write({ id, result: { turn } });
       write({ method: "turn/started", params: { threadId: params.threadId, turn } });
