@@ -451,3 +451,145 @@ it.effect.each(["user", "agent"] as const)(
       }
     }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("a pull request watch does not keep a filed thread, and settling ends it", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* f.orchestrator.dispatch({
+      type: "thread.pull-request.watch",
+      commandId: f.commandId(),
+      threadId: f.threadId,
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 7,
+      watching: true,
+      link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+    });
+    yield* f.settle();
+    assert.isNotNull((yield* f.read()).settleWhenIdleAt);
+    yield* f.setRun("completed");
+    // The watch is listed as work that wakes the agent, yet Settle stops it.
+    assert.deepEqual(
+      (yield* f.projections.getThreadShell(f.threadId))?.pendingBackgroundTasks?.map(
+        (task) => task.kind,
+      ),
+      ["monitor"],
+    );
+    yield* f.fulfill();
+    const shell = yield* f.projections.getThreadShell(f.threadId);
+    assert.equal(shell?.settledOverride, "settled");
+    assert.isUndefined(shell?.pullRequests?.[0]?.watch);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+const bindProviderThread = (f: Effect.Success<ReturnType<typeof fixture>>) =>
+  Effect.gen(function* () {
+    const providerThreadId = ProviderThreadId.make("held-provider-thread");
+    yield* f.sink.write({
+      events: [
+        {
+          id: EventId.make("held-provider"),
+          type: "provider-thread.updated",
+          threadId: f.threadId,
+          occurredAt: f.now,
+          payload: {
+            id: providerThreadId,
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            providerSessionId: null,
+            appThreadId: f.threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: f.now,
+            updatedAt: f.now,
+          },
+        },
+        {
+          id: EventId.make("held-run-binding"),
+          type: "run.updated",
+          threadId: f.threadId,
+          occurredAt: f.now,
+          payload: { ...f.run, providerThreadId },
+        },
+      ],
+    });
+  });
+
+// Restart recovery holds the queue until the user resumes it.
+const holdQueue = (f: Effect.Success<ReturnType<typeof fixture>>) =>
+  Effect.gen(function* () {
+    const { runs } = yield* f.orchestrator.getThreadProjection(f.threadId);
+    const queued = runs.filter((run) => run.status === "queued");
+    assert.isNotEmpty(queued);
+    yield* f.sink.write({
+      events: queued.map((run) => ({
+        id: EventId.make(`hold:${run.id}`),
+        type: "run.updated" as const,
+        threadId: f.threadId,
+        occurredAt: f.now,
+        payload: { ...run, queueHeld: true },
+      })),
+    });
+    return queued;
+  });
+
+it.effect("a held automatic run does not keep a filed thread, and settling cancels it", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* bindProviderThread(f);
+    yield* f.settle();
+    yield* f.orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: f.commandId(),
+      threadId: f.threadId,
+      messageId: MessageId.make("held-notification"),
+      text: "Background activity updated",
+      attachments: [],
+      createdBy: "agent",
+      creationSource: "provider",
+      notification: {
+        source: { kind: "background_task" },
+        outcome: "updated",
+        summary: "Background activity updated",
+      },
+      modelSelection,
+      dispatchMode: { type: "queue_after_active" },
+    });
+    const [held] = yield* holdQueue(f);
+    yield* f.setRun("completed");
+    yield* f.fulfill();
+    assert.equal((yield* f.read()).settledOverride, "settled");
+    const { runs } = yield* f.orchestrator.getThreadProjection(f.threadId);
+    assert.equal(runs.find((run) => run.id === held?.id)?.status, "cancelled");
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("a held user message blocks Settle on a working thread instead of filing it", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* bindProviderThread(f);
+    yield* f.orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: f.commandId(),
+      threadId: f.threadId,
+      messageId: MessageId.make("held-user-message"),
+      text: "Then do this",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      modelSelection,
+      dispatchMode: { type: "queue_after_active" },
+    });
+    yield* holdQueue(f);
+    assert.equal((yield* Effect.exit(f.settle()))._tag, "Failure");
+    const thread = yield* f.read();
+    assert.notExists(thread.settleWhenIdleAt);
+    assert.notEqual(thread.settledOverride, "settled");
+  }).pipe(Effect.provide(testLayer)),
+);
