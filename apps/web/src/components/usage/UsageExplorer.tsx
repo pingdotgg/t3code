@@ -787,6 +787,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
           />
           <ProviderList
             facts={providerScope}
+            allAccounts={allAccounts}
             metric={metric}
             accounts={filters.accounts}
             accountName={(account) => nameOf("account", account)}
@@ -926,6 +927,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
             ) : null}
             {dimension === "thread" ? (
               <ThreadFilters
+                allAccounts={allAccounts}
                 facts={data.facts.filter(
                   (fact) =>
                     fact.project === filters.project &&
@@ -1178,12 +1180,15 @@ function Headline({
 
 function ProviderList({
   facts,
+  allAccounts,
   metric,
   accounts,
   accountName,
   onAccountsChange,
 }: {
   readonly facts: readonly UsageFact[];
+  /** Every account on the page, so a change here keeps accounts outside `facts`. */
+  readonly allAccounts: readonly string[];
   readonly metric: UsageExplorerMetric;
   readonly accounts: ReadonlySet<string> | null;
   readonly accountName: (account: string) => string;
@@ -1198,7 +1203,6 @@ function ProviderList({
     if (!list.includes(fact.account)) list.push(fact.account);
     accountsOf.set(fact.provider, list);
   }
-  const all = [...byAccount.keys()];
   const whole = metricOf(sumFacts(facts), metric);
   const selected = (account: string) => accounts === null || accounts.has(account);
   const providers = PROVIDER_ORDER.filter((provider) => {
@@ -1206,7 +1210,7 @@ function ProviderList({
     return totals !== undefined && (tokensOf(totals) > 0 || totals.costUsd > 0);
   });
   const toggle = (keys: readonly string[]) => {
-    const current = new Set(accounts ?? all);
+    const current = new Set(accounts ?? allAccounts);
     const on = keys.every((key) => current.has(key));
     for (const key of keys) {
       if (on) current.delete(key);
@@ -1402,12 +1406,15 @@ function ColumnsMenu({
 
 function ThreadFilters({
   facts,
+  allAccounts,
   filters,
   accountName,
   onAccountsChange,
   onModelChange,
 }: {
   readonly facts: readonly UsageFact[];
+  /** Every account on the page, so a change here keeps accounts outside this project. */
+  readonly allAccounts: readonly string[];
   readonly filters: UsageFilters;
   readonly accountName: (account: string) => string;
   readonly onAccountsChange: (accounts: readonly string[] | null) => void;
@@ -1438,10 +1445,10 @@ function ThreadFilters({
               checked={selected === null || selected.has(account)}
               closeOnClick={false}
               onCheckedChange={(checked) => {
-                const next = new Set(selected ?? accounts);
+                const next = new Set(selected ?? allAccounts);
                 if (checked) next.add(account);
                 else next.delete(account);
-                onAccountsChange(next.size === accounts.length ? null : [...next]);
+                onAccountsChange([...next]);
               }}
             >
               {accountName(account)}

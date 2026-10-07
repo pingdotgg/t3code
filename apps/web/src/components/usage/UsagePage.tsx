@@ -162,6 +162,15 @@ export function UsagePage() {
   // The Change column compares with the same span just before; read it only then.
   const wantsPrevious = !showingLimits && explorerPreferences.columns.includes("change");
   const previous = useUsage(wantsPrevious ? previousWindow(window) : null, selectedEnvironmentIds);
+  // Change compares like for like only when every environment with usage now
+  // also answered for the span before, live or saved.
+  const previousCoversCurrent = selectedEnvironments.every(
+    (environment) =>
+      environment.summary === null ||
+      previous.selectedEnvironments.some(
+        (entry) => entry.environmentId === environment.environmentId && entry.summary !== null,
+      ),
+  );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const selectedEnvironmentIdList = useMemo(
     () => selectedEnvironments.map((environment) => environment.environmentId),
@@ -566,7 +575,11 @@ export function UsagePage() {
                 ) : null}
                 <UsageExplorer
                   merged={merged}
-                  previous={wantsPrevious && !previous.isPending ? previous.merged : null}
+                  previous={
+                    wantsPrevious && !previous.isPending && previousCoversCurrent
+                      ? previous.merged
+                      : null
+                  }
                   metric={metric}
                   timeline={timeline}
                   timeZone={window.timeZone}
