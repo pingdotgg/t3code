@@ -167,4 +167,21 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("uses a project's own account ahead of the host's pinned one", () => {
+    const { layer, calls } = harness({ "github.com": { account: "personal" } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(Redacted.value((yield* credentials.get("github.com", "work")).token)).toBe(
+        "token-for-work",
+      );
+      expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe(
+        "token-for-personal",
+      );
+      expect(calls).toEqual([
+        ["auth", "token", "--hostname", "github.com", "--user", "work"],
+        ["auth", "token", "--hostname", "github.com", "--user", "personal"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 });

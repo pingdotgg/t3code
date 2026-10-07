@@ -82,6 +82,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { makeGitHubProjectAccount } from "../sourceControl/gitHubProjectAccount.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -2923,18 +2924,24 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Everything that reaches the host runs as the checkout's project account.
+  const { actAs } = yield* makeGitHubProjectAccount;
   return GitManager.of({
     createWorktree,
     localStatus,
-    remoteStatus,
-    status,
-    branchPullRequest,
+    remoteStatus: (input, options) => actAs(input, remoteStatus(input, options)),
+    status: (input) => actAs(input, status(input)),
+    branchPullRequest: (input, options) => actAs(input, branchPullRequest(input, options)),
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,
-    resolvePullRequest,
-    preparePullRequestThread,
-    runStackedAction,
+    resolvePullRequest: (input) => actAs(input, resolvePullRequest(input)),
+    preparePullRequestThread: (input) => actAs(input, preparePullRequestThread(input)),
+    runStackedAction: (input, options) =>
+      actAs(
+        { cwd: input.cwd, projectId: input.projectId ?? null },
+        runStackedAction(input, options),
+      ),
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),

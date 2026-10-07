@@ -145,8 +145,15 @@ export function pullRequestEntryViewer(
   viewers: PullRequestViewers,
 ): string | null {
   // The environment's own answer first; a plain host key is what a single-environment listing
-  // still writes, and what the snapshot from one carries.
-  return normalize(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
+  // still writes, and what the snapshot from one carries. A project with a GitHub account of its
+  // own is keyed `project:<id>` and wins over the host.
+  const project = `project:${entry.projectId}`;
+  return normalize(
+    viewers[`${entry.environmentId ?? ""} ${project}`] ??
+      viewers[project] ??
+      viewers[pullRequestViewerKey(entry)] ??
+      viewers[entry.host],
+  );
 }
 
 /**

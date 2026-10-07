@@ -631,7 +631,8 @@ export const PullRequestListResult = Schema.Struct({
    * The signed-in account per host, which is what involvement filtering compares. Keyed by
    * host rather than by provider kind: two GitHub hosts are two accounts. A host that could
    * not be read is absent rather than present-and-undefined, because an open-keyed record
-   * cannot carry an optional value through the JSON codec.
+   * cannot carry an optional value through the JSON codec. A project with a GitHub account of its
+   * own (its `githubAccount` setting) is keyed `project:<projectId>`.
    */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),

@@ -738,6 +738,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
+    id: "github-project-account",
+    title: "GitHub account",
+    to: "/settings/source-control",
+    scope: "project",
+    searchTerms: ["github gh account login user work personal multiple accounts project"],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",

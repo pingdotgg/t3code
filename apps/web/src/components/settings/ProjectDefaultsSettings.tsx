@@ -16,6 +16,8 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+import { sourceControlEnvironment } from "../../state/sourceControl";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -25,6 +27,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { groupGitHubAccounts } from "./GitHubAccountSettings.logic";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -40,6 +43,9 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+
+/** Sentinel select value for "the account Settings choose for the host"; logins have no spaces. */
+const HOST_ACCOUNT = "host account";
 
 /**
  * Rows for the settings a project may override. The same rows edit
@@ -83,6 +89,25 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const mixedGitHubAccount = useScopedSettingsMixed(["githubAccount"]);
+  // The logins `gh` holds on the project's environment, which is what a project can pick from.
+  const discovery = useEnvironmentQuery(
+    category === "source-control" && isProjectScope && target
+      ? sourceControlEnvironment.discovery({ environmentId: target.environmentId, input: {} })
+      : null,
+  );
+  const githubLogins = [
+    ...new Set(
+      (discovery.data?.sourceControlProviders ?? [])
+        .filter((provider) => provider.kind === "github")
+        .flatMap((provider) =>
+          groupGitHubAccounts(provider.auth.accounts ?? []).flatMap((group) => group.selectable),
+        ),
+    ),
+  ];
+  if (settings.githubAccount !== null && !githubLogins.includes(settings.githubAccount)) {
+    githubLogins.push(settings.githubAccount);
+  }
   const unavailable = connectedEnvironments.length === 0;
   // File-backed keys show their effective value; the target already carries
   // the checkout's t3.json, and a null file here only fills the built-in.
@@ -487,6 +512,49 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
+          {isProjectScope ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["githubAccount"]}
+              mixed={mixedGitHubAccount}
+              {...searchableSetting("github-project-account")}
+              description="T3 Code reads and acts on this project's pull requests, and creates them, with this gh login, so a work project can use a different account than everything else."
+              resetAction={
+                settings.githubAccount !== null ? (
+                  <SettingResetButton
+                    label="GitHub account"
+                    tooltip="Use the host's account"
+                    onClick={() => updateSettings({ githubAccount: null })}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={mixedGitHubAccount ? null : (settings.githubAccount ?? HOST_ACCOUNT)}
+                  onValueChange={(value) => {
+                    if (typeof value !== "string") return;
+                    updateSettings({ githubAccount: value === HOST_ACCOUNT ? null : value });
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="GitHub account for this project">
+                    <SelectValue>
+                      {(value: string | null) =>
+                        value === null ? "Mixed" : value === HOST_ACCOUNT ? "Host account" : value
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value={HOST_ACCOUNT}>Host account</SelectItem>
+                    {githubLogins.map((login) => (
+                      <SelectItem key={login} value={login}>
+                        {login}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
         </>
       ) : (
         <>

@@ -33,6 +33,15 @@ export const PinnedGitHubCredential = Context.Reference<{
 } | null>("t3/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
 
 /**
+ * The `gh` login the current operation acts as, when its project has one of its own. Every
+ * request made under it, including node-id writes that name no repository, uses that account.
+ * Unset, requests use the account Settings choose for the host.
+ */
+export const GitHubAccount = Context.Reference<string | null>("t3/sourceControl/GitHubAccount", {
+  defaultValue: () => null,
+});
+
+/**
  * Set by interactive callers (a user's read or write, not a background sweep). Requests made
  * under it may spend the GraphQL reserve and go through a rate-limit pause: a user acting on a
  * pull request should not be refused because a background read exhausted the quota.
@@ -154,7 +163,7 @@ export class GitHubApi extends Context.Service<
     /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
     readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
-    /** The credential a request to `host` would carry right now. */
+    /** The credential a request to `host` would carry right now, under `GitHubAccount`. */
     readonly credential: (
       host: string,
     ) => Effect.Effect<
@@ -362,7 +371,7 @@ export const make = Effect.gen(function* () {
         }
         return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
       }
-      const held = yield* credentials.get(normalized);
+      const held = yield* credentials.get(normalized, yield* GitHubAccount);
       return { token: held.token, fingerprint: held.fingerprint };
     },
   );
@@ -489,9 +498,9 @@ export const make = Effect.gen(function* () {
             }),
           // The source may hold a newer token than the one that was refused.
           Unauthorized: () =>
-            credentials
-              .invalidate(host)
-              .pipe(Effect.andThen(Effect.fail(new GitHubApiAuthenticationError(context)))),
+            GitHubAccount.pipe(
+              Effect.flatMap((account) => credentials.invalidate(host, account)),
+            ).pipe(Effect.andThen(Effect.fail(new GitHubApiAuthenticationError(context)))),
           NotFound: () => Effect.fail(new GitHubApiNotFoundError(context)),
           Failed: ({ messages }) =>
             Effect.fail(

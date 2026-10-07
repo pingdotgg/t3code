@@ -525,6 +525,7 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? "",
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        Context.getOrElse(context, GitHubApi.GitHubAccount, () => null) ?? "",
       ].join("\0"),
     resolver: (entries) => {
       const [first] = entries;

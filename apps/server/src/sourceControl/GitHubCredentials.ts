@@ -82,17 +82,20 @@ export type GitHubCredentialUnavailableError =
   | GitHubCliFailedError;
 
 /**
- * Where GitHub tokens come from. Callers ask per host and never see how the token was found,
- * so another source (an in-app OAuth login) slots in here without touching any of them.
+ * Where GitHub tokens come from. Callers ask per host, and for a project's own `gh` login when
+ * it has one, and never see how the token was found, so another source (an in-app OAuth login)
+ * slots in here without touching any of them.
  */
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
+    /** `account` is a `gh` login to use instead of the one Settings choose for the host. */
     readonly get: (
       host: string,
+      account?: string | null,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
     /** Drops the held token after GitHub refused it, so the next read asks its source again. */
-    readonly invalidate: (host: string) => Effect.Effect<void>;
+    readonly invalidate: (host: string, account?: string | null) => Effect.Effect<void>;
   }
 >()("t3/sourceControl/GitHubCredentials") {}
 
@@ -231,7 +234,7 @@ export const make = Effect.gen(function* () {
   });
 
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, account) {
       const host = normalizeHost(rawHost);
       const choice = yield* hostChoice(host);
       if (choice?.enabled === false) {
@@ -248,12 +251,14 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      return yield* Cache.get(cache, cacheKey(host, choice?.account));
+      return yield* Cache.get(cache, cacheKey(host, account ?? choice?.account));
     }),
-    invalidate: (rawHost) => {
+    invalidate: (rawHost, account) => {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+        Effect.flatMap((choice) =>
+          Cache.invalidate(cache, cacheKey(host, account ?? choice?.account)),
+        ),
       );
     },
   });
