@@ -213,7 +213,8 @@ sudo t3 browser setup
 
 The server shows the exact line for how you started it, such as
 `sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
-for your user. It allows Chrome's sandbox with an AppArmor profile and installs
+for your user. Where `t3` is not on your `PATH`, such as with only the
+desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries with apt. It is safe to run again. Without `sudo`, it
 only reports what it would change.
 
