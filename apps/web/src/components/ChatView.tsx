@@ -11649,7 +11649,10 @@ export default function ChatView(props: ChatViewProps) {
             {canOperatePreview && activeThreadRef && activeEnvironmentServerBrowser ? (
               <PreviewSessionSync threadRef={activeThreadRef} />
             ) : null}
-            {canOperatePreview && activeThreadRef && activePreviewMiniPlayer && previewMiniPlayerVisible ? (
+            {activeThreadRef &&
+            activePreviewMiniPlayer &&
+            previewMiniPlayerVisible &&
+            (activePreviewMiniPlayer.source.kind === "device" || canOperatePreview) ? (
               <ThreadPreviewMiniPlayer
                 key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
                 threadRef={activeThreadRef}
