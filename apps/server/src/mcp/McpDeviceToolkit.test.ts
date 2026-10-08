@@ -8,20 +8,25 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
 const invocation = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) => ({
   environmentId,
-  threadId,
-  providerSessionId: "provider-session-device-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-device-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session-device-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });
@@ -77,7 +82,7 @@ new DataView(png.buffer).setUint32(12, 0x49484452);
 new DataView(png.buffer).setUint32(16, 1206);
 new DataView(png.buffer).setUint32(20, 2622);
 
-const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
+const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   state: Effect.succeed(state),
   list: Effect.succeed(state),
   open: (input) =>
@@ -96,9 +101,10 @@ const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
 });
 
-const TestLayer = McpHttpServer.DeviceToolkitRegistrationLive.pipe(
+const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
-  Layer.provideMerge(DeviceServiceMock),
+  Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+  Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
 );
@@ -134,11 +140,11 @@ it.effect("registers the device tools and returns the screenshot as image conten
         .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
       expect(denied.isError).toBe(true);
     }),
-  ).pipe(Effect.provide(TestLayer)),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
-  const unavailable = Layer.mock(DeviceService.DeviceService)({
+  const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed(state),
     agentTarget: () =>
       Effect.fail(
@@ -166,9 +172,10 @@ it.effect("rejects unavailable agent access before booting or opening a device",
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      McpHttpServer.DeviceToolkitRegistrationLive.pipe(
+      McpHttpServer.layerDeviceToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(unavailable),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerUnavailable),
         Layer.provide(NodeServices.layer),
       ),
     ),

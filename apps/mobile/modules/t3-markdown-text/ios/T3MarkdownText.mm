@@ -10,7 +10,7 @@
 #import <react/renderer/components/T3MarkdownTextSpec/EventEmitters.h>
 #import <react/renderer/components/T3MarkdownTextSpec/Props.h>
 #import <react/renderer/components/T3MarkdownTextSpec/RCTComponentViewHelpers.h>
-#import "RCTFabricComponentsPlugins.h"
+#import <React/RCTFabricComponentsPlugins.h>
 
 using namespace facebook::react;
 
@@ -287,6 +287,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   UILongPressGestureRecognizer *_longPressGestureRecognizer;
   UITapGestureRecognizer *_pressGestureRecognizer;
   NSArray *_contextAccessibilityElements;
+  BOOL _textLayoutNeedsUpdate;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -311,6 +312,12 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
     _textView.editable = false;
     _textView.textContainerInset = UIEdgeInsetsZero;
     _textView.textContainer.lineFragmentPadding = 0;
+    // The shadow node already sized this view to fit every line. A container
+    // that tracks the frame can come out a fraction of a point shorter after
+    // pixel rounding, and TextKit then drops the last line. Size it by hand
+    // with unbounded height and let the view's bounds clip.
+    _textView.textContainer.widthTracksTextView = NO;
+    _textView.textContainer.heightTracksTextView = NO;
     _textView.delegate = self;
     // Chat text supports selection and contextual actions, but not drag-and-drop.
     _textView.textDragInteraction.enabled = NO;
@@ -378,16 +385,18 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   _textView.frame = CGRectZero;
   _textView.attributedText = nil;
   _contextAccessibilityElements = nil;
+  _textLayoutNeedsUpdate = YES;
 }
 
 - (void)layoutSubviews
 {
   [super layoutSubviews];
-  // _textView's frame is assigned inside drawRect, which only fires when
-  // state changes. Trigger a redraw whenever the host frame moves out from
-  // under it (rotation, parent relayout) so the text view resizes and
-  // onTextLayout re-fires with the new line wrapping.
+  // Resize during UIKit's layout pass. Doing this in drawRect can leave the
+  // text view's drawing surface clipped to its previous width after a pane
+  // expands, even though TextKit has already rewrapped the lines.
   if (!CGRectEqualToRect(_textView.frame, _view.frame)) {
+    _textView.frame = _view.frame;
+    _textLayoutNeedsUpdate = YES;
     [self setNeedsDisplay];
   }
 }
@@ -449,7 +458,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   // entirely when nothing actually changed so a JS-side state update made in
   // response to onSelectionChange doesn't deselect what the user is selecting.
   const BOOL textChanged = ![_textView.attributedText isEqualToAttributedString:convertedAttrString];
-  const BOOL frameChanged = !CGRectEqualToRect(_textView.frame, _view.frame);
+  const BOOL frameChanged = _textLayoutNeedsUpdate;
   if (!textChanged && !frameChanged) {
     return;
   }
@@ -476,8 +485,9 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
     _suppressSelectionChange = NO;
   }
   if (frameChanged) {
-    _textView.frame = _view.frame;
+    _textView.textContainer.size = CGSizeMake(CGRectGetWidth(_view.frame), CGFLOAT_MAX);
   }
+  _textLayoutNeedsUpdate = NO;
 
   // Text attachments have no native link element. Expose their existing runs
   // at the measured glyph bounds, without inserting views into text layout.

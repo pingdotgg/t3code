@@ -3,8 +3,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-  EventId,
-  type OrchestrationThreadActivity,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -26,7 +24,6 @@ import {
   paceOf,
   providersWithLimits,
   remainingPercent,
-  isChatGptUsageLimitError,
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
@@ -1205,32 +1202,6 @@ describe("ChatGPT sharing presentation", () => {
         ...codex,
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
-    ).toBe(false);
-  });
-  it("only gives the matching current structured limit error a management action", () => {
-    const limit: OrchestrationThreadActivity = {
-      id: EventId.make("sharing-limit"),
-      tone: "error",
-      kind: "runtime.error",
-      summary: "Runtime error",
-      turnId: null,
-      createdAt: "2026-09-03T12:00:00.000Z",
-      payload: { code: "subscription_sharing_usage_limit_exceeded", message: "Limit reached" },
-    };
-    expect(isChatGptUsageLimitError([limit], "Limit reached")).toBe(true);
-    expect(isChatGptUsageLimitError([limit], "A different failure")).toBe(false);
-    expect(isChatGptUsageLimitError([limit], null)).toBe(false);
-    expect(
-      isChatGptUsageLimitError(
-        [{ ...limit, payload: { message: "Limit reached" } }],
-        "Limit reached",
-      ),
-    ).toBe(false);
-    expect(
-      isChatGptUsageLimitError(
-        [limit, { ...limit, payload: { code: "unrelated", message: "Limit reached" } }],
-        "Limit reached",
-      ),
     ).toBe(false);
   });
 });

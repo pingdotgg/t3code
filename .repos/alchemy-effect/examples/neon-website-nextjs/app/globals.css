@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+main {
+  max-width: 44rem;
+  margin-inline: auto;
+  display: grid;
+  gap: 1rem;
+}
+form {
+  display: grid;
+  gap: 0.5rem;
+}
+button,
+input {
+  min-height: 44px;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+button {
+  cursor: pointer;
+  background: #e2e8f0;
+  margin: 0.25rem;
+}
+input {
+  background: white;
+  width: 100%;
+}
+a {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}

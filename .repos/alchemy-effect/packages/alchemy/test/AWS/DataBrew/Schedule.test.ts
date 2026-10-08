@@ -50,5 +50,5 @@ test.provider(
       yield* stack.destroy();
       expect(yield* getSchedule(created.schedule.scheduleName)).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:databrew", "live"], timeout: 120_000 },
 );

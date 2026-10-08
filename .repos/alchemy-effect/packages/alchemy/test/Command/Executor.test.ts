@@ -5,6 +5,18 @@ import { assert, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
+import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
+import * as ChildProcess from "effect/process/ChildProcess";
+import {
+  assertDead,
+  lifecycleFixture,
+  pgid,
+  pidAlive,
+} from "./fixture/lifecycle-support.ts";
 import * as pathe from "pathe";
 const { test } = Test.make({ providers: Command.providers() });
 
@@ -41,7 +53,7 @@ test(
       expect(notes).toEqual(expect.arrayContaining(["hello", "warning"]));
     }),
   ),
-  { timeout: 30_000 },
+  { tags: ["unit", "local"], timeout: 30_000 },
 );
 
 test(
@@ -66,7 +78,7 @@ test(
       expect(error.message).toContain("exited with code 7");
     }),
   ),
-  { timeout: 30_000 },
+  { tags: ["unit", "local"], timeout: 30_000 },
 );
 
 test(
@@ -130,7 +142,7 @@ test(
       expect(alive).toBe(false);
     }),
   ),
-  { timeout: 30_000 },
+  { tags: ["unit", "local"], timeout: 30_000 },
 );
 
 test(
@@ -202,5 +214,138 @@ test(
       expect(collisionNotes.join("\n")).not.toContain(markerCollision);
     }),
   ),
-  { timeout: 30_000 },
+  { tags: ["unit", "local"], timeout: 30_000 },
+);
+
+for (const mode of ["cooperative", "stubborn", "early-exit"]) {
+  test.skipIf(process.platform === "win32")(
+    `scoped cleanup uses TERM before bounded escalation (${mode})`,
+    withExecutor(
+      Effect.gen(function* () {
+        const fixture = yield* lifecycleFixture(mode);
+        const executor = yield* Command.CommandExecutor;
+        const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        yield* executor.spawn(fixture.props).pipe(Scope.provide(scope));
+        const pids = yield* fixture.ready;
+        expect(yield* pgid(pids.leaf)).toBe(
+          mode === "cooperative" ? pids.leaf : pids.wrapper,
+        );
+        const started = yield* Clock.currentTimeMillis;
+        yield* Scope.close(scope, Exit.void);
+        expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(3500);
+        expect(yield* fixture.has("wrapper.term")).toBe(true);
+        expect(yield* fixture.has("wrapper.clean")).toBe(
+          mode === "cooperative",
+        );
+        yield* assertDead(pids.wrapper);
+        yield* assertDead(pids.leaf);
+      }),
+    ),
+    { tags: ["unit", "local"], timeout: 20_000 },
+  );
+}
+
+test.skipIf(process.platform === "win32")(
+  "a nonzero leader exit hard-cleans its TERM-ignoring descendant before scope closure",
+  withExecutor(
+    Effect.gen(function* () {
+      const fixture = yield* lifecycleFixture("crash");
+      const executor = yield* Command.CommandExecutor;
+      const fiber = yield* executor
+        .run(fixture.props, session([]))
+        .pipe(Effect.flip, Effect.forkScoped);
+      const pids = yield* fixture.ready;
+      expect(yield* pgid(pids.leaf)).toBe(pids.wrapper);
+      yield* fixture.crash;
+      const error = yield* Fiber.join(fiber).pipe(Effect.timeout("3 seconds"));
+      expect(error.reason._tag).toBe("UnexpectedExit");
+      yield* assertDead(pids.wrapper);
+      yield* assertDead(pids.leaf);
+    }),
+  ),
+  { tags: ["unit", "local"], timeout: 20_000 },
+);
+
+test.skipIf(process.platform === "win32")(
+  "negative control: immediate KILL prevents wrapper cleanup and leaves its detached child",
+  Effect.gen(function* () {
+    const fixture = yield* lifecycleFixture();
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    yield* ChildProcess.make("bun", ["run", fixture.entry], {
+      env: fixture.props.env,
+      extendEnv: true,
+      killSignal: "SIGKILL",
+    }).pipe(Scope.provide(scope));
+    const pids = yield* fixture.ready;
+    yield* Scope.close(scope, Exit.void);
+    expect(yield* fixture.has("wrapper.clean")).toBe(false);
+    expect(yield* pidAlive(pids.leaf)).toBe(true);
+  }),
+  { tags: ["unit", "local"], timeout: 20_000 },
+);
+
+test.skipIf(process.platform === "win32")(
+  "cancelling run without a timeout gracefully cleans a wrapper and detached child",
+  withExecutor(
+    Effect.gen(function* () {
+      const fixture = yield* lifecycleFixture();
+      const executor = yield* Command.CommandExecutor;
+      const fiber = yield* executor
+        .run(fixture.props, session([]))
+        .pipe(Effect.forkScoped);
+      const pids = yield* fixture.ready;
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      assert(Exit.isFailure(exit));
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(yield* fixture.has("wrapper.clean")).toBe(true);
+      yield* assertDead(pids.wrapper);
+      yield* assertDead(pids.leaf);
+    }),
+  ),
+  { tags: ["unit", "local"], timeout: 20_000 },
+);
+
+test.skipIf(process.platform === "win32")(
+  "finite timeout preserves its typed error after graceful wrapper cleanup",
+  withExecutor(
+    Effect.gen(function* () {
+      const fixture = yield* lifecycleFixture();
+      const executor = yield* Command.CommandExecutor;
+      const fiber = yield* executor
+        .run({ ...fixture.props, timeout: "2 seconds" }, session([]))
+        .pipe(Effect.flip, Effect.forkScoped);
+      const pids = yield* fixture.ready;
+      const error = yield* Fiber.join(fiber);
+      expect(error.reason._tag).toBe("CommandTimedOut");
+      expect(yield* fixture.has("wrapper.clean")).toBe(true);
+      yield* assertDead(pids.wrapper);
+      yield* assertDead(pids.leaf);
+    }),
+  ),
+  { tags: ["unit", "local"], timeout: 20_000 },
+);
+
+test.skipIf(process.platform === "win32")(
+  "negative control: TERM without escalation leaves stubborn processes alive",
+  Effect.gen(function* () {
+    const fixture = yield* lifecycleFixture("stubborn");
+    const child = yield* ChildProcess.make("bun", ["run", fixture.entry], {
+      env: fixture.props.env,
+      extendEnv: true,
+      forceKillAfter: "1 second",
+    });
+    const pids = yield* fixture.ready;
+    yield* child
+      .kill({ killSignal: "SIGTERM" })
+      .pipe(Effect.timeoutOption("200 millis"));
+    expect(yield* fixture.has("wrapper.term")).toBe(true);
+    expect(yield* pidAlive(pids.wrapper)).toBe(true);
+    expect(yield* pidAlive(pids.leaf)).toBe(true);
+  }),
+  { tags: ["unit", "local"], timeout: 20_000 },
 );

@@ -1,3 +1,4 @@
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -9,17 +10,21 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
+import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
 const TICK_COUNT = 4;
 const PLOT_TOP = 8;
+const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
+  /** Providers whose figures are still coming in: their lines are muted. */
+  readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
@@ -147,6 +152,10 @@ function curvePath(segments: readonly CurveSegment[]): string {
   return path;
 }
 
+function areaPath(line: string) {
+  return line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`;
+}
+
 /**
  * Builds a scale whose maximum is a readable 1/2/5 x 10^n step at or above the
  * peak.
@@ -169,8 +178,71 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
   return { max, ticks };
 }
 
+const PLACEHOLDER_TICKS = Array.from({ length: TICK_COUNT + 1 }, (_, index) => index);
+
+/**
+ * Scales to the largest single provider-period. With nothing to show yet while
+ * providers load, unlabeled placeholder gridlines hold their usual spacing so
+ * nothing shifts on arrival.
+ */
+export function chartScale(
+  columns: readonly DayColumn[],
+  loadingProviders: ReadonlySet<UsageProviderKind>,
+) {
+  // Not the sum: layered series each measure from zero, so a combined peak
+  // would leave the plot permanently half empty.
+  const peak = columns.reduce(
+    (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
+    0,
+  );
+  return peak === 0 && loadingProviders.size > 0
+    ? { max: TICK_COUNT, ticks: PLACEHOLDER_TICKS, labeled: false }
+    : { ...niceScale(peak, TICK_COUNT), labeled: true };
+}
+
+// Leave room above the top gridline so the constant-width stroke is not
+// clipped when a series reaches the peak.
+function valueToY(value: number, max: number) {
+  return max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
+}
+
+/** Per-provider paths in paint order, heaviest first. */
+function buildChart(
+  periods: readonly string[],
+  byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
+  metric: UsageChartMetric,
+  providers: readonly UsageProviderKind[],
+  loadingProviders: ReadonlySet<UsageProviderKind>,
+) {
+  const columns = buildPeriodColumns(periods, byPeriod, metric);
+  const scale = chartScale(columns, loadingProviders);
+  const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
+  const paths = providers.map((provider) => {
+    const slot = PROVIDER_ORDER.indexOf(provider);
+    const line = curvePath(
+      smoothCurve(
+        columns.map((column, periodIndex) => ({
+          x: periodIndex * stepX,
+          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
+        })),
+      ),
+    );
+    return {
+      provider,
+      loading: loadingProviders.has(provider),
+      total: columns.reduce((sum, column) => sum + (column.bands[slot]?.value ?? 0), 0),
+      line,
+      area: areaPath(line),
+    };
+  });
+
+  // Paint the heavier series first so the lighter one is not buried.
+  return { columns, scale, stepX, paths: paths.toSorted((a, b) => b.total - a.total) };
+}
+
 export function UsageProviderChart({
   providers,
+  loadingProviders = NONE_LOADING,
   days,
   daily,
   hours,
@@ -193,59 +265,14 @@ export function UsageProviderChart({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { paths, ticks, stepX, toY, series } = useMemo(() => {
-    if (periods.length === 0) {
-      return {
-        paths: [],
-        series: [] as readonly DayColumn[],
-        stepX: 0,
-        ticks: [0] as readonly number[],
-        toY: () => VIEW_HEIGHT,
-      };
-    }
-
-    const columns = buildPeriodColumns(periods, byPeriod, metric);
-    // The scale tops out at the largest single provider-period, not the sum:
-    // layered series each measure from zero, so a combined peak would leave
-    // the plot permanently half empty.
-    const peak = columns.reduce(
-      (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
-      0,
-    );
-    const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
-    const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
-    // Leave room above the top gridline so the constant-width stroke is not
-    // clipped when a series reaches the peak.
-    const toY = (value: number) =>
-      max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
-
-    const built = providers.map((provider) => {
-      const providerIndex = PROVIDER_ORDER.indexOf(provider);
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
-      return {
-        provider,
-        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
-        line,
-      };
-    });
-
-    // Paint the heavier series first so the lighter one is not buried.
-    return {
-      paths: built.toSorted((a, b) => b.total - a.total),
-      series: columns,
-      stepX: step,
-      ticks: tickValues,
-      toY,
-    };
-  }, [byPeriod, metric, periods, providers]);
+  const { columns, scale, paths, stepX } = useMemo(
+    () => buildChart(periods, byPeriod, metric, providers, loadingProviders),
+    [byPeriod, loadingProviders, metric, periods, providers],
+  );
+  const toY = (value: number) => valueToY(value, scale.max);
+  // The delay keeps a quick answer from flashing, as with the page's figures.
+  const seriesClassName = (loading: boolean) =>
+    cn("transition-opacity", loading && "opacity-40 delay-150");
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -306,7 +333,8 @@ export function UsageProviderChart({
   );
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
-  const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
+  const hoveredColumn = hoverIndex === null ? undefined : columns[hoverIndex];
+  const partial = providers.some((provider) => loadingProviders.has(provider));
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -319,15 +347,17 @@ export function UsageProviderChart({
       <div className="flex gap-2">
         {/* Axis labels sit outside the plot so they stay aligned to gridlines. */}
         <div className="relative h-56 w-14 shrink-0">
-          {ticks.map((tick) => (
-            <span
-              key={tick}
-              className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
-              style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
-            >
-              {tick === 0 ? "0" : format(tick)}
-            </span>
-          ))}
+          {scale.labeled
+            ? scale.ticks.map((tick) => (
+                <span
+                  key={tick}
+                  className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
+                  style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
+                >
+                  {tick === 0 ? "0" : format(tick)}
+                </span>
+              ))
+            : null}
         </div>
 
         <div
@@ -346,7 +376,7 @@ export function UsageProviderChart({
             role="img"
             aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
           >
-            {ticks.map((tick) => {
+            {scale.ticks.map((tick) => {
               const y = toY(tick);
               return (
                 <line
@@ -364,18 +394,20 @@ export function UsageProviderChart({
             })}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, area }) => (
+            {paths.map(({ provider, loading, area }) => (
               <path
                 key={provider}
                 d={area}
+                className={seriesClassName(loading)}
                 fill={PROVIDER_PRESENTATION[provider].color}
                 fillOpacity={0.12}
               />
             ))}
-            {paths.map(({ provider, line }) => (
+            {paths.map(({ provider, loading, line }) => (
               <path
                 key={provider}
                 d={line}
+                className={seriesClassName(loading)}
                 fill="none"
                 stroke={PROVIDER_PRESENTATION[provider].color}
                 strokeWidth={2}
@@ -408,14 +440,25 @@ export function UsageProviderChart({
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {providers.map((provider) => {
-                const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
+                const { label, driverKind } = PROVIDER_PRESENTATION[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Mark className="size-3 shrink-0" aria-hidden />
+                      <ProviderInstanceIcon
+                        driverKind={driverKind}
+                        displayName={label}
+                        iconClassName="size-3"
+                      />
                       {label}
                     </span>
-                    <span className="text-foreground tabular-nums">
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        loadingProviders.has(provider)
+                          ? "text-muted-foreground"
+                          : "text-foreground",
+                      )}
+                    >
                       {format(
                         hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
                       )}
@@ -425,7 +468,12 @@ export function UsageProviderChart({
               })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
-                <span className="text-foreground tabular-nums">
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    partial ? "text-muted-foreground" : "text-foreground",
+                  )}
+                >
                   {format(hoveredColumn?.total ?? 0)}
                 </span>
               </div>

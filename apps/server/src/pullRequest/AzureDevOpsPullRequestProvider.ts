@@ -25,7 +25,6 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
-import type { AzureDevOpsIterationChanges } from "./AzureDevOpsPullRequestCli.ts";
 import type {
   AzureDevOpsChangeEntry,
   AzureDevOpsItemContent,
@@ -118,6 +117,7 @@ export function azureDevOpsProviderFailure(
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 
@@ -283,7 +283,10 @@ export const make = Effect.gen(function* () {
   }) => {
     const latest = input.iterations.at(-1);
     return latest === undefined
-      ? Effect.succeed({ changes: [], truncated: false } as AzureDevOpsIterationChanges)
+      ? Effect.succeed({
+          changes: [],
+          truncated: false,
+        } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
       : cli.listIterationChanges({
           cwd: input.cwd,
           location: input.location,

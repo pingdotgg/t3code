@@ -156,6 +156,8 @@ export const GlobalsLive = Layer.effect(
           middlewares: [
             {
               name: "plugin:entry",
+              // Accept and route internal requests before assets or other middleware.
+              order: -2,
               worker: {
                 compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 compatibilityFlags: [

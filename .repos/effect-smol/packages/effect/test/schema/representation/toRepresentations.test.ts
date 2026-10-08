@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema, SchemaAST, SchemaRepresentation } from "effect"
+import { Effect, Schema, SchemaAST, SchemaRepresentation } from "effect"
 
 describe("SchemaRepresentation.toRepresentations", () => {
   describe("root identity and sharing", () => {
@@ -137,7 +137,167 @@ describe("SchemaRepresentation.toRepresentations", () => {
     })
   })
 
+  describe.each([
+    { name: "toType", project: SchemaAST.toType },
+    { name: "toEncoded", project: SchemaAST.toEncoded },
+    { name: "flip", project: SchemaAST.flip }
+  ])("contextual projections with $name", ({ project }) => {
+    it.each([
+      {
+        name: "primitive",
+        schema: Schema.NumberFromString.pipe(Schema.annotateEncoded({ identifier: "Wire" }))
+      },
+      { name: "struct", schema: Schema.Struct({ value: Schema.NumberFromString }) },
+      { name: "array", schema: Schema.Array(Schema.NumberFromString) },
+      { name: "tuple", schema: Schema.Tuple([Schema.NumberFromString, Schema.String]) },
+      { name: "union", schema: Schema.Union([Schema.NumberFromString, Schema.Boolean]) },
+      { name: "declaration", schema: Schema.Option(Schema.NumberFromString) },
+      { name: "suspend", schema: Schema.suspend(() => Schema.Struct({ value: Schema.NumberFromString })) },
+      {
+        name: "encoding chain",
+        schema: Schema.String.pipe(
+          Schema.decodeTo(Schema.NumberFromString),
+          Schema.annotateEncoded({ identifier: "Wire" })
+        )
+      }
+    ])("shares the $name reference while preserving each field's context", ({ schema }) => {
+      const value = schema.annotate({ identifier: "Value" })
+      const struct = Schema.Struct({
+        optional: Schema.optionalKey(value),
+        mutable: Schema.mutableKey(value),
+        both: Schema.optionalKey(Schema.mutableKey(value)),
+        required: value
+      })
+      const expected = SchemaRepresentation.toRepresentation(project(value.ast))
+      const document = SchemaRepresentation.toRepresentations([project(struct.ast), project(value.ast)])
+
+      assert.deepStrictEqual(document.references, expected.references)
+      assert.deepStrictEqual(document.representations, [
+        {
+          _tag: "Objects",
+          propertySignatures: [
+            { name: "optional", type: expected.representation, isOptional: true, isMutable: false },
+            { name: "mutable", type: expected.representation, isOptional: false, isMutable: true },
+            { name: "both", type: expected.representation, isOptional: true, isMutable: true },
+            { name: "required", type: expected.representation, isOptional: false, isMutable: false }
+          ],
+          indexSignatures: [],
+          checks: []
+        },
+        expected.representation
+      ])
+    })
+
+    it("shares recursive references across contextual copies", () => {
+      const node: SchemaAST.Suspend = new SchemaAST.Suspend(
+        () =>
+          new SchemaAST.Objects([
+            new SchemaAST.PropertySignature("value", Schema.NumberFromString.ast),
+            new SchemaAST.PropertySignature("next", SchemaAST.optionalKey(node))
+          ], []),
+        { identifier: "Node" }
+      )
+      const document = SchemaRepresentation.toRepresentations([
+        project(SchemaAST.mutableKey(node)),
+        project(node)
+      ])
+
+      assert.deepStrictEqual(document.representations, [
+        { _tag: "Reference", $ref: "Node" },
+        { _tag: "Reference", $ref: "Node" }
+      ])
+      assert.deepStrictEqual(Object.keys(document.references), ["Node"])
+      const representation = document.references.Node
+      assert.strictEqual(representation._tag, "Suspend")
+      if (representation._tag !== "Suspend") return
+      assert.strictEqual(representation.thunk._tag, "Objects")
+      if (representation.thunk._tag !== "Objects") return
+      assert.deepStrictEqual(representation.thunk.propertySignatures[1], {
+        name: "next",
+        type: { _tag: "Reference", $ref: "Node" },
+        isOptional: true,
+        isMutable: false
+      })
+    })
+  })
+
+  it("shares type references without losing key annotations or constructor defaults", () => {
+    const value = Schema.NumberFromString.annotate({ identifier: "Value" })
+    const schema = Schema.toType(Schema.Struct({
+      annotated: value.annotateKey({ description: "field" }),
+      defaulted: value.pipe(Schema.withConstructorDefault(Effect.succeed(1))),
+      required: value
+    }))
+    const document = Schema.toRepresentation(schema)
+
+    assert.deepStrictEqual(Object.keys(document.references), ["Value"])
+    assert.strictEqual(document.representation._tag, "Objects")
+    if (document.representation._tag !== "Objects") return
+    assert.deepStrictEqual(document.representation.propertySignatures[0], {
+      name: "annotated",
+      type: { _tag: "Reference", $ref: "Value" },
+      isOptional: false,
+      isMutable: false,
+      annotations: { description: "field" }
+    })
+    assert.deepStrictEqual(schema.make({ annotated: 2, required: 3 }), { annotated: 2, defaulted: 1, required: 3 })
+  })
+
+  it("keeps projected checks and value annotations distinct from the source", () => {
+    const value = Schema.optionalKey(Schema.NumberFromString).annotate({ identifier: "Value" })
+    const checked = value.check(Schema.isGreaterThan(0))
+    const annotated = value.annotate({ description: "another value" })
+    const document = SchemaRepresentation.toRepresentations([
+      SchemaAST.toType(value.ast),
+      SchemaAST.toType(checked.ast),
+      SchemaAST.toType(annotated.ast)
+    ])
+
+    assert.deepStrictEqual(document.representations[0], { _tag: "Reference", $ref: "Value" })
+    assert.strictEqual(document.representations[1]._tag, "Number")
+    if (document.representations[1]._tag !== "Number") return
+    assert.strictEqual(document.representations[1].checks.length, 1)
+    assert.deepStrictEqual(document.representations[2], { _tag: "Reference", $ref: "Value_1" })
+    assert.deepStrictEqual(document.references.Value, {
+      _tag: "Number",
+      annotations: { identifier: "Value" },
+      checks: []
+    })
+    assert.deepStrictEqual(document.references.Value_1, {
+      _tag: "Number",
+      annotations: { identifier: "Value_1", description: "another value" },
+      checks: []
+    })
+  })
+
   describe("reference policies", () => {
+    it("exposes the projected body and counts contextual copies together", () => {
+      const value = Schema.NumberFromString.annotate({ identifier: "Value" })
+      const inputs: Array<SchemaRepresentation.ReferencePolicyInput> = []
+      const document = SchemaRepresentation.toRepresentations([
+        SchemaAST.toType(Schema.optionalKey(value).ast),
+        SchemaAST.toType(value.ast)
+      ], {
+        referencePolicy: (input) => {
+          inputs.push(input)
+          return SchemaAST.getLastEncoding(input.ast)._tag
+        }
+      })
+
+      assert.strictEqual(inputs.length, 1)
+      assert.strictEqual(inputs[0].occurrences, 2)
+      assert.strictEqual(inputs[0].ast.encoding, undefined)
+      assert.deepStrictEqual(document, {
+        representations: [
+          { _tag: "Reference", $ref: "Number" },
+          { _tag: "Reference", $ref: "Number" }
+        ],
+        references: {
+          Number: { _tag: "Number", annotations: { identifier: "Number" }, checks: [] }
+        }
+      })
+    })
+
     it("supports policies based on occurrence counts", () => {
       const shared = Schema.Struct({ value: Schema.String })
       const equivalent = Schema.Struct({ value: Schema.String })

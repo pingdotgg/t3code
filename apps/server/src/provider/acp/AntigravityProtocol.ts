@@ -8,7 +8,8 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
+import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
 
@@ -36,7 +37,7 @@ const decodeNativeToolFields = Schema.decodeUnknownOption(NativeToolFields);
 const decodeSingleAnswer = Schema.decodeUnknownOption(
   Schema.Union([Schema.String, Schema.Tuple([Schema.String])]),
 );
-const decodeToolCallContent = Schema.decodeUnknownOption(EffectAcpSchema.ToolCallContent);
+const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallContent);
 
 /** Native questions share the permission method, but their choices are not approvals. */
 export function isAntigravityUserInputRequest(
@@ -262,7 +263,9 @@ export function normalizeAntigravitySessionUpdate(
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
-      ...(update._meta !== undefined ? { _meta: Predicate.isObject(meta) ? meta : null } : {}),
+      ...(update._meta !== undefined
+        ? { _meta: Schema.is(Schema.Record(Schema.String, Schema.Json))(meta) ? meta : null }
+        : {}),
     },
   };
 }
@@ -348,10 +351,14 @@ export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
   return toolCall.kind === "execute" && toolCall.status === "inProgress";
 }
 
-/** ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs or models. */
+/**
+ * ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs
+ * or models. Reads the update's `_meta` from `data.meta`, or from the raw
+ * notification when given.
+ */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
-  rawPayload: unknown,
+  rawPayload?: unknown,
 ): "subagent" | "mcp" | undefined {
   if (
     (toolCall.kind !== undefined && toolCall.kind !== "other") ||
@@ -359,7 +366,7 @@ export function classifyAntigravitySubagentToolCall(
   )
     return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
-  const meta = Predicate.isObject(update) ? update._meta : undefined;
+  const meta = Predicate.isObject(update) ? update._meta : toolCall.data.meta;
   return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
 }
 

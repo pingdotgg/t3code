@@ -41,7 +41,9 @@ console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
       const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
-      const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
+      const files = yield* Effect.forEach(["mini", "android"], (host) =>
+        agentDeviceConfigPath(dir, host, path),
+      );
       for (const [index, file] of files.entries())
         yield* writeAgentDeviceConfig(file, {
           baseUrl: `http://127.0.0.1:${1000 + index}`,
@@ -73,8 +75,8 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        agentDeviceSession("thread", "android", "same-id"),
+      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
+        yield* agentDeviceSession("thread", "android", "same-id"),
       );
       for (const args of [
         ["snapshot"],

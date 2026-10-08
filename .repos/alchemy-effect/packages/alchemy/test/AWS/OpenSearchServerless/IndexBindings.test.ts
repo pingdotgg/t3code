@@ -6,8 +6,8 @@ import * as aoss from "@distilled.cloud/aws/opensearchserverless";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import AossIndexFunctionLive, {
   AossIndexFunction,
@@ -89,7 +89,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertCollectionGone(collectionId);
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:opensearchserverless",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );
 
 // Deletion is verified as INITIATED (status `DELETING`) or fully gone — full

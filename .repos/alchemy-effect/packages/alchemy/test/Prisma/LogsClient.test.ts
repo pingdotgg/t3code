@@ -16,52 +16,56 @@ const provideEnv = Effect.provideService(
   }),
 );
 
-describe("Prisma log request builders", () => {
-  it.effect("builds authenticated deployment log stream requests", () =>
-    Effect.gen(function* () {
-      const request = yield* getDeploymentLogsRequest("deployment-1", {
-        tail: 100,
-        fromStart: true,
-        cursor: "byte-42",
-      });
-      expect(request.url).toBe(
-        "wss://api.prisma.test/v1/deployments/deployment-1/logs?tail=100&cursor=byte-42&from_start=true",
-      );
-      expect(Redacted.value(request.headers.Authorization)).toBe(
-        "Bearer test-token",
-      );
-    }).pipe(provideEnv),
-  );
+describe(
+  "Prisma log request builders",
+  { tags: ["unit", "provider:prisma", "local"] },
+  () => {
+    it.effect("builds authenticated deployment log stream requests", () =>
+      Effect.gen(function* () {
+        const request = yield* getDeploymentLogsRequest("deployment-1", {
+          tail: 100,
+          fromStart: true,
+          cursor: "byte-42",
+        });
+        expect(request.url).toBe(
+          "wss://api.prisma.test/v1/deployments/deployment-1/logs?tail=100&cursor=byte-42&from_start=true",
+        );
+        expect(Redacted.value(request.headers.Authorization)).toBe(
+          "Bearer test-token",
+        );
+      }).pipe(provideEnv),
+    );
 
-  it.effect("builds authenticated build log stream requests", () =>
-    Effect.gen(function* () {
-      const request = yield* getBuildLogsRequest("build-1", {
-        follow: true,
-        cursor: "cursor-1",
-      });
-      expect(request.url).toBe(
-        "https://api.prisma.test/v1/builds/build-1/logs?follow=true&cursor=cursor-1",
-      );
-      expect(Redacted.value(request.headers.Authorization)).toBe(
-        "Bearer test-token",
-      );
-      expect(request.headers.Accept).toBe("application/x-ndjson");
-    }).pipe(provideEnv),
-  );
+    it.effect("builds authenticated build log stream requests", () =>
+      Effect.gen(function* () {
+        const request = yield* getBuildLogsRequest("build-1", {
+          follow: true,
+          cursor: "cursor-1",
+        });
+        expect(request.url).toBe(
+          "https://api.prisma.test/v1/builds/build-1/logs?follow=true&cursor=cursor-1",
+        );
+        expect(Redacted.value(request.headers.Authorization)).toBe(
+          "Bearer test-token",
+        );
+        expect(request.headers.Accept).toBe("application/x-ndjson");
+      }).pipe(provideEnv),
+    );
 
-  it.effect("rejects path-confusing resource IDs before building a URL", () =>
-    Effect.gen(function* () {
-      const deploymentLog = yield* getDeploymentLogsRequest(
-        "deployment-1/../../projects",
-      ).pipe(Effect.flip);
-      const buildLog = yield* getBuildLogsRequest("build-1?token=leak").pipe(
-        Effect.flip,
-      );
+    it.effect("rejects path-confusing resource IDs before building a URL", () =>
+      Effect.gen(function* () {
+        const deploymentLog = yield* getDeploymentLogsRequest(
+          "deployment-1/../../projects",
+        ).pipe(Effect.flip);
+        const buildLog = yield* getBuildLogsRequest("build-1?token=leak").pipe(
+          Effect.flip,
+        );
 
-      for (const error of [deploymentLog, buildLog]) {
-        expect(error).toBeInstanceOf(PrismaApiError);
-        expect(error.message).toContain("invalid Prisma Management API");
-      }
-    }).pipe(provideEnv),
-  );
-});
+        for (const error of [deploymentLog, buildLog]) {
+          expect(error).toBeInstanceOf(PrismaApiError);
+          expect(error.message).toContain("invalid Prisma Management API");
+        }
+      }).pipe(provideEnv),
+    );
+  },
+);

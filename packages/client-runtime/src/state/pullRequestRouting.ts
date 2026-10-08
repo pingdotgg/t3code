@@ -3,23 +3,28 @@ import {
   PullRequestRef,
   PullRequestInvalidateInput,
   type EnvironmentId,
+  type PullRequestRoutingResult,
+  type PullRequestRoutingIdentityResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { EnvironmentRegistry, EnvironmentNotRegisteredError } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   GitHubRoutingPermissions,
   gitHubRoutingConnectionKey,
 } from "../connection/githubRoutingPermissions.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { ConnectionProfileStore } from "../connection/profileStore.ts";
+import * as ConnectionProfileStore from "../connection/profileStore.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import {
-  request,
+  requestGuarded as request,
   EnvironmentRpcUnavailableError,
   type EnvironmentRpcInput,
   type EnvironmentUnaryRpcTag,
@@ -30,6 +35,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsStack,
   WS_METHODS.pullRequestsDetail,
   WS_METHODS.pullRequestsPreview,
+  WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
@@ -68,11 +74,52 @@ interface RoutedRead {
   reference: PullRequestRef;
   targets: Set<EnvironmentId>;
 }
-const routedReads = new WeakMap<EnvironmentRegistry["Service"], Map<string, RoutedRead>>();
-const isUnregistered = Schema.is(EnvironmentNotRegisteredError);
+const routedReads = new WeakMap<
+  EnvironmentRegistry.EnvironmentRegistry["Service"],
+  Map<string, RoutedRead>
+>();
+const isUnregistered = Schema.is(EnvironmentRegistry.EnvironmentNotRegisteredError);
 const encodeKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String))),
 );
+type PendingMetadata<A> = WeakMap<RpcSession, Map<string, Deferred.Deferred<Exit.Exit<A>>>>;
+const pendingRouting: PendingMetadata<PullRequestRoutingResult | null> = new WeakMap();
+const pendingIdentities: PendingMetadata<PullRequestRoutingIdentityResult | null> = new WeakMap();
+
+/** Share only active read probes. Completed probes and mutations always read the current account. */
+function shareMetadataRead<A, R>(
+  pending: PendingMetadata<A>,
+  key: string,
+  probe: Effect.Effect<A, never, R>,
+): Effect.Effect<A, never, R | EnvironmentSupervisor.EnvironmentSupervisor> {
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const session = yield* SubscriptionRef.get(supervisor.session);
+      if (Option.isNone(session)) return yield* restore(probe);
+      const entries =
+        pending.get(session.value) ?? new Map<string, Deferred.Deferred<Exit.Exit<A>>>();
+      pending.set(session.value, entries);
+      const existing = entries.get(key);
+      if (existing !== undefined) {
+        const result = yield* restore(Deferred.await(existing));
+        // A cancelled first reader must not cancel the other readers waiting on its probe.
+        return yield* restore(
+          Exit.hasInterrupts(result) ? shareMetadataRead(pending, key, probe) : result,
+        );
+      }
+      const result = Deferred.makeUnsafe<Exit.Exit<A>>();
+      entries.set(key, result);
+      return yield* restore(probe).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => entries.delete(key)).pipe(
+            Effect.andThen(Deferred.succeed(result, exit)),
+          ),
+        ),
+      );
+    }),
+  );
+}
 
 function isLocal(entry: ConnectionCatalogEntry): boolean {
   const url =
@@ -104,7 +151,7 @@ function rejectedBeforeDispatch(error: unknown): boolean {
 }
 
 const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
-  registry: EnvironmentRegistry["Service"],
+  registry: EnvironmentRegistry.EnvironmentRegistry["Service"],
   originId: EnvironmentId,
   destinationId: EnvironmentId,
   write: boolean,
@@ -122,7 +169,7 @@ const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
   if (!allowed) return false;
   for (const entry of [origin, destination]) {
     if (entry.target._tag !== "SshConnectionTarget") continue;
-    const profiles = yield* Effect.serviceOption(ConnectionProfileStore);
+    const profiles = yield* Effect.serviceOption(ConnectionProfileStore.ConnectionProfileStore);
     if (Option.isNone(profiles)) return false;
     const profile = yield* profiles.value
       .get(entry.target.connectionId)
@@ -143,7 +190,7 @@ function matchesReference(reference: PullRequestRef, filter: PullRequestRef): bo
 }
 
 const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(function* (
-  registry: EnvironmentRegistry["Service"],
+  registry: EnvironmentRegistry.EnvironmentRegistry["Service"],
   origin: EnvironmentId,
   target: EnvironmentId,
   inputs: ReadonlyArray<PullRequestInvalidateInput>,
@@ -169,8 +216,8 @@ export function createPullRequestRouter() {
     const source = sourceRead ?? request(tag, input);
     if (tag === WS_METHODS.pullRequestsInvalidate && isInvalidation(input)) {
       const result = yield* request(tag, input);
-      const origin = yield* EnvironmentSupervisor;
-      const registry = yield* EnvironmentRegistry;
+      const origin = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const used = routedReads.get(registry);
       const targets = new Map<EnvironmentId, PullRequestRef>();
       for (const entry of used?.values() ?? []) {
@@ -195,8 +242,8 @@ export function createPullRequestRouter() {
       return yield* request(tag, input);
     }
     const ref = input;
-    const origin = yield* EnvironmentSupervisor;
-    const registry = yield* EnvironmentRegistry;
+    const origin = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const entries = yield* SubscriptionRef.get(registry.entries);
     const sourceEntry = entries.get(origin.target.environmentId);
     const used = routedReads.get(registry) ?? new Map<string, RoutedRead>();
@@ -250,18 +297,41 @@ export function createPullRequestRouter() {
       if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
         continue;
       const connected = yield* registry
-        .run(id, EnvironmentSupervisor.pipe(Effect.flatMap((s) => SubscriptionRef.get(s.session))))
+        .run(
+          id,
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.flatMap((s) => SubscriptionRef.get(s.session)),
+          ),
+        )
         .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(connected)) alternatives.push({ id, local: isLocal(entry) });
+      if (Option.isNone(connected)) continue;
+      if (tag === WS_METHODS.pullRequestsChecks) {
+        const supported = yield* connected.value.initialConfig.pipe(
+          Effect.map((config) => config.environment.capabilities.pullRequestChecks === true),
+          Effect.timeout("2 seconds"),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(false),
+          ),
+        );
+        if (!supported) continue;
+      }
+      alternatives.push({ id, local: isLocal(entry) });
     }
     if (alternatives.length === 0) return yield* finish(source);
 
-    const identity = yield* request(WS_METHODS.pullRequestsRouting, ref).pipe(
+    const identityProbe = request(WS_METHODS.pullRequestsRouting, ref).pipe(
       Effect.timeout("2 seconds"),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
       ),
     );
+    const identity = yield* reads.has(tag)
+      ? shareMetadataRead(
+          pendingRouting,
+          encodeKey([ref.projectId, ref.host?.toLowerCase() ?? null, ref.repository.toLowerCase()]),
+          identityProbe,
+        )
+      : identityProbe;
     // Old servers and unknown accounts retain the existing path.
     if (identity === null || identity.provider !== "github") return yield* finish(source);
 
@@ -318,8 +388,21 @@ export function createPullRequestRouter() {
           if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
             return yield* visit(index + 1);
           // An older server would discard expectedAccountId. Verify it implements the guard first.
+          const alternateProbe = request(WS_METHODS.pullRequestsRoutingIdentity, {
+            host: identity.host,
+          }).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
+            ),
+          );
           const alternate = yield* registry
-            .run(id, request(WS_METHODS.pullRequestsRoutingIdentity, { host: identity.host }))
+            .run(
+              id,
+              reads.has(tag)
+                ? shareMetadataRead(pendingIdentities, identity.host.toLowerCase(), alternateProbe)
+                : alternateProbe,
+            )
             .pipe(
               Effect.timeout("2 seconds"),
               Effect.catchCause((cause) =>
@@ -366,10 +449,10 @@ export function createPullRequestRouter() {
     input: EnvironmentRpcInput<T>,
   ) {
     if (!reads.has(tag) || !isRef(input)) return yield* routedRequest(tag, input);
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const entries = yield* SubscriptionRef.get(registry.entries);
     if (entries.size < 2) return yield* request(tag, input);
-    const origin = yield* EnvironmentSupervisor;
+    const origin = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     let allowed = false;
     for (const id of entries.keys()) {
       if (

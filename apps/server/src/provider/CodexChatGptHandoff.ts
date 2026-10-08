@@ -3,9 +3,9 @@ import { ProviderSetupError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
-import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import { FetchHttpClient } from "effect/http";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 
 // The primary owns OAuth for this stream; the destination owns the refresh session.
@@ -18,7 +18,7 @@ export function subscribeChatGptHandoff(
     Effect.gen(function* () {
       const bytes = new Map<string, Uint8Array>();
       yield* Effect.addFinalizer(() => Effect.sync(() => bytes.clear()));
-      const store = ServerSecretStore.of({
+      const store = ServerSecretStore.ServerSecretStore.of({
         get: (key) => Effect.sync(() => Option.fromUndefinedOr(bytes.get(key))),
         set: (key, value) =>
           Effect.sync(() => {
@@ -38,10 +38,10 @@ export function subscribeChatGptHandoff(
         telemetryFlow: "primary_handoff",
         defaultReturnUrl: input.returnUrl,
       }).pipe(
-        Effect.provideService(ServerSecretStore, store),
+        Effect.provideService(ServerSecretStore.ServerSecretStore, store),
         Effect.provideService(
-          ServerEnvironmentIdentity,
-          ServerEnvironmentIdentity.of({
+          ServerEnvironment.ServerEnvironmentIdentity,
+          ServerEnvironment.ServerEnvironmentIdentity.of({
             getEnvironmentId: Effect.succeed(input.environmentId),
           }),
         ),

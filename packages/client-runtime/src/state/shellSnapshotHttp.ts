@@ -1,16 +1,24 @@
-import type { OrchestrationShellSnapshot } from "@t3tools/contracts";
+import { EnvironmentHttpCommonError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient } from "effect/unstable/http";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import {
+  executeAuthenticatedEnvironmentHttpRequest,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
+import {
+  decodeShellSnapshotDeferringPullRequests,
+  type DeferredShellSnapshot,
+} from "./shellPullRequests.ts";
 
 // Long enough for a slow but alive server to finish. On timeout the socket asks
 // the same server for the same full snapshot, so a short deadline only throws
@@ -30,8 +38,10 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentShellSnapshot",
 )(function* (input: {
   readonly prepared: PreparedConnection;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly timeoutMs?: number;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -40,9 +50,44 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     method: "GET",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) => client.shellSnapshot({ headers }),
+    // The body is decoded here so each thread's pull request links can decode after its
+    // rows. Every declared error is an `EnvironmentHttpCommonError`, so decoding one keeps
+    // the error the credential retry checks for.
+    request: ({ client, headers }) =>
+      client
+        .shellSnapshot({
+          headers: withOrchestrationProtocolHeader(headers),
+          responseMode: "response-only",
+        })
+        .pipe(Effect.flatMap(decodeShellSnapshotResponse)),
   });
 });
+
+const decodeEnvironmentHttpCommonError = Schema.decodeUnknownEffect(
+  Schema.toCodecJson(EnvironmentHttpCommonError),
+);
+
+const decodeShellSnapshotResponse = (
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<
+  DeferredShellSnapshot,
+  HttpClientError.HttpClientError | Schema.SchemaError | EnvironmentHttpCommonError
+> => {
+  if (response.status === 200) {
+    return response.json.pipe(Effect.flatMap(decodeShellSnapshotDeferringPullRequests));
+  }
+  // A body that is not a declared error keeps its status, as the generated decoder reported.
+  const statusError = new HttpClientError.HttpClientError({
+    reason: new HttpClientError.StatusCodeError({ request: response.request, response }),
+  });
+  return response.json.pipe(
+    Effect.flatMap(decodeEnvironmentHttpCommonError),
+    Effect.matchEffect({
+      onFailure: () => Effect.fail(statusError),
+      onSuccess: Effect.fail,
+    }),
+  );
+};
 
 /**
  * Loads the environment shell snapshot over HTTP, returning `Option.none()` when
@@ -55,33 +100,31 @@ export class ShellSnapshotLoader extends Context.Service<
   {
     readonly load: (
       prepared: PreparedConnection,
-    ) => Effect.Effect<Option.Option<OrchestrationShellSnapshot>>;
+    ) => Effect.Effect<Option.Option<DeferredShellSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
 
-export const shellSnapshotLoaderLayer: Layer.Layer<
-  ShellSnapshotLoader,
-  never,
-  HttpClient.HttpClient
-> = Layer.effect(
+export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClient> = Layer.effect(
   ShellSnapshotLoader,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
     // connections, so the loader must not hard-require it.
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    );
     return ShellSnapshotLoader.of({
       load: (prepared: PreparedConnection) =>
         fetchEnvironmentShellSnapshot({ prepared, signer, remoteAuthorization }).pipe(
-          Effect.map(Option.some<OrchestrationShellSnapshot>),
+          Effect.map(Option.some<DeferredShellSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchCause((cause) =>
             Effect.logWarning(
               "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationShellSnapshot>()),
+              Effect.as(Option.none<DeferredShellSnapshot>()),
             ),
           ),
         ),

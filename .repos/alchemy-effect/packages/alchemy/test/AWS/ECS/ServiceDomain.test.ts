@@ -239,7 +239,17 @@ test.provider.skipIf(!!process.env.FAST)(
         }),
       );
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:acm",
+      "provider:aws:ec2",
+      "provider:aws:ecs",
+      "provider:aws:route53",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );
 
 // Typed probe (cheap, no infra): a `domain` whose hosted zone doesn't exist
@@ -271,7 +281,7 @@ test.provider(
       expect(rendered).toContain("no public Route 53 hosted zone");
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ecs", "live"], timeout: 120_000 },
 );
 
 // Full ACM-issuance e2e (composed DNS-validated certificate) needs a REAL
@@ -334,5 +344,8 @@ test.provider.skipIf(!process.env.AWS_TEST_DOMAIN)(
 
       yield* stack.destroy();
     }),
-  { timeout: 900_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:ecs", "live"],
+    timeout: 900_000,
+  },
 );

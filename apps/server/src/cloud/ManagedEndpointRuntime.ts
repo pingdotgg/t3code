@@ -12,8 +12,8 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -47,6 +47,8 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
     readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
+    /** Emits when the connector registers a tunnel connection, i.e. the relay can reach us again. */
+    readonly tunnelConnected: Stream.Stream<void>;
     readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
@@ -57,6 +59,7 @@ interface ActiveConnector {
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
+  readonly connected: Ref.Ref<boolean>;
 }
 
 // A connector that exits before running this long is treated as part of a
@@ -69,6 +72,11 @@ const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
 const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
 // Newly created tunnels can fail authorization briefly while Cloudflare propagates their token.
 const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
+// A connector that never registers a connection may hold a token for a tunnel
+// that no longer exists, rejected in wording the output check does not know.
+// Ask for recovery after this long, and again at this interval while it stays
+// unconnected; the relay hands back the same tunnel when it is still live.
+const CONNECTOR_REGISTRATION_TIMEOUT = Duration.minutes(3);
 
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
@@ -82,14 +90,16 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
 
 /**
  * Cloudflare's edge rejects a connector whose tunnel was deleted or whose
- * token no longer matches. Current edge output is
- * `error="Failed to get tunnel"` with no prefix; older edges prefixed the
- * same messages with `Unauthorized:`. Match both so recovery fires on either.
+ * token no longer matches. The edge words this differently over time
+ * (`Failed to get tunnel`, `Tunnel not found`, ...), sometimes prefixed with
+ * `Unauthorized:`. Treat any `Unauthorized:` registration error as a rejection,
+ * plus the unprefixed messages seen so far. Transient rejections while a new
+ * tunnel's token propagates are absorbed by requiring several in a row.
  */
 export function isRejectedRelayClientTunnelOutput(line: string): boolean {
   return (
     /\bRegister tunnel error from server side\b/iu.test(line) &&
-    /error="(?:Unauthorized:\s*)?(?:Failed to get tunnel|Record for tunnel not found|Invalid tunnel secret)"/iu.test(
+    /error="(?:Unauthorized:[^"]*|Failed to get tunnel|Tunnel not found|Record for tunnel not found|Invalid tunnel secret)"/iu.test(
       line,
     )
   );
@@ -134,6 +144,7 @@ export const make = Effect.gen(function* () {
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
+  const tunnelConnections = yield* Queue.sliding<void>(1);
   const reconcileSemaphore = yield* Semaphore.make(1);
   const restartDelayRef = yield* Ref.make(0);
   const linkStateSemaphore = yield* Semaphore.make(1);
@@ -217,6 +228,24 @@ export const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
+  // Requests recovery while the connector has not registered a connection,
+  // once per timeout, until it connects or is replaced.
+  const watchConnectorRegistration = (connector: ActiveConnector) =>
+    Effect.gen(function* () {
+      yield* Effect.sleep(CONNECTOR_REGISTRATION_TIMEOUT);
+      if (yield* Ref.get(connector.connected)) return true;
+      yield* Effect.logWarning(
+        "Relay client has not registered a tunnel connection; requesting recovery",
+        {
+          pid: Number(connector.child.pid),
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+        },
+      );
+      yield* Queue.offer(recoveryRequests, connector.config);
+      return false;
+    }).pipe(Effect.repeat({ until: (connected) => connected }));
+
   const observeConnectorOutput = (connector: ActiveConnector) => {
     let rejectedRegistrations = 0;
 
@@ -236,7 +265,13 @@ export const make = Effect.gen(function* () {
         switch (classifyRelayClientOutput(line)) {
           case "connected":
             rejectedRegistrations = 0;
-            return Effect.logInfo("Relay client tunnel connection registered", attributes);
+            return Ref.set(connector.connected, true).pipe(
+              Effect.andThen(
+                Effect.logInfo("Relay client tunnel connection registered", attributes),
+              ),
+              Effect.andThen(Queue.offer(tunnelConnections, undefined)),
+              Effect.asVoid,
+            );
           case "warning":
             if (isRejectedRelayClientTunnelOutput(line)) {
               rejectedRegistrations += 1;
@@ -364,10 +399,12 @@ export const make = Effect.gen(function* () {
         configKey: nextConfigKey,
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
+        connected: yield* Ref.make(false),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
+      yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",
@@ -412,6 +449,7 @@ export const make = Effect.gen(function* () {
     applyConfig,
     recoveryRequests: Stream.fromQueue(recoveryRequests),
     requestRecovery: (config) => Queue.offer(recoveryRequests, config).pipe(Effect.asVoid),
+    tunnelConnected: Stream.fromQueue(tunnelConnections),
     withLinkStateLock: linkStateSemaphore.withPermits(1),
   });
 

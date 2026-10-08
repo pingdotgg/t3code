@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -12,7 +13,10 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
+import { RotatingFileSink } from "./logging.ts";
 import {
   causeErrorTag,
   compactTraceAttributes,
@@ -20,6 +24,7 @@ import {
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
+  type EffectTraceRecord,
   type TraceRecord,
   type TraceSinkFlushStats,
   OtlpHeadersFromString,
@@ -97,7 +102,7 @@ const readTraceRecords = Effect.fn("readTraceRecords")(function* (tracePath: str
     .map((line) => decodeTraceRecordLine(line));
 });
 
-const makeTestLayer = (tracePath: string) =>
+const layerTest = (tracePath: string) =>
   Layer.mergeAll(
     Layer.effect(
       Tracer.Tracer,
@@ -187,6 +192,107 @@ describe("decodeOtlpTraceRecords", () => {
 });
 
 describe("observability", () => {
+  it.effect(
+    "preserves successful results without retaining them in sampled or unsampled spans",
+    () =>
+      Effect.gen(function* () {
+        for (const sampled of [true, false]) {
+          const delegates: Array<Tracer.Span> = [];
+          const records: Array<EffectTraceRecord> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: "unused",
+            maxBytes: 1024,
+            maxFiles: 1,
+            batchWindowMs: 10_000,
+            sink: {
+              filePath: "unused",
+              push: (record) => {
+                if (record.type === "effect-span") records.push(record);
+              },
+              flush: Effect.void,
+              close: () => Effect.void,
+            },
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan({ ...options, sampled });
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const payload = { turnItems: [{ output: [{ text: "synthetic-result" }] }] };
+          let span: Tracer.Span | undefined;
+          const result = yield* Effect.gen(function* () {
+            span = yield* Effect.currentSpan;
+            return payload;
+          }).pipe(
+            Effect.withSpan("read-thread-projection"),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          assert.strictEqual(result, payload);
+          assert.isDefined(span);
+          for (const completed of [span!, ...delegates]) {
+            assert.equal(completed.status._tag, "Ended");
+            if (completed.status._tag === "Ended") {
+              assert.deepStrictEqual(completed.status.exit, Exit.void);
+            }
+          }
+          assert.deepStrictEqual(
+            records.map((record) => record.exit),
+            sampled ? [{ _tag: "Success" }] : [],
+          );
+        }
+      }),
+  );
+
+  it.effect("preserves failure and interruption causes in spans and exported traces", () =>
+    Effect.gen(function* () {
+      for (const cause of [Cause.fail({ _tag: "SyntheticFailure" }), Cause.interrupt()]) {
+        const delegates: Array<Tracer.Span> = [];
+        const records: Array<EffectTraceRecord> = [];
+        const tracer = yield* makeLocalFileTracer({
+          filePath: "unused",
+          maxBytes: 1024,
+          maxFiles: 1,
+          batchWindowMs: 10_000,
+          sink: {
+            filePath: "unused",
+            push: (record) => {
+              if (record.type === "effect-span") records.push(record);
+            },
+            flush: Effect.void,
+            close: () => Effect.void,
+          },
+          delegate: Tracer.make({
+            span: (options) => {
+              const span = new Tracer.NativeSpan(options);
+              delegates.push(span);
+              return span;
+            },
+          }),
+        });
+        let span: Tracer.Span | undefined;
+        const result = yield* Effect.gen(function* () {
+          span = yield* Effect.currentSpan;
+          return yield* Effect.failCause(cause);
+        }).pipe(
+          Effect.withSpan("failed-operation"),
+          Effect.provideService(Tracer.Tracer, tracer),
+          Effect.exit,
+        );
+        assert.isTrue(Exit.isFailure(result));
+        assert.isDefined(span);
+        for (const completed of [span!, ...delegates]) {
+          assert.equal(completed.status._tag, "Ended");
+          if (completed.status._tag === "Ended") {
+            assert.strictEqual(completed.status.exit, result);
+          }
+        }
+        assert.equal(records[0]?.exit._tag, Cause.hasInterrupts(cause) ? "Interrupted" : "Failure");
+      }
+    }),
+  );
+
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
     const array: Array<unknown> = ["alpha"];
     array.push(array);
@@ -424,6 +530,98 @@ describe("observability", () => {
       ),
     );
 
+    it.effect("drops records after a failed write and logs once per failure episode", () => {
+      const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+      const captureLogs = Logger.make(({ logLevel, message }) => {
+        logs.push({ logLevel, message });
+      });
+      const spans: Array<Tracer.NativeSpan> = [];
+      const recordingTracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        // A directory at the trace path fails every append, like a full disk.
+        yield* fileSystem.makeDirectory(tracePath);
+        const write = vi.spyOn(RotatingFileSink.prototype, "write");
+        yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
+
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024 * 1024,
+          maxFiles: 2,
+          batchWindowMs: 1_000,
+        }).pipe(Effect.withTracer(recordingTracer));
+
+        for (let index = 0; index < 1_024; index += 1) {
+          sink.push(makeRecord("lost", String(index)));
+        }
+        // Timed flushes run in the fiber forked inside the makeTraceSink span.
+        for (let index = 0; index < 5; index += 1) {
+          sink.push(makeRecord("lost"));
+          yield* TestClock.adjust("1 second");
+        }
+
+        // One write per batch, never a growing backlog.
+        assert.deepStrictEqual(
+          write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
+          [256, 256, 256, 256, 1, 1, 1, 1, 1],
+        );
+        expect(logs).toEqual([
+          { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
+        ]);
+
+        // Once the disk recovers, new records are written and the loss is reported.
+        yield* fileSystem.remove(tracePath, { recursive: true });
+        sink.push(makeRecord("recovered"));
+        yield* TestClock.adjust("1 second");
+
+        const records = yield* readTraceRecords(tracePath);
+        assert.deepStrictEqual(
+          records.map((record) => record.name),
+          ["recovered"],
+        );
+        expect(logs[1]).toEqual({
+          logLevel: "Info",
+          message: [expect.any(String), { filePath: tracePath, droppedCount: 1_029 }],
+        });
+
+        // Healthy flushes after the recovery log nothing.
+        sink.push(makeRecord("healthy"));
+        yield* TestClock.adjust("1 second");
+        expect(logs).toHaveLength(2);
+
+        // A new failure episode warns again.
+        yield* fileSystem.remove(tracePath);
+        yield* fileSystem.makeDirectory(tracePath);
+        sink.push(makeRecord("lost-again"));
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(
+          logs.map((log) => log.logLevel),
+          ["Warn", "Info", "Warn"],
+        );
+
+        // The ended makeTraceSink span is never released, so it must not collect log events.
+        assert.deepStrictEqual(
+          spans.map((span) => [span.name, span.events.length]),
+          [["makeTraceSink", 0]],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Logger.layer([captureLogs, Logger.tracerLogger], { mergeWithExisting: false }),
+        ),
+      );
+    });
+
     it.effect("writes nested spans to disk and captures log messages as span events", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -447,7 +645,7 @@ describe("observability", () => {
                 }).pipe(Effect.withSpan("child-span"));
               }).pipe(Effect.withSpan("parent-span"));
 
-              yield* program.pipe(Effect.provide(makeTestLayer(tracePath)));
+              yield* program.pipe(Effect.provide(layerTest(tracePath)));
             }),
           );
 
@@ -494,7 +692,7 @@ describe("observability", () => {
             Effect.exit(
               Effect.interrupt.pipe(
                 Effect.withSpan("interrupt-span"),
-                Effect.provide(makeTestLayer(tracePath)),
+                Effect.provide(layerTest(tracePath)),
               ),
             ),
           );

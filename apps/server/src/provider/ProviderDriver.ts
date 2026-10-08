@@ -2,8 +2,8 @@
  * ProviderDriver / ProviderInstance — driver SPI as plain values.
  *
  * `ProviderDriver` is a record, not a Context.Service. The thing it produces
- * (`ProviderInstance`) is also a record — three captured closures
- * (`snapshot`, `adapter`, `textGeneration`), an id, and a driver kind. There
+ * (`ProviderInstance`) is also a record of captured closures
+ * (`snapshot`, `orchestrationAdapter`, `textGeneration`), an id, and a driver kind. There
  * are intentionally no per-driver Context tags because tags are
  * singleton-per-runtime and we need many instances of the same driver.
  *
@@ -23,20 +23,25 @@
  */
 import type {
   ProviderConsumeResetCreditOutcome,
+  AcpRegistryListSessionsResult,
+  AcpRegistryListProvidersResult,
+  AcpRegistryOperationError,
+  AcpRegistrySetProviderInput,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
-import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
-import type { ServerProviderShape } from "./Services/ServerProvider.ts";
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderDriverError } from "./Errors.ts";
+import type { ProviderAuthController } from "./ProviderAuthService.ts";
+import type { ServerProviderShape } from "./ServerProvider.ts";
 
 /**
  * Static metadata advertised by a driver. Used for default presentation
@@ -55,6 +60,9 @@ export interface ProviderDriverMetadata {
   readonly supportsMultipleInstances?: boolean;
 }
 
+export type ProviderWorkspaceSnapshot = ServerProvider &
+  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending">;
+
 /**
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
@@ -72,7 +80,9 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
-  readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  readonly snapshotForCwd?: (
+    cwd: string,
+  ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;
@@ -85,9 +95,32 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
-  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
-  readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  readonly orchestrationAdapter: ProviderAdapterV2Shape;
+  readonly textGeneration: TextGeneration["Service"];
   readonly auth?: ProviderAuthController;
+  readonly acpSessionManagement?: {
+    readonly listSessions: (input: {
+      readonly cwd: string;
+      readonly cursor?: string;
+    }) => Effect.Effect<AcpRegistryListSessionsResult, AcpRegistryOperationError>;
+    readonly logout: (cwd: string) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly deleteSession: (input: {
+      readonly cwd: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly listProviders: (
+      cwd: string,
+    ) => Effect.Effect<AcpRegistryListProvidersResult, AcpRegistryOperationError>;
+    readonly setProvider: (
+      input: Omit<AcpRegistrySetProviderInput, "instanceId" | "projectId"> & {
+        readonly cwd: string;
+      },
+    ) => Effect.Effect<void, AcpRegistryOperationError>;
+    readonly disableProvider: (input: {
+      readonly cwd: string;
+      readonly providerId: string;
+    }) => Effect.Effect<void, AcpRegistryOperationError>;
+  };
 }
 
 export interface ProviderContinuationIdentity {

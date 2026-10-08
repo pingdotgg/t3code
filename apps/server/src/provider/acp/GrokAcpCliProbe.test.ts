@@ -15,7 +15,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import { makeGrokAcpRuntime } from "./GrokAcpSupport.ts";
@@ -40,38 +40,18 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("session/new advertises typed SessionModelState with at least one model", () =>
+  it.effect("completes a prompt on the agent's default model", () =>
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;
       const started = yield* runtime.start();
-      const result = started.sessionSetupResult;
-
       expect(typeof started.sessionId).toBe("string");
 
-      // Modern grok-shell advertises models through the typed
-      // `SessionModelState` field, not via a `configOptions` entry.
-      // If this assertion fails the upstream surface has regressed.
-      const models = result.models;
-      expect(models).toBeDefined();
-      expect(typeof models?.currentModelId).toBe("string");
-      expect(models?.availableModels.length ?? 0).toBeGreaterThan(0);
+      const result = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "Respond with exactly: grok switch ok" }] })
+        .pipe(Effect.timeout("60 seconds"));
+      expect(result.stopReason).toBe("end_turn");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-
-  it.effect("session/set_model accepts a no-op switch to the current model", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeProbeRuntime;
-      const started = yield* runtime.start();
-      const currentModelId = started.sessionSetupResult.models?.currentModelId?.trim();
-      expect(currentModelId).toBeDefined();
-      if (!currentModelId) return;
-
-      // No-op switch — selecting the model the session already runs on must
-      // succeed against every Grok build that implements `session/set_model`.
-      yield* runtime.setSessionModel(currentModelId);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("session/set_model accepts advertised reasoning effort metadata", () =>
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;

@@ -10,17 +10,29 @@
  * There is no `typeof` inference: an OID is always supplied, either directly
  * or through a constructor such as `int4` that carries it.
  *
- * `timestamp` has no time zone on the wire and is treated as UTC in both
- * directions. Decoding drops sub-millisecond precision by truncating toward
- * zero, including for timestamps before the PostgreSQL epoch.
+ * `timestamp` and `timestamptz` values, including array elements, decode to
+ * `Date`. Encoders accept `Date` or epoch milliseconds.
+ * Decoding truncates to milliseconds toward zero relative to the PostgreSQL
+ * epoch. To restore numeric decoding, override the codecs with `register`
+ * or a client `Registry`.
+ *
+ * `infinity`, `-infinity` and values outside the JavaScript `Date` range
+ * (±8.64e15 epoch milliseconds) decode to an invalid `Date`. Numeric
+ * `±Infinity` encodes the PostgreSQL sentinels; encoding an invalid `Date` fails.
+ *
+ * The `timestamp` codec maps wall-clock fields to UTC fields of a `Date`.
+ * Date parameters bind as `timestamptz`, so inserting one into a `timestamp`
+ * column applies the session `TimeZone`. Use UTC or `timestamp(value)` to
+ * preserve its UTC fields. `timestamptz` round trips preserve the instant
+ * regardless of session timezone.
  *
  * @since 4.0.0
  */
 import * as Data from "effect/Data"
+import * as IpInterface from "effect/net/IpInterface"
+import * as IpNetwork from "effect/net/IpNetwork"
+import * as NetAddress from "effect/net/NetAddress"
 import * as Result from "effect/Result"
-import * as IpInterface from "effect/unstable/net/IpInterface"
-import * as IpNetwork from "effect/unstable/net/IpNetwork"
-import * as NetAddress from "effect/unstable/net/NetAddress"
 import type * as PgProtocol from "./PgProtocol.ts"
 import type { ValueSink } from "./PgProtocol.ts"
 
@@ -301,6 +313,7 @@ export const OID = {
   timestamptz: 1184,
   timetz: 1266,
   numeric: 1700,
+  regclass: 2205,
   uuid: 2950,
   jsonb: 3802,
   boolArray: 1000,
@@ -324,6 +337,7 @@ export const OID = {
   timestamptzArray: 1185,
   timetzArray: 1270,
   numericArray: 1231,
+  regclassArray: 2210,
   uuidArray: 2951,
   jsonbArray: 3807
 } as const
@@ -350,6 +364,7 @@ const arrayToElement = new Map<number, number>([
   [OID.timestamptzArray, OID.timestamptz],
   [OID.timetzArray, OID.timetz],
   [OID.numericArray, OID.numeric],
+  [OID.regclassArray, OID.regclass],
   [OID.uuidArray, OID.uuid],
   [OID.jsonbArray, OID.jsonb]
 ])
@@ -992,20 +1007,22 @@ const readTimeMicros = (bytes: Uint8Array, offset: number): number => {
   return micros
 }
 
-/** The two halves of the int64 `timestampInt64` last produced. */
 let timestampHigh = 0
 let timestampLow = 0
 
 /**
- * Converts epoch milliseconds to the halves of the wire int64. Both encoding
- * paths read them from here rather than from a returned pair, so neither
- * allocates.
+ * Writes the wire int64 to timestampHigh/Low, avoiding a pair allocation.
  */
 const timestampInt64 = (value: unknown): void => {
-  const ms = requireNumber(value, "timestamp")
-  if (Number.isNaN(ms)) {
-    fail("timestamp cannot be NaN")
-  } else if (ms === Number.POSITIVE_INFINITY) {
+  let ms: number
+  if (value instanceof Date) {
+    ms = value.getTime()
+    if (Number.isNaN(ms)) fail("timestamp cannot be an invalid Date")
+  } else {
+    ms = typeof value === "number" ? value : fail("Expected a Date or number for timestamp")
+    if (Number.isNaN(ms)) fail("timestamp cannot be NaN")
+  }
+  if (ms === Number.POSITIVE_INFINITY) {
     timestampHigh = INT32_MAX
     timestampLow = -1
   } else if (ms === Number.NEGATIVE_INFINITY) {
@@ -1037,17 +1054,14 @@ const timestampCodec: UnsafeCodec<any> = codecOf(
     requireSize(size, 8, "timestamp")
     const high = readInt32(bytes, offset)
     if (high >= -MAX_EXACT_HIGH && high < MAX_EXACT_HIGH) {
-      // Inside these bounds the whole conversion is float arithmetic, so it
-      // allocates no BigInt. Everything outside them, the sentinels included,
-      // needs the exact 64-bit value.
+      // These bounds allow exact conversion without BigInt.
       const micros = high * 4294967296 + readUint32(bytes, offset + 4)
-      return (micros - micros % 1000) / 1000 + PG_EPOCH_MS
+      return new Date((micros - micros % 1000) / 1000 + PG_EPOCH_MS)
     }
     stage8(bytes, offset)
     const micros = scratchView8.getBigInt64(0)
-    if (micros === INT64_MAX) return Number.POSITIVE_INFINITY
-    if (micros === INT64_MIN) return Number.NEGATIVE_INFINITY
-    return Number(micros / THOUSAND) + PG_EPOCH_MS
+    if (micros === INT64_MAX || micros === INT64_MIN) return new Date(Number.NaN)
+    return new Date(Number(micros / THOUSAND) + PG_EPOCH_MS)
   },
   (value) => {
     timestampInt64(value)
@@ -1056,7 +1070,6 @@ const timestampCodec: UnsafeCodec<any> = codecOf(
     writeInt32(bytes, 4, timestampLow)
     return bytes
   },
-  // Two int32s are the int64, so the sink needs nothing of its own for it.
   (sink, value) => {
     timestampInt64(value)
     sink.int32(timestampHigh)
@@ -1150,6 +1163,23 @@ const jsonbCodec: UnsafeCodec<any> = codecOf(
   }
 )
 
+const oidCodec: UnsafeCodec<any> = codecOf(
+  (bytes, offset, size) => {
+    requireSize(size, 4, "oid")
+    return readUint32(bytes, offset)
+  },
+  (value) => {
+    const num = requireInteger(value, "oid", 0, 4294967295)
+    const bytes = new Uint8Array(4)
+    bytes[0] = num >>> 24
+    bytes[1] = num >>> 16
+    bytes[2] = num >>> 8
+    bytes[3] = num
+    return bytes
+  },
+  (sink, value) => sink.int32(requireInteger(value, "oid", 0, 4294967295))
+)
+
 const builtinScalars = new Map<number, UnsafeCodec<any>>([
   [
     OID.bool,
@@ -1214,25 +1244,8 @@ const builtinScalars = new Map<number, UnsafeCodec<any>>([
       (sink, value) => sink.int32(requireInteger(value, "int4", INT32_MIN, INT32_MAX))
     )
   ],
-  [
-    OID.oid,
-    codecOf(
-      (bytes, offset, size) => {
-        requireSize(size, 4, "oid")
-        return readUint32(bytes, offset)
-      },
-      (value) => {
-        const num = requireInteger(value, "oid", 0, 4294967295)
-        const bytes = new Uint8Array(4)
-        bytes[0] = num >>> 24
-        bytes[1] = num >>> 16
-        bytes[2] = num >>> 8
-        bytes[3] = num
-        return bytes
-      },
-      (sink, value) => sink.int32(requireInteger(value, "oid", 0, 4294967295))
-    )
-  ],
+  [OID.oid, oidCodec],
+  [OID.regclass, oidCodec],
   [
     OID.int8,
     codecOf(
@@ -1398,6 +1411,13 @@ const lookupFor = (registry: Registry | undefined): Lookup =>
 /**
  * Registers a binary codec for an OID the built-in catalogue does not cover,
  * or overrides a built-in one. Registered codecs take precedence.
+ *
+ * **Details**
+ *
+ * Unregistered OIDs decode as UTF-8 text. Register binary user-defined types
+ * to avoid garbled output or codec errors, which close the connection when
+ * reading rows. For arrays, use `makeRegistry().register` with
+ * `RegisterOptions.arrayOid` and pass the registry as the client's `types` option.
  *
  * @category registry
  * @since 4.0.0
@@ -1591,9 +1611,9 @@ export interface Column {
  *
  * **Details**
  *
- * Codecs are resolved once per column. SQL `NULL` becomes `null`, and columns
- * without a registered codec return a copy of their bytes. Text-format columns
- * fail with `CodecError`.
+ * Codecs are resolved once per column. SQL `NULL` becomes `null`.
+ * Unregistered OIDs decode as UTF-8 text. Invalid UTF-8 and text-format
+ * columns fail with `CodecError`.
  *
  * **Example** (Updating the reader after `RowDescription`)
  *
@@ -1624,7 +1644,7 @@ export const makeFieldReader = (
     return (bytes: Uint8Array, offset: number, size: number, column: number): unknown => {
       if (size < 0) return null
       const codec = codecs[column]
-      if (codec === undefined) return bytes.slice(offset, offset + size)
+      if (codec === undefined) return decodeUtf8(bytes, offset, size)
       const read = codec.read
       return read === undefined ? codec.decode(bytes.subarray(offset, offset + size)) : read(bytes, offset, size)
     }
@@ -1653,8 +1673,9 @@ export const encode = (value: unknown, oid: number, registry?: Registry): Result
  *
  * **Details**
  *
- * `format` must be `1`; the text format is not implemented. An OID that is
- * neither built in nor registered decodes to the raw bytes.
+ * Only binary format (`1`) is supported. Unregistered OIDs decode as UTF-8
+ * text; invalid UTF-8 fails with `CodecError`. See `register` for binary
+ * user-defined types, including arrays.
  *
  * @category decoding
  * @since 4.0.0
@@ -1670,7 +1691,7 @@ export const decode = (
       return fail(`Only the binary format is supported, received format ${format}`)
     }
     const codec = lookupFor(registry)(oid)
-    return codec === undefined ? bytes : codec.decode(bytes)
+    return codec === undefined ? decodeUtf8(bytes, 0, bytes.length) : codec.decode(bytes)
   })
 
 // -----------------------------------------------------------------------------
@@ -1962,21 +1983,21 @@ export const time: (value: bigint | null) => Parameter = parameter(OID.time)
 export const timetz: (value: string | null) => Parameter = parameter(OID.timetz)
 
 /**
- * A `timestamp` parameter, given as Unix epoch milliseconds and interpreted
- * as UTC.
+ * A `timestamp` parameter from a `Date` or epoch milliseconds. UTC fields
+ * become the stored wall-clock fields, regardless of session `TimeZone`.
  *
  * @category constructors
  * @since 4.0.0
  */
-export const timestamp: (value: number | null) => Parameter = parameter(OID.timestamp)
+export const timestamp: (value: Date | number | null) => Parameter = parameter(OID.timestamp)
 
 /**
- * A `timestamptz` parameter, given as Unix epoch milliseconds.
+ * A `timestamptz` parameter, given as a `Date` or Unix epoch milliseconds.
  *
  * @category constructors
  * @since 4.0.0
  */
-export const timestamptz: (value: number | null) => Parameter = parameter(OID.timestamptz)
+export const timestamptz: (value: Date | number | null) => Parameter = parameter(OID.timestamptz)
 
 /**
  * A one-dimensional array parameter whose elements have the given OID.

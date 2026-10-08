@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { detectPrTemplate } from "./PrTemplateDetection.ts";
@@ -27,7 +27,7 @@ const TEMPLATE_DIRECTORIES = [
   "docs/PULL_REQUEST_TEMPLATE",
 ] as const;
 
-const PrTemplateDetectionTestLayer = GitVcsDriver.layer.pipe(
+const layerPrTemplateDetectionTest = GitVcsDriver.layer.pipe(
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-pr-template-test-",
@@ -59,7 +59,7 @@ const runWithTempDirectory = <A, E, R>(
       yield* runGit(cwd, ["config", "user.name", "Test User"]);
       return yield* test(cwd);
     }),
-  ).pipe(Effect.provide(PrTemplateDetectionTestLayer));
+  ).pipe(Effect.provide(layerPrTemplateDetectionTest));
 
 const writeTemplate = (cwd: string, relativePath: string, contents: string) =>
   Effect.gen(function* () {

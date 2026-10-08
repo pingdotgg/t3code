@@ -29,6 +29,8 @@ export const ChangeRequest = Schema.Struct({
   url: Schema.String,
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
+  /** The head commit, when the provider's read includes it. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   state: ChangeRequestState,
   /** Present when the provider can tell that an open change request is still a draft. */
   isDraft: Schema.optional(Schema.Boolean),
@@ -123,6 +125,20 @@ export const SourceControlProviderAuth = Schema.Struct({
   account: Schema.Option(TrimmedNonEmptyString),
   host: Schema.Option(TrimmedNonEmptyString),
   detail: Schema.Option(TrimmedNonEmptyString),
+  /** Every login the provider CLI holds, across hosts. Only GitHub reports these today. */
+  accounts: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        host: TrimmedNonEmptyString,
+        account: TrimmedNonEmptyString,
+        active: Schema.Boolean,
+        authenticated: Schema.Boolean,
+        error: Schema.optionalKey(TrimmedNonEmptyString),
+        /** Set when the login comes from a token variable such as `GH_TOKEN`, which wins over Settings. */
+        environmentVariable: Schema.optionalKey(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
 });
 export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 

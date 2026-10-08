@@ -137,6 +137,7 @@ export type RestrictedApiKey = Resource<
  * ```
  *
  * @resource
+ * @product Secrets
  */
 export const RestrictedApiKey = Resource<RestrictedApiKey>(
   "Stripe.RestrictedApiKey",
