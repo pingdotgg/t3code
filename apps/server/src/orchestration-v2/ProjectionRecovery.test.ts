@@ -195,6 +195,56 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       },
     });
 
+    const deferred = yield* createThread("deferred-child");
+    const deferredRun = yield* createRun(deferred, "completed");
+    yield* projections.apply({
+      id: EventId.make("event:recovery:deferred-child"),
+      type: "subagent.updated",
+      threadId: deferred,
+      runId: deferredRun,
+      occurredAt: now,
+      payload: {
+        id: NodeId.make("task:recovery:deferred-child"),
+        threadId: deferred,
+        runId: deferredRun,
+        parentNodeId: NodeId.make("node:recovery:deferred-parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Background work",
+        title: null,
+        model: null,
+        completionWake: "settled_only",
+        completionDelivery: { state: "pending", observedByRunId: null },
+        status: "completed",
+        result: "done",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      },
+    });
+
+    const historical = yield* createThread("historical-child");
+    yield* createRun(historical, "completed");
+    const deferredProjection = yield* projections.getThreadProjection(deferred);
+    const oldTask = deferredProjection.subagents[0]!;
+    const { completionDelivery: _delivery, ...historicalTask } = oldTask;
+    yield* projections.apply({
+      id: EventId.make("event:recovery:historical-child"),
+      type: "subagent.updated",
+      threadId: historical,
+      occurredAt: now,
+      payload: {
+        ...historicalTask,
+        id: NodeId.make("task:historical-child"),
+        threadId: historical,
+      },
+    });
+
     // This historical payload cannot be decoded. Candidate discovery must not
     // materialize it while deciding which threads have work to reconcile.
     yield* sql`
@@ -210,8 +260,14 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
       new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
     );
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("delegated-completions")),
+      new Set([delivery, deferred]),
+    );
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    assert.isTrue(yield* projections.hasPendingDelegatedCompletion(deferred));
+    assert.isFalse(yield* projections.hasPendingDelegatedCompletion(historical));
+    assert.isFalse(yield* projections.hasPendingDelegatedCompletion(queued));
     const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
     assert.deepEqual(
       recoveryState.runs.map((run) => run.id),

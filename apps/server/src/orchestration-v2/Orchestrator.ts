@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { isTerminalDelegatedTaskStatus } from "./DelegatedTaskStatus.ts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -567,15 +568,6 @@ function delegatedCompletionWakeDetail(taskIds: ReadonlyArray<string>): string {
   return taskIds.length === 1
     ? `Delegated task ${taskList} reached a terminal state. Use task_status with taskId ${taskList} to read the result.`
     : `Delegated tasks ${taskList} reached terminal states. Use task_status with each taskId to read the results.`;
-}
-
-function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
-  return (
-    status === "completed" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "interrupted"
-  );
 }
 
 function delegatedTaskTerminalStatus(
@@ -6784,26 +6776,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completionWake: command.completionWake,
       updatedAt: now,
     };
-    // A non-terminal task needs no offer here: finalize reads the upgraded
-    // policy when the child terminalizes. Both writers hold this parent lock,
-    // so a terminal task means finalize already committed the terminal row and
-    // already made its offer decision under the pre-upgrade policy: under
-    // settled_only it offered iff the spawning run was not live. Plan a
-    // delivery only when that run is live now, which is precisely the case
-    // where finalize skipped. The mailbox steers a capable active session or
-    // queues behind that run. When that run is not live, finalize already
-    // offered and a second offer would wake the parent twice. (If the parent settled in between,
-    // this skips a wake that finalize also skipped; a missed wake is cheaper
-    // than a duplicate one, and the result is already in the projection.)
+    // Re-plan terminal results under the new policy. Ownership makes already
+    // delivered, acknowledged or disposed results no-ops; deferred ones stay durable.
     const parentRun =
       task.runId === null
         ? undefined
         : parentProjection.runs.find((candidate) => candidate.id === task.runId);
     const completionPlan =
-      command.completionWake === "always" &&
-      isTerminalDelegatedTaskStatus(task.status) &&
-      parentRun !== undefined &&
-      hasLiveRun({ runs: [parentRun] })
+      isTerminalDelegatedTaskStatus(task.status) && task.completionDelivery?.state === "pending"
         ? yield* planDelegatedCompletionDelivery({
             parentProjection,
             parentRun,
@@ -9428,7 +9408,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       hasLiveRun({ runs: [input.parentRun] })
     ) {
       return {
-        task: input.updatedTask,
+        task: {
+          ...input.updatedTask,
+          completionDelivery: { state: "pending" as const, observedByRunId: null },
+        },
         parentRun: undefined,
         message: undefined,
         offer: false,
@@ -9869,6 +9852,85 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
       }
+    });
+
+  const drainDeferredDelegatedCompletions = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (!(yield* projectionStore.hasPendingDelegatedCompletion(threadId))) return;
+      const projection = yield* projectionStore.getThreadRecords(
+        threadId,
+        ["runs", "messages", "subagents", "providerTurns"],
+        { messageRoles: ["user"] },
+      );
+      if (hasLiveRun(projection)) return;
+      const tasks = projection.subagents.filter(
+        (task) =>
+          task.origin === "app_owned" &&
+          task.runId !== null &&
+          isTerminalDelegatedTaskStatus(task.status) &&
+          task.completionDelivery?.state === "pending",
+      );
+      const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = [];
+      const offers = new Set<RunId>();
+      for (const task of tasks) {
+        const now = yield* DateTime.now;
+        const plan = yield* planDelegatedCompletionDelivery({
+          parentProjection: projection,
+          parentRun: projection.runs.find((run) => run.id === task.runId),
+          task,
+          updatedTask: task,
+          now,
+        });
+        events.push(
+          {
+            type: "subagent.updated",
+            threadId,
+            runId: task.runId!,
+            nodeId: task.id,
+            driver: task.driver,
+            providerInstanceId: task.providerInstanceId,
+            occurredAt: now,
+            payload: plan.task,
+          },
+          ...(plan.parentRun === undefined
+            ? []
+            : [
+                {
+                  type: "run.updated" as const,
+                  threadId,
+                  runId: plan.parentRun.id,
+                  providerInstanceId: plan.parentRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: plan.parentRun,
+                },
+              ]),
+          ...(plan.message === undefined
+            ? []
+            : [
+                {
+                  type: "message.updated" as const,
+                  threadId,
+                  providerInstanceId: projection.thread.providerInstanceId,
+                  occurredAt: now,
+                  payload: plan.message,
+                },
+              ]),
+        );
+        if (plan.offer && plan.parentRun !== undefined) offers.add(plan.parentRun.id);
+        // Fold claims into the same snapshot so siblings join one durable delivery.
+        Object.assign(projection, {
+          subagents: projection.subagents.map((row) => (row.id === task.id ? plan.task : row)),
+          runs: projection.runs.map((row) =>
+            plan.parentRun !== undefined && row.id === plan.parentRun.id ? plan.parentRun : row,
+          ),
+          messages: projection.messages.map((row) =>
+            plan.message !== undefined && row.id === plan.message.id ? plan.message : row,
+          ),
+        });
+      }
+      if (events.length === 0) return;
+      yield* writeSystemEvents(events);
+      for (const runId of offers) yield* offerDelegatedCompletionDelivery(threadId, runId);
     });
 
   const finalizeDelegatedCompletionDelivery = (threadId: ThreadId, runId: RunId) =>
@@ -10637,9 +10699,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // child lock here would invert that order, and the keyed executor's
       // semaphores are neither reentrant nor deadlock-aware.
       if (stored.event.type === "run.updated") {
+        const runId = stored.event.payload.id;
         yield* threadDispatch.withLock(
           threadId,
-          finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
+          Effect.gen(function* () {
+            yield* finalizeDelegatedCompletionDelivery(threadId, runId);
+            yield* drainDeferredDelegatedCompletions(threadId);
+          }),
         );
       }
       yield* threadDispatch
@@ -10661,7 +10727,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // wakes, and only then is the failed run the task's result.
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId !== undefined) {
-        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+        yield* threadDispatch.withLock(
+          parentThreadId,
+          Effect.gen(function* () {
+            yield* finalizeAppOwnedSubagent(threadId);
+            yield* drainDeferredDelegatedCompletions(parentThreadId);
+          }),
+        );
       }
     }).pipe(
       Effect.catchCause((cause) =>
@@ -10738,6 +10810,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .withLock(
                 threadId,
                 Effect.gen(function* () {
+                  yield* drainDeferredDelegatedCompletions(threadId);
                   const projection = yield* projectionStore.getThreadRecords(threadId, [
                     "runs",
                     "messages",

@@ -1,6 +1,6 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
@@ -17,9 +17,12 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -40,6 +43,9 @@ import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/Provi
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
@@ -102,41 +108,51 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
-  Layer.provideMerge(RuntimeLayer.layerProjectService),
-  Layer.provide(
-    Layer.mock(WorkspacePaths.WorkspacePaths)({
-      normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
-    }),
-  ),
-  Layer.provide(ProviderTurnStartServiceTestkit.layer),
-  Layer.provide(
-    Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
-      peek: () =>
-        Effect.succeed({
-          repositoryIdentity: null,
-          faviconPath: null,
-          repositoryIdentityResolved: false,
-        }),
-      request: () => Effect.void,
-      getAvailable: () =>
-        Effect.succeed({
-          repositoryIdentity: null,
-          faviconPath: null,
-          repositoryIdentityResolved: false,
-        }),
-      invalidate: () => Effect.void,
-      subscribeChanges: Effect.never,
-    }),
-  ),
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(layerPlatformTest),
-);
+const makeTestLayer = (sql?: SqlClient.SqlClient) =>
+  Layer.mergeAll(
+    RuntimeLayer.layer,
+    RuntimeLayer.layerEventSink,
+    ProviderContinuationRequests.layer,
+  ).pipe(
+    Layer.provideMerge(RuntimeLayer.layerProjectService),
+    Layer.provide(
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+      }),
+    ),
+    Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(
+      Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
+        peek: () =>
+          Effect.succeed({
+            repositoryIdentity: null,
+            faviconPath: null,
+            repositoryIdentityResolved: false,
+          }),
+        request: () => Effect.void,
+        getAvailable: () =>
+          Effect.succeed({
+            repositoryIdentity: null,
+            faviconPath: null,
+            repositoryIdentityResolved: false,
+          }),
+        invalidate: () => Effect.void,
+        subscribeChanges: Effect.never,
+      }),
+    ),
+    Layer.provide(McpSessionRegistryTestkit.layer),
+    Layer.provideMerge(
+      sql === undefined ? SqlitePersistence.layerMemory : Layer.succeed(SqlClient.SqlClient, sql),
+    ),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerTestProviderInstanceRegistry),
+    Layer.provide(layerPlatformTest),
+  );
+
+const TestLayer = makeTestLayer();
+const layerTest = TestLayer;
 
 const seedParentWithTerminalTask = (input: {
   readonly threadId: ThreadId;
@@ -144,7 +160,7 @@ const seedParentWithTerminalTask = (input: {
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly taskId: NodeId;
-  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
+  readonly deliveryState?: "pending" | "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly now: DateTime.Utc;
@@ -274,10 +290,14 @@ const seedParentWithTerminalTask = (input: {
             title: null,
             model: null,
             completionWake: input.completionWake ?? "settled_only",
-            completionDelivery: {
-              state: input.deliveryState,
-              observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
-            },
+            ...(input.deliveryState === undefined
+              ? {}
+              : {
+                  completionDelivery: {
+                    state: input.deliveryState,
+                    observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
+                  },
+                }),
             status: "completed",
             result: "child finished",
             startedAt: input.now,
@@ -289,7 +309,395 @@ const seedParentWithTerminalTask = (input: {
     });
   });
 
-it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+describe("delegated completion delivery repairs", () => {
+  it.effect.each([undefined, "claimed", "pending"] as const)(
+    "preserves delivery ownership when wake policy changes (%s)",
+    (deliveryState) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`deferred-policy-${deliveryState}`);
+        const taskId = NodeId.make(`${threadId}-child`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          taskId,
+          now,
+          runId: RunId.make("deferred-policy-parent"),
+          projectId: ProjectId.make("deferred-policy-project"),
+          rootNodeId: NodeId.make("deferred-policy-root"),
+          completionWake: "always",
+          ...(deliveryState === undefined ? {} : { deliveryState }),
+        });
+        yield* orchestrator.dispatch({
+          type: "delegated_task.wake-policy",
+          commandId: CommandId.make("defer-policy"),
+          parentThreadId: threadId,
+          taskId,
+          completionWake: "settled_only",
+        });
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.subagents[0]?.completionDelivery?.state, deliveryState);
+        assert.isNull(after.runs[0]?.delegatedCompletion?.delivery);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect.each(["ordinary", "waiting", "reconcile"] as const)(
+    "delivers a deferred child when its busy parent settles (%s)",
+    (source) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const deliveryState = source === "reconcile" ? ("pending" as const) : undefined;
+        const threadId = ThreadId.make(`deferred-${source}`);
+        const runId = RunId.make(`${threadId}-parent`);
+        const taskId = NodeId.make(`${threadId}-child`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          taskId,
+          now,
+          ...(deliveryState === undefined ? {} : { deliveryState }),
+          projectId: ProjectId.make(`${threadId}-project`),
+          rootNodeId: NodeId.make(`${threadId}-root`),
+        });
+        const seeded = yield* orchestrator.getThreadProjection(threadId);
+        if (source !== "reconcile") {
+          const childThreadId = ThreadId.make(`${threadId}-child-thread`);
+          const childRunId = RunId.make(`${childThreadId}-run`);
+          yield* seedParentWithTerminalTask({
+            threadId: childThreadId,
+            runId: childRunId,
+            now,
+            taskId: NodeId.make(`${childThreadId}-unused`),
+            projectId: ProjectId.make(`${childThreadId}-project`),
+            rootNodeId: NodeId.make(`${childThreadId}-root`),
+          });
+          const child = yield* orchestrator.getThreadProjection(childThreadId);
+          const { completionDelivery: _delivery, ...task } = seeded.subagents[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-child-lineage`),
+                type: "thread.metadata-updated",
+                threadId: childThreadId,
+                occurredAt: now,
+                payload: {
+                  ...child.thread,
+                  lineage: {
+                    parentThreadId: threadId,
+                    relationshipToParent: "subagent",
+                    rootThreadId: threadId,
+                  },
+                  forkedFrom: { type: "node", nodeId: taskId },
+                },
+              },
+              {
+                id: EventId.make(`${threadId}-child-running`),
+                type: "subagent.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...task,
+                  status: "running",
+                  completedAt: null,
+                  result: null,
+                  childThreadId,
+                },
+              },
+            ],
+          });
+          const beforeCompletion = yield* orchestrator.getThreadProjection(threadId);
+          assert.isUndefined(
+            beforeCompletion.subagents.find((row) => row.id === taskId)?.completionDelivery,
+          );
+          const pending = yield* sink.stream({ afterSequence: yield* sink.latestSequence() }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "context-transfer.created" &&
+                stored.event.payload.type === "subagent_result" &&
+                stored.event.payload.sourceThreadId === childThreadId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-child-finished`),
+                type: "run.updated",
+                threadId: childThreadId,
+                runId: childRunId,
+                occurredAt: now,
+                payload: { ...child.runs[0]!, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* Fiber.join(pending);
+          const busy = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(busy.runs[0]?.status, "running");
+          assert.isNull(busy.runs[0]?.delegatedCompletion?.delivery);
+          assert.equal(
+            busy.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+            "pending",
+          );
+        }
+        const siblingId = NodeId.make(`${threadId}-sibling`);
+        {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-sibling-completed`),
+                type: "subagent.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...seeded.subagents[0]!,
+                  id: siblingId,
+                  completionDelivery: { state: "pending", observedByRunId: null },
+                },
+              },
+            ],
+          });
+        }
+        if (source === "waiting") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-checkpoint-waiting`),
+                type: "run.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: { ...seeded.runs[0]!, status: "waiting" },
+              },
+            ],
+          });
+        }
+        const expectedIds = [taskId, siblingId];
+        const protectedStates = [undefined, "acknowledged", "delivered", "disposed"] as const;
+        yield* sink.write({
+          events: protectedStates.map((state) => {
+            const { completionDelivery: _delivery, ...task } = seeded.subagents[0]!;
+            return {
+              id: EventId.make(`${threadId}-protected-${state}`),
+              type: "subagent.updated" as const,
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                ...task,
+                id: NodeId.make(`${threadId}-protected-${state}`),
+                ...(state === undefined
+                  ? {}
+                  : { completionDelivery: { state, observedByRunId: null } }),
+              },
+            };
+          }),
+        });
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(before.runs[0]?.delegatedCompletion?.delivery);
+        const heldRunId = RunId.make(`${threadId}-held`);
+        if (source === "reconcile") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-held-event`),
+                type: "run.updated",
+                threadId,
+                runId: heldRunId,
+                occurredAt: now,
+                payload: {
+                  ...before.runs[0]!,
+                  id: heldRunId,
+                  ordinal: 2,
+                  status: "queued",
+                  rootNodeId: null,
+                  providerThreadId: null,
+                  startedAt: null,
+                  queueHeld: true,
+                  userMessageId: MessageId.make(`${threadId}-held-message`),
+                  delegatedCompletion: undefined,
+                },
+              },
+            ],
+          });
+        }
+
+        const claimed = yield* sink.stream({ afterSequence: yield* sink.latestSequence() }).pipe(
+          Stream.map((stored) => stored.event),
+          Stream.filter(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.payload.id === expectedIds.at(-1) &&
+              event.payload.completionDelivery?.state === "claimed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        if (source === "waiting") {
+          const childThreadId = ThreadId.make(`${threadId}-child-thread`);
+          const child = yield* orchestrator.getThreadProjection(childThreadId);
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-sibling-boundary`),
+                type: "run.updated",
+                threadId: childThreadId,
+                runId: child.runs[0]!.id,
+                occurredAt: now,
+                payload: child.runs[0]!,
+              },
+            ],
+          });
+        } else
+          yield* sink.write({
+            ...(source === "reconcile"
+              ? { commandId: CommandId.make(`command:runtime-reconcile:startup:${threadId}`) }
+              : {}),
+            events: [
+              {
+                id: EventId.make(`${threadId}-settled`),
+                type: "run.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...before.runs[0]!,
+                  status: source === "reconcile" ? "cancelled" : "completed",
+                  completedAt: now,
+                },
+              },
+            ],
+          });
+        if (source === "reconcile") yield* orchestrator.recoverDelegatedTasks;
+        yield* Fiber.join(claimed);
+        const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const wake = yield* continuations.take;
+        assert.equal(wake.threadId, threadId);
+        assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.runs[0]?.delegatedCompletion?.delivery?.taskIds, expectedIds);
+        const messageId = wake.delegatedCompletion!.messageId;
+        const messageCreated = yield* sink
+          .stream({ afterSequence: yield* sink.latestSequence() })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "message.updated" && stored.event.payload.id === messageId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        // Re-offer the captured request through the real continuation worker.
+        yield* continuations.offer(wake);
+        yield* Layer.build(
+          ProviderContinuationService.layer.pipe(Layer.provide(IdAllocator.layer)),
+        );
+        yield* Fiber.join(messageCreated);
+        const delivered = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          delivered.messages.filter((row) => row.delegatedCompletion?.parentRunId === runId).length,
+          1,
+        );
+        const message = delivered.messages.find((row) => row.id === messageId)!;
+        assert.deepEqual(message.delegatedCompletion?.taskIds, expectedIds);
+        for (const id of expectedIds) assert.include(message.text, String(id));
+        assert.include(message.text, "task_status");
+        if (source === "reconcile") {
+          const held = delivered.runs.find((row) => row.id === heldRunId);
+          assert.equal(held?.status, "queued");
+          assert.isTrue(held?.queueHeld);
+        }
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect.each(["pending", "historical", "archived", "closed", "busy"] as const)(
+    "recovers explicitly pending completions at orchestrator startup (%s)",
+    (state) =>
+      Effect.gen(function* () {
+        const original = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`startup-${state}`);
+        const runId = RunId.make(`${threadId}-run`);
+        const taskId = NodeId.make(`${threadId}-task`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          taskId,
+          now,
+          projectId: ProjectId.make(`${threadId}-project`),
+          rootNodeId: NodeId.make(`${threadId}-root`),
+          ...(state === "historical" ? {} : { deliveryState: "pending" }),
+        });
+        const seeded = yield* original.getThreadProjection(threadId);
+        yield* sink.write({
+          commandId: CommandId.make(`command:runtime-reconcile:shutdown:${threadId}`),
+          events: [
+            {
+              id: EventId.make(`${threadId}-settled`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                ...seeded.runs[0]!,
+                status: state === "busy" ? "running" : "completed",
+                completedAt: state === "busy" ? null : now,
+                ...(state === "closed"
+                  ? {
+                      delegatedCompletion: {
+                        disposition: "stopped",
+                        nextGeneration: 2,
+                        delivery: null,
+                      },
+                    }
+                  : {}),
+              },
+            },
+            ...(state === "archived"
+              ? [
+                  {
+                    id: EventId.make(`${threadId}-archived`),
+                    type: "thread.metadata-updated" as const,
+                    threadId,
+                    occurredAt: now,
+                    payload: { ...seeded.thread, archivedAt: now },
+                  },
+                ]
+              : []),
+          ],
+        });
+        const restarted = yield* Layer.build(Layer.fresh(makeTestLayer(sql)));
+        const fresh = Context.get(restarted, Orchestrator.OrchestratorV2);
+        yield* fresh.recoverDelegatedTasks;
+        const after = yield* fresh.getThreadProjection(threadId);
+        const task = after.subagents.find((row) => row.id === taskId)!;
+        if (state === "pending") {
+          assert.equal(task.completionDelivery?.state, "claimed");
+          const wake = yield* Context.get(
+            restarted,
+            ProviderContinuationRequests.ProviderContinuationRequests,
+          ).take;
+          assert.equal(wake.threadId, threadId);
+          assert.deepEqual(after.runs[0]?.delegatedCompletion?.delivery?.taskIds, [taskId]);
+        } else {
+          assert.equal(
+            task.completionDelivery?.state,
+            state === "historical" ? undefined : state === "busy" ? "pending" : "disposed",
+          );
+          assert.isNull(after.runs[0]?.delegatedCompletion?.delivery);
+        }
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("acceptance batches pending siblings without acknowledging their results", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -380,7 +788,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       });
       const duplicate = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(duplicate.runs.find((row) => row.id === runId)?.delegatedCompletion, cohort);
-    }),
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("acceptance batches a settled_only sibling once its spawning run ended", () =>
@@ -472,7 +880,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         accepted.subagents.find((row) => row.id === siblingId)?.completionDelivery?.state,
         "claimed",
       );
-    }),
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("builds completion text and metadata from the same live cohort", () =>
@@ -522,7 +930,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.include(message?.text ?? "", String(firstTaskId));
       assert.include(message?.text ?? "", String(secondTaskId));
       assert.include(message?.text ?? "", "task_status");
-    }),
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("does not re-offer when wake-policy upgrades after delivered ownership settled", () =>
@@ -585,7 +993,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
             stored.event.payload.delegatedCompletion?.delivery !== undefined,
         ),
       );
-    }),
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect(
@@ -740,7 +1148,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
             observedByRunId: null,
           },
         );
-      }),
+      }).pipe(Effect.provide(TestLayer)),
   );
 });
 
