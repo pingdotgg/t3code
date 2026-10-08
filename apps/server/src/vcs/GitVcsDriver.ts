@@ -810,11 +810,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+      // core.splitIndex governs every index Git writes, so an unguarded write to the
+      // scratch index can expire the sharedindex.* the real .git/index still uses.
       const indexConfig = [
         "-c",
         "core.fsmonitor=false",
         "-c",
         "sparse.expectFilesOutsideOfPatterns=false",
+        "-c",
+        "core.splitIndex=false",
+        "-c",
+        "splitIndex.sharedIndexExpire=never",
       ];
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
       const indexId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
@@ -955,7 +961,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               // A fresh sparse index represents excluded directories without marking them deleted.
               args: sparseCheckout
                 ? [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"]
-                : ["read-tree", "HEAD"],
+                : [...indexConfig, "read-tree", "HEAD"],
               env: commitEnv,
             });
           }
