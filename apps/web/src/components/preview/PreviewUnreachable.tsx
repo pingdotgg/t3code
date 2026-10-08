@@ -11,6 +11,8 @@ interface Props {
   /** Stringified Chromium error, e.g. "ERR_NAME_NOT_RESOLVED". */
   description: string;
   onReload: () => void;
+  /** Reopens the page in a browser that may reach it, such as the environment's. */
+  move?: { readonly label: string; readonly onMove: () => void };
 }
 
 /**
@@ -58,7 +60,7 @@ export function PreviewFileNotShown({
 }
 
 /** Theme-aware tailwind port of Chromium's "This site can't be reached" page. */
-export function PreviewUnreachable({ url, code, description, onReload }: Props) {
+export function PreviewUnreachable({ url, code, description, onReload, move }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
   const friendly = describePreviewError(description);
@@ -81,6 +83,9 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
               <li>Checking your connection</li>
               <li>Confirming the dev server is running</li>
+              {move ? (
+                <li>Opening it in the environment&rsquo;s browser, which reaches its network</li>
+              ) : null}
               <li>Checking the proxy and the firewall</li>
             </ul>
           </div>
@@ -100,6 +105,11 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
             {showDetails ? "Hide details" : "Details"}
           </Button>
           <div className="flex-1" />
+          {move ? (
+            <Button type="button" variant="outline" size="sm" onClick={move.onMove}>
+              {move.label}
+            </Button>
+          ) : null}
           <Button type="button" size="sm" onClick={onReload}>
             Reload
           </Button>

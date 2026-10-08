@@ -36,7 +36,12 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
+import {
+  useEnvironment,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { usePreviewStreamAccess } from "~/state/previewStream";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -50,6 +55,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
+import { closePreviewSession } from "./closePreviewSession";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
@@ -69,7 +75,7 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { useRendersServerTabNatively } from "~/browser/previewRuntime";
+import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -169,6 +175,10 @@ export function PreviewView({
     ? new URL(environmentHttpBaseUrl).hostname
     : null;
   const open = useAtomCommand(previewEnvironment.open);
+  const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
@@ -437,6 +447,48 @@ export function PreviewView({
     if (!localApi || !url) return;
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
+
+  // A desktop tab of a remote environment can only reach what this computer
+  // reaches; the environment's browser reaches its own network, and its agents.
+  const moveTarget = alternatePreviewRuntime(
+    threadRef.environmentId,
+    primaryEnvironmentId,
+    serverBrowser,
+    snapshot,
+  );
+  const moveLabel =
+    moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
+  const handleMoveTab = useCallback(async () => {
+    if (!moveTarget || !tabId || !snapshot) return;
+    const result = await openPreviewSession({
+      openPreview: open,
+      threadRef,
+      // Loopback means the environment's machine, which this computer reaches by its address.
+      ...(url
+        ? {
+            url:
+              moveTarget === "desktop"
+                ? resolveDiscoveredServerUrl(threadRef.environmentId, url)
+                : url,
+          }
+        : {}),
+      viewport,
+      ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
+      runtime: moveTarget,
+    });
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Unable to move the browser tab",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+      return;
+    }
+    useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
+    await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
+  }, [closePreview, moveTarget, open, snapshot, tabId, threadRef, url, viewport]);
 
   const handlePictureInPicture = useCallback(() => {
     if (!tabId) return;
@@ -977,6 +1029,9 @@ export function PreviewView({
                 (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
               }
               actions={moreMenuActions}
+              {...(moveTarget
+                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                : {})}
               profileName={activeProfileName}
               zoomFactor={
                 serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
@@ -1088,6 +1143,9 @@ export function PreviewView({
               code={navStatus.code}
               description={navStatus.description}
               onReload={handleRefresh}
+              {...(moveTarget === "server"
+                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                : {})}
             />
           </div>
         ) : null}
