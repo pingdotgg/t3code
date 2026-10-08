@@ -12,8 +12,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
@@ -35,6 +38,7 @@ import {
   type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
+  type ThreadPullRequestKey,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
 } from "@t3tools/contracts";
@@ -55,6 +59,11 @@ import {
   isSshRemoteUrl,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeyOf,
+} from "@t3tools/shared/threadPullRequests";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -139,6 +148,15 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    /**
+     * Pull requests a branch PR lookup saw in a new state (merged, closed, reopened), so thread
+     * links can catch up before the next sync sweep. Best effort.
+     */
+    readonly subscribePullRequestStateChanges: Effect.Effect<
+      Stream.Stream<ThreadPullRequestKey>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/git/GitManager") {}
 
@@ -1122,6 +1140,26 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+  // The last state a branch PR lookup read per pull request. The thread details panel shows
+  // this lookup, so a merge it sees must reach the thread's link and settlement right away.
+  const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
+  const lookupStates = new Map<string, PullRequestInfo["state"]>();
+  const noteLookupState = (pr: PullRequestInfo) =>
+    Effect.suspend(() => {
+      const parsed = parseChangeRequestUrl(pr.url);
+      if (parsed === null || parsed.number !== pr.number) return Effect.void;
+      const key = normalizeThreadPullRequestKey(parsed);
+      const id = threadPullRequestKeyOf(key);
+      // An unseen pull request counts as open, so only a terminal first read announces.
+      const previous = lookupStates.get(id) ?? "open";
+      lookupStates.delete(id);
+      if (lookupStates.size >= PR_LOOKUP_CACHE_CAPACITY) {
+        const oldest = lookupStates.keys().next().value;
+        if (oldest !== undefined) lookupStates.delete(oldest);
+      }
+      lookupStates.set(id, pr.state);
+      return previous === pr.state ? Effect.void : PubSub.publish(pullRequestStateChanges, key);
+    });
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
@@ -1154,6 +1192,7 @@ export const make = Effect.gen(function* () {
           return { latest: null, headContext };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
     },
@@ -2896,6 +2935,9 @@ export const make = Effect.gen(function* () {
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,
+    subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
+      Effect.map((subscription) => Stream.fromSubscription(subscription)),
+    ),
   });
 });
 

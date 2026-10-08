@@ -32,6 +32,7 @@ import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -221,6 +222,9 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
       subscribeStateChanges: Effect.succeed(Stream.fromQueue(stateChanges)),
+    }),
+    Layer.mock(GitManager.GitManager)({
+      subscribePullRequestStateChanges: Effect.succeed(Stream.empty),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       // Mirrors the store's filter: active threads that have at least one link.
