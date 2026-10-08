@@ -1,9 +1,6 @@
 import { ArrowUpRightIcon, MapPinIcon } from "lucide-react";
 import type { LocationContextRecord } from "@t3tools/contracts";
-import {
-  sharedLocationLocalCaptureTime,
-  sharedLocationMapsUrl,
-} from "@t3tools/shared/sharedLocation";
+import { sharedLocationCaptureTime, sharedLocationMapsUrl } from "@t3tools/shared/sharedLocation";
 
 export function SharedLocationCard(props: { record: LocationContextRecord; copyMarkdown: string }) {
   const location = props.record.payload;
@@ -11,8 +8,7 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
   const address = location.address.trim();
   const coordinates = `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
   const mapsUrl = sharedLocationMapsUrl(location, "web");
-  const capturedAt =
-    sharedLocationLocalCaptureTime(location) ?? formatCapturedAt(location.capturedAt);
+  const capturedAt = sharedLocationCaptureTime(location);
   const accuracy =
     location.accuracy === null
       ? "Accuracy unknown"
@@ -83,12 +79,4 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
       </div>
     </a>
   );
-}
-
-function formatCapturedAt(capturedAt: string | null | undefined): string | null {
-  if (!capturedAt || Number.isNaN(Date.parse(capturedAt))) return null;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(capturedAt));
 }

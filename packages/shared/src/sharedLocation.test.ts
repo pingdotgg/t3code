@@ -8,6 +8,7 @@ import {
   serializeSharedLocation,
   sharedLocationMapsUrl,
   sharedLocationLocalCaptureTime,
+  sharedLocationCaptureTime,
 } from "./sharedLocation.ts";
 
 const location = {
@@ -72,6 +73,20 @@ describe("shared location codec", () => {
     expect(parseSharedLocations(serializeSharedLocation(unknown)).locations[0]).toMatchObject(
       unknown,
     );
+  });
+
+  it("labels capture times as UTC when the device zone is missing or unsupported", () => {
+    const snapshot = { ...location, capturedAt: "2026-10-07T21:26:56.100-04:00" };
+    expect(sharedLocationCaptureTime(snapshot)).toBe("2026-10-08 01:26:56 (UTC)");
+    expect(sharedLocationCaptureTime({ ...snapshot, timeZone: "Future/Unknown" })).toBe(
+      "2026-10-08 01:26:56 (UTC)",
+    );
+    expect(sharedLocationCaptureTime({ ...snapshot, timeZone: "America/New_York" })).toBe(
+      "2026-10-07 21:26:56 (America/New_York)",
+    );
+    expect(sharedLocationCaptureTime(location)).toBeUndefined();
+    expect(sharedLocationCaptureTime({ ...location, capturedAt: null })).toBeUndefined();
+    expect(sharedLocationCaptureTime({ ...location, capturedAt: "invalid" })).toBeUndefined();
   });
 
   it("rejects an invalid capture time and leaves malformed blocks untouched", () => {

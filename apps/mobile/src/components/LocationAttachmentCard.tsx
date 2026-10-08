@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import { sharedLocationLocalCaptureTime } from "@t3tools/shared/sharedLocation";
+import { sharedLocationCaptureTime } from "@t3tools/shared/sharedLocation";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { sharedLocationMapsUrl, type DraftComposerLocationAttachment } from "../lib/sharedLocation";
@@ -29,6 +29,7 @@ export function LocationAttachmentCard(props: {
   };
 
   const coordinates = `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
+  const capturedAt = sharedLocationCaptureTime(location);
 
   if (compact) {
     return (
@@ -113,12 +114,8 @@ export function LocationAttachmentCard(props: {
             ? " · Accuracy unknown"
             : ` · ±${Math.round(location.accuracy)} m`}
         </AppText>
-        {location.capturedAt ? (
-          <AppText className="text-xs text-foreground-muted">
-            Captured{" "}
-            {sharedLocationLocalCaptureTime(location) ??
-              new Date(location.capturedAt).toLocaleString()}
-          </AppText>
+        {capturedAt ? (
+          <AppText className="text-xs text-foreground-muted">Captured {capturedAt}</AppText>
         ) : null}
         <View className="flex-row items-center gap-1.5">
           <SymbolView name="arrow.up.right" size={14} tintColorClassName="accent-icon" />

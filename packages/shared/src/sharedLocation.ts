@@ -8,6 +8,7 @@ import {
   type OrchestrationMessageContext,
   type SharedLocation,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 const isSharedLocation = Schema.is(SharedLocationSchema);
@@ -53,6 +54,15 @@ export function sharedLocationLocalCaptureTime(location: SharedLocation): string
     // Older runtimes may not recognize a newer IANA zone name.
     return undefined;
   }
+}
+
+/** Display the device's capture time, falling back to explicitly labeled UTC. */
+export function sharedLocationCaptureTime(location: SharedLocation): string | undefined {
+  const localTime = sharedLocationLocalCaptureTime(location);
+  if (localTime) return localTime;
+  if (!location.capturedAt || !isValidCaptureTime(location.capturedAt)) return undefined;
+  const utcTime = DateTime.formatIso(DateTime.makeUnsafe(location.capturedAt));
+  return `${utcTime.slice(0, 19).replace("T", " ")} (UTC)`;
 }
 
 /** A map link from the numeric coordinates; the place name remains a label. */

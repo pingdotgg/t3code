@@ -277,6 +277,25 @@ describe("OrchestrationMessageContext", () => {
     expect(context.records.map((record) => record.kind)).toEqual(["skill", "terminal"]);
   });
 
+  it("drops incompatible location payloads and keeps valid location siblings", () => {
+    const context = decodeContext({
+      version: 1,
+      records: [
+        knownRecords.location,
+        {
+          ...knownRecords.location,
+          contextId: "ctx_incompatible",
+          payload: { coordinates: [40.7128, -74.006] },
+        },
+        { ...knownRecords.skill, contextId: "ctx_skill" },
+      ],
+    });
+    expect(context.records).toEqual([
+      knownRecords.location,
+      { ...knownRecords.skill, contextId: "ctx_skill" },
+    ]);
+  });
+
   it("rejects duplicate normalized context identities", () => {
     expect(() =>
       decodeContext({
