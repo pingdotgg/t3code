@@ -11,9 +11,10 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import {
   type NativeReviewDiffViewProps,
   resolveNativeReviewDiffView,
@@ -184,6 +185,9 @@ function NativeSourceFileSurface(
   },
 ) {
   const { NativeView, onRefresh } = props;
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const safeArea = columnMetrics?.safeArea ?? insets;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
   const { themeAppearance, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
@@ -214,6 +218,8 @@ function NativeSourceFileSurface(
         appearanceScheme={themeAppearance}
         contentResetKey={props.path}
         contentWidth={contentWidth}
+        contentInsetTop={safeArea.top}
+        contentInsetBottom={safeArea.bottom + 8}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
@@ -323,6 +329,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const list = (
     <FlatList
       ref={listRef}
+      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
       refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
@@ -354,6 +362,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <ScrollView
       refreshControl={refreshControl}
       className="flex-1"
+      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
       contentContainerStyle={{
         paddingBottom: codeSurface.rowHeight,
         paddingHorizontal: 12,
@@ -393,9 +403,11 @@ export function SourceFileSurface(props: SourceFileSurfaceProps) {
   // The native canvas draws source lines without text selection or wrapping. Attachments
   // need one selectable text view in either wrap mode; workspace line navigation can still
   // use the canvas when wrapping is disabled.
-  return NativeView && !codeWordBreak && !props.selectable ? (
-    <NativeSourceFileSurface {...props} NativeView={NativeView} />
-  ) : (
-    <JavaScriptSourceFileSurface {...props} />
-  );
+  const surface =
+    NativeView && !codeWordBreak && !props.selectable ? (
+      <NativeSourceFileSurface {...props} NativeView={NativeView} />
+    ) : (
+      <JavaScriptSourceFileSurface {...props} />
+    );
+  return surface;
 }

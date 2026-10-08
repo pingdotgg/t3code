@@ -561,7 +561,6 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
           entries={entriesQuery.entries}
-          loadedDirectories={entriesQuery.loadedDirectories}
           loadingDirectories={entriesQuery.loadingDirectories}
           onLoadDirectory={entriesQuery.loadDirectory}
           error={entriesQuery.error}
