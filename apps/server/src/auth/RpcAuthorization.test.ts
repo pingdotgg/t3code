@@ -19,6 +19,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -292,6 +293,39 @@ describe("settings mutation authorization", () => {
           providerInstanceMutation,
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("authorizes interval settings from the decoded payload", () =>
+    Effect.gen(function* () {
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled++;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+            ),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          automaticGitFetchInterval: Duration.minutes(5),
+          backgroundActivity: {
+            profile: "custom",
+            overrides: {
+              automaticGitFetchInterval: Duration.minutes(5),
+              idleClientTtl: Duration.minutes(10),
+              pauseWhenHostLocked: false,
+            },
+          },
+        },
+      });
       expect(handled).toBe(1);
     }).pipe(Effect.scoped),
   );

@@ -1,5 +1,4 @@
-import * as Schema from "effect/Schema";
-import { GitPreparePullRequestThreadInput } from "./git.ts";
+import type { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -42,14 +41,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
-const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
-
+/**
+ * `input` is the RPC's decoded payload: the client's typed input before encoding, or what
+ * the server's RPC layer already decoded. Never decode it again.
+ */
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
-    const payload = decodePrepareThread(input);
+    const payload = input as GitPreparePullRequestThreadInput;
     if (payload.mode === "worktree" && payload.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
