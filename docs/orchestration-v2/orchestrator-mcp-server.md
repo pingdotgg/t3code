@@ -145,8 +145,13 @@ provider-specific extensions; those remain in flavors such as Grok.
 
 ### Pi V2
 
-Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a T3-owned extension into the server cache and spawns
+T3 keeps a provider-session HTTP bridge even when Pi supports native MCP.
+`mcp.json` entries override native registrations, and native MCP's default
+60-second request timeout can interrupt long-running T3 tools. The bridge owns
+the injected endpoint and credential and forwards Pi's cancellation signal.
+
+When a provider session credential exists, the adapter writes a T3-owned
+extension into the server cache and spawns
 `pi --mode rpc --extension <cache>/pi-t3-mcp-extension.ts` with:
 
 ```text
@@ -154,9 +159,13 @@ T3_MCP_URL=http://127.0.0.1:<port>/mcp
 T3_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
-The extension connects to that HTTP endpoint, lists tools, and registers each
-one with `pi.registerTool` under a `mcp__t3-code__` namespace
-(`mcp__t3-code__delegate_task`, `mcp__t3-code__t3_thread_launch`, and the rest).
+The extension preserves public names under `mcp__t3-code__` for saved loadouts
+and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,
+which reserve the normalized namespace against configured MCP servers without
+adding declarations or search results. On Pi 0.99+,
+`orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
+available; optional tools are discovered through Pi's builtin `tool_search`.
+On older Pi or without builtin search, all tools remain directly available.
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
 without it. The first turn of a session also receives the shared T3

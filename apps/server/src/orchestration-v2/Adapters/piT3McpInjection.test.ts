@@ -162,6 +162,7 @@ describe("pi T3 MCP injection", () => {
       assert.include(mcpSource, '"mcp-protocol-version"');
       assert.include(mcpSource, '"tools/call"');
       assert.include(mcpSource, "mcp__t3-code__");
+      assert.include(mcpSource, "mcp__t3_code__");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
