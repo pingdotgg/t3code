@@ -269,7 +269,8 @@ and the agent it runs can use Git however the environment allows.
 Settings changes, provider management, and environment maintenance can be granted
 separately from access administration. New standard pairings include these
 permissions. Existing clients can stay connected after an update, but newly separated
-features may require pairing again with the permissions they need. Older clients
+features may require pairing again with the permissions they need. Devices
+connected through T3 Connect receive the new permissions on their own. Older clients
 may show controls that the server denies. Create a fresh pairing link to change
 a client's permissions.
 

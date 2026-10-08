@@ -64,7 +64,11 @@ group's `RpcScopeAuthorization` middleware checks it before any handler runs.
 Scope changes must not prevent older clients from connecting. Token exchange
 intersects recognized requests with the pairing grant; retired and unknown names
 are dropped. A request with no granted scopes fails before consuming the link.
-Stored credentials are never expanded when scopes split.
+Stored credentials are never expanded when scopes split. T3 Connect sessions are
+revoked instead of kept: the server, not the user, chose their grant, so
+[migration 61](../../apps/server/src/persistence/Migrations/061_RevokeLegacyCloudConnectSessions.ts)
+revokes live ones minted before the split, and clients mint replacements that
+carry the current standard grant.
 
 Auth responses keep `scopes` within the original wire vocabulary and include
 `permissions` for the exact grant. New clients use `permissions` when present,
