@@ -8,8 +8,8 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
-import { makeAcpNativeLoggerFactory } from "./AcpNativeLogging.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeAcpNativeLoggerFactory } from "./nativeLogging.ts";
 
 const nodeServicesIt = it.layer(NodeServices.layer);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));

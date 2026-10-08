@@ -8,7 +8,7 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
-} from "./AcpCoreRuntimeEvents.ts";
+} from "./coreRuntimeEvents.ts";
 
 describe("AcpCoreRuntimeEvents", () => {
   it("maps ACP permission requests to canonical runtime events", () => {

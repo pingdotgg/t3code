@@ -57,12 +57,8 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import * as ServerConfig from "../../config.ts";
-import {
-  makeAcpMcpOverAcpBridge,
-  type AcpMcpOverAcpBridge,
-} from "../../mcp/AcpMcpOverAcpBridge.ts";
+import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
@@ -78,7 +74,7 @@ import {
   type AcpAgentTerminalState,
   type AcpSessionModeState,
   type AcpToolCallState,
-} from "../../provider/acp/AcpRuntimeModel.ts";
+} from "./runtimeModel.ts";
 import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
@@ -86,14 +82,14 @@ import {
   type AcpPermissionDisposition,
   makeAcpClientPolicyGrants,
   unknownRecord,
-} from "../../provider/acp/AcpClientPolicy.ts";
+} from "./clientPolicy.ts";
 import {
   makeAcpClientTerminals,
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
-} from "../../provider/acp/AcpClientTerminals.ts";
-import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
-import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+} from "./clientTerminals.ts";
+import { ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
@@ -487,7 +483,7 @@ export interface AcpAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly host: ProviderHostShape;
   /** How agents spawn this install's `acp-mcp-bridge`; see `resolveSelfInvocation`. */
   readonly selfInvocation: SelfInvocation;
   /**
@@ -1497,7 +1493,7 @@ function shouldPersistToolUpdate(
 export function makeAcpAdapterV2(
   options: AcpAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
-  const { flavor, fileSystem, idAllocator, serverConfig, selfInvocation: self } = options;
+  const { flavor, fileSystem, idAllocator, host, selfInvocation: self } = options;
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -6781,8 +6777,7 @@ export function makeAcpAdapterV2(
           const messageText = providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: (attachment) =>
-              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+            resolveAttachmentPath: host.resolveAttachmentPath,
           });
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
@@ -6804,10 +6799,7 @@ export function makeAcpAdapterV2(
             });
           }
           for (const attachment of imageAttachments) {
-            const path = resolveAttachmentPath({
-              attachmentsDir: serverConfig.attachmentsDir,
-              attachment: attachment as ChatAttachment,
-            });
+            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
             if (path === null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver,

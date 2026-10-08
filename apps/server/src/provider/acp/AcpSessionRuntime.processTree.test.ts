@@ -33,7 +33,7 @@ import {
   type AcpPosixOwnershipRoot,
   type AcpPosixProcessIdentity,
   type AcpPosixProcessTreeController,
-} from "./AcpSessionRuntime.ts";
+} from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const threadSpawnHelperSource = NodeURL.fileURLToPath(
   new URL("../../../scripts/acp-thread-spawn-helper.c", import.meta.url),

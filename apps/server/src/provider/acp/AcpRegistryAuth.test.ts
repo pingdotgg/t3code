@@ -16,7 +16,7 @@ import { AcpRequestError } from "effect-acp/errors";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { makeAcpRegistryAuth } from "./AcpRegistryAuth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import type { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
+import type { AcpSessionRuntime } from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const instanceId = ProviderInstanceId.make("acp-auth-test");

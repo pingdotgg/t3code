@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { makeAcpMcpOverAcpBridge } from "./AcpMcpOverAcpBridge.ts";
+import { makeAcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 
 describe("AcpMcpOverAcpBridge", () => {
   it.effect("forwards authenticated MCP requests and closes the negotiated session", () =>

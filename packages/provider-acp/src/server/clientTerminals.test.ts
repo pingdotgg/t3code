@@ -8,7 +8,7 @@ import {
   makeAcpClientTerminals,
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
-} from "./AcpClientTerminals.ts";
+} from "./clientTerminals.ts";
 
 const withTerminals = <A, E>(use: (terminals: AcpClientTerminals) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {

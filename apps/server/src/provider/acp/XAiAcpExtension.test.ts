@@ -34,12 +34,12 @@ import {
   xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
   mergeToolCallState,
   parseSessionUpdateEvent,
-} from "./AcpRuntimeModel.ts";
+} from "@t3tools/provider-acp/server/runtimeModel";
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 

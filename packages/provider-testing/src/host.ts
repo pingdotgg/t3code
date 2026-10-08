@@ -42,7 +42,13 @@ export const layerTestProviderHost = (
       const settings = options.settings ?? DEFAULT_SERVER_SETTINGS;
       const credentials = new Map<string, Uint8Array>();
       return ProviderHost.ProviderHost.of({
-        paths: { cwd: options.cwd ?? process.cwd(), baseDir, stateDir, providerStatusCacheDir },
+        paths: {
+          cwd: options.cwd ?? process.cwd(),
+          baseDir,
+          stateDir,
+          providerStatusCacheDir,
+          attachmentsDir,
+        },
         settings: {
           get: Effect.succeed(settings),
           changes: Stream.empty,

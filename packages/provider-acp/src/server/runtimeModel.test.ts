@@ -19,7 +19,7 @@ import {
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
   type AcpToolCallState,
-} from "./AcpRuntimeModel.ts";
+} from "./runtimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
   it("parses session mode state from typed ACP session setup responses", () => {

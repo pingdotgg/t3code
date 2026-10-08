@@ -4,7 +4,7 @@ import {
   ACP_STDERR_TAIL_MAX_CHARS,
   appendAcpStderrTail,
   sanitizeAcpStderrExcerpt,
-} from "./AcpStderr.ts";
+} from "./stderr.ts";
 
 describe("AcpStderr", () => {
   it("keeps a bounded tail of stderr chunks", () => {

@@ -1,7 +1,7 @@
 import type { ProviderOptionChoice, ProviderOptionDescriptor } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionModeState } from "./AcpRuntimeModel.ts";
+import type { AcpSessionModeState } from "./runtimeModel.ts";
 
 /**
  * Maps ACP session configuration and session modes onto T3's provider option

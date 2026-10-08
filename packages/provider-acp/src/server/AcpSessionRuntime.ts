@@ -30,7 +30,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
+import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -47,7 +47,7 @@ import {
   type AcpParsedSessionEvent,
   type AcpSessionModeState,
   type AcpToolCallState,
-} from "./AcpRuntimeModel.ts";
+} from "./runtimeModel.ts";
 
 const MAX_SHOWN_TOOL_CALL_IDS = 256;
 
@@ -1329,7 +1329,7 @@ export class AcpSessionRuntime extends Context.Service<
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   }
->()("t3/provider/acp/AcpSessionRuntime") {
+>()("@t3tools/provider-acp/server/AcpSessionRuntime") {
   static layer(
     options: AcpSessionRuntimeOptions,
   ): Layer.Layer<

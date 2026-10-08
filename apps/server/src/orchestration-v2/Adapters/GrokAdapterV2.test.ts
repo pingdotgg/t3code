@@ -22,7 +22,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as ServerConfig from "../../config.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -30,13 +31,13 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
-import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import {
   AcpProviderCapabilitiesV2,
   acpCompletedTurnShouldTerminalizeTool,
   acpSubagentStatusBlocksTurnSettlement,
   acpSupportsImagePrompts,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 import {
   makeGrokAcpAdapterFlavor,
   makeGrokAdapterV2,
@@ -311,10 +312,8 @@ describe("Grok permission prompts", () => {
 });
 
 describe("Grok launch permission mode", () => {
-  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
-    prefix: "t3-grok-v2-launch-",
-  }).pipe(Layer.provide(NodeServices.layer));
-  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerServerConfig);
+  const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerHost);
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
@@ -342,7 +341,7 @@ describe("Grok launch permission mode", () => {
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
+        host: yield* ProviderHost,
         selfInvocation: yield* resolveSelfInvocation(),
       });
       yield* adapter

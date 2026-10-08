@@ -19,7 +19,10 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type {
+  AcpSessionRuntime,
+  AcpSessionRuntimeStartResult,
+} from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
