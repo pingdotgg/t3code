@@ -51,6 +51,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    // Spends provider credits, so it is a command the user triggers and never a
+    // query: queries revalidate on reconnect, and that would spend credits unasked.
+    explainProviderFailure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:explain-provider-failure",
+      tag: ORCHESTRATION_V2_WS_METHODS.explainProviderFailure,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,

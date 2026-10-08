@@ -1,6 +1,6 @@
 import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,11 +27,13 @@ const runtimeMock = {
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
     promptRequestError: undefined as unknown,
+    sdkDirectories: [] as string[],
     promptResult: undefined as
       | { data?: { info?: { error?: unknown }; parts?: Array<unknown> } }
       | undefined,
   },
   reset() {
+    this.state.sdkDirectories.length = 0;
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptParts.length = 0;
@@ -91,8 +93,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           external: Boolean(serverUrl),
         }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword, directory }) => {
+    runtimeMock.state.sdkDirectories.push(directory ?? "");
+    return {
       session: {
         create: async () => {
           runtimeMock.state.sessionCreateCalls += 1;
@@ -127,7 +130,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    } as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -235,6 +239,36 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
+  it.effect("explains provider failures from an empty directory outside the project", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: '{"summary":"The session ended.","likelyFix":"Start a new turn."}',
+              },
+            ],
+          },
+        };
+
+        const explained = yield* textGeneration.explainProviderFailure({
+          context: "Message: boom",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        assert.deepEqual(explained, {
+          summary: "The session ended.",
+          likelyFix: "Start a new turn.",
+        });
+        const directory = runtimeMock.state.sdkDirectories[0];
+        assert.isString(directory);
+        assert.notEqual(directory, process.cwd());
+        assert.include(directory, "t3code-text-generation-");
+      }),
+    ),
+  );
   it.effect("excludes generic files from thread title generation", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
