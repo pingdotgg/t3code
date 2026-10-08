@@ -208,6 +208,34 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     expect(batch.get("env-w:t0")).toEqual({ canMoveUp: false, canMoveDown: false });
   });
 
+  it("answers empty and single-row sections without consulting hidden rows", () => {
+    const hidden = [makeRow("h0", "env-w", "b", true), makeRow("h1", "env-x", null, true)];
+    expect(
+      computeThreadMoveAvailability({
+        ordered: [],
+        allThreads: hidden,
+        section: "pinned",
+        reorderableEnvironmentIds: WRITABLE,
+      }).size,
+    ).toBe(0);
+    for (const environment of ["env-w", "env-x"]) {
+      const ordered = [makeRow("t0", environment, "a", true)];
+      const allThreads = [...ordered, ...hidden];
+      const batch = computeThreadMoveAvailability({
+        ordered,
+        allThreads,
+        section: "pinned",
+        reorderableEnvironmentIds: WRITABLE,
+      });
+      expect(Object.fromEntries(batch)).toEqual({
+        [`${environment}:t0`]: { canMoveUp: false, canMoveDown: false },
+      });
+      expect(Object.fromEntries(batch)).toEqual(
+        Object.fromEntries(referenceAvailability(ordered, allThreads, WRITABLE)),
+      );
+    }
+  });
+
   it("denies rows whose section has non-writable neighbours when the fast path fails", () => {
     // Keyless neighbors force the section-rewrite fallback; a non-writable
     // neighbor makes the rewrite illegal for every row in the section.
