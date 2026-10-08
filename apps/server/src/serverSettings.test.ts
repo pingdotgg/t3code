@@ -14,6 +14,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -34,6 +35,7 @@ import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
+const decodePatch = Schema.decodeUnknownExit(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
@@ -1416,6 +1418,118 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         "sk-or-secret",
       );
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps shared MCP header values in the secret store and redacts them for clients", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const gateway = {
+        name: "gateway",
+        url: "http://127.0.0.1:3050/mcp",
+        enabled: true,
+        headers: { Authorization: "Bearer gw-secret" },
+      };
+
+      const saved = yield* serverSettings.updateSettings({ sharedMcpServers: [gateway] });
+      assert.deepEqual(saved.sharedMcpServers, [gateway]);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "gw-secret");
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).sharedMcpServers;
+      assert.notInclude(forClient[0]?.headers.Authorization ?? "", "gw-secret");
+
+      // Echoing the redacted value back (e.g. toggling the server off) keeps the stored one.
+      yield* serverSettings.updateSettings({
+        sharedMcpServers: [{ ...forClient[0]!, enabled: false }],
+      });
+      assert.deepEqual((yield* serverSettings.getSettings).sharedMcpServers, [
+        { ...gateway, enabled: false },
+      ]);
+
+      // Removing the server drops its secret, so re-adding it starts clean.
+      yield* serverSettings.updateSettings({ sharedMcpServers: [] });
+      const readded = yield* serverSettings.updateSettings({
+        sharedMcpServers: [{ ...gateway, headers: {} }],
+      });
+      assert.deepEqual(readded.sharedMcpServers[0]?.headers, {});
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("keeps a shared MCP server's header secret through a rename", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const saved = yield* serverSettings.updateSettings({
+        sharedMcpServers: [
+          {
+            id: "mcp_1",
+            name: "gateway",
+            url: "http://127.0.0.1:3050/mcp",
+            enabled: true,
+            headers: { Authorization: "Bearer gw-secret" },
+          },
+        ],
+      });
+      const [forClient] =
+        ServerSettingsModule.redactServerSettingsForClient(saved).sharedMcpServers;
+
+      yield* serverSettings.updateSettings({ sharedMcpServers: [{ ...forClient!, name: "gw" }] });
+
+      assert.deepEqual((yield* serverSettings.getSettings).sharedMcpServers[0]?.headers, {
+        Authorization: "Bearer gw-secret",
+      });
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("moves a hand-edited shared MCP header into the secret store", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"sharedMcpServers":[{"name":"gateway","url":"http://127.0.0.1:3050/mcp","headers":{"Authorization":"Bearer hand-edited"}}]}',
+      );
+      const loaded = yield* serverSettings.getSettings;
+      const [forClient] =
+        ServerSettingsModule.redactServerSettingsForClient(loaded).sharedMcpServers;
+
+      // A client toggling the server echoes the marker back.
+      yield* serverSettings.updateSettings({
+        sharedMcpServers: [{ ...forClient!, enabled: false }],
+      });
+
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "hand-edited");
+      assert.deepEqual((yield* serverSettings.getSettings).sharedMcpServers[0]?.headers, {
+        Authorization: "Bearer hand-edited",
+      });
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("rejects shared MCP servers that share a name or a header name", () =>
+    Effect.gen(function* () {
+      const server = { name: "gateway", url: "http://127.0.0.1:3050/mcp", enabled: true };
+      assert.isTrue(
+        Exit.isFailure(
+          decodePatch({
+            sharedMcpServers: [
+              { ...server, headers: {} },
+              { ...server, headers: {} },
+            ],
+          }),
+        ),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          decodePatch({
+            sharedMcpServers: [{ ...server, headers: { Authorization: "a", authorization: "b" } }],
+          }),
+        ),
+      );
+      assert.isTrue(
+        Exit.isSuccess(decodePatch({ sharedMcpServers: [{ ...server, headers: {} }] })),
+      );
+    }),
   );
 
   it.effect(

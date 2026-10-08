@@ -577,6 +577,34 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     });
   });
 
+  it("attaches shared MCP servers next to t3-code without pre-approving them", () => {
+    const threadId = ThreadId.make("thread-claude-shared-mcp");
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        ...mcpSessionFor(threadId),
+        sharedServers: [
+          {
+            name: "gateway",
+            url: "http://127.0.0.1:3050/mcp",
+            headers: { Authorization: "Bearer gateway-token" },
+          },
+        ],
+      },
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(overrides, {
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
+      mcpServers: {
+        gateway: {
+          type: "http",
+          url: "http://127.0.0.1:3050/mcp",
+          headers: { Authorization: "Bearer gateway-token" },
+        },
+        ...T3_MCP_SERVERS,
+      },
+    });
+  });
+
   it("extends an explicit allowlist with the t3-code wildcard", () => {
     const threadId = ThreadId.make("thread-claude-mcp-with-allowlist");
     const mcpSession = mcpSessionFor(threadId);

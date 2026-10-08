@@ -2413,6 +2413,13 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
         browserToolsAvailable: true,
+        sharedServers: [
+          {
+            name: "docs",
+            url: "http://127.0.0.1:43123/mcp/shared/docs",
+            headers: { Authorization: "Bearer target-thread-token" },
+          },
+        ],
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -2464,6 +2471,21 @@ describe("AcpAdapterV2", () => {
         sessionId: "mock-session-1",
         cwd: process.cwd(),
         mcpServers: [
+          // A shared server is a T3 endpoint, reached through the same bridge.
+          {
+            type: "stdio",
+            name: "docs",
+            command: process.execPath,
+            args: [
+              process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
+              "acp-mcp-bridge",
+            ],
+            env: [
+              { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+              { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp/shared/docs" },
+              { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer target-thread-token" },
+            ],
+          },
           {
             type: "stdio",
             name: "t3-code",

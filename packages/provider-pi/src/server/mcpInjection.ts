@@ -7,6 +7,7 @@ import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
+  T3_MCP_SHARED_SERVERS_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -293,6 +294,8 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_MCP_SHARED_SERVERS_ENV];
+  const sharedServers = input.mcpSession?.sharedServers ?? [];
 
   return {
     args,
@@ -313,6 +316,13 @@ export function buildPiRpcLaunch(input: {
             [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
               input.mcpSession.authorizationHeader,
             ),
+            ...(sharedServers.length === 0
+              ? {}
+              : {
+                  [T3_MCP_SHARED_SERVERS_ENV]: JSON.stringify(
+                    sharedServers.map(({ name, url, headers }) => ({ name, url, headers })),
+                  ),
+                }),
           }
         : {}),
     },

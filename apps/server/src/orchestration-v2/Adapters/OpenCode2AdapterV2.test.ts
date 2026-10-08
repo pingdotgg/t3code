@@ -45,6 +45,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
+  sharedMcpServerPrefix,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
@@ -78,7 +79,16 @@ const mcpRules = [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
-const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+/** Other threads' shared MCP servers are denied; this thread's run under the mode. */
+const sharedRules = (effect: "allow" | "ask", thread = "thread_opencode2-adapter") => [
+  { action: "t3-shared-*", resource: "*", effect: "deny" },
+  { action: `t3-shared-${thread}_*`, resource: "*", effect },
+];
+const t3Rules = [
+  { action: "*", resource: "*", effect: "allow" },
+  ...sharedRules("allow"),
+  ...mcpRules,
+];
 /** The thread's title, which the recorded session already carries. */
 const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
@@ -157,8 +167,8 @@ const withInstructions = (
         "skill.list",
       ].includes(String(entry.frame.type)),
   );
-  // T3's MCP server is added before the entry that describes it.
-  const after = entries.findIndex(
+  // T3's MCP servers are added before the entry that describes them.
+  const after = entries.findLastIndex(
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
@@ -277,6 +287,7 @@ const supervisedRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
+  ...sharedRules("ask"),
   ...buildPaths,
   ...mcpRules,
 ];
@@ -869,7 +880,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         // A subagent's session may use its thread's T3 MCP server.
         out("session.update", {
           sessionID: CHILD,
-          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
+          permissions: [...supervisedRules.slice(0, 5), ...mcpRules],
         }),
         reply("session.update", null),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -2182,7 +2193,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.update", {
             sessionID: CHILD,
             permissions: [
-              ...supervisedRules.slice(0, 3),
+              ...supervisedRules.slice(0, 5),
               { action: "shell", resource: "echo *", effect: "allow" },
               // A subagent's session may use its thread's T3 MCP server.
               ...mcpRules,
@@ -2360,7 +2371,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         // The subagent gets them too before its execution runs anything.
         out("session.update", {
           sessionID: CHILD,
-          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
+          permissions: [...supervisedRules.slice(0, 5), ...mcpRules],
         }),
         reply("session.update", null),
         event("session.execution.started", { sessionID: CHILD }),
@@ -2420,9 +2431,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.update", {
             sessionID: SESSION,
             permissions: [
-              ...supervisedRules.slice(0, 3),
+              ...supervisedRules.slice(0, 5),
               { action: "shell", resource: "echo *", effect: "allow" },
-              ...supervisedRules.slice(3),
+              ...supervisedRules.slice(5),
             ],
           }),
           reply("session.update", null),
@@ -2970,6 +2981,105 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "adds the thread's shared MCP servers next to T3's, retries a refused one, and removes them with it",
+    () =>
+      Effect.gen(function* () {
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: false,
+          sharedServers: [
+            {
+              name: "gateway",
+              url: "http://127.0.0.1:3050/mcp",
+              headers: { Authorization: "Bearer gateway-token" },
+            },
+            { name: "broken", url: "http://127.0.0.1:1/mcp", headers: {} },
+          ],
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const server = "t3-code-thread_opencode2-adapter";
+        const gateway = "t3-shared-thread_opencode2-adapter_gateway";
+        const broken = "t3-shared-thread_opencode2-adapter_broken";
+        const { runtime, thread } = yield* resumed([
+          out("mcp.add", { server, "location[directory]": WORK, config: "<any>" }),
+          reply("mcp.add", null),
+          out("mcp.add", {
+            server: gateway,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:3050/mcp",
+              headers: { Authorization: "Bearer gateway-token" },
+              oauth: false,
+            },
+          }),
+          reply("mcp.add", null),
+          // A shared server OpenCode refuses is skipped; the turn still runs.
+          out("mcp.add", {
+            server: broken,
+            "location[directory]": WORK,
+            config: { type: "remote", url: "http://127.0.0.1:1/mcp", oauth: false },
+          }),
+          reply("mcp.add", { status: 500, body: { _tag: "UnknownError", message: "add failed" } }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          // The next turn retries the one OpenCode refused, as it would T3's own.
+          out("mcp.add", {
+            server: broken,
+            "location[directory]": WORK,
+            config: { type: "remote", url: "http://127.0.0.1:1/mcp", oauth: false },
+          }),
+          reply("mcp.add", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+          out("mcp.remove", { server: gateway, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+          out("mcp.remove", { server: broken, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        const firstEnded = yield* Deferred.make<void>();
+        const ended = yield* runtime.events.pipe(
+          Stream.filter(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "turn.terminal" }
+            > => event.type === "turn.terminal",
+          ),
+          Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        yield* Deferred.await(firstEnded);
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          runId: RunId.make("run:opencode2-adapter:2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+        });
+        assert.deepEqual(
+          [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
+          ["completed", "completed"],
+        );
+        yield* runtime.unloadThread!({ providerThread: thread });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
       // Spelled out, this delegated thread's server name would be 120 characters.
@@ -2997,6 +3107,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionInfo({
             permissions: [
               { action: "*", resource: "*", effect: "allow" },
+              // Shared servers' prefix is shortened the same way as T3's name.
+              ...sharedRules("allow", "aa73fa1e03099934"),
               { action: "t3-code-*", resource: "*", effect: "deny" },
               { action: `${server}_*`, resource: "*", effect: "allow" },
             ],
@@ -3050,6 +3162,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(names[0], "t3-code-63abb5df2b188bdd");
       // A name that already fits stays readable.
       assert.equal(yield* t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
+      // Shared servers' names fit too, with the longest allowed server name.
+      for (const id of ids) {
+        const name = `${yield* sharedMcpServerPrefix(id)}_${"x".repeat(24)}`;
+        assert.isAtMost(name.length, 64);
+        assert.match(name, /^t3-shared-[A-Za-z0-9_-]+$/);
+      }
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -3946,6 +4064,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionID: FORK,
           permissions: [
             { action: "*", resource: "*", effect: "allow" },
+            ...sharedRules("allow", "thread_opencode2-adapter_fork"),
             { action: "t3-code-*", resource: "*", effect: "deny" },
             { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
           ],

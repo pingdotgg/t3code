@@ -870,6 +870,31 @@ describe("CursorAdapterV2", () => {
     }
   });
 
+  it("adds shared MCP servers next to t3-code", () => {
+    const servers = cursorMcpServers({
+      environmentId: EnvironmentId.make("environment-cursor-shared-mcp"),
+      threadId: ThreadId.make("thread-cursor-shared-mcp"),
+      providerSessionId: "mcp-session-cursor-shared",
+      providerInstanceId: ProviderInstanceId.make("cursor"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-cursor-mcp-token",
+      browserToolsAvailable: true,
+      sharedServers: [
+        {
+          name: "gateway",
+          url: "http://127.0.0.1:3050/mcp",
+          headers: { Authorization: "Bearer gateway-token" },
+        },
+      ],
+    });
+    assert.deepEqual(Object.keys(servers ?? {}), ["gateway", "t3-code"]);
+    assert.deepEqual(servers?.gateway, {
+      type: "http",
+      url: "http://127.0.0.1:3050/mcp",
+      headers: { Authorization: "Bearer gateway-token" },
+    });
+  });
+
   it("injects thread-scoped MCP credentials without logging them", () => {
     const threadId = ThreadId.make("thread-cursor-mcp");
     const mcpSession = {

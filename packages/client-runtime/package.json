@@ -219,6 +219,10 @@
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"
     },
+    "./state/shared-mcp-servers": {
+      "types": "./src/state/sharedMcpServers.ts",
+      "default": "./src/state/sharedMcpServers.ts"
+    },
     "./state/usage-progress": {
       "types": "./src/state/usageProgress.ts",
       "default": "./src/state/usageProgress.ts"

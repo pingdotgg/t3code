@@ -84,6 +84,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import { SettingsSharedMcpServersRouteScreen } from "./features/settings/SettingsSharedMcpServersRouteScreen";
 import {
   SettingsEnvironmentAgentBehaviorRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -243,6 +244,11 @@ const SettingsContentStack = createV5SheetStackNavigator({
       screen: SettingsProviderAccountsRouteScreen,
       linking: "provider-accounts",
       options: { title: "Provider accounts" },
+    }),
+    SettingsSharedMcpServers: createNativeStackScreen({
+      screen: SettingsSharedMcpServersRouteScreen,
+      linking: "shared-mcp-servers",
+      options: { title: "Shared MCP servers" },
     }),
     SettingsEnvironmentMaintenance: createNativeStackScreen({
       screen: SettingsEnvironmentMaintenanceRouteScreen,

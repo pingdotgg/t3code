@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
+  T3_MCP_SHARED_SERVERS_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -95,6 +96,36 @@ describe("pi T3 MCP injection", () => {
     );
   });
 
+  it("passes the thread's shared MCP servers to the extension only with T3's", () => {
+    const gateway = {
+      name: "gateway",
+      url: "http://127.0.0.1:3050/mcp",
+      enabled: true,
+      headers: { Authorization: "Bearer gateway-token" },
+    };
+    const launch = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_MCP_SHARED_SERVERS_ENV]: "[]" },
+      mcpSession: { ...mcpSession, sharedServers: [gateway] },
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    assert.deepEqual(JSON.parse(launch.env[T3_MCP_SHARED_SERVERS_ENV] ?? ""), [
+      {
+        name: "gateway",
+        url: "http://127.0.0.1:3050/mcp",
+        headers: { Authorization: "Bearer gateway-token" },
+      },
+    ]);
+    const withoutT3 = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_MCP_SHARED_SERVERS_ENV]: "[]" },
+      mcpSession: { ...mcpSession, sharedServers: [gateway] },
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      disableExtensions: true,
+    });
+    assert.isUndefined(withoutT3.env[T3_MCP_SHARED_SERVERS_ENV]);
+  });
+
   it("falls back to Pi's first supported mode for legacy auto threads", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: [],
@@ -170,6 +201,7 @@ describe("pi T3 MCP injection", () => {
       assert.include(mcpSource, '"tools/call"');
       assert.include(mcpSource, "mcp__t3-code__");
       assert.include(mcpSource, "mcp__t3_code__");
+      assert.include(mcpSource, "mcp__${server}__");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

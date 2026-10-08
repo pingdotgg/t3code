@@ -72,6 +72,9 @@ import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
+import * as SharedMcpHttp from "./mcp/SharedMcpHttp.ts";
+import * as SharedMcpProxy from "./mcp/SharedMcpProxy.ts";
+import * as SharedMcpServerProbe from "./mcp/SharedMcpServerProbe.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -592,7 +595,17 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
   Layer.provideMerge(
-    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+    Layer.mergeAll(
+      Keybindings.layer,
+      EnvironmentTheme.layer,
+      UsageLimitSources.layer,
+      // One proxy instance: Settings start sign-ins over RPC and the HTTP
+      // callback finishes them, so both must see the same pending sign-ins.
+      SharedMcpServerProbe.layer.pipe(
+        Layer.provideMerge(SharedMcpProxy.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+        Layer.provide(layerServerSettings),
+      ),
+    ),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
   // The instance registry is the new routing keystone — text generation,
@@ -703,6 +716,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
+    SharedMcpHttp.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
