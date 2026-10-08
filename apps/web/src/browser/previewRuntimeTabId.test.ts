@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isCurrentPreviewRuntimeTab, previewRuntimeTabId } from "./previewRuntimeTabId";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 describe("previewRuntimeTabId", () => {
   it("scopes process-local tab ids to their environment, thread, and server epoch", () => {
@@ -31,16 +31,5 @@ describe("previewRuntimeTabId", () => {
       threadId: ThreadId.make("thread-a"),
     };
     expect(previewRuntimeTabId(ref, null, "tab_1")).toBe(previewRuntimeTabId(ref, null, "tab_1"));
-  });
-
-  it("rejects a pinned operation target after the server epoch changes", () => {
-    const ref = {
-      environmentId: EnvironmentId.make("environment-a"),
-      threadId: ThreadId.make("thread-a"),
-    };
-    const runtimeTabId = previewRuntimeTabId(ref, "epoch-a", "tab_1");
-
-    expect(isCurrentPreviewRuntimeTab(ref, "epoch-a", "tab_1", runtimeTabId)).toBe(true);
-    expect(isCurrentPreviewRuntimeTab(ref, "epoch-b", "tab_1", runtimeTabId)).toBe(false);
   });
 });

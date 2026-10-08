@@ -38,18 +38,6 @@ const queueBrowserViewportMutation = <A>(
   return { started, execution };
 };
 
-/**
- * Serializes every server-side viewport mutation for one desktop runtime tab.
- * Both visible UI commits and background automation use this queue so a
- * compensating rollback cannot overtake a newer resize.
- */
-export function runBrowserViewportMutation<A>(
-  tabId: string,
-  mutation: () => Promise<A>,
-): Promise<A> {
-  return queueBrowserViewportMutation(tabId, mutation).execution;
-}
-
 const runHandlerWithTimeout = (tabId: string, operation: Promise<void>): Promise<void> => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
