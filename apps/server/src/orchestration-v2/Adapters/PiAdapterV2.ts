@@ -1439,7 +1439,39 @@ export function makePiAdapterV2(
         };
       });
 
-      const finalizeTurn = Effect.fnUntraced(function* (state: PiThreadState, readUsage = true) {
+      /**
+       * Drop cached session approvals when Pi's live session is not the one
+       * this thread is bound to. Pi can switch sessions from inside its own
+       * process, including from a slash command forwarded verbatim in the
+       * user's first message, and no adapter command reports that switch, so
+       * the boundary is only observable at turn finalize. An unreadable state
+       * clears the approvals too: an unknown identity is not evidence of an
+       * unchanged one.
+       */
+      const clearApprovalsForForeignSession = Effect.fnUntraced(function* (
+        state: PiThreadState,
+        stateData: Option.Option<unknown>,
+      ) {
+        // The common turn has no cached approval, so it pays no extra round trip.
+        if (sessionApprovals.size === 0) return;
+        const live = Option.isSome(stateData)
+          ? stateData.value
+          : yield* request({ type: "get_state" }, 2_000).pipe(
+              Effect.orElseSucceed(() => undefined),
+            );
+        if (
+          live === undefined ||
+          recordString(live, "sessionFile") !== state.providerThread.nativeThreadRef?.nativeId
+        ) {
+          sessionApprovals.clear();
+        }
+      });
+
+      const finalizeTurn = Effect.fnUntraced(function* (
+        state: PiThreadState,
+        readUsage = true,
+        stateData: Option.Option<unknown> = Option.none(),
+      ) {
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
@@ -1464,6 +1496,9 @@ export function makePiAdapterV2(
           }
         }
         yield* cancelPendingPrompts(completedAt);
+        // A dead transport (the only caller that skips reading usage) cannot
+        // ask Pi anything; the next process reads its own identity.
+        if (readUsage) yield* clearApprovalsForForeignSession(state, stateData);
         const treeRefs =
           turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
         const tokenUsage = readUsage
@@ -2043,7 +2078,7 @@ export function makePiAdapterV2(
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
               turn.settleWhenIdle = false;
-              if (state !== null) yield* finalizeTurn(state);
+              if (state !== null) yield* finalizeTurn(state, true, Option.some(data));
             }
             return;
           }
@@ -2156,6 +2191,8 @@ export function makePiAdapterV2(
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
           threadState = null;
+          sessionApprovals.clear();
+          yield* cancelPendingPrompts(yield* DateTime.now);
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
@@ -2730,6 +2767,8 @@ export function makePiAdapterV2(
               id: pending.nativeRequestId,
               ...response,
             });
+            // A session switch can cancel this prompt while the send is pending.
+            if (pendingPrompts.get(String(requestInput.requestId)) !== pending) return;
             // Dropped only once Pi has the answer, so a failed send leaves the
             // request retryable and still cancellable during teardown.
             pendingPrompts.delete(String(requestInput.requestId));
@@ -2862,12 +2901,14 @@ export function makePiAdapterV2(
             // message, so the rollback boundary is the first user entry of
             // the earliest turn being discarded.
             const forkEntryId = piRollbackForkEntry(rollbackInput);
+            if (forkEntryId === undefined) {
+              return yield* protocolError("Pi rollback target has no captured session-tree entry");
+            }
+            sessionApprovals.clear();
+            yield* cancelPendingPrompts(yield* DateTime.now);
             if (forkEntryId === null) {
               // Nothing after the target: the conversation is already there.
               return piThreadSnapshot(state.providerThread);
-            }
-            if (forkEntryId === undefined) {
-              return yield* protocolError("Pi rollback target has no captured session-tree entry");
             }
             return yield* Effect.acquireUseRelease(
               sessionEventPermit.withPermits(1)(
