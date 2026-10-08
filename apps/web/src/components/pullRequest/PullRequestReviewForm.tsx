@@ -179,10 +179,16 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
+  // GitCafe reviews name the exact diff they cover, which exists once the Code tab has shown it.
+  const needsReviewedDiff =
+    provider === "gitcafe" &&
+    unsettled === undefined &&
+    (comments.length > 0 ? draftRevision : displayedRevision) === undefined;
   const canSubmit = (verdict: PullRequestReviewVerdict) =>
-    verdict === "request-changes" && requestChangesSummaryRequired
+    !needsReviewedDiff &&
+    (verdict === "request-changes" && requestChangesSummaryRequired
       ? body.trim().length > 0
-      : verdict === "approve" || body.trim().length > 0 || comments.length > 0;
+      : verdict === "approve" || body.trim().length > 0 || comments.length > 0);
 
   return (
     <>
@@ -198,6 +204,16 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
+      {needsReviewedDiff ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Open the Code tab first, so the review covers the diff you read.
+        </p>
+      ) : unsettled !== undefined ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          The last review may already be on GitCafe. Retry sends it unchanged; discard drops it here
+          only.
+        </p>
+      ) : null}
       <div className="mt-2 flex justify-between gap-2">
         <Select
           value={selectedVerdict?.value ?? null}
@@ -224,15 +240,25 @@ export function PullRequestReviewForm({
           </SelectPopup>
         </Select>
         {unsettled !== undefined ? (
-          <Button
-            size="xs"
-            disabled={pending}
-            onClick={() =>
-              void submit(VERDICTS.find((candidate) => candidate.value === unsettled.verdict)!)
-            }
-          >
-            {pending ? "Submitting..." : "Retry previous submission"}
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={pending}
+              onClick={() => clearSubmission(reviewKey, unsettled.id)}
+            >
+              Discard
+            </Button>
+            <Button
+              size="xs"
+              disabled={pending}
+              onClick={() =>
+                void submit(VERDICTS.find((candidate) => candidate.value === unsettled.verdict)!)
+              }
+            >
+              {pending ? "Submitting..." : "Retry previous submission"}
+            </Button>
+          </div>
         ) : (
           <Button
             size="xs"

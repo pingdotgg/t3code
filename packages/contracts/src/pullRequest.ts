@@ -1321,8 +1321,9 @@ const PROVIDER_REQUIREMENT: Partial<
   },
   gitcafe: {
     missing:
-      "GitCafe CLI (`cafe`) is required to browse change requests on this host. Install it from https://git.cafe/ and reload.",
-    unauthenticated: "GitCafe CLI is not authenticated. Run `cafe auth login` and retry.",
+      "No GitCafe credential on this server. Install the GitCafe CLI with `bun install -g @gitcafe/cli` and run `cafe auth login`, or set CAFE_TOKEN, then reload.",
+    unauthenticated:
+      "GitCafe has no working credential. Run `cafe auth login`, or check CAFE_TOKEN, and retry.",
   },
   gitlab: {
     missing:

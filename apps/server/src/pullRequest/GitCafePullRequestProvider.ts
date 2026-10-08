@@ -53,6 +53,12 @@ const StatusSchema = Schema.Struct({
     conflicts: Schema.Literals(["unknown", "conflicting"]),
     fastForward: Schema.NullOr(Schema.Boolean),
     strategies: Schema.Array(Schema.String),
+    permitted: Schema.optional(Schema.Boolean),
+    blockers: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ blockedStrategies: Schema.optional(Schema.Array(Schema.String)) }),
+      ),
+    ),
   }),
   checks: Schema.Struct({
     pending: NonNegativeInt,
@@ -136,12 +142,40 @@ function checkStatus(check: (typeof ChecksSchema.Type.items)[number]) {
   }
 }
 const isGitCafeCliError = Schema.is(GitCafeCli.GitCafeCliError);
+
+/**
+ * A strategy GitCafe lists and no blocker names. A blocker without strategies (changes requested,
+ * a lock) still leaves Merge offered, so pressing it shows GitCafe's own reason.
+ */
+function mergeStrategyOpen(status: typeof StatusSchema.Type, strategy: string): boolean {
+  return (
+    status.merge.strategies.includes(strategy) &&
+    !(status.merge.blockers ?? []).some((blocker) =>
+      (blocker.blockedStrategies ?? []).includes(strategy),
+    )
+  );
+}
+
+/** The pull's own capabilities, narrowed by `/status` when it says this viewer may not merge. */
+function withMergePermission(
+  permissions: PullRequestViewerPermissions,
+  status: typeof StatusSchema.Type,
+): PullRequestViewerPermissions {
+  return status.merge.permitted === false
+    ? { ...permissions, actions: permissions.actions.filter((action) => action !== "merge") }
+    : permissions;
+}
 const PAGE_SIZE = 100;
 const CONVERSATION_PAGES = 10;
 /** GitCafe's cap on paths per `/diff-files` or `/compare/files` read, and so one diff page. */
 const DIFF_FILES_BATCH = 64;
-/** Line totals cost one hunk read per batch, so a pull request larger than this reports none. */
+/**
+ * Line totals cost one hunk read per batch, so a pull request larger than this reports none,
+ * as Azure DevOps does, rather than reading every file.
+ */
 const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
+/** Structural `/changes` pages, 500 files each, read to count a pull request's files. */
+const MAX_CHANGE_PAGES = 20;
 
 const chunk = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
@@ -304,7 +338,9 @@ export const make = Effect.gen(function* () {
     const files: Array<Json.DiffFile> = [];
     let revision: { version: number; headOid: string; baseOid: string } | undefined;
     let after: string | null = null;
+    let pages = 0;
     do {
+      pages++;
       const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
       if (after !== null) query.set("after", after);
       const page = yield* read(
@@ -320,7 +356,7 @@ export const make = Effect.gen(function* () {
       };
       files.push(...page.items);
       after = page.next;
-    } while (after !== null && files.length <= LINE_STATS_MAX_FILES);
+    } while (after !== null && pages < MAX_CHANGE_PAGES);
     const counted = files.some((file) => file.additions !== undefined)
       ? files
       : files.length > LINE_STATS_MAX_FILES || revision === undefined
@@ -475,9 +511,11 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(null)
             : readLineStats(input, pull.version).pipe(
                 Effect.catch((error) =>
-                  pull.state !== "open" &&
                   isGitCafeCliError(error.cause) &&
-                  error.cause.status === 404
+                  // A closed pull's source may be gone, and a 409 means the pull moved past the
+                  // version just read: either way the detail stands without its statistics.
+                  ((pull.state !== "open" && error.cause.status === 404) ||
+                    error.cause.status === 409)
                     ? Effect.succeed(null)
                     : Effect.fail(error),
                 ),
@@ -537,11 +575,11 @@ export const make = Effect.gen(function* () {
               ? ("up-to-date" as const)
               : ("behind" as const),
         mergeCapabilities: {
-          merge: status.merge.strategies.includes("merge"),
-          squash: status.merge.strategies.includes("squash"),
-          rebase: status.merge.strategies.includes("rebase"),
+          merge: mergeStrategyOpen(status, "merge"),
+          squash: mergeStrategyOpen(status, "squash"),
+          rebase: mergeStrategyOpen(status, "rebase"),
         },
-        viewerPermissions: gitCafeViewerPermissions(pull),
+        viewerPermissions: withMergePermission(gitCafeViewerPermissions(pull), status),
       };
     }),
     getChangeRequestStack: Effect.fn("GitCafePullRequestProvider.getChangeRequestStack")(

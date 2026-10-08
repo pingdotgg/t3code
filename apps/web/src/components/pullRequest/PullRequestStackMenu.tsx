@@ -283,8 +283,9 @@ export function PullRequestStackMenu({
       });
       return;
     }
-    if (discovering) {
-      // Latest is useful discovery, but does not identify the lost request's operation.
+    if (discovering && outcome.state === "pending") {
+      // Latest is useful discovery, but does not identify the lost request's operation. Once it
+      // settles, the stack revision has moved, so a repeated request is fenced off anyway.
       remember(
         {
           input: storedAction.input,
@@ -365,6 +366,16 @@ export function PullRequestStackMenu({
                 >
                   {pending ? "Checking…" : "Check status"}
                 </Button>
+                {storedAction.state !== "pending" ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => remember(null, storedAction.input)}
+                  >
+                    Dismiss
+                  </Button>
+                ) : null}
                 <Button
                   size="xs"
                   variant="ghost"

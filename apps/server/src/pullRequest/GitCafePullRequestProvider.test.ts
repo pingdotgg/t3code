@@ -357,7 +357,8 @@ describe("deployed GitCafe PR API", () => {
     return Effect.gen(function* () {
       const provider = yield* make;
       const result = yield* provider.getChangeRequest(target);
-      expect(result.changedFiles).toBe(300);
+      // Past the first page of 500: every file is counted even though lines are not.
+      expect(result.changedFiles).toBe(800);
       expect(result.additions).toBe(0);
       expect(calls.some((call) => call.endpoint.endsWith("/diff-files"))).toBe(false);
     }).pipe(
@@ -366,12 +367,16 @@ describe("deployed GitCafe PR API", () => {
           calls.push(input);
           if (input.endpoint.includes("/reviewers?")) return { items: [], next: null };
           if (input.endpoint.includes("/labels?")) return { items: [] };
-          if (input.endpoint.includes("/changes?"))
+          if (input.endpoint.includes("/changes?")) {
+            const continued = input.endpoint.includes("after=");
             return {
               ...revision,
-              items: Array.from({ length: 300 }, (_, index) => ({ path: `src/${index}.ts` })),
-              next: null,
+              items: Array.from({ length: continued ? 300 : 500 }, (_, index) => ({
+                path: `src/${continued ? "b" : "a"}${index}.ts`,
+              })),
+              next: continued ? null : "page-2",
             };
+          }
           if (input.endpoint.includes("/commits/")) return { items: [] };
           if (input.endpoint.endsWith("/status"))
             return {
@@ -383,6 +388,57 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
+  it.effect("narrows merge options by GitCafe's blockers and stands without moved stats", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getChangeRequest(target);
+      expect(result.mergeCapabilities).toEqual({ merge: true, squash: false, rebase: true });
+      expect(result.viewerPermissions.actions).not.toContain("merge");
+      expect(result.changedFiles).toBe(0);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitCafeCli.GitCafeCli)({
+          api: (input) => {
+            if (input.endpoint.includes("/changes?"))
+              return Effect.fail(
+                new GitCafeCli.GitCafeCliError({
+                  command: "cafe",
+                  cwd: target.cwd,
+                  code: "VERSION_CONFLICT",
+                  status: 409,
+                  detail: "The pull request changed.",
+                }),
+              );
+            if (input.endpoint.includes("/reviewers?"))
+              return Effect.succeed(json({ items: [], next: null }));
+            if (input.endpoint.includes("/labels?")) return Effect.succeed(json({ items: [] }));
+            if (input.endpoint.includes("/commits/")) return Effect.succeed(json({ items: [] }));
+            if (input.endpoint.endsWith("/status"))
+              return Effect.succeed(
+                json({
+                  merge: {
+                    conflicts: "unknown",
+                    fastForward: null,
+                    strategies: ["merge", "squash", "rebase"],
+                    permitted: false,
+                    blockers: [
+                      {
+                        code: "SQUASH_FORBIDDEN",
+                        message: "No squash",
+                        blockedStrategies: ["squash"],
+                      },
+                      { code: "CHANGES_REQUESTED", message: "Changes requested" },
+                    ],
+                  },
+                  checks: { pending: 0, failing: 0, successful: 0, total: 0 },
+                }),
+              );
+            return Effect.succeed(json(detail));
+          },
+        }),
+      ),
+    ),
+  );
   it.effect("loads detail labels from the dedicated bounded endpoint", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {

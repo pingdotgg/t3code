@@ -98,14 +98,15 @@ bun install -g @gitcafe/cli
 cafe auth login --host https://git.cafe/api
 ```
 
-T3 Code talks to GitCafe's API directly with the login `cafe` holds, or with `CAFE_TOKEN` from
-the server's environment, which applies to the host `CAFE_HOST` names (`git.cafe` by default).
-Browsing and reviewing pull requests work with the token alone; publishing a repository and
-opening a pull request still run `cafe`.
+T3 Code talks to GitCafe's API directly. `CAFE_TOKEN` in the server's environment comes first and
+applies only to the host `CAFE_HOST` names (`git.cafe` by default); otherwise T3 Code uses the
+login `cafe` holds. Browsing and reviewing pull requests work with the token alone, and Settings
+shows which credential is in use; publishing a repository and opening a pull request still run
+`cafe`.
 
 GitCafe repositories use HTTPS by default. If Git credentials need refreshing, run
-`cafe auth http setup`. Requests follow the repository URL on `git.cafe` or
-`staging.git.cafe`. Sign in separately for staging with
+`cafe auth http setup`. Repositories on `git.cafe` and `staging.git.cafe` are supported, and
+requests follow the repository's host. Sign in separately for staging with
 `cafe auth login --host https://staging.git.cafe/api`.
 
 GitCafe's review browser supports comments, review edits, reactions, inline reviews, and merging.
@@ -114,9 +115,10 @@ request changes, refresh and review the new diff before submitting again. Availa
 on your GitCafe permissions.
 
 If a review result cannot be confirmed, **Retry previous submission** sends the original review,
-not subsequent draft edits. Keep that tab open until the attempt is settled. If a merge is accepted
-but still pending, use **Check status**. When its result is unknown, inspect the pull request on
-GitCafe before attempting another merge.
+not subsequent draft edits, and **Discard** drops it so you can write a new one. It may already be
+on GitCafe, so check there before discarding. If a merge is accepted but still pending, use
+**Check status**. If its answer was lost, **Retry merge** resends the same request, which GitCafe
+never merges twice; **Dismiss** clears a failed or unknown merge once you have checked GitCafe.
 
 ## Start, clone, or publish a project
 

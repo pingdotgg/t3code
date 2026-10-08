@@ -4,7 +4,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import type * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
+import * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
 import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
 import { makeGitCafeActionWrites } from "./gitCafeActionWrites.ts";
 
@@ -458,8 +458,8 @@ describe("GitCafe action writes", () => {
       const missingId = api(() => pull({ mergeRoute: "provider" }));
       const missingIdError = yield* Effect.flip(missingId.writes.runAction(input({})));
       expect(missingIdError.notDispatched).toBe(true);
-      expect(missingId.calls).toHaveLength(1);
-      expect(missingId.calls[0]?.method).toBeUndefined();
+      // Refused before anything is read, let alone sent.
+      expect(missingId.calls).toHaveLength(0);
 
       const unsupported = api(() => pull({ mergeRoute: "unsupported" }));
       const unsupportedError = yield* Effect.flip(
@@ -480,6 +480,52 @@ describe("GitCafe action writes", () => {
         unreadableWrite.writes.runAction(input({ requestId: "stable-request" })),
       );
       expect(writeError.notDispatched).toBeUndefined();
+    }),
+  );
+  it.effect("retries a lost merge with the exact body it first sent", () =>
+    Effect.gen(function* () {
+      const calls: Call[] = [];
+      let merges = 0;
+      let version = 4;
+      const service = {
+        api: (call: Call) => {
+          calls.push(call);
+          if (call.endpoint.endsWith("/merge")) {
+            merges++;
+            // The first answer is lost after GitCafe accepted the merge, which moves the pull.
+            if (merges === 1) {
+              version = 5;
+              return Effect.fail(
+                new GitCafeCli.GitCafeCliError({
+                  command: "cafe",
+                  cwd: "/work",
+                  code: "COMMAND_FAILED",
+                  status: null,
+                  detail: "Could not reach GitCafe.",
+                }),
+              );
+            }
+            return Effect.succeed(json({ id: "merge_1", state: "completed" }));
+          }
+          if (call.endpoint.startsWith("/repos/owner/repo/commit?"))
+            return Effect.succeed(json({ oid: version === 4 ? base : "3".repeat(40) }));
+          return Effect.succeed(json(pull({ version })));
+        },
+      } as unknown as GitCafeCli.GitCafeCli["Service"];
+      const writes = makeGitCafeActionWrites(service);
+      const merge = input({ requestId: "stable-request", mergeMethod: "squash" });
+      yield* Effect.flip(writes.runAction(merge));
+      const outcome = yield* writes.runAction(merge);
+      expect(outcome).toMatchObject({ state: "completed" });
+      const posts = calls.filter((call) => call.method === "POST");
+      expect(posts).toHaveLength(2);
+      expect(posts[1]?.body).toEqual(posts[0]?.body);
+      expect(posts[1]?.body).toMatchObject({ expectedVersion: 4, baseOid: base });
+
+      // A restarted server has no first body; a merged pull is then the answer, not a new post.
+      const restarted = api(() => pull({ state: "merged", version: 6 }));
+      expect(yield* restarted.writes.runAction(merge)).toMatchObject({ state: "completed" });
+      expect(restarted.calls.some((call) => call.method === "POST")).toBe(false);
     }),
   );
 });

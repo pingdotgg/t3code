@@ -949,6 +949,11 @@ export function PullRequestDetailPanel({
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
   useEffect(() => setPendingAction(null), [mergeScopeKey]);
+  // Once the pull request is merged or closed there is nothing left to wait for or retry.
+  const pullRequestSettled = detail?.state === "merged" || detail?.state === "closed";
+  useEffect(() => {
+    if (pullRequestSettled && mergeOperation !== null) rememberMergeOperation(null);
+  }, [pullRequestSettled, mergeOperation]);
   const actionPending =
     pendingAction !== null ||
     (detail?.provider === "gitcafe" &&
@@ -1012,10 +1017,12 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    /** A GitCafe merge whose result was lost, resent under its original request ID. */
+    retry?: PullRequestActionInput,
   ) => {
     onActed?.(action, "sent");
     const durableMerge = action === "merge" && detail?.provider === "gitcafe";
-    const input = {
+    const input = retry ?? {
       ...reference,
       action,
       ...(durableMerge ? { requestId: randomUUID() } : {}),
@@ -1129,6 +1136,16 @@ export function PullRequestDetailPanel({
     return finishAction(action, method, updateMethod);
   };
 
+  /**
+   * A merge whose answer never arrived names no operation to inspect. Resending it under the same
+   * request ID is safe: GitCafe replays a request ID rather than merging twice.
+   */
+  const retryMerge = async () => {
+    if (!mergeOperation || mergeOperation.operation || pendingAction !== null) return;
+    setPendingAction("merge");
+    await finishAction("merge", undefined, undefined, mergeOperation.input);
+  };
+
   const checkMergeStatus = async () => {
     if (!mergeOperation || pendingAction !== null) return;
     const input = inspectionInput(mergeOperation);
@@ -1176,7 +1193,7 @@ export function PullRequestDetailPanel({
     toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS.merge });
     if (isCurrentScope) {
       refreshDetail();
-      onActed?.();
+      onActed?.("merge", "done");
     }
   };
 
@@ -2063,13 +2080,32 @@ export function PullRequestDetailPanel({
                     >
                       {pendingAction === "merge" ? "Checking…" : "Check status"}
                     </Button>
+                  ) : mergeOperation.state === "unknown" ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={pendingAction !== null}
+                      onClick={() => void retryMerge()}
+                    >
+                      {pendingAction === "merge" ? "Retrying…" : "Retry merge"}
+                    </Button>
+                  ) : null}
+                  {mergeOperation.state !== "pending" ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      disabled={pendingAction !== null}
+                      onClick={() => rememberMergeOperation(null)}
+                    >
+                      Dismiss
+                    </Button>
                   ) : null}
                   <Button
                     size="xs"
                     variant="ghost"
                     render={<a href={detail.url} target="_blank" rel="noreferrer" />}
                   >
-                    {detail.provider === "gitcafe" ? "Open on GitCafe" : "Open pull request"}
+                    Open on GitCafe
                   </Button>
                 </span>
               ) : null}

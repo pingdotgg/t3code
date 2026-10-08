@@ -2,15 +2,18 @@ import { afterEach, beforeEach, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitCafeCli from "./GitCafeCli.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
-import { discovery } from "./GitCafeSourceControlProvider.ts";
+import { discovery, makeDiscovery } from "./GitCafeSourceControlProvider.ts";
 
 const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 const fetchRemoteBranch = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"]>();
@@ -510,3 +513,52 @@ it("discovery identifies a valid account and keeps transient failures separate f
     "unknown",
   );
 });
+
+it.effect.each([
+  { name: "a working token", principal: { handle: "alice" }, status: "authenticated" },
+  { name: "a refused token", principal: null, status: "unauthenticated" },
+] as const)("discovery reports CAFE_TOKEN without cafe installed: $name", (scenario) =>
+  Effect.gen(function* () {
+    const spec = yield* makeDiscovery;
+    if (spec.type !== "managed-cli") throw new Error("expected a managed discovery");
+    const item = yield* spec.probe("/repo");
+    expect(item.status).toBe("available");
+    expect(item.auth).toMatchObject({ status: scenario.status, host: Option.some("git.cafe") });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(GitCafeCli.GitCafeCli)({
+          api: () =>
+            scenario.principal === null
+              ? Effect.fail(
+                  new GitCafeCli.GitCafeCliError({
+                    command: "cafe",
+                    cwd: "/repo",
+                    code: "AUTHENTICATION_REQUIRED",
+                    status: 401,
+                    detail: "Refused",
+                  }),
+                )
+              : Effect.succeed(JSON.stringify(scenario.principal)),
+        }),
+        // No `cafe` on PATH at all.
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: "probe",
+                command: input.command,
+                cwd: "/repo",
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                }),
+              }),
+            ),
+        }),
+      ),
+    ),
+    Effect.provideService(HostProcessEnvironment, { CAFE_TOKEN: "env-token" }),
+  ),
+);

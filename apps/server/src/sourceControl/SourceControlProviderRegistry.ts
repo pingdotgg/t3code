@@ -306,6 +306,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
 export const make = Effect.gen(function* () {
   const gitcafe = yield* GitCafeSourceControlProvider.make;
+  const gitcafeDiscovery = yield* GitCafeSourceControlProvider.makeDiscovery;
   const github = yield* GitHubSourceControlProvider.make;
   const githubDiscovery = yield* GitHubSourceControlProvider.makeDiscovery;
   const gitlab = yield* GitLabSourceControlProvider.make;
@@ -315,7 +316,7 @@ export const make = Effect.gen(function* () {
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
   return yield* makeWithProviders([
-    { kind: "gitcafe", provider: gitcafe, discovery: GitCafeSourceControlProvider.discovery },
+    { kind: "gitcafe", provider: gitcafe, discovery: gitcafeDiscovery },
     {
       kind: "github",
       provider: github,

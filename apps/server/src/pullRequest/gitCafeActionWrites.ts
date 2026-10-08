@@ -116,8 +116,22 @@ const requestIdError = (requestId: string | undefined) =>
 const STACK_LAND_POLL_INTERVAL = "500 millis";
 
 /** GitCafe lifecycle and exact single-pull-request merge writes. */
+interface MergeBody {
+  readonly requestId: string | undefined;
+  readonly expectedVersion: number;
+  readonly headOid: string;
+  readonly baseOid: string;
+  readonly strategy: string;
+}
+
 export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
   const request = gitCafeWriteApi(cli);
+  /**
+   * The body each merge request ID was first sent with. GitCafe replays a request ID only for
+   * identical input, and a retry re-reading the pull after a merge landed would send a moved
+   * version and base, so a retry must resend exactly what the lost attempt sent.
+   */
+  const mergeBodies = new Map<string, MergeBody>();
   const readPull = (input: GitCafeActionInput, number = input.number) =>
     request(input, `/pulls/${number}`, Pull, { operation: "readActionFence" }).pipe(
       Effect.mapError(markNotDispatched),
@@ -360,13 +374,49 @@ export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
       );
     }
 
+    const invalidRequestId = requestIdError(input.requestId);
+    if (invalidRequestId !== undefined) return yield* Effect.fail(fail("merge", invalidRequestId));
+    const remembered = input.requestId === undefined ? undefined : mergeBodies.get(input.requestId);
+    const fresh = remembered === undefined ? yield* freshMergeBody(input) : undefined;
+    if (fresh?._tag === "merged") return fresh.outcome;
+    const body = remembered ?? fresh!.body;
+    if (remembered === undefined && input.requestId !== undefined) {
+      mergeBodies.set(input.requestId, body);
+      if (mergeBodies.size > 256) mergeBodies.delete(mergeBodies.keys().next().value!);
+    }
+    return normalizeMerge(
+      yield* request(input, `/pulls/${input.number}/merge`, MergeOutcome, {
+        operation: "merge",
+        method: "POST",
+        body,
+      }),
+    );
+  });
+
+  /** Reads the fences a first merge attempt is sent with, or the outcome if there is nothing to send. */
+  const freshMergeBody = Effect.fn("GitCafeActionWrites.freshMergeBody")(function* (
+    input: GitCafeActionInput,
+  ): Effect.fn.Return<
+    | { readonly _tag: "merged"; readonly outcome: PullRequestActionOutcome }
+    | { readonly _tag: "body"; readonly body: MergeBody },
+    PullRequestProviderError
+  > {
     const pull = yield* readPull(input);
+    // Without the first attempt's body (a restarted server), a merged pull is the answer: a
+    // re-read fence would only make GitCafe reject the replay of a merge that already landed.
+    if (pull.state === "merged")
+      return {
+        _tag: "merged",
+        outcome: {
+          operation: { kind: "merge", id: input.requestId ?? "merged" },
+          state: "completed",
+          detail: "GitCafe has merged this pull request.",
+        },
+      };
     if (pull.mergeRoute === "unsupported")
       return yield* Effect.fail(
         fail("merge", "This GitCafe pull request has no supported merge route."),
       );
-    const invalidRequestId = requestIdError(input.requestId);
-    if (invalidRequestId !== undefined) return yield* Effect.fail(fail("merge", invalidRequestId));
     const headOid = pull.headOid;
     if (headOid === null)
       return yield* Effect.fail(
@@ -391,19 +441,16 @@ export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
           "GitCafe did not provide exact head and base object IDs. Refresh before merging.",
         ),
       );
-    return normalizeMerge(
-      yield* request(input, `/pulls/${input.number}/merge`, MergeOutcome, {
-        operation: pull.mergeRoute === "provider" ? "providerMerge" : "nativeMerge",
-        method: "POST",
-        body: {
-          requestId: input.requestId,
-          expectedVersion: pull.version,
-          headOid,
-          baseOid,
-          strategy: input.mergeMethod ?? "merge",
-        },
-      }),
-    );
+    return {
+      _tag: "body",
+      body: {
+        requestId: input.requestId,
+        expectedVersion: pull.version,
+        headOid,
+        baseOid,
+        strategy: input.mergeMethod ?? "merge",
+      },
+    };
   });
 
   return { runAction } satisfies Pick<PullRequestProviderApi, "runAction">;
