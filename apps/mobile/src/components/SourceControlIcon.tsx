@@ -34,10 +34,11 @@ export function SourceControlIcon(props: {
         </Svg>
       );
     case "gitcafe":
-      // GitCafe's own mark, from https://git.cafe/favicon.svg.
+      // GitCafe's own mark, from https://git.cafe/favicon.svg, inset to match the weight of
+      // the other marks.
       return (
         <Svg width={size} height={size} viewBox="0 0 64 64">
-          <Rect width={64} height={64} fill="#a78bfa" />
+          <Rect x={8} y={8} width={48} height={48} fill="#a78bfa" />
         </Svg>
       );
     case "github":

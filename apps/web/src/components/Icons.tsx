@@ -731,10 +731,11 @@ export const ForgejoIcon: Icon = (props) => (
   </svg>
 );
 
-// GitCafe's own mark, from https://git.cafe/favicon.svg.
+// GitCafe's own mark, from https://git.cafe/favicon.svg. Inset because a full-bleed square
+// reads heavier than the round and cut-out marks it sits beside.
 export const GitCafeIcon: Icon = (props) => (
   <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
-    <rect width="64" height="64" fill="#a78bfa" />
+    <rect x="8" y="8" width="48" height="48" fill="#a78bfa" />
   </svg>
 );
 
