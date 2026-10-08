@@ -89,10 +89,10 @@ describe("resolveDeviceMiniPlayerCornerRadius", () => {
 });
 
 describe("resolvePreviewMiniPlayerFrame", () => {
-  it("opens at the source aspect ratio in the top-right corner", () => {
+  it("opens at the source aspect ratio in the bottom-right corner", () => {
     expect(
       resolvePreviewMiniPlayerFrame({ width: null, position: null, source, container }),
-    ).toEqual({ x: 668, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 320, height: 200 });
+    ).toEqual({ x: 668, y: 488, width: 320, height: 200 });
   });
 
   it("keeps a tall source at the minimum width instead of the default box", () => {
@@ -103,7 +103,7 @@ describe("resolvePreviewMiniPlayerFrame", () => {
         source: { width: 390, height: 844 },
         container,
       }),
-    ).toEqual({ x: 748, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 240, height: 519 });
+    ).toEqual({ x: 748, y: 169, width: 240, height: 519 });
   });
 
   it("derives height from the stored width", () => {

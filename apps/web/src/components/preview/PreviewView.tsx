@@ -412,13 +412,13 @@ export function PreviewView({
 
   const handlePictureInPicture = useCallback(() => {
     if (!tabId) return;
-    if (miniPlayerTabId === tabId) {
+    if (!visible && miniPlayerTabId === tabId) {
       usePreviewMiniPlayerStore.getState().close(threadRef);
       return;
     }
     usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
     useRightPanelStore.getState().close(threadRef);
-  }, [miniPlayerTabId, tabId, threadRef]);
+  }, [miniPlayerTabId, tabId, threadRef, visible]);
 
   /**
    * The menu's actions. A server tab, streamed or rendered natively here, runs
@@ -908,7 +908,7 @@ export function PreviewView({
         onPictureInPicture={
           tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
         }
-        pictureInPicture={miniPlayerTabId === tabId}
+        pictureInPicture={!visible && miniPlayerTabId === tabId}
         pictureInPictureDisabled={
           isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
         }

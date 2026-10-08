@@ -2322,8 +2322,8 @@ export default function ChatView(props: ChatViewProps) {
         : undefined,
     [activeThreadRef, activePreviewServerEpoch],
   );
-  const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
-    selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
+  const activePreviewMiniPlayerSource = usePreviewMiniPlayerStore(
+    (state) => selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef)?.source ?? null,
   );
   const panelTerminalIds = useMemo(
     () =>
@@ -2381,8 +2381,8 @@ export default function ChatView(props: ChatViewProps) {
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
-    activePreviewMiniPlayer?.source ?? null,
-    renderedRightPanelSurface,
+    activePreviewMiniPlayerSource ?? null,
+    rightPanelOpen ? renderedRightPanelSurface : null,
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
@@ -2416,7 +2416,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activePreviewState.sessions, activeThreadRef, previewSessionsReady]);
 
   useEffect(() => {
-    const source = activePreviewMiniPlayer?.source;
+    const source = activePreviewMiniPlayerSource;
     if (
       activeThreadRef &&
       previewSessionsReady &&
@@ -2425,7 +2425,12 @@ export default function ChatView(props: ChatViewProps) {
     ) {
       usePreviewMiniPlayerStore.getState().close(activeThreadRef);
     }
-  }, [activePreviewMiniPlayer, activePreviewState.sessions, activeThreadRef, previewSessionsReady]);
+  }, [
+    activePreviewMiniPlayerSource,
+    activePreviewState.sessions,
+    activeThreadRef,
+    previewSessionsReady,
+  ]);
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
@@ -5553,7 +5558,7 @@ export default function ChatView(props: ChatViewProps) {
   // closes the device there is nothing left to stream.
   useEffect(() => {
     if (!activeThreadRef || !deviceStateLoaded) return;
-    const source = activePreviewMiniPlayer?.source;
+    const source = activePreviewMiniPlayerSource;
     if (source?.kind !== "device") return;
     const sessionStillExists = deviceState.sessions.some(
       (session) =>
@@ -5562,7 +5567,7 @@ export default function ChatView(props: ChatViewProps) {
         session.deviceId === source.deviceId,
     );
     if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
-  }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
+  }, [activePreviewMiniPlayerSource, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -11230,7 +11235,6 @@ export default function ChatView(props: ChatViewProps) {
         <div className="relative flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
           <ChatCanvas
-            composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
             onDragOver={workspaceFileDropHandlers.onDragOver}
@@ -11741,13 +11745,13 @@ export default function ChatView(props: ChatViewProps) {
               <PreviewSessionSync threadRef={activeThreadRef} />
             ) : null}
             {activeThreadRef &&
-            activePreviewMiniPlayer &&
+            activePreviewMiniPlayerSource &&
             previewMiniPlayerVisible &&
-            (activePreviewMiniPlayer.source.kind === "device" || canOperatePreview) ? (
+            (activePreviewMiniPlayerSource.kind === "device" || canOperatePreview) ? (
               <ThreadPreviewMiniPlayer
-                key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
+                key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayerSource)}`}
                 threadRef={activeThreadRef}
-                miniPlayer={activePreviewMiniPlayer}
+                source={activePreviewMiniPlayerSource}
               />
             ) : null}
 

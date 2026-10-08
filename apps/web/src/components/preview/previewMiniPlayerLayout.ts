@@ -94,7 +94,7 @@ export interface PreviewMiniPlayerObstacles {
   readonly detailsCard: (HorizontalSpan & { readonly bottom: number }) | null;
 }
 
-export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
+const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
   composer: null,
   detailsCard: null,
 };
@@ -274,7 +274,7 @@ export function clampPreviewMiniPlayerPosition(
  * Resolves the on-screen frame from the stored width and position. Clamping
  * happens here on every layout pass instead of being written back to the
  * store, so a temporarily narrow container never destroys the user's chosen
- * width. A player without a position sits in the top-right corner, or tucks
+ * width. A player without a position sits in the bottom-right corner, or tucks
  * under the details card with right edges aligned when the card owns it.
  */
 export function resolvePreviewMiniPlayerFrame(input: {
@@ -310,7 +310,7 @@ export function resolvePreviewMiniPlayerFrame(input: {
       ? { x: detailsCard.right - size.width, y: detailsCard.bottom + PREVIEW_MINI_PLAYER_EDGE_GAP }
       : {
           x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
-          y: PREVIEW_MINI_PLAYER_EDGE_GAP,
+          y: container.height - size.height - PREVIEW_MINI_PLAYER_EDGE_GAP,
         });
   return { ...clampPreviewMiniPlayerPosition(anchored, container, size, obstacles), ...size };
 }
