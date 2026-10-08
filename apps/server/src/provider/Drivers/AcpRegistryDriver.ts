@@ -467,6 +467,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
   metadata: {
     displayName: "ACP Registry",
     supportsMultipleInstances: true,
+    hasDefaultInstance: false,
   },
   configSchema: AcpRegistrySettings,
   defaultConfig: () => decodeSettings({}),
