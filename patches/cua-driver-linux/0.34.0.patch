@@ -465,7 +465,7 @@ index 0909579..86d050e 100644
              return listed_windows(apply_pid_filter(ws, filter_pid));
          }
 diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
-index 111b4ed..8483142 100644
+index 111b4ed..a36c240 100644
 --- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
 +++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs
 @@ -18,12 +18,11 @@
@@ -524,7 +524,7 @@ index 111b4ed..8483142 100644
  }
  
  /// Resolve the helper's immutable unique bus name and prove that it is hosted
-@@ -210,6 +187,42 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
+@@ -210,6 +187,62 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
              .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
  }
  
@@ -553,7 +553,7 @@ index 111b4ed..8483142 100644
 +        &[id.to_string(), pid.to_string(), max_dimension.to_string()],
 +        Duration::from_secs(5),
 +    )?;
-+    let png = decode_capture(&raw)?;
++    let png = strip_preview_timestamp(decode_capture(&raw)?)?;
 +    let tail = &raw[raw.rfind('\'')? + 1..];
 +    let dims: Vec<u32> = tail.split(',').filter_map(|part|
 +        part.trim().trim_end_matches(')').trim().trim_start_matches("uint32 ").parse().ok()
@@ -564,10 +564,30 @@ index 111b4ed..8483142 100644
 +    }
 +}
 +
++/// GNOME embeds a wall-clock timestamp even when pixels are identical. Remove
++/// only that ancillary chunk so preview deduplication needs no pixel decoding.
++fn strip_preview_timestamp(mut png: Vec<u8>) -> Option<Vec<u8>> {
++    if !png.starts_with(b"\x89PNG\r\n\x1a\n") { return None; }
++    let mut offset = 8usize;
++    loop {
++        let header = png.get(offset..offset.checked_add(8)?)?;
++        let size = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
++        let end = offset.checked_add(12)?.checked_add(size)?;
++        let chunk = png.get(offset..end)?;
++        if &chunk[4..8] == b"tEXt" && chunk[8..8 + size].starts_with(b"Creation Time\0") {
++            png.drain(offset..end);
++        } else if &chunk[4..8] == b"IEND" {
++            return (size == 0 && end == png.len()).then_some(png);
++        } else {
++            offset = end;
++        }
++    }
++}
++
  /// Capture the GNOME stage through the compositor helper.
  ///
  /// Mutter does not expose wlroots screencopy protocols, and its one-shot
-@@ -247,53 +260,6 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
+@@ -247,53 +280,6 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
      B64.decode(&raw[start..end]).ok()
  }
  
@@ -621,7 +641,32 @@ index 111b4ed..8483142 100644
  /// Screen origin of the compositor frame backing `pid`.
  ///
  /// `screenshot_window_dispatch` crops the Shell stage to this same frame
-@@ -643,9 +609,9 @@ mod tests {
+@@ -585,6 +571,24 @@ pub fn hide_cursor() {
+ mod tests {
+     use super::*;
+
++    #[test]
++    fn preview_timestamp_does_not_change_pixels_or_frame_identity() {
++        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
++        let first = B64.decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAE3RFWHRDcmVhdGlvbiBUaW1lAGZpcnN0muU4QwAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAUSURBVHicY5SLqvjPwMDAwMQABQAczgHzr55lzgAAAABJRU5ErkJggg==").unwrap();
++        let second = B64.decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFHRFWHRDcmVhdGlvbiBUaW1lAHNlY29uZKzNUcIAAAAZdEVYdFNvZnR3YXJlAGdub21lLXNjcmVlbnNob3TvA78+AAAAFElEQVR4nGOUi6r4z8DAwMDEAAUAHM4B86+eZc4AAAAASUVORK5CYII=").unwrap();
++        let stable = strip_preview_timestamp(first.clone()).unwrap();
++        assert_eq!(stable, strip_preview_timestamp(second).unwrap());
++        assert_eq!(image::load_from_memory(&stable).unwrap().to_rgba8(),
++                   image::load_from_memory(&first).unwrap().to_rgba8());
++        assert!(stable.windows(8).any(|bytes| bytes == b"Software"));
++        assert_eq!(Some(stable.clone()), strip_preview_timestamp(stable));
++        assert!(strip_preview_timestamp(first[..first.len() - 1].to_vec()).is_none());
++        let mut malformed = first;
++        malformed[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
++        assert!(strip_preview_timestamp(malformed).is_none());
++    }
++
++
+     const EXTENSION_SOURCE: &str =
+         include_str!("../../../../../wayland-helper/winrects@cua/extension.js");
+     const EXTENSION_METADATA: &str =
+@@ -643,9 +647,9 @@ mod tests {
      }
  
      #[test]
@@ -633,7 +678,7 @@ index 111b4ed..8483142 100644
          assert!(EXTENSION_SOURCE.contains("SetCursorState"));
          assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
          assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
-@@ -670,7 +636,7 @@ mod tests {
+@@ -670,7 +674,7 @@ mod tests {
          assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
          let metadata: serde_json::Value =
              serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");

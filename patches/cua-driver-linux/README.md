@@ -1,7 +1,7 @@
 # Linux Cua Driver test build
 
 `0.34.0.patch` contains the native changes used by the Linux PiP test installer
-`0.0.46-preview.20261007.2756`. It applies to trycua/cua commit
+`0.0.46-preview.20261007.2757`. It applies to trycua/cua commit
 `b0968e1b12834e485dda68789541a3cc57664a9f` (`cua-driver-rs-v0.34.0`).
 This is a source patch, not a pnpm dependency patch. Standard T3 builds still use
 upstream release binaries; this file does not silently replace those binaries.
@@ -11,7 +11,9 @@ preview downscaling (helper API 10), persistent D-Bus transport, and an opt-in
 `display_only` screenshot path that does not register action captures or replace
 agent snapshots. T3 discovers the Linux extension through the daemon tool schema;
 older drivers and other platforms retain the typed screenshot path. Static-frame
-deduplication and polling backoff apply on every platform. It retains
+deduplication and polling backoff apply on every platform. GNOME preview PNGs
+omit the changing `Creation Time` text chunk so identical pixels produce
+identical bytes without decoding and re-encoding the image. It retains
 owner attestation on each call and reconnects after failed calls without
 replaying mutations. The transport has a separate runtime because synchronous
 helper callers can already be inside Tokio.
