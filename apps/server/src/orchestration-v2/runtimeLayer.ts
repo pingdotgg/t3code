@@ -13,6 +13,8 @@ import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -176,6 +178,7 @@ const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
 const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer)),
       ProjectStore.layer,
       layerCheckpointServiceProvided,
       layerEventSinkProvided,

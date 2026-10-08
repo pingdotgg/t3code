@@ -31,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
@@ -54,6 +55,7 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
@@ -67,7 +69,11 @@ import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterRollbackThreadError,
+  type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2Shape,
+} from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
@@ -270,10 +276,11 @@ const layerTest = Layer.mergeAll(
   ProjectionStore.layer,
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
+  WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer)),
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
+  Layer.provideMerge(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
@@ -525,7 +532,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
    * A thread with one ready checkpoint and no queued turn start. Every provider
    * rollback on it fails, so each rollback effect retries until it gives up.
    */
-  const seedFailingRollbackThread = (name: string) =>
+  const seedFailingRollbackThread = (name: string, cwd?: string) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -544,7 +551,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         interactionMode: "default",
         branch: null,
         // Its own path, so other rollback tests keep an isolated worktree.
-        worktreePath: `/tmp/t3-${name}`,
+        worktreePath: cwd ?? `/tmp/t3-${name}`,
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -593,14 +600,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       });
       return {
         threadId,
-        rollback: (commandId: CommandId) =>
+        checkpointId,
+        rollback: (commandId: CommandId, restoreFiles = false) =>
           orchestrator.dispatch({
             type: "checkpoint.rollback",
             commandId,
             threadId,
             checkpointId,
             scopeId: scope.id,
-            restoreFiles: false,
+            restoreFiles,
           }),
       };
     });
@@ -622,6 +630,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
 
       const [rollbackEffect] = yield* outbox.listByCommandId(rollbackCommandId);
       assert.equal(rollbackEffect?.status, "failed");
+      assert.equal(rollbackEffect?.attemptCount, 5);
       const failed = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(failed.thread.rollbackFailure, {
         requestId: rollbackCommandId,
@@ -632,6 +641,157 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const retried = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(retried.thread.rollbackFailure);
     }),
+  );
+
+  it.effect.each(["partial-restore", "refresh-defect", "provider-only", "restore-fails"] as const)(
+    "settles checkpoint rollback safely for %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(NodeServices.layer));
+        const path = yield* Path.Path.pipe(Effect.provide(NodeServices.layer));
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const postRestoreFailure = outcome === "partial-restore" || outcome === "refresh-defect";
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-rollback-partial-" });
+        const file = path.join(cwd, "workspace.txt");
+        yield* fs.writeFileString(file, "current uncheckpointed contents");
+        const { threadId, checkpointId, rollback } = yield* seedFailingRollbackThread(
+          `runtime-rollback-${outcome}`,
+          cwd,
+        );
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const providerThread = before.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("runtime-rollback-partial-completed"),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        let restored = 0;
+        let rejected = 0;
+        const restoreSpy = vi
+          .spyOn(checkpointStore, "restoreCheckpoint")
+          .mockImplementation((input) =>
+            Effect.gen(function* () {
+              assert.equal(path.resolve(input.cwd), path.resolve(cwd));
+              restored += 1;
+              if (outcome === "restore-fails") return false;
+              yield* fs.writeFileString(file, "checkpoint contents");
+              return true;
+            }).pipe(Effect.orDie),
+          );
+        const deleteSpy = vi.spyOn(checkpointStore, "deleteCheckpointRefs");
+        const refreshSpy = vi.spyOn(workspaceEntries, "refresh");
+        if (outcome === "refresh-defect") {
+          refreshSpy.mockImplementation(() => Effect.die(new Error("index refresh defect")));
+        }
+        const sessionSpy = vi.spyOn(sessions, "open").mockReturnValue(
+          Effect.succeed({
+            rollbackThread: () =>
+              Effect.gen(function* () {
+                rejected += 1;
+                assert.equal(
+                  yield* fs.readFileString(file).pipe(Effect.orDie),
+                  outcome === "provider-only"
+                    ? "current uncheckpointed contents"
+                    : "checkpoint contents",
+                );
+                return yield* new ProviderAdapterRollbackThreadError({
+                  driver,
+                  providerThreadId: providerThread.id,
+                  cause: new Error("legacy history cannot be reverted"),
+                });
+              }),
+          } as unknown as ProviderAdapterV2SessionRuntime),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            restoreSpy.mockRestore();
+            deleteSpy.mockRestore();
+            refreshSpy.mockRestore();
+            sessionSpy.mockRestore();
+          }),
+        );
+        const commandId = CommandId.make("runtime-rollback-partial-request");
+        yield* rollback(commandId, outcome !== "provider-only");
+        yield* worker.drain();
+        const [firstAttempt] = yield* outbox.listByCommandId(commandId);
+        assert.equal(firstAttempt?.attemptCount, 1);
+        assert.equal(firstAttempt?.status, postRestoreFailure ? "failed" : "pending");
+        if (!postRestoreFailure) {
+          assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.rollbackFailure);
+          assert.equal(yield* fs.readFileString(file), "current uncheckpointed contents");
+          for (let attempt = 1; attempt < 5; attempt++) {
+            yield* TestClock.adjust("30 seconds");
+            yield* worker.drain();
+          }
+        }
+        const [effect] = yield* outbox.listByCommandId(commandId);
+        assert.equal(effect?.status, "failed");
+        const expectedAttempts = postRestoreFailure ? 1 : 5;
+        const expectedProviderCalls =
+          outcome === "restore-fails" || outcome === "refresh-defect" ? 0 : expectedAttempts;
+        assert.equal(effect?.attemptCount, expectedAttempts);
+        assert.equal(restored, outcome === "provider-only" ? 0 : expectedAttempts);
+        assert.equal(rejected, expectedProviderCalls);
+        assert.equal(
+          yield* fs.readFileString(file),
+          postRestoreFailure ? "checkpoint contents" : "current uncheckpointed contents",
+        );
+        const failed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(failed.thread.rollbackFailure?.requestId, commandId);
+        assert.equal(
+          failed.thread.rollbackFailure?.message,
+          outcome === "partial-restore"
+            ? "Files were restored to the selected checkpoint, but the conversation rollback failed. Conversation history may not match your files. Check the provider and server logs before retrying."
+            : outcome === "refresh-defect"
+              ? "Files were restored to the selected checkpoint, but the workspace index could not be refreshed. The conversation rollback was not attempted. Conversation history may not match your files. Check the server logs before retrying."
+              : ROLLBACK_FAILED_MESSAGE,
+        );
+        assert.equal(failed.runs.find((candidate) => candidate.id === run.id)?.status, "completed");
+        assert.equal(
+          failed.checkpoints.find((candidate) => candidate.id === checkpointId)?.status,
+          "ready",
+        );
+        assert.equal(deleteSpy.mock.calls.length, 0);
+        yield* fs.writeFileString(file, "user edits after rollback failure");
+        for (let attempt = 0; attempt < 5; attempt++) {
+          yield* TestClock.adjust("30 seconds");
+          assert.equal(yield* worker.drain(), 0);
+        }
+        assert.equal(yield* fs.readFileString(file), "user edits after rollback failure");
+        assert.equal(restored, outcome === "provider-only" ? 0 : expectedAttempts);
+        assert.equal(rejected, expectedProviderCalls);
+        if (postRestoreFailure) {
+          const nextCommandId = CommandId.make("runtime-rollback-partial-next");
+          yield* rollback(nextCommandId, true);
+          assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.rollbackFailure);
+          yield* worker.drain();
+          const [nextEffect] = yield* outbox.listByCommandId(nextCommandId);
+          assert.equal(nextEffect?.status, "failed");
+          assert.equal(nextEffect?.attemptCount, 1);
+          assert.equal(restored, 2);
+          assert.equal(rejected, outcome === "refresh-defect" ? 0 : 2);
+          assert.equal(yield* fs.readFileString(file), "checkpoint contents");
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.rollbackFailure?.requestId,
+            nextCommandId,
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("ignores a late failure from a rollback that a newer one superseded", () =>

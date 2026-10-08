@@ -4,17 +4,24 @@ import {
   CheckpointId,
   CheckpointScopeId,
   type OrchestrationV2ThreadProjection,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
+
+import * as ServerConfig from "../config.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
@@ -26,7 +33,10 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type { ProviderAdapterV2RollbackThreadInput } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterRollbackThreadError,
+  type ProviderAdapterV2RollbackThreadInput,
+} from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
@@ -38,6 +48,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
     ),
   ),
@@ -97,6 +108,7 @@ it.effect("rejects a non-ready checkpoint before opening a session or restoring 
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackExecutionError");
     assert.equal(error.reason, "rollback-target-invalid");
     assert.equal(
       error.message,
@@ -175,6 +187,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackExecutionError");
     assert.equal(error.reason, "active-provider-changed");
     assert.equal(
       error.message,
@@ -256,6 +269,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackExecutionError");
     assert.equal(error.reason, "active-provider-changed");
     assert.equal(
       error.message,
@@ -332,6 +346,7 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackExecutionError");
     assert.equal(error.reason, "provider-turn-unavailable");
     assert.equal(
       error.message,
@@ -476,6 +491,7 @@ it.effect.each([
       const error = yield* Effect.flip(
         service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles }),
       );
+      assert(error._tag === "CheckpointRollbackExecutionError");
       assert.equal(error.reason, "shared-workspace");
       assert.deepEqual(calls, []);
       return;
@@ -483,10 +499,249 @@ it.effect.each([
     yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
     assert.deepEqual(
       calls,
-      restoreFiles ? ["provider", "files", "projection"] : ["provider", "projection"],
+      restoreFiles ? ["files", "provider", "projection"] : ["provider", "projection"],
     );
   }).pipe(Effect.provide(layerTest));
 });
+
+const checkpointRollbackStateOutcomes = [
+  "success",
+  "restore-fails",
+  "refresh-defect",
+  "refresh-interrupted",
+  "provider-fails",
+  "provider-only-fails",
+] as const;
+
+it.effect.each(checkpointRollbackStateOutcomes)(
+  "reports checkpoint rollback state with %s",
+  (outcome) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-rollback-index-" });
+      const currentFile = path.join(cwd, "rollback-current.txt");
+      const restoredFile = path.join(cwd, "rollback-restored.txt");
+      yield* fs.writeFileString(currentFile, "current turn");
+      const search = () => workspaceEntries.search({ cwd, query: "rollback", limit: 10 });
+      assert.deepEqual((yield* search()).entries, [{ path: "rollback-current.txt", kind: "file" }]);
+
+      const threadId = ThreadId.make("rollback-restore-state");
+      const providerThreadId = ProviderThreadId.make("rollback-restore-provider");
+      const providerSessionId = ProviderSessionId.make("rollback-restore-session");
+      const instanceId = ProviderInstanceId.make("rollback-restore-instance");
+      const checkpointId = CheckpointId.make("rollback-restore-checkpoint");
+      const scopeId = CheckpointScopeId.make("rollback-restore-scope");
+      const laterCheckpointId = CheckpointId.make("rollback-later-checkpoint");
+      const providerThread = {
+        id: providerThreadId,
+        providerSessionId,
+        providerInstanceId: instanceId,
+      };
+      const projection = {
+        thread: {
+          worktreePath: cwd,
+          activeProviderThreadId: providerThreadId,
+          modelSelection: { instanceId, model: "test" },
+        },
+        providerThreads: [providerThread],
+        providerSessions: [],
+        providerTurns: [
+          {
+            id: "turn-1",
+            providerThreadId,
+            runAttemptId: "attempt-1",
+            ordinal: 1,
+            status: "completed",
+          },
+        ],
+        nodes: [],
+        attempts: [{ id: "attempt-1", runId: "run-1" }],
+        checkpoints: [
+          { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
+          { id: laterCheckpointId, scopeId, status: "ready", appRunOrdinal: 1 },
+        ],
+        checkpointScopes: [{ id: scopeId, cwd }],
+        runs: [{ id: "run-1", ordinal: 1, status: "completed", rootNodeId: null }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const restoreFailure = new CheckpointService.CheckpointRestoreError({
+        scopeId,
+        checkpointId,
+        cause: new Error("git restore failed"),
+      });
+      const providerConversation = ["turn-1"];
+      const refreshFailure = new Error("index refresh defect");
+      let providerCalls = 0;
+      const providerFailure = new ProviderAdapterRollbackThreadError({
+        driver: ProviderDriverKind.make("codex"),
+        providerThreadId,
+        checkpointId,
+        cause: new Error("provider rollback failed"),
+      });
+      const deletedRefs: CheckpointId[] = [];
+      const persistedEvents: string[] = [];
+      const testLayer = CheckpointRollbackService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ThreadCommandExecutor.layer,
+            Layer.succeed(WorkspaceEntries.WorkspaceEntries, {
+              ...workspaceEntries,
+              refresh:
+                outcome === "refresh-defect"
+                  ? () => Effect.die(refreshFailure)
+                  : outcome === "refresh-interrupted"
+                    ? () => Effect.interrupt
+                    : workspaceEntries.refresh,
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              get: () => Effect.succeed(unrelatedProject),
+            }),
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              restore: () =>
+                outcome === "restore-fails"
+                  ? Effect.fail(restoreFailure)
+                  : Effect.gen(function* () {
+                      yield* fs.remove(currentFile);
+                      yield* fs.writeFileString(restoredFile, "checkpoint turn");
+                    }).pipe(Effect.orDie),
+              deleteStaleRefs: ({ checkpoints }) =>
+                Effect.sync(() => {
+                  deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
+                }),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: ({ events }) =>
+                Effect.sync(() => {
+                  persistedEvents.push(...events.map((event) => event.type));
+                  return [];
+                }),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadRecords: () => Effect.succeed(projection),
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              open: () =>
+                Effect.succeed({
+                  rollbackThread: (input: ProviderAdapterV2RollbackThreadInput) =>
+                    Effect.gen(function* () {
+                      providerCalls += 1;
+                      const count = yield* resolveCodexRollbackTurnCount(input);
+                      assert.equal(count, 1);
+                      if (outcome === "provider-fails" || outcome === "provider-only-fails") {
+                        return yield* providerFailure;
+                      }
+                      providerConversation.splice(providerConversation.length - count, count);
+                      return { providerThread };
+                    }),
+                } as never),
+            }),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: () => Effect.succeed({} as never),
+            }),
+          ),
+        ),
+      );
+      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
+        Effect.provide(testLayer),
+      );
+      const rollback = service.execute({
+        threadId,
+        providerThreadId,
+        checkpointId,
+        scopeId,
+        ...(outcome === "provider-only-fails" ? { restoreFiles: false } : {}),
+      });
+      if (outcome === "refresh-interrupted") {
+        const exit = yield* Effect.exit(rollback);
+        assert(Exit.isFailure(exit));
+        assert(Cause.hasInterruptsOnly(exit.cause));
+        assert.equal(providerCalls, 0);
+        assert.deepEqual(providerConversation, ["turn-1"]);
+        assert.deepEqual(persistedEvents, []);
+        assert.deepEqual(deletedRefs, []);
+        assert.equal(yield* fs.readFileString(restoredFile), "checkpoint turn");
+      } else if (outcome !== "success") {
+        const error = yield* Effect.flip(rollback);
+        assert.equal(error.threadId, threadId);
+        assert.equal(error.providerThreadId, providerThreadId);
+        assert.equal(error.checkpointId, checkpointId);
+        assert.equal(
+          error.cause,
+          outcome === "restore-fails"
+            ? restoreFailure
+            : outcome === "refresh-defect"
+              ? refreshFailure
+              : providerFailure,
+        );
+        assert.equal(
+          providerCalls,
+          outcome === "restore-fails" || outcome === "refresh-defect" ? 0 : 1,
+        );
+        assert.deepEqual(providerConversation, ["turn-1"]);
+        assert.deepEqual(persistedEvents, []);
+        assert.deepEqual(deletedRefs, []);
+        assert.equal(projection.runs[0]?.status, "completed");
+        assert.equal(projection.checkpoints[1]?.status, "ready");
+        if (outcome === "provider-fails" || outcome === "refresh-defect") {
+          assert.equal(
+            error._tag,
+            outcome === "refresh-defect"
+              ? "CheckpointRollbackIndexRefreshError"
+              : "CheckpointRollbackPartialRestoreError",
+          );
+          assert.equal(
+            error.message,
+            outcome === "refresh-defect"
+              ? "Files were restored to the selected checkpoint, but the workspace index could not be refreshed. The conversation rollback was not attempted. Conversation history may not match your files. Check the server logs before retrying."
+              : "Files were restored to the selected checkpoint, but the conversation rollback failed. Conversation history may not match your files. Check the provider and server logs before retrying.",
+          );
+          assert.equal(yield* fs.exists(currentFile), false);
+          assert.equal(yield* fs.readFileString(restoredFile), "checkpoint turn");
+        } else {
+          assert(error._tag === "CheckpointRollbackExecutionError");
+          assert.equal(error.reason, "unexpected-failure");
+          assert.equal(error.message, CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE);
+          assert.equal(yield* fs.readFileString(currentFile), "current turn");
+          assert.equal(yield* fs.exists(restoredFile), false);
+        }
+        if (outcome !== "refresh-defect")
+          assert.deepEqual((yield* search()).entries, [
+            {
+              path: outcome === "provider-fails" ? "rollback-restored.txt" : "rollback-current.txt",
+              kind: "file",
+            },
+          ]);
+      } else {
+        yield* rollback;
+        assert.deepEqual(providerConversation, []);
+        assert.include(persistedEvents, "run.updated");
+        assert.deepEqual(deletedRefs, [laterCheckpointId]);
+        assert.equal(yield* fs.exists(currentFile), false);
+        assert.equal(yield* fs.readFileString(restoredFile), "checkpoint turn");
+        assert.deepEqual((yield* search()).entries, [
+          { path: "rollback-restored.txt", kind: "file" },
+        ]);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        WorkspaceEntries.layer.pipe(
+          Layer.provide(WorkspacePaths.layer),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-rollback-config-" })),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
 
 it.effect.skipIf(!symlinksSupported)(
   "rejects an archived thread sharing a worktree through a symlink",

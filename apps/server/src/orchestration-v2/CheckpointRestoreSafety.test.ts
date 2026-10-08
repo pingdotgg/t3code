@@ -25,6 +25,7 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 
 it.effect.each([
   "nested",
@@ -103,6 +104,7 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -187,12 +189,13 @@ it.effect.each([
       const error = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
         .pipe(Effect.flip);
+      assert(error._tag === "CheckpointRollbackExecutionError");
       assert.equal(error.reason, "shared-workspace");
       assert.deepEqual(calls, []);
       assert.equal(yield* fs.readFileString(otherFile), "other thread's uncommitted work");
     } else {
       yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
-      assert.deepEqual(calls, restoreFiles ? ["provider", "files"] : ["provider"]);
+      assert.deepEqual(calls, restoreFiles ? ["files", "provider"] : ["provider"]);
       assert.equal(yield* fs.exists(otherFile), !restoreFiles);
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

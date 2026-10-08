@@ -22,6 +22,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
@@ -390,6 +391,7 @@ export function layerWithRegistry<Error>(
   const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
