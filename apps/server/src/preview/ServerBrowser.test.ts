@@ -153,7 +153,7 @@ let clipboardBinding: ClipboardBinding | null = null;
 let contextFailure: Error | null = null;
 /** Server tabs the fake desktop renders, and the endpoints the server connected to. */
 let desktopRendersNext = false;
-/** Pages the fake desktop takes back; the channel's detached stream emits them. */
+/** Pages the fake desktop mounts late or takes back; the channel's streams emit them. */
 const desktopDetaches = new NodeEvents.EventEmitter();
 const desktopTabs = new Set<string>();
 const desktopRenders = (tabId: string) => {
@@ -198,6 +198,17 @@ const dependencies = Layer.mergeAll(
     // Only tabs a test marks render on the desktop; the rest stay headless.
     available: true,
     awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const onAttach = (key: { threadId: string; tabId: string }) =>
+            Queue.offerUnsafe(queue, key);
+          desktopDetaches.on("attach", onAttach);
+          return onAttach;
+        }),
+        (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+      ),
+    ),
     detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -1060,6 +1071,40 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
       while (releasedDesktopTabs.length === 0) yield* Effect.yieldNow;
       expect(releasedDesktopTabs).toEqual([opened.tabId]);
       expect(page.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("an agent tab that started headless moves to the desktop's page once it mounts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      // No panel showed the agent's tab in time, so it runs headless in its own storage.
+      expect(desktopConnections).toEqual([]);
+      const headless = contexts[0]!;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      // The person opens the panel, and the desktop mounts its own page for the tab.
+      while (desktopDetaches.listenerCount("attach") === 0) yield* Effect.yieldNow;
+      desktopTabs.add(tabId);
+      desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId });
+      let end = yield* Queue.take(viewer.output);
+      while (end._tag !== "reconnect" && end._tag !== "gone")
+        end = yield* Queue.take(viewer.output);
+      expect(end._tag).toBe("reconnect");
+      while (desktopConnections.length === 0) yield* Effect.yieldNow;
+      expect(desktopConnections.map((connection) => connection.endpoint)).toEqual([
+        `ws://desktop/${tabId}`,
+      ]);
+      expect(headless.close).toHaveBeenCalled();
+      // The agent keeps the same tab and now drives the page the person sees.
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+        tabId,
+      });
+      expect(status).toMatchObject({ tabId });
+      expect(contexts).toHaveLength(1);
     }),
   ).pipe(Effect.provide(layer)),
 );

@@ -44,7 +44,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import { constVoid } from "effect/Function";
+import { constUndefined, constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -641,13 +641,15 @@ const make = Effect.gen(function* () {
   /** Whether the preview session for a tab still exists. */
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /** `handOff` keeps viewers for a session that moves to another page, such as the desktop's. */
+  const dropTab = (tab: ServerTab, closeSession: boolean, handOff = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end =
+      (tab.desktop || handOff) && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     // The desktop owns its page; letting go only ends this connection.
@@ -2140,6 +2142,22 @@ const make = Effect.gen(function* () {
         if (tab?.desktop) dropTab(tab, false);
       }),
     ),
+    Effect.forkScoped,
+  );
+  // A tab opened while no desktop panel showed it in time started headless, with
+  // its own storage. Once the desktop mounts it, move the session onto the
+  // desktop's page so agents drive what the person sees, with their sign-ins.
+  yield* desktopChannel.attached.pipe(
+    Stream.mapEffect(
+      (key) =>
+        Effect.promise(async () => {
+          const id = tabKey(key.threadId, key.tabId);
+          const tab = tabs.get(id) ?? (await pendingTabs.get(id)?.catch(constUndefined));
+          if (tab && !tab.desktop) dropTab(tab, false, true);
+        }).pipe(Effect.andThen(findTab(key.threadId, key.tabId)), Effect.ignore),
+      { concurrency: "unbounded" },
+    ),
+    Stream.runDrain,
     Effect.forkScoped,
   );
   yield* Effect.sync(closeIdleAgentTabs).pipe(

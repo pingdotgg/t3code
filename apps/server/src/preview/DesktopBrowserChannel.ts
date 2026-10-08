@@ -52,6 +52,8 @@ export class DesktopBrowserChannel extends Context.Service<
      * attach landing in between is never missed. False after `timeout`.
      */
     readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
+    /** Desktop tabs as they attach. */
+    readonly attached: Stream.Stream<DesktopTabKey>;
     /** Desktop tabs as they detach. */
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
@@ -82,6 +84,7 @@ const make = Effect.gen(function* () {
     return DesktopBrowserChannel.of({
       available: false,
       awaitAttached: () => Effect.succeed(false),
+      attached: Stream.empty,
       detached: Stream.empty,
       isAttached: () => Effect.succeed(false),
       endpoint: () => Effect.die("No desktop app is attached to this server."),
@@ -212,6 +215,10 @@ const make = Effect.gen(function* () {
           );
         }),
       ),
+    attached: Stream.fromPubSub(changes).pipe(
+      Stream.filter((change) => change.attached),
+      Stream.map((change) => change.key),
+    ),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
       Stream.map((change) => change.key),
