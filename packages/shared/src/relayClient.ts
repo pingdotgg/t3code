@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -116,6 +117,9 @@ const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 
+const ACTIVATE_RETRY_COUNT = 40;
+const ACTIVATE_RETRY_DELAY = "250 millis";
+
 const trimmedString = (name: string) =>
   Config.String(name).pipe(
     Config.option,
@@ -203,6 +207,13 @@ class VersionProbeKey extends Data.Class<{
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
+}
+
+// Windows refuses to rename a file another process briefly holds open, such as a virus
+// scanner reading the binary that just ran. These codes clear once it lets go.
+function isTransientWindowsLock(error: PlatformError.PlatformError): boolean {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 }
 
 const wrapInstallFailure =
@@ -397,6 +408,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
+  /** Moves the new binary toward its final path, waiting out a brief Windows lock. */
+  const renameWhenUnlocked = (from: string, to: string) =>
+    fileSystem.rename(from, to).pipe(
+      Effect.retry({
+        times: ACTIVATE_RETRY_COUNT,
+        schedule: Schedule.spaced(ACTIVATE_RETRY_DELAY),
+        while: (error) => platform === "win32" && isTransientWindowsLock(error),
+      }),
+    );
+
   const runCommand = Effect.fn("cloudflared.runCommand")(function* (
     command: string,
     args: ReadonlyArray<string>,
@@ -574,15 +595,13 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
       yield* report("activating");
-      yield* fileSystem
-        .rename(executablePath, stagedPath)
-        .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
-      yield* fileSystem
-        .rename(stagedPath, managedPath)
-        .pipe(
-          wrapInstallFailure("write_failed", "Could not activate the relay client."),
-          Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
-        );
+      yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
+        wrapInstallFailure("write_failed", "Could not stage the relay client."),
+      );
+      yield* renameWhenUnlocked(stagedPath, managedPath).pipe(
+        wrapInstallFailure("write_failed", "Could not activate the relay client."),
+        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
+      );
       return {
         status: "available",
         executablePath: managedPath,
