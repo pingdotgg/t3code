@@ -8,8 +8,6 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { resolveAttachmentPath } from "../attachmentStore.ts";
-
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 interface SnapShotPromptAccessibilityNode {
@@ -161,7 +159,8 @@ export function isProviderNativeImageAttachment(attachment: ChatAttachment): boo
 export function providerMessageTextWithAttachmentPaths(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly attachmentsDir: string;
+  /** Absolute path of a stored attachment, such as `ProviderHost.resolveAttachmentPath`. */
+  readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
 }): string {
   let text = input.text;
   const appendContext = (context: string | undefined) => {
@@ -171,10 +170,7 @@ export function providerMessageTextWithAttachmentPaths(input: {
   };
 
   for (const attachment of input.attachments) {
-    const path = resolveAttachmentPath({
-      attachmentsDir: input.attachmentsDir,
-      attachment,
-    });
+    const path = input.resolveAttachmentPath(attachment);
     appendContext(
       path === null
         ? undefined

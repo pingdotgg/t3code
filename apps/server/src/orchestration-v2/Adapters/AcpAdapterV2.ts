@@ -98,14 +98,14 @@ import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { type ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,
   backgroundWorkNotification,
-} from "../Notification.ts";
+} from "@t3tools/provider-core/server/notification";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
@@ -114,7 +114,7 @@ import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionT
 import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
-} from "../AttachmentPrompt.ts";
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
@@ -6781,7 +6781,8 @@ export function makeAcpAdapterV2(
           const messageText = providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
-            attachmentsDir: serverConfig.attachmentsDir,
+            resolveAttachmentPath: (attachment) =>
+              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
           });
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,

@@ -9,7 +9,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
-} from "./AttachmentPrompt.ts";
+} from "./attachmentPrompt.ts";
 
 const document = ChatFileAttachment.make({
   id: ChatAttachmentId.make("file-document"),
@@ -26,13 +26,17 @@ const image = ChatImageAttachment.make({
   sizeBytes: 456,
 });
 
+// Stands in for the host's resolver, which maps stored attachments to their files.
+const resolveAttachmentPath = (attachment: { readonly id: string; readonly name: string }) =>
+  `/attachments/${attachment.id}${attachment.name.slice(attachment.name.lastIndexOf("."))}`;
+
 describe("provider attachment prompts", () => {
   it("appends resolvable file paths for documents and images", () => {
     assert.equal(
       providerMessageTextWithAttachmentPaths({
         text: "Review these.",
         attachments: [document, image],
-        attachmentsDir: "/attachments",
+        resolveAttachmentPath,
       }),
       'Review these.\n\n[Attached file "spec.pdf" is saved at: /attachments/file-document.pdf]\n' +
         '\n[Attached image "diagram.png" is saved at: /attachments/file-image.png]',
@@ -53,7 +57,7 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Fix this.",
       attachments: [captured],
-      attachmentsDir: "/attachments",
+      resolveAttachmentPath,
     });
 
     assert.include(
@@ -103,7 +107,7 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Describe this.",
       attachments: [captured],
-      attachmentsDir: "/attachments",
+      resolveAttachmentPath,
     });
 
     assert.include(
@@ -133,7 +137,7 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Fix this.",
       attachments,
-      attachmentsDir: "/attachments",
+      resolveAttachmentPath,
     });
 
     assert.isAtMost(text.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);

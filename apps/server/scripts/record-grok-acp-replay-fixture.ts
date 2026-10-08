@@ -44,7 +44,7 @@ import { makeReplayServerConfig } from "../src/orchestration-v2/testkit/Provider
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "../src/provider/acp/GrokAcpSupport.ts";
-import { buildRuntimeInstructions } from "../src/provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));

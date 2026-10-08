@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { backgroundWorkNotification, notificationTurnItem } from "./Notification.ts";
+import { backgroundWorkNotification, notificationTurnItem } from "./notification.ts";
 
 const childThreadId = ThreadId.make("thread:child");
 
