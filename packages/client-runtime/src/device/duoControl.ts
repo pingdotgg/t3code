@@ -1,12 +1,8 @@
 // @effect-diagnostics globalTimers:off - The stream owns this browser control queue and its timeout.
-export const DUO_POSES = [
-  { id: "closed", label: "Closed", angle: 0 },
-  { id: "book", label: "Book", angle: 90 },
-  { id: "open", label: "Open", angle: 180 },
-  { id: "laptop", label: "Laptop", angle: 90 },
-  { id: "tent", label: "Tent", angle: 80 },
-] as const;
-export type DuoPose = (typeof DUO_POSES)[number]["id"];
+import type { DeviceScreenSize } from "./stream.ts";
+
+/** Native hinge presets. Each one also sets the device's physical orientation. */
+export type DuoPose = "closed" | "book" | "open" | "laptop" | "tent";
 export type DuoOrientation =
   | "portrait"
   | "landscape_left"
@@ -23,6 +19,48 @@ export type DuoControlState = {
   requested: DuoCommand | null;
   error: string | null;
 };
+
+/**
+ * Whether the reporting display is the one the fold shows: the cover when closed, the inner
+ * display when open. A fold across the closed position hands off in steps, and the outgoing
+ * display first reports the incoming one's orientation, so an unsettled screen's orientation
+ * does not say how the phone is held. Stands such as Tent can also rest unsettled on the cover.
+ */
+export function duoScreenSettled(screen: Pick<DeviceScreenSize, "screenId" | "hingeAngle">) {
+  const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
+  return (screen.screenId === 1) === (angle === 0);
+}
+
+/**
+ * The fold the device is in and the way it is held. Missing hinge fields fall back the same way
+ * the 3D view does, so controls never disagree with what is drawn. The inner panel is mounted a
+ * quarter turn from the cover, so its landscape orientation means a vertical phone.
+ */
+export function duoFoldState(
+  screen: Pick<DeviceScreenSize, "orientation" | "screenId" | "hingeAngle" | "hingePose">,
+) {
+  const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
+  const landscape = screen.orientation.startsWith("landscape");
+  return {
+    fold: angle === 0 ? "closed" : angle === 180 ? "open" : "half",
+    stand: screen.hingePose === "laptop" || screen.hingePose === "tent",
+    phoneVertical: screen.screenId === 1 ? !landscape : landscape,
+    settled: duoScreenSettled(screen),
+  } as const;
+}
+
+/**
+ * The rotation that holds the phone vertical or horizontal. Native rotation is
+ * read in the frame of the display active when it arrives, and the inner panel
+ * is mounted a quarter turn from the cover.
+ */
+export function duoHoldOrientation(
+  vertical: boolean,
+  screenId: number | undefined,
+): DuoOrientation {
+  if (screenId === 1) return vertical ? "portrait" : "landscape_left";
+  return vertical ? "landscape_left" : "portrait_upside_down";
+}
 
 /** One in-flight native transaction. Hinge motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
 export function createDuoControl(options: {

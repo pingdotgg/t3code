@@ -325,8 +325,8 @@ this binding.
 Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
-`startFromOrigin: false`. Launch requires a full-access/default caller and has
-no retry key, so inspect existing threads after a failed or lost response before
+`startFromOrigin: false`. The new thread may not run with broader runtime or
+interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
 ### `t3_thread_list`
@@ -351,6 +351,16 @@ provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
 and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
+
+Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
+link carries only the id, which resolves in the environment of the message that
+holds it. Clients show the thread's current title rather than the label, so a
+rename never leaves a stale link.
+
+List and read results report `snoozed` and `snoozedUntil`, and
+`t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
+client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
+wakes early when it has a pending request, fails, or completes after the snooze.
 
 ### `t3_thread_update`
 

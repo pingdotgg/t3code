@@ -36,6 +36,7 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
+import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
@@ -131,7 +132,7 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-it.effect("checks capability before accessing services through the production registration", () =>
+it.effect("checks capability through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     expect(server.tools.some(({ tool }) => tool.name === "t3_thread_organize")).toBe(true);
@@ -152,7 +153,7 @@ it.effect("checks capability before accessing services through the production re
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
       ),
     ),
   ),
@@ -395,12 +396,12 @@ it.effect("resolves reused attachment references from stored metadata", () =>
 );
 
 const clientScope = (
-  runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+  access: McpInvocationContext.McpClientCaller["access"],
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("mcp-core-environment"),
   requestNamespace: "client:session-1",
   thread: undefined,
-  client: { sessionId: "session-1", label: "Claude Code", runtimeModeCeiling },
+  client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
 });
@@ -453,6 +454,66 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  deletedAt: null,
+                },
+              } as never),
+            dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("a read-only client reads threads and is refused every write before it runs", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (name: string, args: Record<string, unknown>) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("read-only"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const configuration = yield* call("t3_thread_configuration", {
+      threadId: "other-project-thread",
+    });
+    expect(configuration.isError).toBe(false);
+    expect(configuration.structuredContent).toMatchObject({ runtimeMode: "auto" });
+
+    const pinned = yield* call("t3_thread_organize", {
+      action: "pin",
+      threadId: "other-project-thread",
+    });
+    expect(declaredFailure(pinned)).toMatchObject({ code: "capability_denied" });
+    expect(dispatched).toEqual([]);
+
+    const configure = yield* call("t3_thread_configure", {
+      threadId: "other-project-thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+    });
+    expect(declaredFailure(configure)).toMatchObject({ code: "capability_denied" });
+    expect(dispatched).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: () =>
               Effect.succeed({
                 id: ThreadId.make("other-project-thread"),
@@ -464,18 +525,24 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
                 thread: {
                   id: ThreadId.make("other-project-thread"),
                   projectId: "other-project",
+                  modelSelection: { instanceId: "codex", model: "gpt-5" },
                   runtimeMode: "auto",
                   interactionMode: "default",
                   deletedAt: null,
                 },
               } as never),
-            dispatch: () => Effect.succeed({ sequence: 7 } as never),
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched.push("dispatch");
+                return { sequence: 7 } as never;
+              }),
           }),
         ),
       ),
     ),
   ),
 );
+const dispatched: Array<string> = [];
 
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {

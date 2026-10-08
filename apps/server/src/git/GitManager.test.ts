@@ -6,7 +6,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -16,11 +19,14 @@ import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
+  ChangeRequest,
   GitActionProgressEvent,
+  GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   ModelSelection,
 } from "@t3tools/contracts";
@@ -32,17 +38,21 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SourceControlProviderError as SourceControlProviderFailure,
   TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
 import {
   ForgejoPullRequestSchema,
@@ -81,7 +91,10 @@ interface FakeGhScenario {
     headRepositoryOwnerLogin?: string | null;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
-  failWith?: GitHubCli.GitHubCliError;
+  /** The detail the provider fails with, the way a GitHub failure reaches GitManager. */
+  failWith?: string;
+  /** The raw failure behind `failWith`, which must stay out of anything shown or logged. */
+  failCause?: unknown;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
 }
@@ -100,7 +113,12 @@ type FakeGitTextGeneration = TextGeneration.TextGeneration["Service"];
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
 
-function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequestSummary | null {
+type FakePullRequestSummary = Omit<ChangeRequest, "provider" | "state" | "updatedAt"> & {
+  readonly state?: ChangeRequest["state"];
+  readonly updatedAt?: string;
+};
+
+function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
@@ -370,8 +388,12 @@ function createTextGeneration(
   };
 }
 
-function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
-  service: GitHubCli.GitHubCli["Service"];
+/**
+ * A GitHub source control provider over a fake `gh`. The fake still speaks gh's command shapes,
+ * which is what `ghCalls` records and the tests assert on; the provider methods translate to them.
+ */
+function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
+  service: SourceControlProvider["Service"];
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
@@ -383,12 +405,20 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   );
   const ghCalls: string[] = [];
 
-  const execute: GitHubCli.GitHubCli["Service"]["execute"] = (input) => {
+  const fail = (cwd: string, detail: string, cause?: unknown, operation = "fakeGh") =>
+    new SourceControlProviderFailure({ provider: "github", operation, cwd, detail, cause });
+
+  /** `operation` is the provider method the call answers, which a failure reports. */
+  const execute = (input: {
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+    readonly operation: string;
+  }): Effect.Effect<VcsProcess.VcsProcessOutput, SourceControlProviderFailure> => {
     const args = [...input.args];
     ghCalls.push(args.join(" "));
 
     if (scenario.failWith && ghCalls.length > (scenario.failAfterCalls ?? 0)) {
-      return Effect.fail(scenario.failWith);
+      return Effect.fail(fail(input.cwd, scenario.failWith, scenario.failCause, input.operation));
     }
 
     if (args[0] === "pr" && args[1] === "list") {
@@ -470,14 +500,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           }
           return fakeGhOutput("");
         },
-        catch: (error) =>
-          GitHubCli.isGitHubCliError(error)
-            ? error
-            : new GitHubCli.GitHubCliCommandError({
-                command: "gh",
-                cwd: input.cwd,
-                cause: error,
-              }),
+        catch: (error) => fail(input.cwd, "GitHub request failed.", error),
       });
     }
 
@@ -486,13 +509,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       if (typeof repository === "string" && args.includes("nameWithOwner,url,sshUrl")) {
         const cloneUrls = scenario.repositoryCloneUrls?.[repository];
         if (!cloneUrls) {
-          return Effect.fail(
-            new GitHubCli.GitHubCliCommandError({
-              command: "gh",
-              cwd: input.cwd,
-              cause: new Error(`Unexpected repository lookup: ${repository}`),
-            }),
-          );
+          return Effect.fail(fail(input.cwd, `Unexpected repository lookup: ${repository}`));
         }
         return Effect.succeed(
           fakeGhOutput(
@@ -507,73 +524,86 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.succeed(fakeGhOutput(`${scenario.defaultBranch ?? "main"}\n`));
     }
 
-    return Effect.fail(
-      new GitHubCli.GitHubCliCommandError({
-        command: "gh",
-        cwd: input.cwd,
-        cause: new Error(`Unexpected gh command: ${args.join(" ")}`),
-      }),
-    );
+    return Effect.fail(fail(input.cwd, `Unexpected gh command: ${args.join(" ")}`));
   };
+
+  /** What GitHubSourceControlProvider makes of a pull request it read. */
+  const toChangeRequest = (summary: FakePullRequestSummary): ChangeRequest => ({
+    ...summary,
+    provider: "github",
+    state: summary.state ?? "open",
+    closedAt: summary.closedAt ?? null,
+    mergedAt: summary.mergedAt ?? null,
+    updatedAt:
+      summary.updatedAt === undefined
+        ? Option.none()
+        : Option.some(DateTime.makeUnsafe(summary.updatedAt)),
+  });
 
   return {
     service: {
-      execute,
-      // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
-      listPullRequestsByHead: (input) =>
+      kind: "github",
+      listChangeRequests: (input) =>
+        input.state === "open"
+          ? execute({
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              args: [
+                "pr",
+                "list",
+                "--head",
+                input.headSelector,
+                "--state",
+                "open",
+                "--limit",
+                String(input.limit ?? 1),
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
+              ],
+            }).pipe(
+              Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+              Effect.map((raw) =>
+                raw
+                  .map((entry) => normalizeFakePullRequestSummary(entry))
+                  .filter((entry): entry is FakePullRequestSummary => entry !== null)
+                  .map(toChangeRequest),
+              ),
+            )
+          : // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
+            execute({
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              args: [
+                "pr",
+                "list",
+                "--head",
+                input.headSelector,
+                "--state",
+                input.state,
+                "--limit",
+                String(input.limit ?? 20),
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+              ],
+            }).pipe(
+              Effect.map((result) => {
+                const raw = result.stdout.trim();
+                if (raw.length === 0) return [];
+                const decoded = decodeGitHubPullRequestListJson(raw);
+                return Result.isSuccess(decoded)
+                  ? decoded.success.map((record) => ({ provider: "github" as const, ...record }))
+                  : [];
+              }),
+            ),
+      createChangeRequest: (input) =>
         execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            input.headSelector,
-            "--state",
-            input.state,
-            "--limit",
-            String(input.limit),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
-        }).pipe(
-          Effect.map((result) => {
-            const raw = result.stdout.trim();
-            if (raw.length === 0) return [];
-            const decoded = decodeGitHubPullRequestListJson(raw);
-            return Result.isSuccess(decoded) ? decoded.success : [];
-          }),
-        ),
-      listOpenPullRequests: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            input.headSelector,
-            "--state",
-            "open",
-            "--limit",
-            String(input.limit ?? 1),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
-        }).pipe(
-          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
-          Effect.map((raw) =>
-            raw
-              .map((entry) => normalizeFakePullRequestSummary(entry))
-              .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
-          ),
-        ),
-      createPullRequest: (input) =>
-        execute({
+          operation: "createChangeRequest",
           cwd: input.cwd,
           args: [
             "pr",
             "create",
             "--base",
-            input.baseBranch,
+            input.baseRefName,
             "--head",
             input.headSelector,
             "--title",
@@ -584,6 +614,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(Effect.asVoid),
       getDefaultBranch: (input) =>
         execute({
+          operation: "getDefaultBranch",
           cwd: input.cwd,
           args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
         }).pipe(
@@ -592,8 +623,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             return value.length > 0 ? value : null;
           }),
         ),
-      getPullRequest: (input) =>
+      getChangeRequest: (input) =>
         execute({
+          operation: "getChangeRequest",
           cwd: input.cwd,
           args: [
             "pr",
@@ -603,23 +635,21 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
-          Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
+          Effect.map((result) =>
+            toChangeRequest(JSON.parse(result.stdout) as FakePullRequestSummary),
+          ),
         ),
       getRepositoryCloneUrls: (input) =>
         execute({
+          operation: "getRepositoryCloneUrls",
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       createRepository: (input) =>
-        Effect.fail(
-          new GitHubCli.GitHubCliCommandError({
-            command: "gh",
-            cwd: input.cwd,
-            cause: new Error(`Unexpected repository create: ${input.repository}`),
-          }),
-        ),
-      checkoutPullRequest: (input) =>
+        Effect.fail(fail(input.cwd, `Unexpected repository create: ${input.repository}`)),
+      checkoutChangeRequest: (input) =>
         execute({
+          operation: "checkoutChangeRequest",
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
@@ -677,7 +707,9 @@ function makeManager(input?: {
     ProjectionStore.ProjectionStoreV2 | ProjectStore.ProjectStoreV2
   >;
 }) {
-  const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
+  const { service: fakeGitHubProvider, ghCalls } = createGitHubProviderWithFakeGh(
+    input?.ghScenario,
+  );
   const textGeneration = createTextGeneration(input?.textGeneration);
   const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
@@ -711,10 +743,7 @@ function makeManager(input?: {
       );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    (input?.sourceControlProvider === undefined
-      ? GitHubSourceControlProvider.make
-      : Effect.succeed(input.sourceControlProvider)
-    ).pipe(
+    Effect.succeed(input?.sourceControlProvider ?? fakeGitHubProvider).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
@@ -724,7 +753,6 @@ function makeManager(input?: {
           discover: Effect.succeed([]),
         }),
       ),
-      Effect.provide(Layer.succeed(GitHubCli.GitHubCli, gitHubCli)),
     ),
   );
 
@@ -769,6 +797,120 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("passive worktree status streams do not start remote refreshes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-passive-vcs-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const worktreeDir = NodePath.join(repoDir, "worktree");
+      yield* runGit(repoDir, ["worktree", "add", "-b", "feature/passive", worktreeDir]);
+      yield* runGit(worktreeDir, ["push", "-u", "origin", "feature/passive"]);
+
+      const { manager } = yield* makeManager();
+      let remoteReads = 0;
+      const workflowContext = yield* Layer.build(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.succeed(GitManager.GitManager, {
+              ...manager,
+              remoteStatus: (input, options) =>
+                manager.remoteStatus(input, options).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      remoteReads += 1;
+                    }),
+                  ),
+                ),
+            }),
+          ),
+          Layer.provide(
+            VcsDriverRegistry.layer.pipe(
+              Layer.provide(VcsProjectConfig.layer),
+              Layer.provide(VcsProcess.layer),
+            ),
+          ),
+        ),
+      );
+      const broadcasterContext = yield* Layer.build(
+        VcsStatusBroadcaster.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              GitWorkflowService.GitWorkflowService,
+              Context.get(workflowContext, GitWorkflowService.GitWorkflowService),
+            ),
+          ),
+          Layer.provide(
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              hasDemand: () => Effect.succeed(true),
+              shouldRunScopeWork: () => Effect.succeed(true),
+            }),
+          ),
+        ),
+      );
+      const broadcaster = Context.get(
+        broadcasterContext,
+        VcsStatusBroadcaster.VcsStatusBroadcaster,
+      );
+      const passiveScope = yield* Scope.make();
+      const snapshots = yield* Deferred.make<void, GitManagerServiceError>();
+      const localUpdated = yield* Deferred.make<void>();
+      const remoteUpdated = yield* Deferred.make<void>();
+      let snapshotCount = 0;
+      for (const cwd of [repoDir, worktreeDir]) {
+        yield* Stream.runForEach(
+          broadcaster.streamStatus(
+            { cwd, includeRemote: false },
+            { automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(1)) },
+          ),
+          (event) => {
+            if (
+              cwd === worktreeDir &&
+              event._tag === "localUpdated" &&
+              event.local.hasWorkingTreeChanges
+            ) {
+              return Deferred.succeed(localUpdated, undefined);
+            }
+            if (cwd === worktreeDir && event._tag === "remoteUpdated") {
+              expect(event.remote?.hasUpstream).toBe(true);
+              return Deferred.succeed(remoteUpdated, undefined);
+            }
+            if (event._tag !== "snapshot") return Effect.void;
+            expect(event.local.isRepo).toBe(true);
+            expect(event.local.refName).toBe(cwd === repoDir ? "main" : "feature/passive");
+            snapshotCount += 1;
+            return snapshotCount === 2 ? Deferred.succeed(snapshots, undefined) : Effect.void;
+          },
+        ).pipe(
+          Effect.catchCause((cause) => Deferred.failCause(snapshots, cause)),
+          Effect.forkIn(passiveScope),
+        );
+      }
+      yield* Deferred.await(snapshots);
+      expect(remoteReads).toBe(0);
+      yield* TestClock.adjust("1 minute");
+      expect(remoteReads).toBe(0);
+
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(worktreeDir, "README.md"), "changed\n");
+      yield* broadcaster.refreshLocalStatus(worktreeDir);
+      yield* Deferred.await(localUpdated);
+      expect(remoteReads).toBe(0);
+
+      const activeScope = yield* Scope.make();
+      yield* Stream.runDrain(broadcaster.streamStatus({ cwd: worktreeDir })).pipe(
+        Effect.forkIn(activeScope),
+      );
+      yield* Deferred.await(remoteUpdated);
+      expect(remoteReads).toBe(1);
+      yield* Scope.close(activeScope, Exit.void);
+      yield* TestClock.adjust("1 minute");
+      expect(remoteReads).toBe(1);
+      yield* Scope.close(passiveScope, Exit.void);
+    }),
+  );
+
   it.effect("status includes draft PR metadata when branch already has a draft PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -781,7 +923,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 13,
@@ -826,7 +967,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 14,
@@ -866,7 +1006,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 0,
@@ -919,7 +1058,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 16,
@@ -1033,7 +1171,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr]), JSON.stringify([existingPr])],
         },
       });
@@ -1086,7 +1223,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 217,
@@ -1129,7 +1265,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           prListSequence: [
             "[]",
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 114,
@@ -1170,11 +1305,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/rate-limited"]);
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
       yield* manager.remoteStatus({ cwd: repoDir });
@@ -1235,7 +1367,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 216,
@@ -1243,6 +1374,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/t3code/pull/216",
                 baseRefName: "main",
                 headRefName: "feature/saved-branch",
+                headRefOid: "a".repeat(40),
                 state: "OPEN",
                 updatedAt: "2026-04-03T15:00:00Z",
               },
@@ -1262,6 +1394,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         url: "https://github.com/pingdotgg/t3code/pull/216",
         baseRef: "main",
         headRef: "feature/saved-branch",
+        headSha: "a".repeat(40),
         state: "open",
         closedAt: null,
         mergedAt: null,
@@ -1287,7 +1420,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 221,
@@ -1338,7 +1470,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 217,
@@ -1401,7 +1532,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListByHeadSelector: {
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             "feature/deleted-fork-branch": JSON.stringify([
               {
                 number: 218,
@@ -1483,7 +1613,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 219,
@@ -1536,7 +1665,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 220,
@@ -1544,6 +1672,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/220",
                 baseRefName: "main",
                 headRefName: "feature/shared-pr-cache",
+                headRefOid: "a".repeat(40),
                 state: "MERGED",
                 updatedAt: "2026-04-07T15:00:00Z",
               },
@@ -1555,6 +1684,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/221",
                 baseRefName: "main",
                 headRefName: "feature/shared-pr-cache",
+                headRefOid: "b".repeat(40),
                 state: "OPEN",
                 updatedAt: "2026-04-08T15:00:00Z",
               },
@@ -1571,6 +1701,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(status.pr?.state).toBe("merged");
       expect(pullRequest?.state).toBe("merged");
+      expect(pullRequest?.headSha).toBe("a".repeat(40));
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
       const refreshed = yield* manager.branchPullRequest(
         { cwd: repoDir, branch: "feature/shared-pr-cache" },
@@ -1579,6 +1710,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(refreshed).toMatchObject({
         number: 221,
         state: "open",
+        headSha: "b".repeat(40),
         repositoryKey: "github.com/pingdotgg/codething-mvp",
       });
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
@@ -1640,6 +1772,58 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch PR lookup announces a pull request when it reads it merged", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        for (const branch of ["feature/merges-later", "feature/already-merged"]) {
+          yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+          yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+        }
+        const pullRequest = (number: number, headRefName: string, state: string) =>
+          encodeCliJson([
+            {
+              number,
+              title: headRefName,
+              url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+              baseRefName: "main",
+              headRefName,
+              state,
+              updatedAt: "2026-04-07T15:00:00Z",
+            },
+          ]);
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListSequenceByHeadSelector: {
+              "feature/merges-later": [
+                pullRequest(401, "feature/merges-later", "OPEN"),
+                pullRequest(401, "feature/merges-later", "MERGED"),
+              ],
+              "feature/already-merged": [pullRequest(402, "feature/already-merged", "MERGED")],
+            },
+          },
+        });
+        const changes = yield* manager.subscribePullRequestStateChanges;
+        const lookup = (branch: string) => manager.branchPullRequest({ cwd: repoDir, branch });
+
+        yield* lookup("feature/merges-later");
+        yield* lookup("feature/already-merged");
+        // Open answers are re-read after a minute.
+        yield* TestClock.adjust("61 seconds");
+        expect((yield* lookup("feature/merges-later"))?.state).toBe("merged");
+
+        const announced = yield* Stream.runCollect(Stream.take(changes, 2));
+        expect(announced).toEqual([
+          { host: "github.com", repository: "pingdotgg/codething-mvp", number: 402 },
+          { host: "github.com", repository: "pingdotgg/codething-mvp", number: 401 },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("branch PR lookup propagates provider failures", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1653,11 +1837,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -1710,7 +1891,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 215,
@@ -1759,7 +1939,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 214,
@@ -1982,7 +2161,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 1661,
@@ -2036,7 +2214,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 488,
@@ -2102,7 +2279,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               main: JSON.stringify([
                 {
                   number: 777,
@@ -2178,7 +2354,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "effect-atom": JSON.stringify([
                 {
                   number: 1618,
@@ -2190,7 +2365,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   updatedAt: "2026-03-01T10:00:00Z",
                 },
               ]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "upstream/effect-atom": JSON.stringify([
                 {
                   number: 1518,
@@ -2241,7 +2415,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 22,
@@ -2280,7 +2453,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 23,
@@ -2316,7 +2488,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 54,
@@ -2356,7 +2527,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListByHeadSelector: {
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             "feature/pushed-plain": JSON.stringify([
               {
                 number: 88,
@@ -2411,7 +2581,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ghScenario: {
             prListByHeadSelector: {
               // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "feature/fork-plain": JSON.stringify([
                 {
                   number: 89,
@@ -2467,7 +2636,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListByHeadSelector: {
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             "feature/fork-settle": JSON.stringify([
               {
                 number: 91,
@@ -2515,7 +2683,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListByHeadSelector: {
             // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             "feature/sticky-plain": JSON.stringify([
               {
                 number: 90,
@@ -2528,11 +2695,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               },
             ]),
           },
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2555,7 +2719,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 45,
@@ -2606,11 +2769,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -2632,11 +2792,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const upstreamCause = "GraphQL rate limit for user ID 51714798 and token secret-value";
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliRateLimitError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error(upstreamCause),
-          }),
+          failWith: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
+          failCause: new Error(upstreamCause),
         },
       });
       const logs: Array<{ message: string; annotations: Record<string, unknown> }> = [];
@@ -2659,9 +2816,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         errorTag: "SourceControlProviderError",
         provider: "github",
         providerOperation: "listChangeRequests",
-        providerCommand: "gh",
-        errorDetail:
-          "GitHub API rate limit exceeded. For the GraphQL quota and reset time, run `gh api graphql -f query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit` reports REST.",
+        errorDetail: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
       });
       const loggedText = [
         warning?.message ?? "",
@@ -2690,13 +2845,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2734,13 +2885,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         };
         const { manager } = yield* makeManager({
           ghScenario: {
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             prListSequence: [JSON.stringify([existingPr])],
-            failWith: new GitHubCli.GitHubCliUnavailableError({
-              command: "gh",
-              cwd: repoDir,
-              cause: new Error("rate limited"),
-            }),
+            failWith:
+              "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
             failAfterCalls: 1,
           },
         });
@@ -2783,13 +2930,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2823,13 +2966,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2866,13 +3005,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -3461,7 +3596,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ghScenario: {
             prListSequence: [
               "[]",
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 77,
@@ -3597,7 +3731,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             "[]",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 303,
@@ -3644,7 +3777,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             "[]",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 404,
@@ -3696,7 +3828,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           defaultBranch: "",
           prListSequence: [
             "[]",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 505,
@@ -3736,7 +3867,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 42,
@@ -3790,7 +3920,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 142,
@@ -3867,7 +3996,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "effect-atom": JSON.stringify([
                 {
                   number: 1618,
@@ -3877,7 +4005,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   headRefName: "effect-atom",
                 },
               ]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "upstream/effect-atom": JSON.stringify([
                 {
                   number: 1518,
@@ -3927,9 +4054,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "t3code/pr-142/statemachine": JSON.stringify([]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               statemachine: JSON.stringify([
                 {
                   number: 41,
@@ -3995,7 +4120,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               statemachine: JSON.stringify([
                 {
                   number: 142,
@@ -4013,7 +4137,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   },
                 },
               ]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               "t3code/pr-142/statemachine": JSON.stringify([]),
             },
           },
@@ -4256,7 +4379,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             "[]",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 88,
@@ -4377,7 +4499,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 1661,
@@ -4395,7 +4516,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   },
                 },
               ]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 188,
@@ -4458,9 +4578,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghScenario: {
           prListSequenceByHeadSelector: {
             statemachine: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([]),
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify([
                 {
                   number: 188,
@@ -4530,11 +4648,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -4545,7 +4660,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         Effect.flip,
         Effect.map((error) => error.message),
       );
-      expect(errorMessage).toContain("GitHub CLI (`gh`) is required");
+      expect(errorMessage).toContain("No GitHub credential on the server");
     }),
   );
 
@@ -4560,11 +4675,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliAuthenticationError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not authenticated"),
-          }),
+          failWith: "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
         },
       });
 
@@ -6076,9 +6187,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([]),
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 201,

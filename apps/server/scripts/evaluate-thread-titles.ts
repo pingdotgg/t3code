@@ -23,7 +23,7 @@ import {
 } from "../src/textGeneration/ThreadTitleContext.ts";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as GitHubCli from "../src/sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "../src/sourceControl/ForgejoCli.ts";
 import * as AzureDevOpsCli from "../src/sourceControl/AzureDevOpsCli.ts";
@@ -152,14 +152,16 @@ await Effect.runPromise(
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              GitHubCli.layer,
+              GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               ForgejoCli.layer,
               AzureDevOpsCli.layer,
               // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
-              BitbucketApi.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+              BitbucketApi.layer,
             ),
           ),
+          // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),
           Layer.provide(VcsProcess.layer),

@@ -541,7 +541,6 @@ it.effect("creates repositories through the Bitbucket REST API", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
-    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       scm: "git",
       is_private: true,
@@ -577,7 +576,6 @@ it.effect("creates pull requests using the official REST payload shape", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
-    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       title: "Provider PR",
       description: "PR body",

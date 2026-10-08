@@ -2679,8 +2679,9 @@ export function makePiAdapterV2(
             }
             // Pi fork replaces the session file, including for rollback. Persist
             // its new identity before any later request can fail or restart.
+            // An interrupted read leaves the identity just as unknown as a failed one.
             const forkState = yield* request({ type: "get_state" }).pipe(
-              Effect.tapError(() =>
+              Effect.onError(() =>
                 Effect.sync(() => {
                   threadState = null;
                 }),

@@ -6,12 +6,11 @@ import {
   buildPullRequestWatchFingerprintsGraphQlQuery,
   decodePullRequestSummariesJson,
   decodePullRequestWatchFingerprintsJson,
-  buildReviewSubmissionJson,
+  buildReviewSubmission,
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
-  buildReviewerRequestJson,
+  buildReviewerRequest,
   buildSetFilesViewedGraphQlMutation,
-  decodeBaseComparisonJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
@@ -25,26 +24,50 @@ import {
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
-  decodeWorkflowRunApprovalsJson,
+  decodeWorkflowRunsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
   pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
+/**
+ * Rows as a repository's own GraphQL list answers them. Entries may use flat shapes for brevity:
+ * `reviewRequests` and `latestReviews` as arrays, and `checks` as the rollup state.
+ */
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
-  return JSON.stringify(
-    entries.map((entry) => ({
-      number: 1,
-      title: "Add the pull requests page",
-      url: "https://github.com/pingdotgg/t3code/pull/1",
-      headRefName: "feat/page",
-      baseRefName: "main",
-      createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-02T00:00:00Z",
-      ...entry,
-    })),
-  );
+  return JSON.stringify({
+    data: {
+      repository: {
+        pullRequests: {
+          pageInfo: { hasNextPage: false },
+          nodes: entries.map(({ reviewRequests, latestReviews, checks, ...entry }) => ({
+            number: 1,
+            title: "Add the pull requests page",
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+            headRefName: "feat/page",
+            baseRefName: "main",
+            createdAt: "2026-07-01T00:00:00Z",
+            updatedAt: "2026-07-02T00:00:00Z",
+            ...(reviewRequests === undefined
+              ? {}
+              : {
+                  reviewRequests: {
+                    nodes: (reviewRequests as ReadonlyArray<unknown>).map((requestedReviewer) => ({
+                      requestedReviewer,
+                    })),
+                  },
+                }),
+            ...(latestReviews === undefined ? {} : { latestReviews: { nodes: latestReviews } }),
+            ...(checks === undefined
+              ? {}
+              : { commits: { nodes: [{ commit: { statusCheckRollup: { state: checks } } }] } }),
+            ...entry,
+          })),
+        },
+      },
+    },
+  });
 }
 
 function expectSuccess<A>(result: Result.Result<A, unknown>): A {
@@ -136,38 +159,15 @@ describe("pull request list decoding", () => {
     ]);
   });
 
-  it("rolls the head commit's checks up to the one word a row has space for", () => {
+  it("rolls the head commit's rollup up to the one word a row has space for", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
         listJson([
-          // A failure outranks a run still going, and a completed run has to be read through its
-          // conclusion rather than its status.
-          {
-            statusCheckRollup: [
-              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-              { name: "build", status: "IN_PROGRESS" },
-              { name: "test", status: "COMPLETED", conclusion: "FAILURE" },
-            ],
-          },
-          {
-            statusCheckRollup: [
-              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-              { name: "build", status: "QUEUED" },
-            ],
-          },
-          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }] },
-          // A commit status reports one `state` and no `status` at all.
-          { statusCheckRollup: [{ context: "ci/legacy", state: "ERROR" }] },
-          // Neither a pass, a failure nor a wait is no verdict rather than a green tick.
-          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SKIPPED" }] },
-          // Cancelled reads as failing here and in the detail header, so the two never flap.
-          {
-            statusCheckRollup: [
-              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-              { name: "test", status: "COMPLETED", conclusion: "CANCELLED" },
-            ],
-          },
-          { statusCheckRollup: [] },
+          { checks: "FAILURE" },
+          { checks: "PENDING" },
+          { checks: "SUCCESS" },
+          { checks: "ERROR" },
+          { checks: "EXPECTED" },
           {},
         ]),
       ),
@@ -177,16 +177,15 @@ describe("pull request list decoding", () => {
       "pending",
       "passing",
       "failing",
-      null,
-      "failing",
-      null,
+      "pending",
       null,
     ]);
   });
 
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
-    const raw = `[${listJson([{}]).slice(1, -1)},{"number":"not-a-number"}]`;
-    const batch = expectSuccess(decodePullRequestListJson(raw));
+    const batch = expectSuccess(
+      decodePullRequestListJson(listJson([{}, { number: "not-a-number" }])),
+    );
     expect(batch.items).toHaveLength(1);
     expect(batch.rawCount).toBe(2);
   });
@@ -279,6 +278,43 @@ describe("pull request detail decoding", () => {
     ],
   });
 
+  /** The same conversation as the GraphQL activity query answers it. */
+  const activityJson = (raw: Record<string, unknown>) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            comments: { nodes: raw["comments"] ?? [] },
+            reviews: { nodes: raw["reviews"] ?? [] },
+            commits: {
+              nodes: ((raw["commits"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
+                ({ authors, ...commit }) => ({
+                  commit: {
+                    ...commit,
+                    authors: {
+                      nodes: ((authors ?? []) as ReadonlyArray<Record<string, unknown>>).map(
+                        ({ login, ...author }) => ({
+                          ...author,
+                          ...(login === undefined ? {} : { user: { login } }),
+                        }),
+                      ),
+                    },
+                  },
+                }),
+              ),
+            },
+          },
+        },
+      },
+    });
+  const activity = (raw: Record<string, unknown>) =>
+    Result.map(decodePullRequestActivityJson(activityJson(raw)), (page) => ({
+      comments: page.remarks.toSorted((left, right) =>
+        left.createdAt.localeCompare(right.createdAt),
+      ),
+      commits: page.commits ?? [],
+    }));
+
   it("maps check-run status and commit-status state onto one vocabulary", () => {
     const detail = expectSuccess(decodePullRequestDetailJson(detailJson));
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
@@ -333,13 +369,15 @@ describe("pull request detail decoding", () => {
   it("decodes workflow runs that can be approved", () => {
     expect(
       expectSuccess(
-        decodeWorkflowRunApprovalsJson(
-          JSON.stringify([
-            { databaseId: 10, workflowName: "contributor tests", url: "https://example.com/10" },
-            { databaseId: 11, workflowName: null, url: null },
-          ]),
+        decodeWorkflowRunsJson(
+          JSON.stringify({
+            workflow_runs: [
+              { id: 10, name: "contributor tests", html_url: "https://example.com/10" },
+              { id: 11, name: null, html_url: null },
+            ],
+          }),
         ),
-      ),
+      ).runs,
     ).toEqual([
       { id: 10, name: "contributor tests", url: "https://example.com/10" },
       { id: 11, name: "Workflow run 11", url: null },
@@ -398,14 +436,14 @@ describe("pull request detail decoding", () => {
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
-    const detail = expectSuccess(decodePullRequestActivityJson(detailJson));
+    const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     // r2 approved without writing anything, which is still the event worth seeing.
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
   });
 
   it("keeps every attributed commit author, including an unlinked signature", () => {
-    const detail = expectSuccess(decodePullRequestActivityJson(detailJson));
+    const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.commits[0]?.authors).toEqual([
       { login: "octocat", name: "Octo Cat", avatarUrl: null },
       { login: "Pair Author", name: "Pair Author", avatarUrl: null },
@@ -415,22 +453,20 @@ describe("pull request detail decoding", () => {
   it("drops the bodyless review GitHub opens to hold line comments", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
-      decodePullRequestActivityJson(
-        JSON.stringify({
-          ...raw,
-          reviews: [
-            // What a reviewer leaving inline comments produces: a container with a state but
-            // nothing to read. Its comments come from the review threads instead.
-            { id: "r4", body: "", state: "COMMENTED", submittedAt: "2026-07-07T00:00:00Z" },
-            {
-              id: "r5",
-              body: "Looks good.",
-              state: "COMMENTED",
-              submittedAt: "2026-07-08T00:00:00Z",
-            },
-          ],
-        }),
-      ),
+      activity({
+        ...raw,
+        reviews: [
+          // What a reviewer leaving inline comments produces: a container with a state but
+          // nothing to read. Its comments come from the review threads instead.
+          { id: "r4", body: "", state: "COMMENTED", submittedAt: "2026-07-07T00:00:00Z" },
+          {
+            id: "r5",
+            body: "Looks good.",
+            state: "COMMENTED",
+            submittedAt: "2026-07-08T00:00:00Z",
+          },
+        ],
+      }),
     );
 
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r5"]);
@@ -441,12 +477,10 @@ describe("pull request detail decoding", () => {
     (state) => {
       const raw = JSON.parse(detailJson) as Record<string, unknown>;
       const detail = expectSuccess(
-        decodePullRequestActivityJson(
-          JSON.stringify({
-            ...raw,
-            reviews: [{ id: "r6", body: "", state, submittedAt: "2026-07-07T00:00:00Z" }],
-          }),
-        ),
+        activity({
+          ...raw,
+          reviews: [{ id: "r6", body: "", state, submittedAt: "2026-07-07T00:00:00Z" }],
+        }),
       );
 
       expect(detail.comments.map((comment) => comment.id)).toContain("r6");
@@ -456,12 +490,10 @@ describe("pull request detail decoding", () => {
   it("drops a review that carries neither a body nor a state", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
-      decodePullRequestActivityJson(
-        JSON.stringify({
-          ...raw,
-          reviews: [{ id: "r3", body: "  ", submittedAt: "2026-07-07T00:00:00Z" }],
-        }),
-      ),
+      activity({
+        ...raw,
+        reviews: [{ id: "r3", body: "  ", submittedAt: "2026-07-07T00:00:00Z" }],
+      }),
     );
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1"]);
   });
@@ -1432,18 +1464,16 @@ describe("reviewer candidate decoding", () => {
 describe("reviewer request payload", () => {
   it("sends people and teams in the two lists GitHub keeps them in", () => {
     expect(
-      JSON.parse(
-        buildReviewerRequestJson([
-          { id: "octocat", kind: "user" },
-          { id: "reviewers", kind: "team" },
-          { id: "hubot", kind: "user" },
-        ]),
-      ),
+      buildReviewerRequest([
+        { id: "octocat", kind: "user" },
+        { id: "reviewers", kind: "team" },
+        { id: "hubot", kind: "user" },
+      ]),
     ).toEqual({ reviewers: ["octocat", "hubot"], team_reviewers: ["reviewers"] });
   });
 
   it("sends both lists even where one of them is empty, which is what GitHub reads", () => {
-    expect(JSON.parse(buildReviewerRequestJson([{ id: "octocat", kind: "user" }]))).toEqual({
+    expect(buildReviewerRequest([{ id: "octocat", kind: "user" }])).toEqual({
       reviewers: ["octocat"],
       team_reviewers: [],
     });
@@ -1452,24 +1482,22 @@ describe("reviewer request payload", () => {
 
 describe("review submission payload", () => {
   it("sends the verdict, the summary and every line comment in one body", () => {
-    const payload = JSON.parse(
-      buildReviewSubmissionJson({
-        verdict: "request-changes",
-        body: "Two things.",
-        comments: [
-          {
-            path: "src/a.ts",
-            position: { kind: "added", newLine: 12 },
-            body: "rename this",
-          },
-          {
-            path: "src/b.ts",
-            position: { kind: "deleted", oldLine: 3 },
-            body: "why remove?",
-          },
-        ],
-      }),
-    ) as Record<string, unknown>;
+    const payload = buildReviewSubmission({
+      verdict: "request-changes",
+      body: "Two things.",
+      comments: [
+        {
+          path: "src/a.ts",
+          position: { kind: "added", newLine: 12 },
+          body: "rename this",
+        },
+        {
+          path: "src/b.ts",
+          position: { kind: "deleted", oldLine: 3 },
+          body: "why remove?",
+        },
+      ],
+    });
     expect(payload).toEqual({
       event: "REQUEST_CHANGES",
       body: "Two things.",
@@ -1481,9 +1509,11 @@ describe("review submission payload", () => {
   });
 
   it("sends an approval with no words and no comments", () => {
-    expect(
-      JSON.parse(buildReviewSubmissionJson({ verdict: "approve", body: "", comments: [] })),
-    ).toEqual({ event: "APPROVE", body: "", comments: [] });
+    expect(buildReviewSubmission({ verdict: "approve", body: "", comments: [] })).toEqual({
+      event: "APPROVE",
+      body: "",
+      comments: [],
+    });
   });
 });
 
@@ -1665,48 +1695,6 @@ describe("decodePullRequestFilesJson", () => {
   });
 });
 
-describe("how far a branch trails its base", () => {
-  const comparison = (pullRequest: unknown) =>
-    JSON.stringify({ data: { repository: { pullRequest } } });
-
-  it("reads the commit count and whether this viewer may move the branch", () => {
-    const decoded = expectSuccess(
-      decodeBaseComparisonJson(
-        comparison({ viewerCanUpdateBranch: true, baseRef: { compare: { behindBy: 12 } } }),
-      ),
-    );
-    expect(decoded).toEqual({ behindBy: 12, viewerCanUpdate: true });
-  });
-
-  it("reads a current branch as nothing to do", () => {
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(
-          comparison({ viewerCanUpdateBranch: false, baseRef: { compare: { behindBy: 0 } } }),
-        ),
-      ),
-    ).toEqual({ behindBy: 0, viewerCanUpdate: false });
-  });
-
-  it("answers unknown where the head could not be compared", () => {
-    // A pull request from a fork whose repository is gone, which GitHub answers with a null
-    // comparison beside a perfectly good pull request.
-    expect(
-      expectSuccess(
-        decodeBaseComparisonJson(comparison({ viewerCanUpdateBranch: true, baseRef: null })),
-      ).behindBy,
-    ).toBeNull();
-    expect(expectSuccess(decodeBaseComparisonJson(comparison(null)))).toEqual({
-      behindBy: null,
-      viewerCanUpdate: false,
-    });
-  });
-
-  it("refuses a body that is not the answer to this question", () => {
-    expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
-  });
-});
-
 describe("decodePullRequestFilesViewedJson", () => {
   const page = (
     nodes: ReadonlyArray<unknown>,
@@ -1766,36 +1754,40 @@ describe("decodePullRequestFilesViewedJson", () => {
 
 describe("buildSetFilesViewedGraphQlMutation", () => {
   it("asks for nothing when nothing was pressed", () => {
-    expect(buildSetFilesViewedGraphQlMutation([])).toBeNull();
+    expect(buildSetFilesViewedGraphQlMutation("PR_1", [])).toBeNull();
   });
 
   it("clears and restores in one document, each file under its own alias", () => {
-    const mutation = buildSetFilesViewedGraphQlMutation([
+    const mutation = buildSetFilesViewedGraphQlMutation("PR_1", [
       { path: "src/a.ts", viewed: true },
       { path: "src/b.ts", viewed: false },
     ]);
     expect(mutation).not.toBeNull();
     if (mutation === null) return;
     expect(mutation.query).toContain(
-      "mutation($pullRequestId: ID!, $path0: String!, $path1: String!)",
+      "mutation($pullRequestId: ID!, $f0_path: String!, $f1_path: String!)",
     );
     expect(mutation.query).toContain(
-      "f0: markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path0 })",
+      "f0: markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $f0_path })",
     );
     expect(mutation.query).toContain(
-      "f1: unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path1 })",
+      "f1: unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $f1_path })",
     );
-    expect(mutation.variables).toEqual({ path0: "src/a.ts", path1: "src/b.ts" });
+    expect(mutation.variables).toEqual({
+      pullRequestId: "PR_1",
+      f0_path: "src/a.ts",
+      f1_path: "src/b.ts",
+    });
   });
 
   it("keeps a path out of the document, so one cannot be read as part of it", () => {
-    const mutation = buildSetFilesViewedGraphQlMutation([
+    const mutation = buildSetFilesViewedGraphQlMutation("PR_1", [
       { path: '") { __typename } evil: markFileAsViewed(input: { path: "x', viewed: true },
     ]);
     expect(mutation).not.toBeNull();
     if (mutation === null) return;
     expect(mutation.query).not.toContain("evil");
-    expect(mutation.variables.path0).toBe(
+    expect(mutation.variables.f0_path).toBe(
       '") { __typename } evil: markFileAsViewed(input: { path: "x',
     );
   });
@@ -1934,9 +1926,14 @@ describe("pull request stack membership batches", () => {
     expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [0])).toBeNull();
     expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [1.5])).toBeNull();
     expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [])).toBeNull();
-    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
-      "pullRequest(number: 8)",
-    );
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])?.variables).toEqual({
+      s0_owner: "acme",
+      s0_name: "web",
+      s0_number: 7,
+      s1_owner: "acme",
+      s1_name: "web",
+      s1_number: 8,
+    });
   });
 });
 
@@ -1994,10 +1991,10 @@ describe("batched pull request summaries", () => {
 
   it("reads stack membership only where the document asked for it", () => {
     expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true),
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true)?.query,
     ).toContain("stack { number size baseRefName } stackEntry { position }");
     expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }]),
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }])?.query,
     ).not.toContain("stack {");
     const pullRequest = (number: number, stack: Record<string, unknown>) => ({
       pullRequest: {
@@ -2031,16 +2028,22 @@ describe("batched pull request summaries", () => {
 
 describe("pull request watch fingerprints", () => {
   it("asks for every pull request in one aliased read, and refuses an unsafe selector", () => {
-    const query = buildPullRequestWatchFingerprintsGraphQlQuery([
+    const document = buildPullRequestWatchFingerprintsGraphQlQuery([
       { repository: "pingdotgg/t3code", number: 7 },
       { repository: "pingdotgg/lakebed", number: 8 },
     ]);
-    expect(query).toContain(
-      'w0: repository(owner: "pingdotgg", name: "t3code") { pullRequest(number: 7)',
+    expect(document?.query).toContain(
+      "w0: repository(owner: $w0_owner, name: $w0_name) { pullRequest(number: $w0_number)",
     );
-    expect(query).toContain(
-      'w1: repository(owner: "pingdotgg", name: "lakebed") { pullRequest(number: 8)',
-    );
+    expect(document?.query).toContain("w1: repository(owner: $w1_owner, name: $w1_name)");
+    expect(document?.variables).toEqual({
+      w0_owner: "pingdotgg",
+      w0_name: "t3code",
+      w0_number: 7,
+      w1_owner: "pingdotgg",
+      w1_name: "lakebed",
+      w1_number: 8,
+    });
     expect(
       buildPullRequestWatchFingerprintsGraphQlQuery([{ repository: 'evil") { x', number: 1 }]),
     ).toBeNull();
