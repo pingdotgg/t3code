@@ -851,6 +851,22 @@ describe("ChatMarkdown artifact-template cards", () => {
   });
 });
 
+describe("ChatMarkdown Windows paths", () => {
+  it("keeps backslashes that CommonMark would read as escapes in prose paths", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={String.raw`Saved to C:\Users\me\.t3\_build\shot.png and (C:\.scratch) and C:/work\.config. Keep \*this\* escaped.`}
+      />,
+    );
+
+    expect(html).toContain(
+      String.raw`Saved to C:\Users\me\.t3\_build\shot.png and (C:\.scratch) and C:/work\.config.`,
+    );
+    expect(html).toContain("Keep *this* escaped.");
+  });
+});
+
 describe("ChatMarkdown heading levels", () => {
   it("exposes headings below the host heading without changing their tags", () => {
     const html = renderToStaticMarkup(

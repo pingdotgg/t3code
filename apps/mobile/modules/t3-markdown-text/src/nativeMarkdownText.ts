@@ -587,20 +587,25 @@ export function nativeMarkdownWithPreservedSoftBreaks(node: MarkdownNode): Markd
 }
 
 const WINDOWS_DESTINATION_PATTERN = /\](?:\(|:)\s*<?((?:[A-Za-z]:|\\\\)(?:\\.|[^\s()<>\\])*)/g;
+const WINDOWS_PROSE_PATH_PATTERN = /(^|[^\w\\])([A-Za-z]:(?:\\\S|[^\s<>\\`*])*)/g;
 const MARKDOWN_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
 
 /**
- * md4c reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link destination.
- * Every backslash in a Windows path is a separator, so link and image paths go back to
- * the destination as written in `markdown`. A parsed path that more than one written
- * destination could have produced stays as parsed.
+ * md4c reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a Windows
+ * path is a separator, so link and image paths, and drive paths in prose, go back to the
+ * path as written in `markdown`. A parsed path that more than one written path could
+ * have produced stays as parsed.
  */
 export function nativeMarkdownWithAuthoredWindowsPaths(
   node: MarkdownNode,
   markdown: string,
 ): MarkdownNode {
   const authoredByParsed = new Map<string, string | null>();
-  for (const [, authored = ""] of markdown.matchAll(WINDOWS_DESTINATION_PATTERN)) {
+  const written = [
+    ...Array.from(markdown.matchAll(WINDOWS_DESTINATION_PATTERN), (match) => match[1] ?? ""),
+    ...Array.from(markdown.matchAll(WINDOWS_PROSE_PATH_PATTERN), (match) => match[2] ?? ""),
+  ];
+  for (const authored of written) {
     if (!isWindowsAbsolutePath(authored)) continue;
     const parsed = authored.replace(MARKDOWN_ESCAPE_PATTERN, "$1");
     const known = authoredByParsed.get(parsed);
@@ -608,9 +613,22 @@ export function nativeMarkdownWithAuthoredWindowsPaths(
   }
   if (authoredByParsed.size === 0) return node;
   const restore = (current: MarkdownNode): MarkdownNode => {
+    if (current.type === "code_inline" || current.type === "code_block") return current;
     const href = current.href && authoredByParsed.get(current.href);
+    const content =
+      current.type === "text" &&
+      current.content?.replace(
+        WINDOWS_PROSE_PATH_PATTERN,
+        (_match, prefix: string, parsed: string) =>
+          prefix + (authoredByParsed.get(parsed) ?? parsed),
+      );
     const children = current.children?.map(restore);
-    return { ...current, ...(href ? { href } : {}), ...(children ? { children } : {}) };
+    return {
+      ...current,
+      ...(href ? { href } : {}),
+      ...(content ? { content } : {}),
+      ...(children ? { children } : {}),
+    };
   };
   return restore(node);
 }
