@@ -927,6 +927,47 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "signs MCP render intent only for inline HTML attachments, including saved captures",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        for (const [extension, disposition, intent] of [
+          ["html", "inline", "mcp-app"],
+          ["html", "inline", undefined],
+          ["html", "attachment", "mcp-app"],
+          ["pdf", "inline", "mcp-app"],
+        ] as const) {
+          const attachmentId = `thread-1-00000000-0000-4000-8000-000000000001-${extension}`;
+          const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.${extension}`);
+          yield* fs.writeFileString(attachmentPath, "saved capture");
+          const result = yield* issueAssetUrl({
+            resource: {
+              _tag: "attachment",
+              attachmentId,
+              disposition,
+              ...(intent ? { renderIntent: intent } : {}),
+            },
+          });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const asset = yield* resolveAsset(
+            suffix.slice(0, separator),
+            suffix.slice(separator + 1),
+          );
+          expect(asset).toMatchObject({ kind: "file", path: attachmentPath });
+          if (extension === "html" && disposition === "inline" && intent !== undefined) {
+            expect(asset).toMatchObject({ renderIntent: intent });
+          } else {
+            expect(asset).not.toHaveProperty("renderIntent");
+          }
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves video attachments inline", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

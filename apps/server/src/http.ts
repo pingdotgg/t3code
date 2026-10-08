@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
+import { injectMcpAppCookieBootstrap, MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
@@ -167,12 +168,40 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly fileName?: string;
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
+    readonly renderIntent?: "mcp-app";
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
   method: "GET" | "HEAD" = "GET",
 ) {
   const headers = assetResponseHeaders(asset.path, asset);
+  if (
+    asset.renderIntent === "mcp-app" &&
+    !asset.download &&
+    headers["Content-Type"] === "text/html; charset=utf-8"
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    // Saved captures also contain a bounded CSP meta tag added after the raw HTML limit.
+    const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
+    const chunks = yield* fs.stream(asset.path, { bytesToRead: limit + 1 }).pipe(Stream.runCollect);
+    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    if (size > limit) {
+      return HttpServerResponse.text("MCP App is too large to preview.", { status: 413 });
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const html = injectMcpAppCookieBootstrap(new TextDecoder().decode(bytes));
+    // The served bytes differ from the saved capture: do not reuse its file
+    // length or validators. HEAD reports the transformed document's length.
+    const response = HttpServerResponse.text(html, { headers });
+    return method === "HEAD"
+      ? HttpServerResponse.empty({ status: 200, headers: response.headers })
+      : response;
+  }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
   const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");

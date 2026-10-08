@@ -128,6 +128,7 @@ const AssetClaimsSchema = Schema.Union([
         download filename and Content-Type. */
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
+    renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -180,6 +181,7 @@ export type ResolvedAsset =
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
+      readonly renderIntent?: "mcp-app";
     }
   | {
       readonly kind: "bytes";
@@ -622,6 +624,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           : input.resource.mimeType !== undefined
             ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
             : {}),
+        ...(inlinePreviewMimeType === "text/html" && input.resource.renderIntent !== undefined
+          ? { renderIntent: input.resource.renderIntent }
+          : {}),
         expiresAt,
       };
       fileName = input.resource.fileName ?? path.basename(attachmentPath);
@@ -853,6 +858,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.download ? { download: true } : {}),
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+          ...(claims.renderIntent !== undefined ? { renderIntent: claims.renderIntent } : {}),
         } satisfies ResolvedAsset)
       : null;
   }

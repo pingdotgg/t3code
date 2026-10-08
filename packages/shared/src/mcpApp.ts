@@ -215,6 +215,22 @@ export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): strin
     : `<!doctype html>${meta}${html}`;
 }
 
+/**
+ * Analytics libraries often read cookies during startup. An opaque document
+ * has none, but browsers throw instead of returning an empty cookie string.
+ * Keep the sandbox and make that document-local case behave like no cookies.
+ */
+export function injectMcpAppCookieBootstrap(html: string): string {
+  const bootstrap = `<script>(function(){try{void document.cookie;}catch(error){if(error&&error.name==="SecurityError"){Object.defineProperty(document,"cookie",{configurable:true,get:function(){return "";},set:function(){}});}}})();</script>`;
+  // Saved captures begin with the CSP inserted by injectMcpAppCsp. Keep it
+  // ahead of executable code, including this bootstrap, without rewriting it.
+  const prefix =
+    /^(?:\uFEFF?\s*<!doctype[^>]*>\s*)?(?:<meta http-equiv="Content-Security-Policy" content="[^"]*">)?/i.exec(
+      html,
+    )![0];
+  return `${prefix}${bootstrap}${html.slice(prefix.length)}`;
+}
+
 /** The iframe `allow` attribute for the permissions an app declared. */
 export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined): string {
   const features: Array<string> = [];
