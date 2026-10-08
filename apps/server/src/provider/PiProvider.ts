@@ -32,6 +32,8 @@ import {
 } from "../orchestration-v2/Adapters/piT3McpInjection.ts";
 import {
   makePiRpcConnection,
+  PiRpcError,
+  PiRpcTimeoutError,
   piRecordField as recordField,
   piRecordString as recordString,
 } from "../orchestration-v2/Adapters/PiRpc.ts";
@@ -126,6 +128,33 @@ function parseDiscoveredModels(
   return parsed;
 }
 
+const makePiDiscoveryConnection = Effect.fnUntraced(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) {
+  const launch = buildPiRpcLaunch({
+    launchArgs,
+    environment,
+    mcpSession: undefined,
+    extensionPath: undefined,
+    ephemeral: true,
+  });
+  const connection = yield* makePiRpcConnection({
+    command: piSettings.binaryPath || "pi",
+    args: launch.args,
+    cwd,
+    env: launch.env,
+  });
+  yield* Stream.fromQueue(connection.events).pipe(
+    Stream.runDrain,
+    Effect.ignore,
+    Effect.forkScoped,
+  );
+  return connection;
+});
+
 const discoverPiViaRpc = (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
@@ -133,24 +162,7 @@ const discoverPiViaRpc = (
   cwd?: string,
 ) =>
   Effect.gen(function* () {
-    const launch = buildPiRpcLaunch({
-      launchArgs,
-      environment,
-      mcpSession: undefined,
-      extensionPath: undefined,
-      ephemeral: true,
-    });
-    const connection = yield* makePiRpcConnection({
-      command: piSettings.binaryPath || "pi",
-      args: launch.args,
-      cwd,
-      env: launch.env,
-    });
-    yield* Stream.fromQueue(connection.events).pipe(
-      Stream.runDrain,
-      Effect.ignore,
-      Effect.forkScoped,
-    );
+    const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
     const stateData = yield* connection.request({ type: "get_state" });
     const modelsData = yield* connection.request({ type: "get_available_models" });
     const commandsData = yield* connection
@@ -168,6 +180,34 @@ const discoverPiViaRpc = (
       authenticated: discoveredModels.length > 0,
     } satisfies PiDiscovery;
   }).pipe(Effect.scoped);
+
+/** Probe the full command catalog Pi exposes in a workspace without changing machine health. */
+export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
+  function* (piSettings: PiSettings, environment: NodeJS.ProcessEnv, cwd: string) {
+    const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+    if (!launchArgs.ok) {
+      return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
+    }
+    const connection = yield* makePiDiscoveryConnection(
+      piSettings,
+      environment,
+      launchArgs.args,
+      cwd,
+    );
+    // A failed read must not replace a previously usable workspace catalog with an empty one.
+    const commandsData = yield* connection.request({ type: "get_commands" });
+    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+    return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: PI_RPC_DISCOVERY_TIMEOUT_MS,
+    orElse: () =>
+      Effect.fail(
+        new PiRpcTimeoutError({ operation: "discovery", timeoutMs: PI_RPC_DISCOVERY_TIMEOUT_MS }),
+      ),
+  }),
+);
 
 const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
