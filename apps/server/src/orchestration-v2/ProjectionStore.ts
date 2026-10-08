@@ -514,7 +514,7 @@ function needsRecovery(
         parentThreadId !== null &&
         projection.thread.forkedFrom?.type === "node" &&
         ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          projection.runs.at(-1)?.status ?? "idle",
+          latestUnheldRun(projection.runs)?.status ?? "idle",
         ) &&
         !projection.contextTransfers.some(
           (transfer) =>
@@ -3505,9 +3505,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                   AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
                   AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
+                  -- A held queue waits for the user, so the newest unheld run
+                  -- decides, matching latestUnheldRun.
                   AND (
                     SELECT status FROM orchestration_v2_projection_runs
                     WHERE thread_id = child.thread_id
+                      AND NOT (
+                        status = 'queued'
+                        AND json_extract(payload_json, '$.queueHeld') IS 1
+                      )
                     ORDER BY ordinal DESC LIMIT 1
                   ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                   AND NOT EXISTS (

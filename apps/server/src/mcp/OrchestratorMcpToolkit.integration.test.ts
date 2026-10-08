@@ -1873,6 +1873,20 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
+            // A queue Stop held waits for the user; it is not pending child work.
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId
+                      ? { ...run, status: "queued", queueHeld: true }
+                      : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(false);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Stop the child's later work too.",

@@ -370,9 +370,11 @@ export function hasPendingChildRuns(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs">,
   delegatedRun: OrchestrationV2Run | undefined,
 ): boolean {
+  // Held queued runs wait for the user to resume the child; task_cancel holds them.
   return childProjection.runs.some(
     (run) =>
       !ThreadManagementService.isTerminalRunStatus(run.status) &&
+      !(run.status === "queued" && run.queueHeld === true) &&
       (delegatedRun === undefined || run.ordinal > delegatedRun.ordinal),
   );
 }
