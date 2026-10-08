@@ -39,6 +39,24 @@ describe("provider attachment prompts", () => {
     );
   });
 
+  it("passes a 100 MB ZIP by path", () => {
+    const attachment = ChatFileAttachment.make({
+      ...document,
+      id: ChatAttachmentId.make("file-archive"),
+      name: "archive.zip",
+      mimeType: "application/zip",
+      sizeBytes: 100_000_000,
+    });
+    assert.equal(
+      providerMessageTextWithAttachmentPaths({
+        text: "",
+        attachments: [attachment],
+        attachmentsDir: "/attachments",
+      }),
+      '[Attached file "archive.zip" is saved at: /attachments/file-archive.zip]',
+    );
+  });
+
   it("frames captured-window context as escaped untrusted JSON", () => {
     const captured = ChatImageAttachment.make({
       ...image,

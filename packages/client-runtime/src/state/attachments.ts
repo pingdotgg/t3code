@@ -227,10 +227,12 @@ export function formatAttachmentSize(sizeBytes: number): string {
 /** User-facing rejection for a file over the effective upload limit. */
 export function fileAttachmentTooLargeMessage(name: string, maxUploadBytes: number): string {
   const maxUploadSize =
-    maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
-      ? `${maxUploadBytes / (1024 * 1024)} MB`
-      : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
-        ? `${maxUploadBytes / 1024} KB`
-        : `${maxUploadBytes} ${maxUploadBytes === 1 ? "byte" : "bytes"}`;
+    maxUploadBytes >= 1_000_000 && maxUploadBytes % 1_000_000 === 0
+      ? `${maxUploadBytes / 1_000_000} MB`
+      : maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
+        ? `${maxUploadBytes / (1024 * 1024)} MB`
+        : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
+          ? `${maxUploadBytes / 1024} KB`
+          : `${maxUploadBytes} ${maxUploadBytes === 1 ? "byte" : "bytes"}`;
   return `'${name}' exceeds the ${maxUploadSize} attachment limit.`;
 }

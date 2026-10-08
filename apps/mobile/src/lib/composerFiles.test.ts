@@ -446,10 +446,10 @@ describe("composer file attachments", () => {
       },
       {
         reason: "server advertises more than the contract limit",
-        reported: 51 * 1024 * 1024,
+        reported: 100_000_001,
         stored: 42,
-        limit: 80 * 1024 * 1024,
-        error: "'clip.mov' exceeds the 50 MB attachment limit.",
+        limit: 200_000_000,
+        error: "'clip.mov' exceeds the 100 MB attachment limit.",
       },
     ])(
       "rejects a video when $reason while retaining the selected photo",
@@ -676,7 +676,7 @@ describe("composer file attachments", () => {
     expect(mocks.copy).not.toHaveBeenCalled();
   });
 
-  it("never accepts files above the 50 MB contract limit", async () => {
+  it("never accepts files above the 100 MB contract limit", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
       assets: [
@@ -684,16 +684,14 @@ describe("composer file attachments", () => {
           uri: "file:///downloads/archive.zip",
           name: "archive.zip",
           mimeType: "application/zip",
-          size: 51 * 1024 * 1024,
+          size: 100_000_001,
         },
       ],
     });
 
-    await expect(
-      pickComposerFiles({ existingCount: 0, maxBytes: 80 * 1024 * 1024 }),
-    ).resolves.toEqual({
+    await expect(pickComposerFiles({ existingCount: 0, maxBytes: 200_000_000 })).resolves.toEqual({
       files: [],
-      error: "'archive.zip' exceeds the 50 MB attachment limit.",
+      error: "'archive.zip' exceeds the 100 MB attachment limit.",
     });
   });
 
