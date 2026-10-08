@@ -2532,6 +2532,227 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  const streamTextFrame = (event: unknown) =>
+    claudeSdkFrame({
+      type: "stream_event",
+      event,
+      parent_tool_use_id: null,
+      session_id: WAKE_NATIVE_SESSION,
+      uuid: "stream-frame",
+    });
+  const assistantSnapshotFrame = (id: string, uuid: string, content: ReadonlyArray<unknown>) =>
+    claudeSdkFrame({
+      type: "assistant",
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+      parent_tool_use_id: null,
+      message: { id, model: "claude-sonnet-4-6", content },
+    });
+  const assistantItemUpdates = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+        ? [event.turnItem]
+        : [],
+    );
+  const assistantMessageUpdates = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "message.updated" && event.message.role === "assistant" ? [event.message] : [],
+    );
+  const startTextTurn = Effect.fnUntraced(function* (
+    harness: Effect.Success<typeof makeWakeHarness>,
+  ) {
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("text-stream-attempt"),
+        text: "Answer the question",
+        attachments: [],
+      }),
+    );
+  });
+
+  it.effect("streams Claude assistant text and completes it from each snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* startTextTurn(harness);
+      const streamedTexts = () =>
+        assistantItemUpdates(harness.events).flatMap((item) => (item.streaming ? [item.text] : []));
+      const textDelta = (index: number, text: string) =>
+        streamTextFrame({
+          type: "content_block_delta",
+          index,
+          delta: { type: "text_delta", text },
+        });
+
+      // One message: thinking, text, tool_use, then a second text block.
+      for (const frame of [
+        streamTextFrame({ type: "message_start", message: { id: "answer-message" } }),
+        streamTextFrame({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "thinking", thinking: "Plan it" },
+        }),
+        streamTextFrame({ type: "content_block_stop", index: 0 }),
+        assistantSnapshotFrame("answer-message", "thinking-snapshot", [
+          { type: "thinking", thinking: "Plan it", signature: "signature" },
+        ]),
+        streamTextFrame({
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "text", text: "" },
+        }),
+        textDelta(1, "Hel"),
+      ]) {
+        yield* harness.offerAndWait(frame);
+      }
+      yield* TestClock.adjust("50 millis");
+      yield* awaitUntil(() => streamedTexts().length === 1, "first text flush");
+      yield* harness.offerAndWait(textDelta(1, "lo"));
+      yield* TestClock.adjust("50 millis");
+      yield* awaitUntil(() => streamedTexts().length === 2, "second text flush");
+      assert.deepEqual(streamedTexts(), ["Hel", "Hello"]);
+      assert.deepEqual(assistantMessageUpdates(harness.events), []);
+
+      for (const frame of [
+        streamTextFrame({ type: "content_block_stop", index: 1 }),
+        assistantSnapshotFrame("answer-message", "first-text-snapshot", [
+          { type: "text", text: "Hello." },
+        ]),
+        // A repeated snapshot must not emit a second message.
+        assistantSnapshotFrame("answer-message", "first-text-snapshot", [
+          { type: "text", text: "Hello." },
+        ]),
+        streamTextFrame({
+          type: "content_block_start",
+          index: 2,
+          content_block: { type: "tool_use", id: "tool-1", name: "Read", input: {} },
+        }),
+        streamTextFrame({ type: "content_block_stop", index: 2 }),
+        assistantSnapshotFrame("answer-message", "tool-snapshot", [
+          { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "/a" } },
+        ]),
+        streamTextFrame({
+          type: "content_block_start",
+          index: 3,
+          content_block: { type: "text", text: "After " },
+        }),
+        textDelta(3, "the tool"),
+        streamTextFrame({ type: "content_block_stop", index: 3 }),
+        assistantSnapshotFrame("answer-message", "second-text-snapshot", [
+          { type: "text", text: "After the tool" },
+        ]),
+        makeResultFrame({ uuid: "text-stream-result", result: "After the tool" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+
+      const messages = assistantMessageUpdates(harness.events);
+      assert.deepEqual(
+        messages.map((message) => [message.text, message.streaming]),
+        [
+          ["Hello.", false],
+          ["After the tool", false],
+        ],
+      );
+      const latest = new Map(
+        assistantItemUpdates(harness.events).map((item) => [item.id, item] as const),
+      );
+      assert.deepEqual(
+        [...latest.values()].map((item) => [item.text, item.streaming, item.status]),
+        [
+          ["Hello.", false, "completed"],
+          ["After the tool", false, "completed"],
+        ],
+      );
+      assert.deepEqual(
+        [...latest.values()].map((item) => item.type === "assistant_message" && item.messageId),
+        messages.map((message) => message.id),
+      );
+      // Streamed items keep their stream position around the reasoning and tool.
+      const order = [
+        ...new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated"
+              ? [[event.turnItem.id, event.turnItem] as const]
+              : [],
+          ),
+        ).values(),
+      ]
+        .toSorted((left, right) => left.ordinal - right.ordinal)
+        .map((item) => (item.type === "assistant_message" ? item.text : item.type));
+      assert.deepEqual(order, ["reasoning", "Hello.", "dynamic_tool", "After the tool"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("completes partial Claude assistant text when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* startTextTurn(harness);
+      for (const frame of [
+        streamTextFrame({ type: "message_start", message: { id: "aborted-message" } }),
+        streamTextFrame({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+        streamTextFrame({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Partial ans" },
+        }),
+        makeResultFrame({
+          uuid: "aborted-result",
+          result: "",
+          terminalReason: "aborted_streaming",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "interrupted");
+      assert.deepEqual(
+        assistantMessageUpdates(harness.events).map((message) => [message.text, message.streaming]),
+        [["Partial ans", false]],
+      );
+      const items = assistantItemUpdates(harness.events);
+      assert.equal(new Set(items.map((item) => item.id)).size, 1);
+      assert.equal(items.at(-1)?.text, "Partial ans");
+      assert.equal(items.at(-1)?.streaming, false);
+      assert.equal(items.at(-1)?.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("keeps snapshot-only Claude assistant text when partial messages are absent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* startTextTurn(harness);
+      for (const frame of [
+        assistantSnapshotFrame("plain-message", "empty-snapshot", [{ type: "text", text: "" }]),
+        assistantSnapshotFrame("plain-message", "plain-snapshot", [
+          { type: "text", text: "Plain reply" },
+        ]),
+        makeResultFrame({ uuid: "plain-result", result: "Plain reply" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(
+        assistantMessageUpdates(harness.events).map((message) => message.text),
+        ["Plain reply"],
+      );
+      const items = assistantItemUpdates(harness.events);
+      assert.deepEqual(
+        items.map((item) => [item.nativeItemRef?.nativeId, item.text, item.streaming]),
+        [["plain-snapshot", "Plain reply", false]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
     (kind) =>
