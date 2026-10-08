@@ -369,7 +369,7 @@ rename never leaves a stale link.
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
-wakes early when it has a pending request, fails, or completes after the snooze.
+wakes early when it has a pending request, fails, or a run requested after the snooze completes.
 
 ### `t3_thread_update`
 
