@@ -32,6 +32,7 @@ import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as GitLabProjectAvatarResolver from "../project/GitLabProjectAvatarResolver.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -45,6 +46,13 @@ import {
 } from "./project.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const layerNoGitLabProjectAvatars = Layer.succeed(
+  GitLabProjectAvatarResolver.GitLabProjectAvatarResolver,
+  GitLabProjectAvatarResolver.GitLabProjectAvatarResolver.of({
+    resolvePath: () => Effect.succeed(null),
+    isManagedPath: () => false,
+  }),
+);
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(layerCliRuntime));
 
@@ -91,6 +99,7 @@ const readProjects = (baseDir: string) =>
       Layer.provideMerge(ProjectEnrichmentService.layer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ProjectFaviconResolver.layer),
+      Layer.provideMerge(layerNoGitLabProjectAvatars),
       Layer.provideMerge(T3ProjectFileLoader.layer),
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(SqlitePersistence.layerConfig),

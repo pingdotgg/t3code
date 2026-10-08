@@ -9,14 +9,25 @@ import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitLabProjectAvatarResolver from "./GitLabProjectAvatarResolver.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
+
+const layerGitLabProjectAvatar = (avatarPath: string | null) =>
+  Layer.succeed(
+    GitLabProjectAvatarResolver.GitLabProjectAvatarResolver,
+    GitLabProjectAvatarResolver.GitLabProjectAvatarResolver.of({
+      resolvePath: () => Effect.succeed(avatarPath),
+      isManagedPath: (filePath) => filePath === avatarPath,
+    }),
+  );
 
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(layerGitLabProjectAvatar(null)),
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -45,8 +56,21 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   ProjectFaviconResolver.make.pipe(
-    Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
+    Effect.provide([
+      WorkspacePaths.layer,
+      T3ProjectFileLoader.layer,
+      layerGitLabProjectAvatar(null),
+    ]),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
+  );
+
+const makeResolverWithGitLabProjectAvatar = (avatarPath: string) =>
+  ProjectFaviconResolver.make.pipe(
+    Effect.provide([
+      WorkspacePaths.layer,
+      T3ProjectFileLoader.layer,
+      layerGitLabProjectAvatar(avatarPath),
+    ]),
   );
 
 it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
@@ -349,6 +373,35 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).toBeNull();
+      }),
+    );
+
+    it.effect("falls back to the GitLab project avatar when nothing local resolves", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const cacheDir = yield* makeTempDir;
+        yield* writeTextFile(cacheDir, "avatar.png", "png");
+        const avatarPath = path.join(cacheDir, "avatar.png");
+        const resolver = yield* makeResolverWithGitLabProjectAvatar(avatarPath);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(avatarPath);
+      }),
+    );
+
+    it.effect("prefers icons declared in project source over the GitLab project avatar", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const cacheDir = yield* makeTempDir;
+        yield* writeTextFile(cacheDir, "avatar.png", "png");
+        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
+        yield* writeTextFile(cwd, "brand/logo.svg", "<svg>logo</svg>");
+        const resolver = yield* makeResolverWithGitLabProjectAvatar(
+          path.join(cacheDir, "avatar.png"),
+        );
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "brand", "logo.svg"));
       }),
     );
 
