@@ -156,7 +156,7 @@ await Effect.runPromise(
               GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               ForgejoCli.layer,
-              GitCafeCli.layer,
+              GitCafeCli.layerWithDependencies,
               AzureDevOpsCli.layer,
               // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
               BitbucketApi.layer,

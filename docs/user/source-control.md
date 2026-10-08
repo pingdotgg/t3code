@@ -98,6 +98,11 @@ bun install -g @gitcafe/cli
 cafe auth login --host https://git.cafe/api
 ```
 
+T3 Code talks to GitCafe's API directly with the login `cafe` holds, or with `CAFE_TOKEN` from
+the server's environment, which applies to the host `CAFE_HOST` names (`git.cafe` by default).
+Browsing and reviewing pull requests work with the token alone; publishing a repository and
+opening a pull request still run `cafe`.
+
 GitCafe repositories use HTTPS by default. If Git credentials need refreshing, run
 `cafe auth http setup`. Requests follow the repository URL on `git.cafe` or
 `staging.git.cafe`. Sign in separately for staging with

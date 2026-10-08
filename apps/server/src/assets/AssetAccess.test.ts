@@ -20,17 +20,15 @@ import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as GitCafeCredentials from "../sourceControl/GitCafeCredentials.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
@@ -126,6 +124,15 @@ const layerTest = Layer.mergeAll(
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
+  Layer.mock(GitCafeCredentials.GitCafeCredentials)({
+    get: (host) => Effect.succeed({ host, token: Redacted.make("cafe-token"), source: "env" }),
+    invalidate: () => Effect.void,
+  }),
+  // Only the private-media tests reach the network; each brings its own client.
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die("unexpected HTTP request")),
+  ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
@@ -211,22 +218,12 @@ describe("AssetAccess", () => {
     () => {
       const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 128, 255]);
       let downloads = 0;
-      const spawner = ChildProcessSpawner.make(() =>
+      const client = HttpClient.make((request) =>
         Effect.sync(() => {
           downloads++;
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: Stream.make(png),
-            stderr: Stream.empty,
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
+          expect(request.url).toBe("https://git.cafe/api/attachments/attach_123abc");
+          expect(request.headers.authorization).toBe("Bearer cafe-token");
+          return HttpClientResponse.fromWeb(request, new Response(png, { status: 200 }));
         }),
       );
       return Effect.gen(function* () {
@@ -250,10 +247,7 @@ describe("AssetAccess", () => {
         yield* TestClock.adjust("61 minutes");
         expect(yield* resolveAsset(token, "attach_123abc")).toBeNull();
         expect(downloads).toBe(1);
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provide(layerTest),
-      );
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.provide(layerTest));
     },
   );
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>

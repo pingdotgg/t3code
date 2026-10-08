@@ -52,6 +52,7 @@ import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as GitCafeCli from "./sourceControl/GitCafeCli.ts";
+import * as GitCafeCredentials from "./sourceControl/GitCafeCredentials.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
@@ -278,7 +279,7 @@ const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.p
       GitHubApi.layerWithDependencies,
       GitLabCli.layer,
       ForgejoCli.layer,
-      GitCafeCli.layer,
+      GitCafeCli.layerWithDependencies,
     ),
   ),
   Layer.provideMerge(GitVcsDriver.layer),
@@ -569,9 +570,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
-  // The asset route uses the registry's GitHub credential for private PR media.
+  // The asset route uses the registry's GitHub and GitCafe credentials for private PR media.
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(GitHubApi.layerWithDependencies),
+  Layer.provideMerge(GitCafeCredentials.layer),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),

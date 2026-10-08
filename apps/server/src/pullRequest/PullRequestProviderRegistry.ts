@@ -60,7 +60,7 @@ export const make = Effect.map(
 );
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
-  Layer.provide(GitCafeCli.layer),
+  Layer.provide(GitCafeCli.layerWithDependencies),
   Layer.provide(
     GitHubPullRequestApi.layer.pipe(
       Layer.provide(

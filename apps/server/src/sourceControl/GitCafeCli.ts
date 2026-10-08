@@ -1,13 +1,19 @@
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { PositiveInt, TrimmedNonEmptyString, type ChangeRequest } from "@t3tools/contracts";
 
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 
 export const HOST = "https://git.cafe/api";
@@ -31,6 +37,25 @@ const Failure = Schema.Struct({
   }),
 });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+/** GitCafe's RFC 7807 error body, e.g. `{"type":"https://cafe.sh/errors/not-found",...}`. */
+const Problem = Schema.Struct({
+  type: Schema.optional(Schema.String),
+  title: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+});
+const decodeProblem = Schema.decodeUnknownOption(Schema.fromJsonString(Problem));
+const API_TIMEOUT = Duration.seconds(30);
+/** Responses above this are refused rather than buffered, like the CLI's output cap was. */
+const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/** `https://cafe.sh/errors/not-found` → `NOT_FOUND`, the code the CLI reported for it. */
+function problemCode(type: string | undefined, status: number): string {
+  const slug = type?.split("/").at(-1);
+  if (slug) return slug.replaceAll("-", "_").toUpperCase();
+  if (status === 401) return "AUTHENTICATION_REQUIRED";
+  if (status === 429) return "RATE_LIMITED";
+  return "REQUEST_FAILED";
+}
 const decodeFailureEnvelope = Schema.decodeUnknownResult(Schema.fromJsonString(Failure));
 
 /** Raw API errors put the problem body before the Cafe error envelope on stderr. */
@@ -84,7 +109,7 @@ export class GitCafeCli extends Context.Service<
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitCafeCliError>;
-    /** Raw API responses have no Cafe success envelope. Payloads travel on stdin. */
+    /** One REST call to the host's `/api`, sent directly with the GitCafeCredentials token. */
     readonly api: (input: {
       readonly cwd: string;
       readonly host?: string;
@@ -144,6 +169,8 @@ function normalizePull(
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const httpClient = yield* HttpClient.HttpClient;
+  const credentials = yield* GitCafeCredentials.GitCafeCredentials;
   const error = (cwd: string, detail: string, cause?: unknown) =>
     new GitCafeCliError({
       command: "cafe",
@@ -219,30 +246,88 @@ export const make = Effect.gen(function* () {
     },
   );
   const api: GitCafeCli["Service"]["api"] = Effect.fn("GitCafeCli.api")(function* (input) {
-    const stdin =
-      input.body === undefined
-        ? undefined
-        : yield* encodeJson(input.body).pipe(
-            Effect.mapError((cause) => error(input.cwd, "Invalid GitCafe request body.", cause)),
-          );
-    const result = yield* execute({
-      cwd: input.cwd,
-      ...(input.host === undefined ? {} : { host: input.host }),
-      args: [
-        "api",
-        input.endpoint,
-        "--method",
-        input.method ?? "GET",
-        ...(stdin === undefined ? [] : ["--input", "-"]),
-        ...Object.entries(input.headers ?? {}).flatMap(([name, value]) => [
-          "--header",
-          `${name}:${value}`,
-        ]),
-      ],
-      ...(stdin === undefined ? {} : { stdin }),
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-    });
-    return result.stdout;
+    const host = input.host ?? "git.cafe";
+    if (host !== "git.cafe" && host !== "staging.git.cafe")
+      return yield* error(input.cwd, "Unsupported GitCafe host.");
+    const failed = (code: string, status: number | null, detail: string, cause?: unknown) =>
+      new GitCafeCliError({
+        command: "cafe",
+        cwd: input.cwd,
+        code,
+        status,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const { token } = yield* credentials
+      .get(host)
+      .pipe(
+        Effect.mapError((cause) =>
+          failed(
+            cause._tag === "GitCafeCliMissingError"
+              ? "CLI_UNAVAILABLE"
+              : cause._tag === "GitCafeNotSignedInError"
+                ? "AUTHENTICATION_REQUIRED"
+                : "COMMAND_FAILED",
+            null,
+            cause.message,
+            cause,
+          ),
+        ),
+      );
+    const base = HttpClientRequest.make(
+      (input.method ?? "GET") as HttpClientRequest.HttpClientRequest["method"],
+    )(`https://${host}/api${input.endpoint}`).pipe(
+      HttpClientRequest.bearerToken(Redacted.value(token)),
+      HttpClientRequest.setHeaders({
+        accept: "application/json",
+        "user-agent": "t3code",
+        ...input.headers,
+      }),
+    );
+    const request =
+      input.body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, input.body);
+    const { status, collected } = yield* Effect.gen(function* () {
+      const response = yield* httpClient
+        .execute(request)
+        // The client's own span would record the query string, which can carry branch names.
+        .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
+      const collected = yield* collectUint8StreamText({
+        stream: response.stream,
+        maxBytes: input.maxOutputBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+      }).pipe(
+        // 204 and many refusals carry no body at all, which is an empty answer.
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "EmptyBodyError",
+          () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
+        ),
+      );
+      return { status: response.status, collected };
+    }).pipe(
+      Effect.timeout(API_TIMEOUT),
+      Effect.mapError((cause) =>
+        cause._tag === "TimeoutError"
+          ? failed(
+              "TIMEOUT",
+              null,
+              `GitCafe did not answer within ${Duration.toSeconds(API_TIMEOUT)} seconds. Check the connection and try refreshing.`,
+              cause,
+            )
+          : failed("COMMAND_FAILED", null, "Could not reach GitCafe.", cause),
+      ),
+    );
+    if (status >= 200 && status < 300) {
+      if (collected.truncated)
+        return yield* failed("RESPONSE_TOO_LARGE", status, "GitCafe's response was too large.");
+      return collected.text;
+    }
+    // The source may hold a newer token than the one that was refused.
+    if (status === 401) yield* credentials.invalidate(host);
+    const problem = Option.getOrUndefined(decodeProblem(collected.text));
+    return yield* failed(
+      problemCode(problem?.type, status),
+      status,
+      problem?.detail ?? problem?.title ?? `GitCafe answered HTTP ${status}.`,
+    );
   });
   const decode = <S extends Schema.Top & { readonly DecodingServices: never }>(
     cwd: string,
@@ -525,3 +610,6 @@ export const make = Effect.gen(function* () {
   });
 });
 export const layer = Layer.effect(GitCafeCli, make);
+
+/** The client with the credential it authenticates through, for applications to build once. */
+export const layerWithDependencies = layer.pipe(Layer.provideMerge(GitCafeCredentials.layer));

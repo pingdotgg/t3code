@@ -3210,7 +3210,7 @@ export const layer = Layer.unwrap(
                           GitHubApi.layerWithDependencies,
                           GitLabCli.layer,
                           ForgejoCli.layer,
-                          GitCafeCli.layer,
+                          GitCafeCli.layerWithDependencies,
                         ),
                       ),
                       Layer.provideMerge(GitVcsDriver.layer),

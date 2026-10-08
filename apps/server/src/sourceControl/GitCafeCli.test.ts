@@ -1,14 +1,15 @@
-import { afterEach, expect, it, vi } from "@effect/vitest";
+import { afterEach, beforeEach, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
-import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
+import * as Redacted from "effect/Redacted";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitCafeCli from "./GitCafeCli.ts";
+import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import { discovery } from "./GitCafeSourceControlProvider.ts";
 
 const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
@@ -19,10 +20,29 @@ const ensureRemote = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"]>
 const switchRef = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["switchRef"]>();
 const listLocalBranchNames = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["listLocalBranchNames"]>();
 const setBranchUpstream = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"]>();
+/** What the host answers each REST call with: a JSON body, or a status and raw text. */
+const http = vi.fn<(request: HttpClientRequest.HttpClientRequest) => Response>();
+const getCredential = vi.fn<GitCafeCredentials.GitCafeCredentials["Service"]["get"]>();
+const invalidateCredential =
+  vi.fn<GitCafeCredentials.GitCafeCredentials["Service"]["invalidate"]>();
+const reply = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+const requestBody = (request: HttpClientRequest.HttpClientRequest) =>
+  request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : undefined;
 const layer = it.layer(
   GitCafeCli.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => HttpClientResponse.fromWeb(request, http(request))),
+          ),
+        ),
+        Layer.mock(GitCafeCredentials.GitCafeCredentials)({
+          get: (host) => getCredential(host),
+          invalidate: (host) => invalidateCredential(host),
+        }),
         Layer.mock(VcsProcess.VcsProcess)({ run }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           fetchRemoteBranch,
@@ -68,6 +88,12 @@ function failure(code: string, status: number | null) {
 }
 const HOSTS = ["git.cafe", "staging.git.cafe"] as const;
 afterEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  getCredential.mockImplementation((host) =>
+    Effect.succeed({ host, token: Redacted.make("cafe-token"), source: "cafe" }),
+  );
+  invalidateCredential.mockReturnValue(Effect.void);
+});
 
 layer("GitCafeCli", (it) => {
   it.effect.each(HOSTS)(
@@ -80,7 +106,7 @@ layer("GitCafeCli", (it) => {
       };
       return Effect.gen(function* () {
         const cafe = yield* GitCafeCli.GitCafeCli;
-        run.mockReturnValueOnce(Effect.succeed(output({ name: "project", defaultBranch: "main" })));
+        http.mockReturnValueOnce(reply({ name: "project", defaultBranch: "main" }));
         expect(
           yield* cafe.getRepositoryCloneUrls({
             cwd: "/repo",
@@ -91,19 +117,13 @@ layer("GitCafeCli", (it) => {
           url: `https://${host}/team/project`,
           sshUrl: `ssh@${host}:team/project.git`,
         });
-        run.mockReturnValueOnce(Effect.succeed(output(pull)));
+        http.mockReturnValueOnce(reply(pull));
         expect(
           (yield* cafe.getChangeRequest({ cwd: "/repo", context: hostContext, reference: "7" }))
             .url,
         ).toBe(`https://${host}/team/project/pulls/7`);
-        run.mockReturnValueOnce(
-          Effect.succeed(
-            output({
-              ...pull,
-              isCrossFork: true,
-              sourceRepo: { owner: "alice", name: "fork" },
-            }),
-          ),
+        http.mockReturnValueOnce(
+          reply({ ...pull, isCrossFork: true, sourceRepo: { owner: "alice", name: "fork" } }),
         );
         ensureRemote.mockReturnValueOnce(Effect.succeed("gitcafe"));
         listLocalBranchNames.mockReturnValueOnce(Effect.succeed([]));
@@ -120,7 +140,12 @@ layer("GitCafeCli", (it) => {
           preferredName: "gitcafe",
           url: `ssh@${host}:alice/fork.git`,
         });
-        expect(run.mock.calls.every(([input]) => input.args?.[1] === `https://${host}/api`)).toBe(
+        expect(http.mock.calls.map(([request]) => new URL(request.url).origin)).toEqual([
+          `https://${host}`,
+          `https://${host}`,
+          `https://${host}`,
+        ]);
+        expect(getCredential.mock.calls.every(([credentialHost]) => credentialHost === host)).toBe(
           true,
         );
       });
@@ -153,97 +178,62 @@ layer("GitCafeCli", (it) => {
       expect(run.mock.calls[0]?.[0].args?.slice(0, 2)).toEqual(["--host", `https://${host}/api`]);
     }),
   );
-  it.effect("rejects unsupported API origins before invoking the CLI", () =>
+  it.effect("rejects unsupported API origins before asking for a credential", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
       const failure = yield* cafe
-        .api({ cwd: "/repo", host: "sub.git.cafe", endpoint: "/auth/identity" })
+        .api({ cwd: "/repo", host: "sub.git.cafe", endpoint: "/auth/principal" })
         .pipe(Effect.flip);
       expect(failure.detail).toContain("Unsupported GitCafe host");
-      expect(run).not.toHaveBeenCalled();
+      expect(getCredential).not.toHaveBeenCalled();
+      expect(http).not.toHaveBeenCalled();
     }),
   );
 
-  it.effect("preserves a process timeout with actionable detail", () =>
-    Effect.gen(function* () {
-      const cause = new VcsProcessTimeoutError({
-        operation: "GitCafeCli.execute",
-        command: "cafe",
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-      run.mockReturnValueOnce(Effect.fail(cause));
-      const cafe = yield* GitCafeCli.GitCafeCli;
-      const failure = yield* cafe
-        .api({ cwd: "/repo", endpoint: "/auth/identity" })
-        .pipe(Effect.flip);
-      expect(failure).toMatchObject({
-        code: "TIMEOUT",
-        status: null,
-        cause,
-        detail: "GitCafe CLI timed out after 30 seconds. Check the connection and try refreshing.",
-      });
-      expect(run).toHaveBeenCalledTimes(1);
-    }),
-  );
-  it.effect("distinguishes an unavailable CLI from a missing working directory", () =>
+  it.effect("tells a missing CLI apart from a missing login", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
-      for (const [module, method, code] of [
-        ["ChildProcess", "spawn", "CLI_UNAVAILABLE"],
-        ["FileSystem", "access", "COMMAND_FAILED"],
-      ] as const) {
-        run.mockReturnValueOnce(
-          Effect.fail(
-            new VcsProcessSpawnError({
-              operation: "GitCafeCli.execute",
-              command: "cafe",
-              cwd: "/repo",
-              cause: PlatformError.systemError({
-                _tag: "NotFound",
-                module,
-                method,
-                pathOrDescriptor: "/repo",
-              }),
-            }),
-          ),
-        );
-        expect(
-          (yield* cafe.api({ cwd: "/repo", endpoint: "/auth/identity" }).pipe(Effect.flip)).code,
-        ).toBe(code);
-      }
-    }),
-  );
-  it.effect("sends API headers and body without enabling envelope output", () =>
-    Effect.gen(function* () {
-      run.mockReturnValueOnce(Effect.succeed(output({ ok: true })));
-      const cafe = yield* GitCafeCli.GitCafeCli;
-      yield* cafe.api({
-        cwd: "/repo",
-        endpoint: "/repos/team/project/stacks/1/restack",
-        method: "POST",
-        body: { expectedHead: "abc" },
-        headers: { "Idempotency-Key": "operation-1" },
-      });
-      expect(run.mock.calls[0]?.[0]).toMatchObject({
-        stdin: '{"expectedHead":"abc"}',
-        args: [
-          ...GitCafeCli.CLI_ARGS,
-          "api",
-          "/repos/team/project/stacks/1/restack",
-          "--method",
-          "POST",
-          "--input",
-          "-",
-          "--header",
-          "Idempotency-Key:operation-1",
+      for (const [cause, code] of [
+        [new GitCafeCredentials.GitCafeCliMissingError({ host: "git.cafe" }), "CLI_UNAVAILABLE"],
+        [
+          new GitCafeCredentials.GitCafeNotSignedInError({ host: "git.cafe" }),
+          "AUTHENTICATION_REQUIRED",
         ],
+      ] as const) {
+        getCredential.mockReturnValueOnce(Effect.fail(cause));
+        expect(
+          yield* cafe.api({ cwd: "/repo", endpoint: "/auth/principal" }).pipe(Effect.flip),
+        ).toMatchObject({ code, status: null, detail: cause.message });
+      }
+      expect(http).not.toHaveBeenCalled();
+    }),
+  );
+  it.effect("sends the bearer token, headers and JSON body to the host's API", () =>
+    Effect.gen(function* () {
+      http.mockReturnValueOnce(reply({ ok: true }));
+      const cafe = yield* GitCafeCli.GitCafeCli;
+      expect(
+        yield* cafe.api({
+          cwd: "/repo",
+          endpoint: "/repos/team/project/stacks/1/restack",
+          method: "POST",
+          body: { expectedHead: "abc" },
+          headers: { "Idempotency-Key": "operation-1" },
+        }),
+      ).toBe('{"ok":true}');
+      const [request] = http.mock.calls[0]!;
+      expect(request.method).toBe("POST");
+      expect(request.url).toBe("https://git.cafe/api/repos/team/project/stacks/1/restack");
+      expect(request.headers).toMatchObject({
+        authorization: "Bearer cafe-token",
+        "idempotency-key": "operation-1",
       });
+      expect(requestBody(request)).toBe('{"expectedHead":"abc"}');
     }),
   );
   it.effect("targets repository reads explicitly and normalizes clone URLs", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(Effect.succeed(output({ name: "project", defaultBranch: "trunk" })));
+      http.mockReturnValueOnce(reply({ name: "project", defaultBranch: "trunk" }));
       const cafe = yield* GitCafeCli.GitCafeCli;
       expect(
         yield* cafe.getRepositoryCloneUrls({
@@ -255,13 +245,7 @@ layer("GitCafeCli", (it) => {
         url: "https://git.cafe/team/project",
         sshUrl: "ssh@git.cafe:team/project.git",
       });
-      expect(run).toHaveBeenCalledWith(
-        expect.objectContaining({
-          args: [...GitCafeCli.CLI_ARGS, "api", "/repos/team/project", "--method", "GET"],
-          allowNonZeroExit: true,
-          env: { CAFE_OUTPUT: "json" },
-        }),
-      );
+      expect(http.mock.calls[0]?.[0].url).toBe("https://git.cafe/api/repos/team/project");
     }),
   );
   it.effect("passes explicit owner and visibility when creating repositories", () =>
@@ -307,15 +291,13 @@ layer("GitCafeCli", (it) => {
   );
   it.effect("normalizes draft and fork data using the repository in a PR URL", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(
-        Effect.succeed(
-          output({
-            ...pull,
-            draft: true,
-            isCrossFork: true,
-            sourceRepo: { owner: "alice", name: "fork" },
-          }),
-        ),
+      http.mockReturnValueOnce(
+        reply({
+          ...pull,
+          draft: true,
+          isCrossFork: true,
+          sourceRepo: { owner: "alice", name: "fork" },
+        }),
       );
       const cafe = yield* GitCafeCli.GitCafeCli;
       const result = yield* cafe.getChangeRequest({
@@ -332,7 +314,7 @@ layer("GitCafeCli", (it) => {
         headRepositoryOwnerLogin: "alice",
       });
       expect(Option.isSome(result.updatedAt)).toBe(true);
-      expect(run.mock.calls[0]?.[0].args).toContain("/repos/other/repo/pulls/7");
+      expect(http.mock.calls[0]?.[0].url).toBe("https://git.cafe/api/repos/other/repo/pulls/7");
     }),
   );
   it.effect("lists open/draft PRs and resolves fork identity only for matching branches", () =>
@@ -344,16 +326,14 @@ layer("GitCafeCli", (it) => {
         isCrossFork: true,
         sourceRepo: { owner: "alice", name: "fork" },
       };
-      run.mockReturnValueOnce(
-        Effect.succeed(
-          output({
-            next: null,
-            items: [pull, fork, { ...pull, number: 9, sourceBranch: "unrelated" }],
-          }),
-        ),
+      http.mockReturnValueOnce(
+        reply({
+          next: null,
+          items: [pull, fork, { ...pull, number: 9, sourceBranch: "unrelated" }],
+        }),
       );
-      run.mockReturnValueOnce(Effect.succeed(output(pull)));
-      run.mockReturnValueOnce(Effect.succeed(output(fork)));
+      http.mockReturnValueOnce(reply(pull));
+      http.mockReturnValueOnce(reply(fork));
       const cafe = yield* GitCafeCli.GitCafeCli;
       const items = yield* cafe.listChangeRequests({
         cwd: "/repo",
@@ -364,9 +344,9 @@ layer("GitCafeCli", (it) => {
       });
       expect(items.map((item) => item.number)).toEqual([8]);
       expect(items[0]?.isDraft).toBe(true);
-      expect(run.mock.calls[0]?.[0].args.join(" ")).toContain("sourceBranches=%5B%22feature%22%5D");
-      expect(run.mock.calls[0]?.[0].args.join(" ")).toContain("state=open");
-      expect(run).toHaveBeenCalledTimes(3);
+      expect(http.mock.calls[0]?.[0].url).toContain("sourceBranches=%5B%22feature%22%5D");
+      expect(http.mock.calls[0]?.[0].url).toContain("state=open");
+      expect(http).toHaveBeenCalledTimes(3);
     }),
   );
   it.effect("finds a fork match on a subsequent keyset page", () =>
@@ -377,10 +357,10 @@ layer("GitCafeCli", (it) => {
         isCrossFork: true,
         sourceRepo: { owner: "alice", name: "fork" },
       };
-      run.mockReturnValueOnce(Effect.succeed(output({ next: "pr_next", items: [pull] })));
-      run.mockReturnValueOnce(Effect.succeed(output(pull)));
-      run.mockReturnValueOnce(Effect.succeed(output({ next: null, items: [fork] })));
-      run.mockReturnValueOnce(Effect.succeed(output(fork)));
+      http.mockReturnValueOnce(reply({ next: "pr_next", items: [pull] }));
+      http.mockReturnValueOnce(reply(pull));
+      http.mockReturnValueOnce(reply({ next: null, items: [fork] }));
+      http.mockReturnValueOnce(reply(fork));
       const cafe = yield* GitCafeCli.GitCafeCli;
       const items = yield* cafe.listChangeRequests({
         cwd: "/repo",
@@ -391,7 +371,7 @@ layer("GitCafeCli", (it) => {
         limit: 1,
       });
       expect(items.map((item) => item.number)).toEqual([8]);
-      expect(run.mock.calls[2]?.[0].args.join(" ")).toContain("after=pr_next");
+      expect(http.mock.calls[2]?.[0].url).toContain("after=pr_next");
     }),
   );
   it.effect("reports pending repository admission without claiming clone/push readiness", () =>
@@ -447,38 +427,33 @@ layer("GitCafeCli", (it) => {
       ]);
     }),
   );
-  it.effect("preserves structured authentication, forbidden, and rate-limit errors", () =>
+  it.effect("maps problem documents to codes and drops a refused token", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
-      for (const [code, status] of [
-        ["AUTHENTICATION_REQUIRED", 401],
-        ["FORBIDDEN", 403],
-        ["RATE_LIMITED", 429],
+      for (const [type, status, code] of [
+        ["https://cafe.sh/errors/authentication-required", 401, "AUTHENTICATION_REQUIRED"],
+        ["https://cafe.sh/errors/forbidden", 403, "FORBIDDEN"],
+        ["https://cafe.sh/errors/rate-limited", 429, "RATE_LIMITED"],
+        ["https://cafe.sh/errors/not-found", 404, "NOT_FOUND"],
+        [undefined, 401, "AUTHENTICATION_REQUIRED"],
       ] as const) {
-        run.mockReturnValueOnce(Effect.succeed(output(null, 1, failure(code, status))));
+        http.mockReturnValueOnce(
+          reply(
+            { ...(type === undefined ? {} : { type }), title: "Refused", detail: `No ${status}` },
+            status,
+          ),
+        );
         expect(
-          yield* cafe.api({ cwd: "/repo", endpoint: "/auth/identity" }).pipe(Effect.flip),
-        ).toMatchObject({ code, status, detail: `Failure ${code}` });
+          yield* cafe.api({ cwd: "/repo", endpoint: "/auth/principal" }).pipe(Effect.flip),
+        ).toMatchObject({ code, status, detail: `No ${status}` });
       }
-    }),
-  );
-  it.effect("preserves the Cafe failure envelope following a raw API problem document", () =>
-    Effect.gen(function* () {
-      const stderr =
-        '{"type":"about:blank","title":"Git source request failed","status":404,"code":"not-found"}\n' +
-        failure("NOT_FOUND", 404) +
-        "\n";
-      run.mockReturnValueOnce(Effect.succeed({ ...output(null, 5, stderr), stdout: "" }));
-      const cafe = yield* GitCafeCli.GitCafeCli;
-      const result = yield* cafe
-        .api({ cwd: "/repo", endpoint: "/repos/versecafe/ashlar/pulls/12/changes" })
-        .pipe(Effect.flip);
-      expect(result).toMatchObject({ code: "NOT_FOUND", status: 404, detail: "Failure NOT_FOUND" });
+      // Only the two refusals of the token itself make the next read ask its source again.
+      expect(invalidateCredential).toHaveBeenCalledTimes(2);
     }),
   );
   it.effect("rejects invalid PR JSON instead of inventing branch or state defaults", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(Effect.succeed(output({ ...pull, number: 0 })));
+      http.mockReturnValueOnce(reply({ ...pull, number: 0 }));
       const cafe = yield* GitCafeCli.GitCafeCli;
       expect(
         (yield* cafe.getChangeRequest({ cwd: "/repo", context, reference: "7" }).pipe(Effect.flip))
@@ -488,7 +463,7 @@ layer("GitCafeCli", (it) => {
   );
   it.effect("reads the actual default branch", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(Effect.succeed(output({ name: "project", defaultBranch: "trunk" })));
+      http.mockReturnValueOnce(reply({ name: "project", defaultBranch: "trunk" }));
       const cafe = yield* GitCafeCli.GitCafeCli;
       expect(yield* cafe.getDefaultBranch({ cwd: "/repo", context })).toBe("trunk");
     }),
@@ -497,7 +472,7 @@ layer("GitCafeCli", (it) => {
     "checkout with force=%s keeps the existing local branch in step",
     (force) =>
       Effect.gen(function* () {
-        run.mockReturnValueOnce(Effect.succeed(output(pull)));
+        http.mockReturnValueOnce(reply(pull));
         if (force) run.mockReturnValueOnce(Effect.succeed(output(null)));
         listLocalBranchNames.mockReturnValueOnce(Effect.succeed(["feature"]));
         fetchRemoteBranch.mockReturnValue(Effect.void);
@@ -512,7 +487,7 @@ layer("GitCafeCli", (it) => {
         );
         expect(fetchRemoteBranch).not.toHaveBeenCalled();
         if (force)
-          expect(run.mock.calls[1]?.[0]).toMatchObject({
+          expect(run.mock.calls[0]?.[0]).toMatchObject({
             command: "git",
             args: ["checkout", "-B", "feature", "refs/remotes/origin/feature", "--"],
           });
