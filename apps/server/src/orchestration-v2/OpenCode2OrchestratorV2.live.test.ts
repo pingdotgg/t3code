@@ -66,7 +66,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";

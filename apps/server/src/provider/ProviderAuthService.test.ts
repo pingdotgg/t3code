@@ -23,7 +23,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import { AcpProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/AcpAdapterV2.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderAuthService from "./ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 

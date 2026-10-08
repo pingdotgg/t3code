@@ -18,7 +18,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";

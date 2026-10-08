@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -18,8 +19,10 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -133,8 +136,26 @@ function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
 const layerBackgroundPolicyAlwaysRun = layerBackgroundPolicy(true);
 const layerBackgroundPolicyNeverRun = layerBackgroundPolicy(false);
 const layerServerSettingsTest = ServerSettings.layerTest();
-const layerAlwaysRunTest = Layer.merge(layerBackgroundPolicyAlwaysRun, layerServerSettingsTest);
-const layerNeverRunTest = Layer.merge(layerBackgroundPolicyNeverRun, layerServerSettingsTest);
+const layerServerConfigTest = ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-managed-provider-test-",
+}).pipe(Layer.provide(NodeServices.layer));
+
+function layerProviderHost<BE, BR, SE, SR>(
+  layerBackground: Layer.Layer<BackgroundPolicy.BackgroundPolicy, BE, BR>,
+  layerSettings: Layer.Layer<ServerSettings.ServerSettingsService, SE, SR>,
+) {
+  return ProviderHostLive.layer.pipe(
+    Layer.provideMerge(layerBackground),
+    Layer.provideMerge(layerSettings),
+    Layer.provide(layerServerConfigTest),
+  );
+}
+
+const layerAlwaysRunTest = layerProviderHost(
+  layerBackgroundPolicyAlwaysRun,
+  layerServerSettingsTest,
+);
+const layerNeverRunTest = layerProviderHost(layerBackgroundPolicyNeverRun, layerServerSettingsTest);
 
 const enrichedSnapshotSecond: ServerProvider = {
   ...refreshedSnapshotSecond,
@@ -326,7 +347,9 @@ describe("makeManagedServerProvider", () => {
             ),
             Effect.as(refreshedSnapshot),
           ),
-        }).pipe(Effect.provide(Layer.merge(layerBackgroundPolicyAlwaysRun, layerServerSettings)));
+        }).pipe(
+          Effect.provide(layerProviderHost(layerBackgroundPolicyAlwaysRun, layerServerSettings)),
+        );
 
         yield* Deferred.await(initialCheckDone);
         const nextServerSettings = {

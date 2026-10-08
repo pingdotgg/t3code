@@ -7,14 +7,13 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
-import * as ServerSettings from "../../serverSettings.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeMuseAdapterV2 } from "../../orchestration-v2/Adapters/MuseAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { checkMuseProviderStatus, makePendingMuseProvider } from "../MuseProvider.ts";
 import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
@@ -25,12 +24,12 @@ import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+} from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   makeCachedProviderMaintenanceResolution,
   resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
@@ -43,14 +42,13 @@ const decodeMuseSettings = Schema.decodeSync(MuseSettings);
 
 export type MuseDriverEnv =
   | IdAllocator.IdAllocatorV2
-  | BackgroundPolicy.BackgroundPolicy
+  | ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService;
+  | ServerConfig.ServerConfig;
 
 export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -63,7 +61,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const host = yield* ProviderHost;
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverConfig = yield* ServerConfig.ServerConfig;
       const { cwd } = serverConfig;
@@ -91,7 +89,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
       const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
           binaryPath: effectiveConfig.binaryPath,

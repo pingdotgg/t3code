@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";

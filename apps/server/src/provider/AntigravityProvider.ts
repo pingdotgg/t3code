@@ -23,12 +23,12 @@ import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   buildServerProvider,
   isCommandMissingCause,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;

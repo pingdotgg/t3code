@@ -32,15 +32,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import type { MuseItem } from "../../provider/museProtocol.ts";
 import type { MuseSdkHost } from "../../provider/museSdk.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./MuseAdapterV2.ts";
 

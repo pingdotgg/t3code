@@ -95,7 +95,7 @@ import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetup
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
-import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
   backgroundActivityOverrideSettings,
@@ -145,8 +145,8 @@ function providerConfigString(config: unknown, key: string): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
-  provider: definition.value,
+const PROVIDER_SETTINGS = providerClients.definitions.map((definition) => ({
+  provider: definition.driverKind,
 }));
 
 function configuredBinaryPath(config: unknown): string {
@@ -975,7 +975,7 @@ export function EnvironmentProviderSettings({
   };
 
   const renderProviderInstance = (row: InstanceRow, mode: "list" | "editor") => {
-    const driverOption = getDriverOption(row.driver);
+    const driverOption = providerClients.get(row.driver);
     const liveProvider = serverProviders.find(
       (candidate) => candidate.instanceId === row.instanceId,
     );

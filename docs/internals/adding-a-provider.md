@@ -13,7 +13,7 @@ whether a turn runs. This page lists the decisions and evidence a new driver nee
   [shared ACP adapter](../../apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.ts), like Grok
   and Antigravity. Never add agent-id checks to the generic registry adapter.
 - **Other protocols** get a native adapter that implements
-  [`ProviderAdapterV2`](../../apps/server/src/orchestration-v2/ProviderAdapter.ts), like Codex,
+  [`ProviderAdapterV2`](../../packages/provider-core/src/server/ProviderAdapter.ts), like Codex,
   Claude, Cursor, OpenCode, Pi, and Muse.
 
 Provider-specific behavior stays in the adapter and driver. Orchestration and clients read

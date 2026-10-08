@@ -15,11 +15,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
 import { PiDriver } from "./PiDriver.ts";
 
-const layerTest = Layer.mergeAll(
+const layerDeps = Layer.mergeAll(
   ServerConfig.layerTest("/machine", { prefix: "t3-pi-driver-" }),
   IdAllocator.layer,
   ServerSettings.layerTest({ enableProviderUpdateChecks: false }),
@@ -31,6 +32,8 @@ const layerTest = Layer.mergeAll(
     HttpClient.make(() => Effect.die("Unexpected HTTP")),
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
+
+const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 const decodeRequest = Schema.decodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),

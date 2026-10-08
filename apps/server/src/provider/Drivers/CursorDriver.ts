@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { readCursorUsageLimits } from "../cursorUsageLimits.ts";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
@@ -34,10 +34,10 @@ import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
@@ -63,7 +63,7 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | BackgroundPolicy.BackgroundPolicy
+  | ProviderHost
   | ServerConfig.ServerConfig
   | ServerSecretStore.ServerSecretStore
   | ServerSettings.ServerSettingsService;
@@ -79,6 +79,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const host = yield* ProviderHost;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
@@ -234,7 +235,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provide(CursorSdkCatalog.layer),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
         getSettings: snapshotSettings.getSettings,

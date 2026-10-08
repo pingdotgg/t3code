@@ -23,9 +23,9 @@ import * as UrlParams from "effect/http/UrlParams";
 import * as ServerConfig from "../../config.ts";
 import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";
 import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,

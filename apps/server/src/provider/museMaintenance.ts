@@ -13,8 +13,8 @@ import {
   ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
-} from "./providerMaintenance.ts";
-import { parseGenericCliVersion } from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 const DRIVER = ProviderDriverKind.make("muse");
 /** Mirrors the official launcher, which reads MUSE_CHANNEL and accepts only these two. */

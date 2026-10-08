@@ -33,15 +33,16 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
-import * as ServerConfig from "../../config.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "../ContextHandoffBudget.ts";
 import {
   makePiAdapterV2,
@@ -51,11 +52,11 @@ import {
 } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
 
-const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-pi-v2-adapter-",
-}).pipe(Layer.provide(NodeServices.layer));
-
-const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerServerConfig);
+const layerTest = Layer.mergeAll(
+  NodeServices.layer,
+  IdAllocator.layer,
+  layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+);
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -330,7 +331,7 @@ const makeAdapter = Effect.fnUntraced(function* (
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const serverConfig = yield* ServerConfig.ServerConfig;
+  const host = yield* ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner =
     forkFake === undefined
@@ -363,7 +364,7 @@ const makeAdapter = Effect.fnUntraced(function* (
     spawner,
     fileSystem,
     idAllocator,
-    serverConfig,
+    host,
   });
 });
 

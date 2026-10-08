@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as PlatformError from "effect/PlatformError";
 
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 export interface CodexHomeLayout {
   readonly mode: "direct" | "authOverlay";
