@@ -304,7 +304,8 @@ export function DraftHeroHeadline({
             <ComboboxTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
-              className="pointer-events-auto max-w-64 align-baseline"
+              // Leaves room for the trailing "?" so a truncated name keeps it on its line.
+              className="pointer-events-auto max-w-[calc(100%-1em)] align-baseline"
             />
           }
         >
@@ -411,7 +412,9 @@ export function DraftHeroHeadline({
         {isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
-          <>What should we build in {projectSelector}?</>
+          <>
+            What should we build in <span className="whitespace-nowrap">{projectSelector}?</span>
+          </>
         ) : canChooseProject ? (
           <>{projectSelector} to start</>
         ) : (
