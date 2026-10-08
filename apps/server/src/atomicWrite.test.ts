@@ -1,11 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 
@@ -101,6 +105,113 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       assert.strictEqual(yield* fs.readFileString(filePath), "fresh");
     }),
   );
+
+  it.effect("retries a Windows replacement while another process holds the target", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "settings.json");
+      yield* fs.writeFileString(filePath, "before");
+      const firstAttempt = yield* Deferred.make<void>();
+      let attempts = 0;
+      const lockedOnce = FileSystem.make({
+        ...fs,
+        rename: (from, to) =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts <= 2
+              ? Deferred.succeed(firstAttempt, undefined).pipe(
+                  Effect.andThen(Effect.fail(renameError("EBUSY", to))),
+                )
+              : fs.rename(from, to);
+          }),
+      });
+
+      const writing = yield* writeFileStringAtomically({ filePath, contents: "after" }).pipe(
+        Effect.provideService(FileSystem.FileSystem, lockedOnce),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(writing);
+
+      assert.strictEqual(attempts, 3);
+      assert.strictEqual(yield* fs.readFileString(filePath), "after");
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
+    }),
+  );
+
+  it.effect("gives up on a Windows lock that does not clear and keeps the old contents", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "settings.json");
+      yield* fs.writeFileString(filePath, "before");
+      const firstAttempt = yield* Deferred.make<void>();
+      let attempts = 0;
+      const locked = FileSystem.make({
+        ...fs,
+        rename: (_from, to) =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return Deferred.succeed(firstAttempt, undefined).pipe(
+              Effect.andThen(Effect.fail(renameError("EPERM", to))),
+            );
+          }),
+      });
+
+      const writing = yield* writeFileStringAtomically({ filePath, contents: "after" }).pipe(
+        Effect.provideService(FileSystem.FileSystem, locked),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust("1 minute");
+
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(writing)));
+      assert.isAbove(attempts, 1);
+      assert.strictEqual(yield* fs.readFileString(filePath), "before");
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
+    }),
+  );
+
+  it.effect("fails a rename at once outside Windows or for other errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      for (const [platform, code] of [
+        ["linux", "EPERM"],
+        ["win32", "EXDEV"],
+      ] as const) {
+        let attempts = 0;
+        const failing = FileSystem.make({
+          ...fs,
+          rename: (_from, to) =>
+            Effect.suspend(() => {
+              attempts += 1;
+              return Effect.fail(renameError(code, to));
+            }),
+        });
+
+        const result = yield* writeFileStringAtomically({
+          filePath: path.join(root, `${platform}.json`),
+          contents: "after",
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, failing),
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.exit,
+        );
+
+        assert.isTrue(Exit.isFailure(result));
+        assert.strictEqual(attempts, 1);
+      }
+    }),
+  );
 });
 
 it.effect("surfaces an unreadable link instead of writing over it", () =>
@@ -183,3 +294,12 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
     assert.deepStrictEqual(removed, ["/home/settings.json.abc123"]);
   }),
 );
+
+const renameError = (code: string, path: string) =>
+  PlatformError.systemError({
+    _tag: "Unknown",
+    module: "FileSystem",
+    method: "rename",
+    pathOrDescriptor: path,
+    cause: Object.assign(new Error(`${code}, rename`), { code }),
+  });
