@@ -40,6 +40,8 @@ import { sourceHighlightAtom } from "./sourceHighlightingState";
 interface SourceFileSurfaceProps {
   readonly contents: string;
   readonly path: string;
+  /** The enclosing sheet or card already reserves its own chrome and safe area. */
+  readonly embedded?: boolean;
   readonly initialLine?: number | null;
   /** Override when a fixed notice already reserves the native header. */
   readonly headerInsetTop?: number;
@@ -220,8 +222,8 @@ function NativeSourceFileSurface(
         appearanceScheme={themeAppearance}
         contentResetKey={props.path}
         contentWidth={contentWidth}
-        contentInsetTop={props.headerInsetTop ?? safeArea.top}
-        contentInsetBottom={safeArea.bottom + 8}
+        contentInsetTop={props.embedded ? 0 : (props.headerInsetTop ?? safeArea.top)}
+        contentInsetBottom={props.embedded ? 0 : safeArea.bottom + 8}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
@@ -241,6 +243,7 @@ function NativeSourceFileSurface(
 }
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+  const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
   const foreground = useUniwindTheme()["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
@@ -331,8 +334,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const list = (
     <FlatList
       ref={listRef}
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+      contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
       refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
@@ -364,8 +367,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <ScrollView
       refreshControl={refreshControl}
       className="flex-1"
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+      contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
       contentContainerStyle={{
         paddingBottom: codeSurface.rowHeight,
         paddingHorizontal: 12,
