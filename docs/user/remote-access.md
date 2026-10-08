@@ -235,6 +235,13 @@ from, open **Settings → Connections → Linked environments**, choose **Link**
 and enter the other machine's address and a pairing code from it. From a
 terminal, use `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
+You can also ask an agent to link a machine by name, such as "delegate this to
+my vps". It shows a card in the thread where you pick the machine from the ones
+this app knows (or enter an address) and the access, then approve. If this app
+is connected to that machine with a session that manages access there, it uses
+that session; otherwise paste a pairing code from that machine's
+**Settings → Connections**.
+
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
 - Threads a link starts are marked **From** and this machine's name there.

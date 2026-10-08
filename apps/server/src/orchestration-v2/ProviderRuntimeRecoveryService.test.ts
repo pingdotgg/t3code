@@ -578,7 +578,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("closes a secret request card's form when its run is recovered", () => {
+it.effect("recovery closes a secret card's form but leaves a link card open", () => {
   const threadId = ThreadId.make("thread_secret_recovery");
   const runId = RunId.make("run_secret_recovery");
   let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
@@ -605,6 +605,17 @@ it.effect("closes a secret request card's form when its run is recovered", () =>
         secretStatus: "pending",
         label: "GitHub token",
         reason: "Used as GH_TOKEN.",
+      },
+      {
+        id: "turn-item:link-request:recovery",
+        threadId,
+        runId,
+        nodeId: null,
+        type: "link_request",
+        status: "waiting",
+        linkStatus: "pending",
+        url: "https://box.example.ts.net",
+        reason: "Run the suite there.",
       },
     ],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -636,10 +647,17 @@ it.effect("closes a secret request card's form when its run is recovered", () =>
 
   return Effect.gen(function* () {
     yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    const itemEvent = committedInput?.events.find((event) => event.type === "turn-item.updated");
-    const card = itemEvent?.type === "turn-item.updated" ? itemEvent.payload : null;
-    assert.equal(card?.status, "cancelled");
-    assert.equal(card?.type === "secret_request" ? card.secretStatus : null, "cancelled");
+    const cards = (committedInput?.events ?? []).flatMap((event) =>
+      event.type === "turn-item.updated" ? [event.payload] : [],
+    );
+    const secret = cards.find((card) => card.type === "secret_request");
+    assert.equal(secret?.status, "cancelled");
+    assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
+    // Nothing in memory waits on a link card; the user can still answer it.
+    assert.equal(
+      cards.some((card) => card.type === "link_request"),
+      false,
+    );
   }).pipe(Effect.provide(layer));
 });
 

@@ -554,6 +554,8 @@ export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
   /** This environment. */
   environmentId: EnvironmentId,
   links: Schema.Array(OrchestratorMcpEnvironmentLink),
+  /** What to do when the machine the user means is not among `links`. */
+  notListed: Schema.String,
 });
 export type OrchestratorMcpEnvironmentLinksResult =
   typeof OrchestratorMcpEnvironmentLinksResult.Type;
@@ -695,6 +697,79 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
+
+export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
+  environmentId: Schema.optional(EnvironmentId).annotate({
+    description:
+      "The environment to link, when you know it, e.g. from a machine the user mentioned. Omit it otherwise: the user picks the machine in the card.",
+  }),
+  url: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Only when the user gave an address: its https, Tailscale, LAN or loopback base URL. Never guess one.",
+  }),
+  hint: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      'A short phrase from the user\'s words naming the machine, e.g. "vps" or "mac mini". It only preselects a machine in the card.',
+  }),
+  reason: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "One sentence on why, shown on the card.",
+  }),
+  requestedAccess: Schema.optional(AuthMcpClientAccess).annotate({
+    description:
+      "The access to suggest. The user picks the access in the card; it defaults to approval-required.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Reuse when retrying a call that lost its result, so the user sees one card and its current outcome is returned. Use a new id to ask again.",
+  }),
+});
+export type OrchestratorMcpEnvironmentLinkInput = typeof OrchestratorMcpEnvironmentLinkInput.Type;
+
+export const OrchestratorMcpEnvironmentLinkResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("pending").annotate({
+      description:
+        "The card is waiting for the user. Their answer arrives as a message in this thread.",
+    }),
+    turnItemId: TurnItemId,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("linked"),
+    environmentId: EnvironmentId.annotate({
+      description: "Pass it as environmentId to act there; t3_environment_links lists it.",
+    }),
+    label: Schema.String,
+    access: AuthMcpClientAccess.annotate({ description: "The access the user chose." }),
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["declined", "cancelled"]).annotate({
+      description:
+        "declined: the user chose not to. cancelled: the card closed unanswered, when the thread was stopped or archived.",
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("failed"),
+    message: Schema.String.annotate({
+      description: "Why the other environment refused the link, as the user saw it.",
+    }),
+  }),
+]);
+export type OrchestratorMcpEnvironmentLinkResult = typeof OrchestratorMcpEnvironmentLinkResult.Type;
+
+export const OrchestratorMcpEnvironmentUnlinkInput = Schema.Struct({
+  environmentId: EnvironmentId.annotate({
+    description: "The linked environment to forget, from t3_environment_links.",
+  }),
+});
+export type OrchestratorMcpEnvironmentUnlinkInput =
+  typeof OrchestratorMcpEnvironmentUnlinkInput.Type;
+
+export const OrchestratorMcpEnvironmentUnlinkResult = Schema.Struct({
+  environmentId: EnvironmentId,
+  removed: Schema.Boolean,
+});
+export type OrchestratorMcpEnvironmentUnlinkResult =
+  typeof OrchestratorMcpEnvironmentUnlinkResult.Type;
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,

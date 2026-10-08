@@ -37,6 +37,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
@@ -1418,6 +1419,42 @@ const OrchestrationV2SecretRequestFields = {
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 
+export const OrchestrationV2LinkRequestStatus = Schema.Literals([
+  "pending",
+  "linked",
+  "declined",
+  "cancelled",
+  "failed",
+]);
+export type OrchestrationV2LinkRequestStatus = typeof OrchestrationV2LinkRequestStatus.Type;
+
+/**
+ * An agent asked the user to link another environment. The user picks the
+ * access; the pairing code never passes through orchestration, so the item
+ * carries only what was asked and how it ended.
+ */
+const OrchestrationV2LinkRequestFields = {
+  type: Schema.Literal("link_request"),
+  /** The address the agent named, if it named one. */
+  url: Schema.optional(TrimmedNonEmptyString),
+  reason: Schema.String,
+  /**
+   * The environment the agent named, or the one answering at `url`. Without
+   * either the user picks the machine in the card.
+   */
+  environmentId: Schema.optional(EnvironmentId),
+  label: Schema.optional(Schema.String),
+  /** A phrase from the user's words, such as "vps", that preselects a machine. */
+  hint: Schema.optional(Schema.String),
+  /** The access the agent suggested; the user's choice is final. */
+  requestedAccess: Schema.optional(AuthMcpClientAccess),
+  linkStatus: OrchestrationV2LinkRequestStatus,
+  linkedEnvironmentId: Schema.optional(EnvironmentId),
+  linkedLabel: Schema.optional(Schema.String),
+  linkedAccess: Schema.optional(AuthMcpClientAccess),
+  failure: Schema.optional(Schema.String),
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1600,6 +1637,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2SecretRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2LinkRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2378,6 +2419,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2SecretRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2LinkRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3225,6 +3270,37 @@ const OrchestrationV2InternalCommand = Schema.Union([
     reason: Schema.String,
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /**
+   * Records or updates a link an agent asked the user to make. Internal so no
+   * client can mark a request linked without the link being made.
+   */
+  Schema.Struct({
+    type: Schema.Literal("link_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    url: Schema.optional(TrimmedNonEmptyString),
+    reason: Schema.String,
+    environmentId: Schema.optional(EnvironmentId),
+    label: Schema.optional(Schema.String),
+    hint: Schema.optional(Schema.String),
+    requestedAccess: Schema.optional(AuthMcpClientAccess),
+    linkStatus: OrchestrationV2LinkRequestStatus,
+    linkedEnvironmentId: Schema.optional(EnvironmentId),
+    linkedLabel: Schema.optional(Schema.String),
+    linkedAccess: Schema.optional(AuthMcpClientAccess),
+    failure: Schema.optional(Schema.String),
+    /** Tells the agent how the card ended, in the same commit that closes it. */
+    wake: Schema.optional(
+      Schema.Struct({
+        messageId: MessageId,
+        text: Schema.String,
+        notification: OrchestrationV2Notification,
+      }),
+    ),
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

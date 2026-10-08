@@ -1332,6 +1332,16 @@ export function createServerEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
     }),
+    // Like a secret card's answer: off the config lane, one per card at a time.
+    answerLinkRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:peer-links:answer-request",
+      tag: WS_METHODS.peerLinksAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
+    }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,

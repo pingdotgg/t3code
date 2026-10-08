@@ -207,12 +207,16 @@ it.effect(
     ),
 );
 
-it.effect("requires access management to link or forget environments", () =>
+it.effect("requires access management to link, forget, or answer a link request", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
       registry.set(sessions(env), AsyncResult.success(grant(true)));
-      for (const method of [WS_METHODS.peerLinksLink, WS_METHODS.peerLinksUnlink]) {
+      for (const method of [
+        WS_METHODS.peerLinksLink,
+        WS_METHODS.peerLinksUnlink,
+        WS_METHODS.peerLinksAnswerRequest,
+      ]) {
         const peerLinks = createCommandPermissions(runtime, method);
         expect(registry.get(peerLinks.permissionAtom(env))).toBe(false);
         expect(
@@ -230,6 +234,9 @@ it.effect("requires access management to link or forget environments", () =>
       const link = createCommandPermissions(runtime, WS_METHODS.peerLinksLink);
       expect(registry.get(link.permissionAtom(env))).toBe(true);
       yield* link.authorize(registry, env);
+      const answer = createCommandPermissions(runtime, WS_METHODS.peerLinksAnswerRequest);
+      expect(registry.get(answer.permissionAtom(env))).toBe(true);
+      yield* answer.authorize(registry, env);
     }),
   ),
 );

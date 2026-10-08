@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { AuthMcpClientAccess } from "./auth.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 /**
  * A link from this environment to another one (the peer). This environment
@@ -40,6 +40,13 @@ export const PeerLinkCreateInput = Schema.Struct({
   /** A pairing code from the peer (`t3 pair` there, or its Connections settings). */
   pairingCode: TrimmedNonEmptyString,
   access: AuthMcpClientAccess,
+  /**
+   * The environment the user means. Addresses that answer as another one are
+   * skipped, and only those that answer as this one are kept.
+   */
+  expectedEnvironmentId: Schema.optionalKey(EnvironmentId),
+  /** What the user calls that environment, to name it when it cannot be reached. */
+  expectedLabel: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type PeerLinkCreateInput = typeof PeerLinkCreateInput.Type;
 
@@ -63,3 +70,60 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
   ]),
   message: Schema.String,
 }) {}
+
+/**
+ * The user's answer to an agent asking to link an environment. The pairing
+ * code is used once to link and is never recorded; the thread learns only the
+ * outcome and the access the user chose.
+ */
+export const PeerLinkRequestAnswerInput = Schema.Struct({
+  threadId: ThreadId,
+  turnItemId: TurnItemId,
+  answer: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("link"),
+      /** The machine the user picked, when they picked one rather than typing an address. */
+      environmentId: Schema.optionalKey(EnvironmentId),
+      /** What the client calls that machine. */
+      label: Schema.optionalKey(TrimmedNonEmptyString),
+      /** The addresses the client knows for that machine, most preferred first. */
+      urls: Schema.NonEmptyArray(TrimmedNonEmptyString),
+      access: AuthMcpClientAccess,
+      pairingCode: TrimmedNonEmptyString,
+    }),
+    /** Answers with a machine this environment is already linked to, as it is. */
+    Schema.Struct({ type: Schema.Literal("use-existing"), environmentId: EnvironmentId }),
+    Schema.Struct({ type: Schema.Literal("decline") }),
+  ]),
+});
+export type PeerLinkRequestAnswerInput = typeof PeerLinkRequestAnswerInput.Type;
+
+const PEER_LINK_REQUEST_FAILURE_MESSAGES = {
+  load_failed: "Could not load the link request.",
+  not_found: "This link request no longer exists.",
+  already_answered: "This link request was already answered.",
+  record_failed: "Could not update the link request.",
+} as const;
+
+export const PeerLinkRequestFailureReason = Schema.Literals(
+  Object.keys(PEER_LINK_REQUEST_FAILURE_MESSAGES) as Array<
+    keyof typeof PEER_LINK_REQUEST_FAILURE_MESSAGES
+  >,
+);
+export type PeerLinkRequestFailureReason = typeof PeerLinkRequestFailureReason.Type;
+
+/**
+ * Answering a link request failed before anything was linked. A link the
+ * other environment refused is not this error: the card records it as failed.
+ */
+export class PeerLinkRequestError extends Schema.TaggedError<PeerLinkRequestError>()(
+  "PeerLinkRequestError",
+  {
+    reason: PeerLinkRequestFailureReason,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason];
+  }
+}
