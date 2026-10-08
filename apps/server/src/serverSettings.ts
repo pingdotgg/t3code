@@ -16,6 +16,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
+  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProjectId,
   ProjectScript,
   ProjectSettingsOverrides,
@@ -54,6 +55,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
+import { ManagedSettings } from "@t3tools/shared/managedSettings";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -120,12 +122,68 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
   };
 };
 
+/** Managed keys also beat per-project overrides, so a project cannot opt out of policy. */
+const dropManagedProjectOverrides = (
+  settings: ServerSettings,
+  managedDocument: Readonly<Record<string, unknown>>,
+): ServerSettings => {
+  const managedKeys = PROJECT_SCOPED_SERVER_SETTING_KEYS.filter((key) =>
+    Object.hasOwn(managedDocument, key),
+  );
+  if (managedKeys.length === 0) return settings;
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(settings.projectSettingsOverrides).map(([projectId, entry]) => {
+      const next: Record<string, unknown> = { ...entry };
+      for (const key of managedKeys) delete next[key];
+      return [projectId, next];
+    }),
+  ) as ServerSettings["projectSettingsOverrides"];
+  return { ...settings, projectSettingsOverrides };
+};
+
+/**
+ * A built-in provider configured only through legacy `providers.<kind>` gets its
+ * default instance synthesized from that blob at hydration, unless an explicit
+ * `providerInstances.<kind>` exists. A managed entry for that instance would be
+ * such an explicit entry and silently drop the user's legacy config, so seed it
+ * from the legacy blob first and let the policy merge into the real config.
+ */
+const seedManagedDefaultInstances = (
+  encoded: Record<string, unknown>,
+  managedDocument: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => {
+  const managedInstances = managedDocument.providerInstances;
+  if (typeof managedInstances !== "object" || managedInstances === null) return encoded;
+  const providers = (encoded.providers ?? {}) as Record<string, unknown>;
+  const instances = { ...(encoded.providerInstances as Record<string, unknown> | undefined) };
+  let seeded = false;
+  for (const instanceId of Object.keys(managedInstances)) {
+    if (Object.hasOwn(instances, instanceId) || !Object.hasOwn(providers, instanceId)) continue;
+    instances[instanceId] = { driver: instanceId, config: providers[instanceId] };
+    seeded = true;
+  }
+  return seeded ? { ...encoded, providerInstances: instances } : encoded;
+};
+
+/** `managedDocument` is laid over the encoded settings first; see `@t3tools/shared/managedSettings`. */
 const normalizeServerSettings = (
   settings: ServerSettings,
+  managedDocument?: Readonly<Record<string, unknown>>,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
+    Effect.map((encoded) =>
+      managedDocument === undefined
+        ? encoded
+        : deepMerge(
+            seedManagedDefaultInstances(encoded as Record<string, unknown>, managedDocument),
+            managedDocument,
+          ),
+    ),
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
+    Effect.map((next) =>
+      managedDocument === undefined ? next : dropManagedProjectOverrides(next, managedDocument),
+    ),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
       (cause) =>
@@ -841,6 +899,23 @@ const make = Effect.gen(function* () {
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
+  // The cache and settings.json hold only the user's own values; managed
+  // policy is laid over them on the way out. Keyed by the cached object, so
+  // the overlay runs once per load or write rather than once per read.
+  const managedSettings = yield* ManagedSettings;
+  const managedOverlays = new WeakMap<ServerSettings, ServerSettings>();
+  const withManagedSettings = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> => {
+    if (managedSettings.paths.length === 0) return Effect.succeed(settings);
+    const cached = managedOverlays.get(settings);
+    if (cached !== undefined) return Effect.succeed(cached);
+    return normalizeServerSettings(settings, managedSettings.document).pipe(
+      Effect.tap((effective) => Effect.sync(() => managedOverlays.set(settings, effective))),
+    );
+  };
+  const getEffectiveSettings = getSettingsFromCache.pipe(Effect.flatMap(withManagedSettings));
+
   const materializeProviderEnvironmentSecrets = (
     settings: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -1242,14 +1317,14 @@ const make = Effect.gen(function* () {
           }),
         );
         yield* Cache.set(settingsCache, cacheKey, next);
-        yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
+        yield* emitChange(yield* withManagedSettings(next));
+        return resolveTextGenerationProvider(yield* withManagedSettings(materialized));
       }),
     );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(
-      getSettingsFromCache.pipe(
+      getEffectiveSettings.pipe(
         Effect.flatMap(materializeProviderEnvironmentSecrets),
         Effect.map(resolveTextGenerationProvider),
         Effect.flatMap(use),
@@ -1259,7 +1334,7 @@ const make = Effect.gen(function* () {
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       yield* Cache.invalidate(settingsCache, cacheKey);
-      const settings = yield* getSettingsFromCache;
+      const settings = yield* getEffectiveSettings;
       yield* emitChange(settings);
     }),
   );
@@ -1350,7 +1425,7 @@ const make = Effect.gen(function* () {
     const startup = Effect.gen(function* () {
       yield* startWatcher;
       yield* Cache.invalidate(settingsCache, cacheKey);
-      yield* getSettingsFromCache;
+      yield* getEffectiveSettings;
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -1365,7 +1440,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: getSettingsFromCache.pipe(
+    getSettings: getEffectiveSettings.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),

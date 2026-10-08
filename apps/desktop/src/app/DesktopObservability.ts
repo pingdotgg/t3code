@@ -5,6 +5,13 @@ import {
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as SharedObservability from "@t3tools/shared/observability";
+import {
+  EMPTY_MANAGED_SETTINGS,
+  loadHostManagedSettings,
+  ManagedSettings,
+  managedOtlpUrl,
+  type ManagedSettingsPolicy,
+} from "@t3tools/shared/managedSettings";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   parsePersistedServerObservabilitySettings,
@@ -370,25 +377,29 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
 
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const persisted = yield* readPersistedObservabilitySettings;
+  const managedSettings = yield* ManagedSettings;
   const signalExport: SignalExport = {
     protocol: environment.otlpProtocol,
     headers: Option.getOrUndefined(environment.otlpHeaders),
     exportIntervalMs: environment.otlpExportIntervalMs,
   };
   return {
-    traces: OtelEnvironment.resolveSignalEndpoint(
+    traces: OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpTracesUrl"),
       otel,
       "traces",
       { url: Option.getOrUndefined(environment.otlpTracesUrl), export: signalExport },
       persisted.otlpTracesUrl,
     ),
-    metrics: OtelEnvironment.resolveSignalEndpoint(
+    metrics: OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpMetricsUrl"),
       otel,
       "metrics",
       { url: Option.getOrUndefined(environment.otlpMetricsUrl), export: signalExport },
       persisted.otlpMetricsUrl,
     ),
-    logs: OtelEnvironment.resolveSignalEndpoint(
+    logs: OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpLogsUrl"),
       otel,
       "logs",
       { url: Option.getOrUndefined(environment.otlpLogsUrl), export: signalExport },
@@ -736,4 +747,27 @@ export const layer = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, "Info"),
   Layer.succeed(Tracer.MinimumTraceLevel, "Info"),
   Layer.succeed(References.TracerTimingEnabled, true),
+);
+
+// Turns every signal off: blank managed URLs mean "do not export".
+const EXPORT_NOTHING: ManagedSettingsPolicy = {
+  document: { observability: { otlpTracesUrl: "", otlpMetricsUrl: "", otlpLogsUrl: "" } },
+  paths: EMPTY_MANAGED_SETTINGS.paths,
+};
+
+/**
+ * The machine's policy for this process's own export. The server refuses to
+ * start on an invalid policy and says why; the desktop shell only has to avoid
+ * exporting anywhere the policy did not approve, so it exports nothing.
+ */
+export const layerManagedSettings = Layer.effect(
+  ManagedSettings,
+  loadHostManagedSettings.pipe(
+    Effect.catch((error) =>
+      Effect.logError("invalid managed settings; desktop telemetry export is off", {
+        path: error.path,
+        detail: error.detail,
+      }).pipe(Effect.as(EXPORT_NOTHING)),
+    ),
+  ),
 );

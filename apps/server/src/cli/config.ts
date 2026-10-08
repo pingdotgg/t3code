@@ -4,6 +4,7 @@ import {
   OtlpProtocol,
   type SignalExport,
 } from "@t3tools/shared/observability";
+import { ManagedSettings, managedOtlpUrl } from "@t3tools/shared/managedSettings";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
@@ -409,6 +410,7 @@ export const resolveServerConfig = (
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
     const otel = yield* OtelEnvironment.load;
+    const managedSettings = yield* ManagedSettings;
 
     // T3 Code's own OTLP variables name no signal, so the one answer they give
     // is the answer for all three.
@@ -417,21 +419,24 @@ export const resolveServerConfig = (
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
-    const traces = OtelEnvironment.resolveSignalEndpoint(
+    const traces = OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpTracesUrl"),
       otel,
       "traces",
       { url: env.otlpTracesUrl, export: signalExport },
       bootstrap?.otlpTracesUrl,
       persistedObservabilitySettings.otlpTracesUrl,
     );
-    const metrics = OtelEnvironment.resolveSignalEndpoint(
+    const metrics = OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpMetricsUrl"),
       otel,
       "metrics",
       { url: env.otlpMetricsUrl, export: signalExport },
       bootstrap?.otlpMetricsUrl,
       persistedObservabilitySettings.otlpMetricsUrl,
     );
-    const logs = OtelEnvironment.resolveSignalEndpoint(
+    const logs = OtelEnvironment.resolveManagedSignalEndpoint(
+      managedOtlpUrl(managedSettings, "otlpLogsUrl"),
       otel,
       "logs",
       { url: env.otlpLogsUrl, export: signalExport },

@@ -398,6 +398,23 @@ export const resolveSignalEndpoint = (
 };
 
 /**
+ * `resolveSignalEndpoint` under an organization policy: a managed URL replaces
+ * every other source and a blank one turns the signal off. `OTEL_SDK_DISABLED`
+ * still wins, since exporting nothing sends nothing anywhere.
+ */
+export const resolveManagedSignalEndpoint = (
+  managedUrl: string | undefined,
+  otel: OtelEnvironment,
+  signal: SignalName,
+  t3: { readonly url: string | undefined; readonly export: SignalExport },
+  ...fallbackUrls: ReadonlyArray<string | undefined>
+): SignalEndpoint | undefined => {
+  if (managedUrl === undefined) return resolveSignalEndpoint(otel, signal, t3, ...fallbackUrls);
+  const url = blankAsUnset(managedUrl);
+  return otel.disabled || url === undefined ? undefined : { url, export: t3.export };
+};
+
+/**
  * Provide this around Effect's OTLP exporters, which read
  * `OTEL_RESOURCE_ATTRIBUTES` for themselves and die when it does not decode,
  * so they see what `load` accepted instead.

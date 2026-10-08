@@ -1,4 +1,5 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { loadHostManagedSettings, ManagedSettings } from "@t3tools/shared/managedSettings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -22,8 +23,16 @@ const runServerCommand = (
 ) =>
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveServerConfig(flags, logLevel, options);
-    return yield* runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
+    // Loaded before config so policy can outrank flags and env vars there, and
+    // an invalid policy stops the server before it binds anything.
+    const managedSettings = yield* loadHostManagedSettings;
+    const config = yield* resolveServerConfig(flags, logLevel, options).pipe(
+      Effect.provideService(ManagedSettings, managedSettings),
+    );
+    return yield* runServer.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, config),
+      Effect.provideService(ManagedSettings, managedSettings),
+    );
   });
 
 /** Bare words can name existing directories, but must not create typo projects. */
