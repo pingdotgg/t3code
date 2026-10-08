@@ -151,19 +151,8 @@ describe("CuaWindowPreview", () => {
     (displayOnly) =>
       Effect.gen(function* () {
         clearCuaToolContext(threadId);
-        McpProviderSession.setMcpProviderSession({
-          threadId,
-          endpoint: "http://127.0.0.1/mcp",
-          authorizationHeader: "Bearer x",
-          capabilities: new Set(),
-          cuaDriver: { command: "/driver", args: [], environment: [], socketPath: "/tmp/cua.sock" },
-        } as unknown as McpProviderSession.McpProviderSessionConfig);
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            McpProviderSession.clearMcpProviderSession(threadId);
-            clearCuaToolContext(threadId);
-          }),
-        );
+        yield* setCuaSession;
+        yield* Effect.addFinalizer(() => Effect.sync(() => clearCuaToolContext(threadId)));
         const select = (windowId: number) =>
           cuaToolPresentation({
             threadId,

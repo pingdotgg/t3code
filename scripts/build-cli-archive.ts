@@ -22,12 +22,14 @@ import rootPackageJson from "../package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import {
+  stageCuaDriverExecutable,
   createStagePatchedDependencies,
   createStageWorkspaceConfig,
   resolveFffNativeDependencies,
   STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
 import { assertLinuxArm64PageCompatibility } from "./lib/linux-arm64-sea.ts";
+import { stageCuaLinuxSdk } from "./lib/cua-linux-bundle.ts";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { signWithJsign } from "./lib/windows-jsign.ts";
 import { windowsSystemTar } from "./lib/windows-tar.ts";
@@ -643,6 +645,22 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     arch: input.arch,
     version: input.version,
   });
+
+  if (input.platform === "linux") {
+    yield* stageCuaDriverExecutable({
+      platform: input.platform,
+      arch: input.arch,
+      repoRoot,
+      stageRoot,
+      stageResourcesDir: contentDir,
+      verbose: true,
+    });
+    yield* stageCuaLinuxSdk({
+      arch: input.arch,
+      bundleDir: path.join(contentDir, "cua-driver"),
+      nodeModulesDir: path.join(contentDir, "node_modules"),
+    });
+  }
 
   const executablePath = path.join(contentDir, executableName);
   if (input.platform === "linux") {
