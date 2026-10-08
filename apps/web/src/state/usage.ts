@@ -240,17 +240,31 @@ export function useUsage(
   // Stored during render, as React recommends for state that follows props, so
   // the kept usage is on screen in the same frame the new window starts pending.
   const [lastAnswered, setLastAnswered] = useState<
-    (NonNullable<UsageView["shown"]> & { readonly selection: typeof selectedEnvironmentIds }) | null
+    | (NonNullable<UsageView["shown"]> & {
+        readonly selection: typeof selectedEnvironmentIds;
+        readonly hidden: typeof hiddenProviders;
+      })
+    | null
   >(null);
   if (
     answeredCount > 0 &&
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
-      lastAnswered.selection !== selectedEnvironmentIds)
+      lastAnswered.selection !== selectedEnvironmentIds ||
+      lastAnswered.hidden !== hiddenProviders)
   ) {
-    setLastAnswered({ window: input, merged, selection: selectedEnvironmentIds });
+    setLastAnswered({
+      window: input,
+      merged,
+      selection: selectedEnvironmentIds,
+      hidden: hiddenProviders,
+    });
   }
-  const kept = lastAnswered?.selection === selectedEnvironmentIds ? lastAnswered : null;
+  // Kept usage only stands in for the same environments and provider filter.
+  const kept =
+    lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
+      ? lastAnswered
+      : null;
   // With no answers, even failed ones keep the last answered usage on screen.
   const shown =
     answeredCount > 0

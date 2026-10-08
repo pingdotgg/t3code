@@ -211,6 +211,13 @@ describe("usage environment selection", () => {
     expect(latest.shown?.window).toBe(nextWindow);
     expect(latest.shown?.merged.costUsd).toBe(30);
 
+    // A different provider filter does not reuse usage merged with the old one.
+    testState.environments = [environment("a", null)];
+    await act(() =>
+      renderer?.update(<Probe selected={selected} hidden={new Set(["claude"])} window={input} />),
+    );
+    expect(latest.shown).toBeNull();
+
     // Another selection has nothing of its own to show.
     testState.environments = [environment("a", null)];
     await select("a");
