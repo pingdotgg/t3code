@@ -17,10 +17,12 @@ import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLay
  */
 export function ChatCanvas({
   composerOverlayElement,
+  detailsCardTopInset = 0,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
   composerOverlayElement: HTMLElement | null;
+  detailsCardTopInset?: number;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -106,8 +108,17 @@ export function ChatCanvas({
       clearPreview,
       registerTimeline,
       reportDetailsCard,
+      detailsCardTopInset,
     };
-  }, [measurements, preview, detailsCard, reportPreview, clearPreview, reportDetailsCard]);
+  }, [
+    measurements,
+    preview,
+    detailsCard,
+    reportPreview,
+    clearPreview,
+    reportDetailsCard,
+    detailsCardTopInset,
+  ]);
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>

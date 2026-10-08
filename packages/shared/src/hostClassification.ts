@@ -119,6 +119,23 @@ export const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
+// Reserved and special-use names, plus the private TLDs RFC 6762 Appendix G
+// records as common on internal networks.
+const PRIVATE_FAVICON_TLDS = [
+  ".alt",
+  ".corp",
+  ".example",
+  ".home",
+  ".internal",
+  ".intranet",
+  ".invalid",
+  ".lan",
+  ".onion",
+  ".private",
+  ".test",
+];
+const INTERNAL_HOST_LABELS: ReadonlySet<string> = new Set(["corp", "internal", "intranet"]);
+
 /** Whether a hostname is eligible to be disclosed to a public favicon provider. */
 export const isPublicFaviconHost = (host: string): boolean => {
   // A single trailing dot is a valid absolute DNS name. Repeated trailing
@@ -127,12 +144,15 @@ export const isPublicFaviconHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (isPrivateNetworkHost(normalized)) return false;
   if (
-    [".alt", ".example", ".internal", ".invalid", ".onion", ".test"].some(
+    PRIVATE_FAVICON_TLDS.some(
       (suffix) => normalized === suffix.slice(1) || normalized.endsWith(suffix),
     )
   ) {
     return false;
   }
+  // Company networks often nest internal services under a public domain
+  // (`grafana.internal.acme.com`); never send those names to a third party.
+  if (normalized.split(".").some((label) => INTERNAL_HOST_LABELS.has(label))) return false;
   const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
   if (ipv4) return !isSpecialPurposeIpv4Address(ipv4);
   if (!normalized.includes(":")) return true;

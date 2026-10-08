@@ -18,8 +18,8 @@ import {
   OpenCodeAdapterV2Driver,
   type OpenCodeAdapterV2DriverEnv,
 } from "./Adapters/OpenCodeAdapterV2.ts";
-import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./Adapters/PiAdapterV2.ts";
-import type { AnyProviderAdapterDriver } from "./ProviderAdapterDriver.ts";
+import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "@t3tools/provider-pi/server";
+import type { AnyProviderAdapterDriver } from "@t3tools/provider-core/server/adapterDriver";
 
 export type BuiltInProviderAdapterDriversV2Env =
   | AcpRegistryAdapterV2DriverEnv

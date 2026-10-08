@@ -29,7 +29,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-import { signalProcessGroup } from "../../process/processGroup.ts";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import {
   collectSessionConfigOptionValues,

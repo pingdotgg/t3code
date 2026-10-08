@@ -158,8 +158,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };
 
-// SOLID: opaque sheet-colored header for surfaces whose content scrolls internally
-// (file viewer, terminal, review) — there is nothing for glass to sample there.
+// SOLID: opaque sheet-colored header for surfaces that manage their own viewport.
 const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   headerBackButtonDisplayMode: "minimal",
   headerBackTitle: "",
@@ -724,7 +723,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/review`,
-      options: SOLID_HEADER_OPTIONS,
+      options: GLASS_HEADER_OPTIONS,
     }),
     ThreadReviewComment: createNativeStackScreen({
       screen: ReviewCommentComposerSheet,
@@ -750,7 +749,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
-      options: SOLID_HEADER_OPTIONS,
+      options: GLASS_HEADER_OPTIONS,
     }),
     ThreadMcpApp: createNativeStackScreen({
       screen: McpAppFullscreenScreen,

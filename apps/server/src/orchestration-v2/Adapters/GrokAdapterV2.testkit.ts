@@ -16,10 +16,10 @@ import {
   GROK_ACP_INITIALIZE_META,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import { makeXAiPromptCompletionRuntime } from "../../provider/acp/XAiAcpExtension.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {

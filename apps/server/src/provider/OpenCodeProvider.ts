@@ -19,7 +19,7 @@ import {
   nonEmptyTrimmed,
   providerModelsFromSettings,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import type { ProbedOpenCode } from "./opencodeVersionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";

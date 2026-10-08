@@ -172,7 +172,7 @@ export const make = Effect.gen(function* () {
             proof_key_thumbprint IS NULL
             OR proof_key_thumbprint = ${proofKeyThumbprint}
           )
-          AND (${requestedScopes === undefined} OR EXISTS (
+          AND (${requestedScopes === undefined ? 1 : 0} OR EXISTS (
             SELECT 1
             FROM json_each(${JSON.stringify(requestedScopes ?? [])}) AS requested
             WHERE requested.value IN (

@@ -7,7 +7,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import type { IdAllocatorV2, IdAllocatorV2Error } from "./IdAllocator.ts";
+import type { IdAllocatorV2, IdAllocatorV2Error } from "@t3tools/provider-core/server/IdAllocator";
 
 export interface ThreadDeletionPlan {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -214,6 +214,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     commandId: command.commandId,
     threadId: command.threadId,
     request: { type: "terminal.cleanup" },
+  });
+  effects.push({
+    id: `effect:${command.commandId}:preview.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "preview.cleanup" },
   });
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {
