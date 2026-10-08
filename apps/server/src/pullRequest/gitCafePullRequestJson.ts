@@ -66,7 +66,7 @@ export const RawPullSchema = Schema.Struct({
 export type RawPull = typeof RawPullSchema.Type;
 export const PullListSchema = Schema.Struct({
   items: Schema.Array(RawPullSchema),
-  nextAfter: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
 });
 export const PullDetailSchema = Schema.Struct({
   ...RawPullSchema.fields,
@@ -165,7 +165,8 @@ const CommentSchema = Schema.Struct({
   body: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   path: Schema.NullOr(Schema.String),
-  line: Schema.NullOr(PositiveInt),
+  // The API allows any integer here; only a positive line anchors a review thread.
+  line: Schema.NullOr(Schema.Int),
   side: Schema.NullOr(Schema.Literals(["left", "right"])),
   commitOid: Schema.NullOr(Schema.String),
   resolvedAt: Schema.NullOr(IsoDateTime),
@@ -182,7 +183,7 @@ const CommentSchema = Schema.Struct({
 });
 export const CommentsSchema = Schema.Struct({
   items: Schema.Array(CommentSchema),
-  nextAfter: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
 });
 const ReviewSchema = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -194,7 +195,7 @@ const ReviewSchema = Schema.Struct({
 });
 export const ReviewsSchema = Schema.Struct({
   items: Schema.Array(ReviewSchema),
-  nextAfter: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
 });
 const ReactionSubjectSchema = Schema.Struct({
   kind: Schema.Literals(["issue", "issue_comment", "pull_request", "pull_request_comment"]),
@@ -259,7 +260,7 @@ export function toReactions(data: typeof ReactionsSchema.Type): GitCafeReactions
 }
 export const ReviewersSchema = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: Schema.String, actor: ActorSchema })),
-  nextAfter: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
 });
 export function toReviewers(
   data: typeof ReviewersSchema.Type,
@@ -275,7 +276,7 @@ export const CommitListSchema = Schema.Struct({
     Schema.Struct({ oid: TrimmedNonEmptyString, summary: Schema.String, time: Schema.Finite }),
   ),
   truncated: Schema.Boolean,
-  nextAfter: Schema.NullOr(Schema.String),
+  next: Schema.NullOr(Schema.String),
   headOid: Schema.String,
 });
 export function toCommits(data: typeof CommitListSchema.Type) {
@@ -301,7 +302,8 @@ export function toActivity(
   );
   const groups = new Map<string, Array<typeof CommentSchema.Type>>();
   for (const comment of ordered) {
-    if (!comment.path || comment.line === null || comment.side === null) continue;
+    if (!comment.path || comment.line === null || comment.line < 1 || comment.side === null)
+      continue;
     const key = comment.threadId;
     const group = groups.get(key) ?? [];
     group.push(comment);
@@ -374,7 +376,7 @@ export function toActivity(
       })),
     ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     commentCount: comments.items.length + reviews.items.length,
-    commentsTruncated: comments.nextAfter !== null || reviews.nextAfter !== null,
+    commentsTruncated: comments.next !== null || reviews.next !== null,
     reviewThreads,
     commits: toCommits(commits),
     ...(mappedReactions === undefined ? {} : { reactions: mappedReactions.reactions }),
@@ -384,15 +386,17 @@ export function toActivity(
 const DiffFileSchema = Schema.Struct({
   path: TrimmedNonEmptyString,
   oldPath: Schema.optional(Schema.NullOr(Schema.String)),
-  status: Schema.Literals([
-    "added",
-    "deleted",
-    "modified",
-    "typeChanged",
-    "conflicted",
-    "renamed",
-    "copied",
-  ]),
+  status: Schema.optional(
+    Schema.Literals([
+      "added",
+      "deleted",
+      "modified",
+      "typeChanged",
+      "conflicted",
+      "renamed",
+      "copied",
+    ]),
+  ),
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
   binary: Schema.optional(Schema.Boolean),
@@ -401,19 +405,25 @@ const DiffFileSchema = Schema.Struct({
   isSubmodule: Schema.optional(Schema.Boolean),
   oldOid: Schema.optional(Schema.String),
   newOid: Schema.optional(Schema.String),
-  hunks: Schema.Array(
-    Schema.Struct({
-      oldStart: NonNegativeInt,
-      oldLines: NonNegativeInt,
-      newStart: NonNegativeInt,
-      newLines: NonNegativeInt,
-      lines: Schema.Array(Schema.Struct({ origin: Schema.String, content: Schema.String })),
-    }),
+  // Structural pages (`/changes`, `/compare`) list files without hunks; the batched
+  // `/diff-files` and `/compare/files` reads fill them in.
+  hunks: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        oldStart: NonNegativeInt,
+        oldLines: NonNegativeInt,
+        newStart: NonNegativeInt,
+        newLines: NonNegativeInt,
+        lines: Schema.Array(Schema.Struct({ origin: Schema.String, content: Schema.String })),
+      }),
+    ),
   ),
 });
+export type DiffFile = typeof DiffFileSchema.Type;
+export const DiffFilesSchema = Schema.Array(DiffFileSchema);
 export const DiffSchema = Schema.Struct({
-  items: Schema.Array(DiffFileSchema),
-  truncated: Schema.Boolean,
+  items: DiffFilesSchema,
+  truncated: Schema.optional(Schema.Boolean),
 });
 
 function quotePath(path: string): string {
@@ -458,12 +468,13 @@ export function toDiff(diff: typeof DiffSchema.Type): ProviderDiffSlice {
       if (hasOld) lines.push(`-Subproject commit ${file.oldOid}`);
       if (hasNew) lines.push(`+Subproject commit ${file.newOid}`);
     } else {
-      if (file.hunks.length > 0)
+      const hunks = file.hunks ?? [];
+      if (hunks.length > 0)
         lines.push(
           `--- ${file.status === "added" ? "/dev/null" : a}`,
           `+++ ${file.status === "deleted" ? "/dev/null" : b}`,
         );
-      for (const hunk of file.hunks) {
+      for (const hunk of hunks) {
         lines.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
         for (const line of hunk.lines) {
           if (["=", ">", "<"].includes(line.origin)) lines.push("\\ No newline at end of file");
@@ -475,7 +486,7 @@ export function toDiff(diff: typeof DiffSchema.Type): ProviderDiffSlice {
   }
   return {
     patch: chunks.length === 0 ? "" : `${chunks.join("\n")}\n`,
-    truncated: diff.truncated || omittedFileStats.length > 0,
+    truncated: diff.truncated === true || omittedFileStats.length > 0,
     nextCursor: null,
     ...(omittedFileStats.length === 0 ? {} : { omittedFileStats }),
   };

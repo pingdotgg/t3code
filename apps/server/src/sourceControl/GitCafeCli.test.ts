@@ -345,7 +345,7 @@ layer("GitCafeCli", (it) => {
       run.mockReturnValueOnce(
         Effect.succeed(
           output({
-            nextAfter: null,
+            next: null,
             items: [pull, fork, { ...pull, number: 9, sourceBranch: "unrelated" }],
           }),
         ),
@@ -375,9 +375,9 @@ layer("GitCafeCli", (it) => {
         isCrossFork: true,
         sourceRepo: { owner: "alice", name: "fork" },
       };
-      run.mockReturnValueOnce(Effect.succeed(output({ nextAfter: "pr_next", items: [pull] })));
+      run.mockReturnValueOnce(Effect.succeed(output({ next: "pr_next", items: [pull] })));
       run.mockReturnValueOnce(Effect.succeed(output(pull)));
-      run.mockReturnValueOnce(Effect.succeed(output({ nextAfter: null, items: [fork] })));
+      run.mockReturnValueOnce(Effect.succeed(output({ next: null, items: [fork] })));
       run.mockReturnValueOnce(Effect.succeed(output(fork)));
       const cafe = yield* GitCafeCli.GitCafeCli;
       const items = yield* cafe.listChangeRequests({

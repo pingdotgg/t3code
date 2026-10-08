@@ -98,12 +98,12 @@ describe("deployed GitCafe PR normalization", () => {
         { ...base, id: "reply", threadId: "thread-one" },
         { ...base, id: "other", threadId: "thread-two" },
       ],
-      nextAfter: "next",
+      next: "next",
     });
     const activity = toActivity(
       comments,
-      { items: [], nextAfter: null },
-      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      { items: [], next: null },
+      { items: [], headOid: "abcdef", truncated: false, next: null },
       "abcdef",
     );
     expect(activity.reviewThreads.map((thread) => thread.id)).toEqual(["thread-two", "thread-one"]);
@@ -128,10 +128,10 @@ describe("deployed GitCafe PR normalization", () => {
             { ...base, id: "root", resolvedAt },
             { ...base, id: "reply", resolvedAt: null },
           ],
-          nextAfter: null,
+          next: null,
         }),
-        { items: [], nextAfter: null },
-        { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+        { items: [], next: null },
+        { items: [], headOid: "abcdef", truncated: false, next: null },
         "abcdef",
       );
       expect(activity.reviewThreads).toHaveLength(1);
@@ -165,10 +165,10 @@ describe("deployed GitCafe PR normalization", () => {
             capabilities,
           },
         ],
-        nextAfter: null,
+        next: null,
       }),
-      { items: [], nextAfter: null },
-      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      { items: [], next: null },
+      { items: [], headOid: "abcdef", truncated: false, next: null },
       "abcdef",
     );
     expect(activity.comments[0]).toMatchObject({ canEdit: false });
@@ -202,10 +202,10 @@ describe("deployed GitCafe PR normalization", () => {
             },
           },
         ],
-        nextAfter: null,
+        next: null,
       }),
-      { items: [], nextAfter: null },
-      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      { items: [], next: null },
+      { items: [], headOid: "abcdef", truncated: false, next: null },
     );
     expect(activity.reviewThreads[0]?.canResolve).toBe(false);
   });
@@ -226,10 +226,10 @@ describe("deployed GitCafe PR normalization", () => {
           { ...base, id: "comment-a", threadId: "comment-a" },
           { ...base, id: "comment-b", threadId: "comment-a" },
         ],
-        nextAfter: null,
+        next: null,
       }),
-      { items: [], nextAfter: null },
-      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      { items: [], next: null },
+      { items: [], headOid: "abcdef", truncated: false, next: null },
       "abcdef",
       "git.cafe",
       decodeReactions({
@@ -273,9 +273,9 @@ describe("deployed GitCafe PR normalization", () => {
   });
   it("drops custom and unsupported Unicode emoji instead of misrepresenting them", () => {
     const activity = toActivity(
-      decodeComments({ items: [], nextAfter: null }),
-      { items: [], nextAfter: null },
-      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      decodeComments({ items: [], next: null }),
+      { items: [], next: null },
+      { items: [], headOid: "abcdef", truncated: false, next: null },
       undefined,
       "git.cafe",
       decodeReactions({

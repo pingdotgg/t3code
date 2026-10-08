@@ -399,7 +399,7 @@ export const make = Effect.gen(function* () {
         const data = yield* decode(
           input.cwd,
           raw,
-          Schema.Struct({ items: Schema.Array(Pull), nextAfter: Schema.NullOr(Schema.String) }),
+          Schema.Struct({ items: Schema.Array(Pull), next: Schema.NullOr(Schema.String) }),
         );
         for (const pull of data.items) {
           if (pull.sourceBranch !== SourceControlProvider.sourceBranch(input)) continue;
@@ -415,8 +415,8 @@ export const make = Effect.gen(function* () {
             items.push(normalized);
           if (items.length >= limit) break;
         }
-        if (data.items.length === 0 || data.nextAfter === null || data.nextAfter === after) break;
-        after = data.nextAfter;
+        if (data.items.length === 0 || data.next === null || data.next === after) break;
+        after = data.next;
       }
       return items.slice(0, limit);
     }),

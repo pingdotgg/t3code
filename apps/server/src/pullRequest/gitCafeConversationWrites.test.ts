@@ -74,7 +74,7 @@ describe("GitCafe conversation writes", () => {
     Effect.gen(function* () {
       const f = fixture(() => ({
         items: [{ id: "thread", threadId: "thread", version: 2, resolvedAt: "now" }],
-        nextAfter: null,
+        next: null,
       }));
       yield* f.writes.setThreadResolution({ ...target, threadId: "thread", resolved: true });
       expect(f.calls).toHaveLength(1);
@@ -127,8 +127,8 @@ describe("GitCafe conversation writes", () => {
         if (call.method === "PUT") return { version: 10 };
         if (call.endpoint.includes("/reviewers"))
           return call.endpoint.includes("after=next")
-            ? { kind: "reviewers", items: [reviewer("b")], nextAfter: null }
-            : { kind: "reviewers", items: [reviewer("a")], nextAfter: "next" };
+            ? { items: [reviewer("b")], next: null }
+            : { items: [reviewer("a")], next: "next" };
         return pull;
       });
       yield* reviewers.writes.setReviewerRequest({
@@ -143,19 +143,17 @@ describe("GitCafe conversation writes", () => {
         if (call.endpoint.includes("/pulls/7/labels"))
           return call.endpoint.includes("after=next")
             ? {
-                kind: "labels",
                 items: [{ id: "old2", name: "old2", color: "fff", description: null }],
-                nextAfter: null,
+                next: null,
               }
             : {
-                kind: "labels",
                 items: [{ id: "old1", name: "old1", color: "fff", description: null }],
-                nextAfter: "next",
+                next: "next",
               };
         if (call.endpoint.includes("/labels"))
           return {
             items: [{ id: "new", name: "new", color: "000", description: null }],
-            nextAfter: null,
+            next: null,
           };
         return pull;
       });
@@ -170,9 +168,7 @@ describe("GitCafe conversation writes", () => {
   it.effect("rejects cyclic pagination without replacing a partial reviewer set", () =>
     Effect.gen(function* () {
       const f = fixture((call) =>
-        call.endpoint.includes("/reviewers")
-          ? { kind: "reviewers", items: [], nextAfter: "same" }
-          : pull,
+        call.endpoint.includes("/reviewers") ? { items: [], next: "same" } : pull,
       );
       const result = yield* Effect.result(
         f.writes.setReviewerRequest({ ...target, reviewers: [], requested: true }),

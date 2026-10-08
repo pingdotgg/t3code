@@ -45,7 +45,7 @@ const CommentDetail = Schema.Struct({
 });
 const CommentPage = Schema.Struct({
   items: Schema.Array(CommentDetail),
-  nextAfter: Schema.NullOr(Id),
+  next: Schema.NullOr(Id),
 });
 const Actor = Schema.Struct({
   id: Id,
@@ -71,9 +71,8 @@ const Actor = Schema.Struct({
   avatarUrl: Schema.NullOr(Schema.String),
 });
 const ActorPage = Schema.Struct({
-  kind: Schema.String,
   items: Schema.Array(Actor),
-  nextAfter: Schema.NullOr(Id),
+  next: Schema.NullOr(Id),
 });
 const ReviewState = Schema.Struct({
   id: Id,
@@ -83,7 +82,6 @@ const ReviewState = Schema.Struct({
   stale: Schema.Boolean,
 });
 const ReviewerPage = Schema.Struct({
-  kind: Schema.Literal("reviewers"),
   items: Schema.Array(
     Schema.Struct({
       ...Actor.fields,
@@ -92,7 +90,7 @@ const ReviewerPage = Schema.Struct({
       latestReview: Schema.NullOr(ReviewState),
     }),
   ),
-  nextAfter: Schema.NullOr(Id),
+  next: Schema.NullOr(Id),
 });
 const Label = Schema.Struct({
   id: Id,
@@ -100,12 +98,8 @@ const Label = Schema.Struct({
   color: Schema.String,
   description: Schema.NullOr(Schema.String),
 });
-const LabelPage = Schema.Struct({ items: Schema.Array(Label), nextAfter: Schema.NullOr(Id) });
-const AssignedLabelPage = Schema.Struct({
-  kind: Schema.String,
-  items: Schema.Array(Label),
-  nextAfter: Schema.NullOr(Id),
-});
+const LabelPage = Schema.Struct({ items: Schema.Array(Label), next: Schema.NullOr(Id) });
+const AssignedLabelPage = LabelPage;
 const AssignmentReceipt = Schema.Struct({ version: NonNegativeInt });
 const PullUpdateReceipt = Schema.Struct({ version: NonNegativeInt });
 const Reaction = Schema.Struct({ id: Id });
@@ -146,7 +140,7 @@ export function makeGitCafeConversationWrites(cli: GitCafeCli.GitCafeCli["Servic
     path: string,
     schema: Schema.Schema<{
       readonly items: ReadonlyArray<A>;
-      readonly nextAfter: string | null;
+      readonly next: string | null;
     }> & { readonly DecodingServices: never },
     operation: string,
   ) =>
@@ -155,10 +149,10 @@ export function makeGitCafeConversationWrites(cli: GitCafeCli.GitCafeCli["Servic
       const cursors = new Set<string>();
       let after: string | null = null;
       do {
-        const page: { readonly items: ReadonlyArray<A>; readonly nextAfter: string | null } =
+        const page: { readonly items: ReadonlyArray<A>; readonly next: string | null } =
           yield* request(input, `${path}${query(after)}`, schema, { operation });
         items.push(...page.items);
-        if (page.nextAfter !== null && (page.nextAfter === after || cursors.has(page.nextAfter))) {
+        if (page.next !== null && (page.next === after || cursors.has(page.next))) {
           return yield* new PullRequestProviderError({
             provider: "gitcafe",
             operation,
@@ -167,7 +161,7 @@ export function makeGitCafeConversationWrites(cli: GitCafeCli.GitCafeCli["Servic
           });
         }
         if (after !== null) cursors.add(after);
-        after = page.nextAfter;
+        after = page.next;
       } while (after !== null);
       return items;
     });

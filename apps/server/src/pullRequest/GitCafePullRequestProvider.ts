@@ -38,7 +38,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
 };
-const IdentitySchema = Schema.Struct({ user: Schema.Struct({ username: TrimmedNonEmptyString }) });
+const PrincipalSchema = Schema.Struct({ handle: TrimmedNonEmptyString });
 const LabelsSchema = Schema.Struct({
   items: Schema.Array(Schema.Struct({ name: Schema.String, color: Schema.String })),
 });
@@ -48,15 +48,6 @@ const FilterOptionsSchema = Schema.Struct({
   ),
 });
 const encodeActorIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
-const DiffStatsSchema = Schema.Struct({
-  items: Schema.Array(
-    Schema.Struct({
-      additions: Schema.optional(NonNegativeInt),
-      deletions: Schema.optional(NonNegativeInt),
-    }),
-  ),
-  truncated: Schema.Boolean,
-});
 const StatusSchema = Schema.Struct({
   merge: Schema.Struct({
     conflicts: Schema.Literals(["unknown", "conflicting"]),
@@ -81,12 +72,19 @@ const ChecksSchema = Schema.Struct({
     }),
   ),
 });
-const DiffPageSchema = Schema.Struct({
-  ...Json.DiffSchema.fields,
+/** A pull request's files at one revision, without hunks. */
+const ChangesPageSchema = Schema.Struct({
   version: NonNegativeInt,
-  headOid: Schema.optional(TrimmedNonEmptyString),
-  comparisonBaseOid: Schema.optional(TrimmedNonEmptyString),
-  nextAfter: Schema.NullOr(TrimmedNonEmptyString),
+  headOid: TrimmedNonEmptyString,
+  comparisonBaseOid: TrimmedNonEmptyString,
+  items: Json.DiffFilesSchema,
+  next: Schema.NullOr(TrimmedNonEmptyString),
+});
+const DiffFilesSchema = Schema.Struct({
+  version: NonNegativeInt,
+  headOid: TrimmedNonEmptyString,
+  comparisonBaseOid: TrimmedNonEmptyString,
+  items: Json.DiffFilesSchema,
 });
 const DiffCursorSchema = Schema.Struct({
   version: NonNegativeInt,
@@ -99,9 +97,10 @@ const encodeCommitDiffCursor = Schema.encodeSync(Schema.fromJsonString(CommitDif
 const decodeCommitDiffCursor = Schema.decodeEffect(Schema.fromJsonString(CommitDiffCursorSchema));
 const decodeDiffCursor = Schema.decodeEffect(Schema.fromJsonString(DiffCursorSchema));
 const ComparePageSchema = Schema.Struct({
-  ...Json.DiffSchema.fields,
-  nextAfter: Schema.NullOr(TrimmedNonEmptyString),
+  items: Json.DiffFilesSchema,
+  next: Schema.NullOr(TrimmedNonEmptyString),
 });
+const CompareFilesSchema = Schema.Struct({ items: Json.DiffFilesSchema });
 const DiffFileContentsSchema = Schema.Struct({
   version: NonNegativeInt,
   headOid: Schema.optional(TrimmedNonEmptyString),
@@ -139,6 +138,28 @@ function checkStatus(check: (typeof ChecksSchema.Type.items)[number]) {
 const isGitCafeCliError = Schema.is(GitCafeCli.GitCafeCliError);
 const PAGE_SIZE = 100;
 const CONVERSATION_PAGES = 10;
+/** GitCafe's cap on paths per `/diff-files` or `/compare/files` read, and so one diff page. */
+const DIFF_FILES_BATCH = 64;
+/** Line totals cost one hunk read per batch, so a pull request larger than this reports none. */
+const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
+
+const chunk = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> =>
+  Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
+    items.slice(index * size, (index + 1) * size),
+  );
+
+/** Files whose hunks GitCafe can return; binary and oversized ones are listed as they are. */
+const detailablePaths = (files: ReadonlyArray<Json.DiffFile>) =>
+  files.filter((file) => !file.binary && !file.tooLarge).map((file) => file.path);
+
+/** Lays the detailed files over the structural page, keeping its order and anything omitted. */
+const withDetails = (
+  files: ReadonlyArray<Json.DiffFile>,
+  details: ReadonlyArray<Json.DiffFile>,
+): ReadonlyArray<Json.DiffFile> => {
+  const byPath = new Map(details.map((file) => [file.path, file]));
+  return files.map((file) => byPath.get(file.path) ?? file);
+};
 
 export function gitCafeProviderFailure(error: GitCafeCli.GitCafeCliError) {
   if (error.code === "CLI_UNAVAILABLE") return "missing-tool" as const;
@@ -207,12 +228,14 @@ export const make = Effect.gen(function* () {
     schema: S,
     operation: string,
     maxOutputBytes?: number,
+    body?: unknown,
   ) =>
     cli
       .api({
         cwd: input.cwd,
         host: input.host,
         endpoint,
+        ...(body === undefined ? {} : { method: "POST", body }),
         ...(maxOutputBytes === undefined ? {} : { maxOutputBytes }),
       })
       .pipe(
@@ -240,15 +263,88 @@ export const make = Effect.gen(function* () {
     const base = yield* target(input);
     return yield* read(input, `${base}/${input.number}`, Json.PullDetailSchema, "getChangeRequest");
   });
+  /** One `/diff-files` read for up to a batch of paths, pinned to the revision it was asked at. */
+  const readDiffFiles = Effect.fn("GitCafePullRequestProvider.readDiffFiles")(function* (
+    input: ProviderRepositoryRef & { readonly number: number },
+    revision: { readonly version: number; readonly headOid: string; readonly baseOid: string },
+    paths: ReadonlyArray<string>,
+    operation: string,
+  ) {
+    if (paths.length === 0) return [];
+    const base = yield* target(input);
+    const files = yield* read(
+      input,
+      `${base}/${input.number}/diff-files`,
+      DiffFilesSchema,
+      operation,
+      8 * 1024 * 1024,
+      { paths, expectedVersion: revision.version },
+    );
+    if (
+      files.version !== revision.version ||
+      files.headOid !== revision.headOid ||
+      files.comparisonBaseOid !== revision.baseOid
+    )
+      return yield* failure(
+        operation,
+        `GitCafe returned a different diff snapshot than revision ${revision.version} requested.`,
+      );
+    return files.items;
+  });
+  /**
+   * Added and deleted line totals. `/changes` lists files without counting lines, so the counts
+   * come from batched hunk reads, and a pull request past the cap reports none rather than paying
+   * for every file.
+   */
+  const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
+    input: ProviderRepositoryRef & { readonly number: number },
+    version: number,
+  ) {
+    const base = yield* target(input);
+    const files: Array<Json.DiffFile> = [];
+    let revision: { version: number; headOid: string; baseOid: string } | undefined;
+    let after: string | null = null;
+    do {
+      const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
+      if (after !== null) query.set("after", after);
+      const page = yield* read(
+        input,
+        `${base}/${input.number}/changes?${query}`,
+        ChangesPageSchema,
+        "getChangeRequestStats",
+      );
+      revision ??= {
+        version: page.version,
+        headOid: page.headOid,
+        baseOid: page.comparisonBaseOid,
+      };
+      files.push(...page.items);
+      after = page.next;
+    } while (after !== null && files.length <= LINE_STATS_MAX_FILES);
+    const counted = files.some((file) => file.additions !== undefined)
+      ? files
+      : files.length > LINE_STATS_MAX_FILES || revision === undefined
+        ? []
+        : yield* Effect.forEach(
+            chunk(detailablePaths(files), DIFF_FILES_BATCH),
+            (paths) => readDiffFiles(input, revision!, paths, "getChangeRequestStats"),
+            { concurrency: 4 },
+          ).pipe(Effect.map((batches) => batches.flat()));
+    return {
+      changedFiles: files.length,
+      additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
+      deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
+    };
+  });
   const readComments = Effect.fn("GitCafePullRequestProvider.readComments")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
     const base = yield* target(input);
     const items: Array<(typeof Json.CommentsSchema.Type.items)[number]> = [];
-    let nextAfter: string | null = null;
+    let next: string | null = null;
     for (let page = 0; page < CONVERSATION_PAGES; page++) {
       const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (nextAfter !== null) query.set("after", nextAfter);
+      if (next !== null) query.set("after", next);
       const batch = yield* read(
         input,
         `${base}/${input.number}/comments?${query}`,
@@ -257,20 +353,20 @@ export const make = Effect.gen(function* () {
         8 * 1024 * 1024,
       );
       items.push(...batch.items);
-      nextAfter = batch.nextAfter;
-      if (nextAfter === null || batch.items.length === 0) break;
+      next = batch.next;
+      if (next === null || batch.items.length === 0) break;
     }
-    return { items, nextAfter };
+    return { items, next };
   });
   const readReviews = Effect.fn("GitCafePullRequestProvider.readReviews")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
     const base = yield* target(input);
     const items: Array<(typeof Json.ReviewsSchema.Type.items)[number]> = [];
-    let nextAfter: string | null = null;
+    let next: string | null = null;
     for (let page = 0; page < CONVERSATION_PAGES; page++) {
       const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (nextAfter !== null) query.set("after", nextAfter);
+      if (next !== null) query.set("after", next);
       const batch = yield* read(
         input,
         `${base}/${input.number}/reviews?${query}`,
@@ -279,11 +375,11 @@ export const make = Effect.gen(function* () {
         8 * 1024 * 1024,
       );
       items.push(...batch.items);
-      const previous: string | null = nextAfter;
-      nextAfter = batch.nextAfter;
-      if (nextAfter === null || nextAfter === previous || batch.items.length === 0) break;
+      const previous: string | null = next;
+      next = batch.next;
+      if (next === null || next === previous || batch.items.length === 0) break;
     }
-    return { items, nextAfter };
+    return { items, next };
   });
   const writes = makeGitCafeConversationWrites(cli);
   const reviewWrites = makeGitCafeReviewWrites(cli);
@@ -294,10 +390,10 @@ export const make = Effect.gen(function* () {
     getViewer: (input) =>
       read(
         { ...input, host: input.host ?? "git.cafe" },
-        "/auth/identity",
-        IdentitySchema,
+        "/auth/principal",
+        PrincipalSchema,
         "getViewer",
-      ).pipe(Effect.map((identity) => identity.user.username)),
+      ).pipe(Effect.map((principal) => principal.handle)),
     listChangeRequests: Effect.fn("GitCafePullRequestProvider.listChangeRequests")(
       function* (input) {
         const base = yield* target(input);
@@ -316,7 +412,7 @@ export const make = Effect.gen(function* () {
         }
         const limit = Math.min(1000, Math.max(1, input.limit));
         const items: Array<Json.RawPull> = [];
-        let nextAfter: string | null = null;
+        let next: string | null = null;
         do {
           const query = new URLSearchParams({
             limit: String(Math.min(PAGE_SIZE, limit - items.length)),
@@ -329,7 +425,7 @@ export const make = Effect.gen(function* () {
               input.involvement === "reviewing" ? "reviewers" : "authors",
               encodeActorIds([authorId]),
             );
-          if (nextAfter !== null) query.set("after", nextAfter);
+          if (next !== null) query.set("after", next);
           const batch = yield* read(
             input,
             `${base}?${query}`,
@@ -337,9 +433,9 @@ export const make = Effect.gen(function* () {
             "listChangeRequests",
           );
           items.push(...batch.items);
-          nextAfter = batch.nextAfter;
+          next = batch.next;
           if (batch.items.length === 0) break;
-        } while (nextAfter !== null && items.length < limit);
+        } while (next !== null && items.length < limit);
         return {
           items: items.map((pull) => {
             const item = Json.toChangeRequest(pull, input.repository, input.host);
@@ -350,7 +446,7 @@ export const make = Effect.gen(function* () {
                 }
               : item;
           }),
-          truncated: nextAfter !== null,
+          truncated: next !== null,
           continues: false,
         };
       },
@@ -377,28 +473,14 @@ export const make = Effect.gen(function* () {
           read(input, `${base}/${input.number}/status`, StatusSchema, "getStatus"),
           pull.headOid === null
             ? Effect.succeed(null)
-            : read(
-                input,
-                `${base}/${input.number}/diff?expectedVersion=${pull.version}&limit=500`,
-                DiffStatsSchema,
-                "getChangeRequestStats",
-                8 * 1024 * 1024,
-              ).pipe(
-                Effect.catch((error) => {
-                  if (!isGitCafeCliError(error.cause)) return Effect.fail(error);
-                  if (pull.state !== "open" && error.cause.status === 404)
-                    return Effect.succeed(null);
-                  // GC2 refuses detailed diffs beyond its native admission limits;
-                  // the structural inventory still supplies the file count.
-                  if (error.cause.status === 413 || error.cause.status === 501)
-                    return read(
-                      input,
-                      `${base}/${input.number}/changes?expectedVersion=${pull.version}`,
-                      DiffStatsSchema,
-                      "getChangeRequestStats",
-                    );
-                  return Effect.fail(error);
-                }),
+            : readLineStats(input, pull.version).pipe(
+                Effect.catch((error) =>
+                  pull.state !== "open" &&
+                  isGitCafeCliError(error.cause) &&
+                  error.cause.status === 404
+                    ? Effect.succeed(null)
+                    : Effect.fail(error),
+                ),
               ),
           pull.headOid === null
             ? Effect.succeed(null)
@@ -420,9 +502,9 @@ export const make = Effect.gen(function* () {
         ...(pull.sourceRepo === null
           ? {}
           : { headRepositoryNameWithOwner: `${pull.sourceRepo.owner}/${pull.sourceRepo.name}` }),
-        additions: changes?.items.reduce((total, file) => total + (file.additions ?? 0), 0) ?? 0,
-        deletions: changes?.items.reduce((total, file) => total + (file.deletions ?? 0), 0) ?? 0,
-        changedFiles: changes?.items.length ?? 0,
+        additions: changes?.additions ?? 0,
+        deletions: changes?.deletions ?? 0,
+        changedFiles: changes?.changedFiles ?? 0,
         closedAt: pull.closedAt,
         mergedAt: pull.mergedAt,
         reviewers: actors,
@@ -482,7 +564,7 @@ export const make = Effect.gen(function* () {
             readComments(input),
             readReviews(input),
             pull.headOid === null
-              ? Effect.succeed({ items: [], truncated: false, nextAfter: null, headOid: "" })
+              ? Effect.succeed({ items: [], truncated: false, next: null, headOid: "" })
               : read(
                   input,
                   `${yield* target(input)}/${input.number}/commits?limit=100`,
@@ -540,25 +622,30 @@ export const make = Effect.gen(function* () {
             "getDiff",
             "GitCafe cannot compare a root commit yet. Open the commit on GitCafe to inspect it.",
           );
-        const query = new URLSearchParams({
-          base: "HEAD",
-          baseOid: parent,
-          head: "HEAD",
-          headOid: commit.oid,
-          limit: "500",
-        });
+        const pinned = { base: "HEAD", baseOid: parent, head: "HEAD", headOid: commit.oid };
+        const query = new URLSearchParams({ ...pinned, limit: String(DIFF_FILES_BATCH) });
         if (cursor !== null) query.set("after", cursor.after);
         const page = yield* read(
           input,
           `${sourceBase}/compare?${query}`,
           ComparePageSchema,
           "getDiff",
-          8 * 1024 * 1024,
         );
+        const paths = detailablePaths(page.items);
+        const details =
+          paths.length === 0
+            ? []
+            : (yield* read(
+                input,
+                `${sourceBase}/compare/files`,
+                CompareFilesSchema,
+                "getDiff",
+                8 * 1024 * 1024,
+                { ...pinned, paths },
+              )).items;
         return {
-          ...Json.toDiff(page),
-          nextCursor:
-            page.nextAfter === null ? null : encodeCommitDiffCursor({ after: page.nextAfter }),
+          ...Json.toDiff({ items: withDetails(page.items, details) }),
+          nextCursor: page.next === null ? null : encodeCommitDiffCursor({ after: page.next }),
         };
       }
       const cursor =
@@ -569,14 +656,16 @@ export const make = Effect.gen(function* () {
             );
       const revision = cursor ?? { version: (yield* readPull(input)).version };
       const version = revision.version;
-      const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
+      const query = new URLSearchParams({
+        expectedVersion: String(version),
+        limit: String(DIFF_FILES_BATCH),
+      });
       if (cursor !== null) query.set("after", cursor.after);
       const page = yield* read(
         input,
-        `${base}/${input.number}/diff?${query}`,
-        DiffPageSchema,
+        `${base}/${input.number}/changes?${query}`,
+        ChangesPageSchema,
         "getDiff",
-        8 * 1024 * 1024,
       );
       if (
         page.version !== version ||
@@ -587,23 +676,24 @@ export const make = Effect.gen(function* () {
           "getDiff",
           `GitCafe returned a different diff snapshot than revision ${version} requested.`,
         );
-      const diff = Json.toDiff(page);
-      const reviewRevision =
-        page.headOid === undefined || page.comparisonBaseOid === undefined
-          ? undefined
-          : { version, headOid: page.headOid, baseOid: page.comparisonBaseOid };
+      const reviewRevision = { version, headOid: page.headOid, baseOid: page.comparisonBaseOid };
+      const details = yield* readDiffFiles(
+        input,
+        reviewRevision,
+        detailablePaths(page.items),
+        "getDiff",
+      );
       return {
-        ...diff,
-        ...(reviewRevision === undefined ? {} : { reviewRevision }),
+        ...Json.toDiff({ items: withDetails(page.items, details) }),
+        reviewRevision,
         nextCursor:
-          page.nextAfter === null
+          page.next === null
             ? null
             : encodeDiffCursor({
                 version,
-                ...(reviewRevision === undefined
-                  ? {}
-                  : { headOid: reviewRevision.headOid, baseOid: reviewRevision.baseOid }),
-                after: page.nextAfter,
+                headOid: reviewRevision.headOid,
+                baseOid: reviewRevision.baseOid,
+                after: page.next,
               }),
       };
     }),

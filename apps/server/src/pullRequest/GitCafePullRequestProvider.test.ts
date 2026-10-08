@@ -40,6 +40,17 @@ const detail = {
   capabilities: { comment: false, review: true, merge: true, edit: true, moderate: true },
 };
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const revision = { version: 1, headOid: "abcdef", comparisonBaseOid: "baseabcdef" };
+const hunk = {
+  oldStart: 1,
+  oldLines: 1,
+  newStart: 1,
+  newLines: 1,
+  lines: [
+    { origin: "-", content: "old\n" },
+    { origin: "+", content: "new\n" },
+  ],
+};
 type Request = Parameters<GitCafeCli.GitCafeCli["Service"]["api"]>[0];
 const withApi = (respond: (input: Request) => unknown) =>
   Layer.mock(GitCafeCli.GitCafeCli)({ api: (input) => Effect.sync(() => json(respond(input))) });
@@ -78,8 +89,6 @@ describe("deployed GitCafe PR API", () => {
     ["closed", 404, true],
     ["open", 404, false],
     ["merged", 503, false],
-    ["open", 413, true],
-    ["open", 501, true],
   ] as const) {
     it.effect(`handles unavailable source statistics for ${state} PRs with HTTP ${status}`, () =>
       Effect.gen(function* () {
@@ -89,14 +98,14 @@ describe("deployed GitCafe PR API", () => {
         if (result._tag === "Success") {
           expect(result.success.body).toBe("Body");
           expect(result.success.state).toBe(state);
-          expect(result.success.changedFiles).toBe(status === 413 || status === 501 ? 65 : 0);
+          expect(result.success.changedFiles).toBe(0);
           expect(result.success.additions).toBe(0);
         }
       }).pipe(
         Effect.provide(
           Layer.mock(GitCafeCli.GitCafeCli)({
             api: (input) => {
-              if (input.endpoint.includes("/diff?"))
+              if (input.endpoint.includes("/changes?"))
                 return Effect.fail(
                   new GitCafeCli.GitCafeCliError({
                     command: "cafe",
@@ -106,12 +115,8 @@ describe("deployed GitCafe PR API", () => {
                     detail: "Git source request failed",
                   }),
                 );
-              if (input.endpoint.includes("/changes?"))
-                return Effect.succeed(
-                  json({ items: Array.from({ length: 65 }, () => ({})), truncated: false }),
-                );
               if (input.endpoint.includes("/reviewers?"))
-                return Effect.succeed(json({ items: [], nextAfter: null }));
+                return Effect.succeed(json({ items: [], next: null }));
               if (input.endpoint.includes("/labels?")) return Effect.succeed(json({ items: [] }));
               if (input.endpoint.includes("/commits/")) return Effect.succeed(json({ items: [] }));
               if (input.endpoint.endsWith("/status"))
@@ -163,15 +168,15 @@ describe("deployed GitCafe PR API", () => {
       Effect.provide(
         withApi((input) => {
           calls.push(input);
-          if (input.endpoint === "/auth/identity") return { user: { username: "staging-user" } };
+          if (input.endpoint === "/auth/principal") return { handle: "staging-user" };
           if (input.endpoint.endsWith("/stack"))
             return {
               stack: { id: "stack", number: 2, revision: 1, landingBase: "main", members: [] },
             };
           if (input.endpoint.includes("/commits?"))
-            return { items: [], truncated: false, nextAfter: null, headOid: "abcdef" };
+            return { items: [], truncated: false, next: null, headOid: "abcdef" };
           if (input.endpoint.includes("/comments?") || input.endpoint.includes("/reviews?"))
-            return { items: [], nextAfter: null };
+            return { items: [], next: null };
           return detail;
         }),
       ),
@@ -204,7 +209,7 @@ describe("deployed GitCafe PR API", () => {
           );
           return {
             items: Array.from({ length: limit }, (_, i) => ({ ...pull, number: i + 1 })),
-            nextAfter: "pr_cursor",
+            next: "pr_cursor",
           };
         }),
       ),
@@ -230,7 +235,7 @@ describe("deployed GitCafe PR API", () => {
           calls.push(input);
           return input.endpoint.endsWith("/filter-options")
             ? { actors: [{ actorId: "act_author", handle: "author" }] }
-            : { items: [pull], nextAfter: null };
+            : { items: [pull], next: null };
         }),
       ),
     );
@@ -258,7 +263,7 @@ describe("deployed GitCafe PR API", () => {
           calls.push(input);
           return input.endpoint.endsWith("/filter-options")
             ? { actors: [{ actorId: "act_author", handle: "author" }] }
-            : { items: [pull], nextAfter: null };
+            : { items: [pull], next: null };
         }),
       ),
     );
@@ -287,11 +292,15 @@ describe("deployed GitCafe PR API", () => {
       Effect.provide(
         withApi((input) => {
           calls.push(input);
-          if (input.endpoint.includes("/reviewers?")) return { items: [], nextAfter: null };
+          if (input.endpoint.includes("/reviewers?")) return { items: [], next: null };
           if (input.endpoint.includes("/labels?")) return { items: [] };
-          if (input.endpoint.includes("/diff?")) {
+          if (input.endpoint.includes("/changes?")) {
             expect(input.endpoint).toContain("expectedVersion=1&limit=500");
-            return { items: [{ additions: 7, deletions: 2 }], truncated: false };
+            return { ...revision, items: [{ path: "src/a.ts", status: "modified" }], next: null };
+          }
+          if (input.endpoint.endsWith("/diff-files")) {
+            expect(input.body).toEqual({ paths: ["src/a.ts"], expectedVersion: 1 });
+            return { ...revision, items: [{ path: "src/a.ts", additions: 7, deletions: 2 }] };
           }
           if (input.endpoint.includes("/commits/")) {
             expect(input.endpoint).toBe("/repos/owner/repo/commits/abcdef/checks");
@@ -342,6 +351,37 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
+  it.effect("counts files but not lines past the line statistics cap", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getChangeRequest(target);
+      expect(result.changedFiles).toBe(300);
+      expect(result.additions).toBe(0);
+      expect(calls.some((call) => call.endpoint.endsWith("/diff-files"))).toBe(false);
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          calls.push(input);
+          if (input.endpoint.includes("/reviewers?")) return { items: [], next: null };
+          if (input.endpoint.includes("/labels?")) return { items: [] };
+          if (input.endpoint.includes("/changes?"))
+            return {
+              ...revision,
+              items: Array.from({ length: 300 }, (_, index) => ({ path: `src/${index}.ts` })),
+              next: null,
+            };
+          if (input.endpoint.includes("/commits/")) return { items: [] };
+          if (input.endpoint.endsWith("/status"))
+            return {
+              merge: { conflicts: "unknown", fastForward: null, strategies: [] },
+              checks: { pending: 0, failing: 0, successful: 0, total: 0 },
+            };
+          return detail;
+        }),
+      ),
+    );
+  });
   it.effect("loads detail labels from the dedicated bounded endpoint", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
@@ -355,10 +395,10 @@ describe("deployed GitCafe PR API", () => {
       Effect.provide(
         withApi((input) => {
           calls.push(input);
-          if (input.endpoint.includes("/reviewers?")) return { items: [], nextAfter: null };
+          if (input.endpoint.includes("/reviewers?")) return { items: [], next: null };
           if (input.endpoint.includes("/labels?"))
             return { items: [{ name: "detail-label", color: "#123456" }] };
-          if (input.endpoint.includes("/diff?")) return { items: [], truncated: false };
+          if (input.endpoint.includes("/changes?")) return { ...revision, items: [], next: null };
           if (input.endpoint.includes("/commits/")) return { items: [] };
           if (input.endpoint.endsWith("/status"))
             return {
@@ -384,12 +424,12 @@ describe("deployed GitCafe PR API", () => {
             return {
               items: [{ oid: "abcdef", summary: "Change", time: 1789214400 }],
               truncated: false,
-              nextAfter: null,
+              next: null,
               headOid: "abcdef",
             };
           }
           if (input.endpoint.includes("/comments?") || input.endpoint.includes("/reviews?"))
-            return { items: [], nextAfter: null };
+            return { items: [], next: null };
           return detail;
         }),
       ),
@@ -407,7 +447,7 @@ describe("deployed GitCafe PR API", () => {
         withApi((input) => {
           calls.push(input);
           return input.endpoint.includes("?")
-            ? { items: [], nextAfter: null }
+            ? { items: [], next: null }
             : { ...detail, state: "closed", headOid: null };
         }),
       ),
@@ -433,7 +473,7 @@ describe("deployed GitCafe PR API", () => {
               items: [{ oid: second ? "second" : "first", summary: "Change", time: 1789214400 }],
               headOid: "abcdef",
               truncated: !second,
-              nextAfter: second ? null : "first",
+              next: second ? null : "first",
             };
           if (input.endpoint.includes("/reviews?"))
             return {
@@ -447,9 +487,9 @@ describe("deployed GitCafe PR API", () => {
                   createdAt: time,
                 },
               ],
-              nextAfter: second ? null : "review1",
+              next: second ? null : "review1",
             };
-          if (input.endpoint.includes("/comments?")) return { items: [], nextAfter: null };
+          if (input.endpoint.includes("/comments?")) return { items: [], next: null };
           return detail;
         }),
       ),
@@ -471,7 +511,20 @@ describe("deployed GitCafe PR API", () => {
       expect(compare.pathname).toBe("/repos/fork/project/compare");
       expect(compare.searchParams.get("baseOid")).toBe("parent1");
       expect(compare.searchParams.get("headOid")).toBe("selected");
-      const continued = new URL(calls.at(-1)!.endpoint, "https://git.cafe");
+      expect(first.patch).toContain("@@ -1,1 +1,1 @@\n-old\n+new");
+      const files = calls.find((call) => call.endpoint.endsWith("/compare/files"));
+      expect(files?.endpoint).toBe("/repos/fork/project/compare/files");
+      expect(files?.body).toEqual({
+        base: "HEAD",
+        baseOid: "parent1",
+        head: "HEAD",
+        headOid: "selected",
+        paths: ["src/a.ts"],
+      });
+      const continued = new URL(
+        calls.filter((call) => call.endpoint.includes("/compare?")).at(-1)!.endpoint,
+        "https://git.cafe",
+      );
       expect(continued.searchParams.get("after")).toBe("src/a.ts");
       expect(continued.searchParams.get("baseOid")).toBe("parent1");
       expect(continued.searchParams.get("headOid")).toBe("selected");
@@ -481,14 +534,17 @@ describe("deployed GitCafe PR API", () => {
           calls.push(input);
           if (input.endpoint.includes("/commit?"))
             return { oid: "selected", parents: ["parent1", "parent2"] };
-          if (input.endpoint.includes("/compare?"))
+          if (input.endpoint.endsWith("/compare/files"))
+            return { items: [{ path: "src/a.ts", status: "modified", hunks: [hunk] }] };
+          if (input.endpoint.includes("/compare?")) {
+            const continued = new URL(input.endpoint, "https://git.cafe").searchParams.has("after");
             return {
-              items: [],
-              truncated: false,
-              nextAfter: new URL(input.endpoint, "https://git.cafe").searchParams.has("after")
-                ? null
-                : "src/a.ts",
+              base: "parent1",
+              head: "selected",
+              items: continued ? [] : [{ path: "src/a.ts", status: "modified" }],
+              next: continued ? null : "src/a.ts",
             };
+          }
           return { ...detail, sourceRepo: { owner: "fork", name: "project" } };
         }),
       ),
@@ -536,7 +592,7 @@ describe("deployed GitCafe PR API", () => {
                 );
               }
               if (input.endpoint.includes("/comments?") || input.endpoint.includes("/reviews?"))
-                return Effect.succeed(json({ items: [], nextAfter: null }));
+                return Effect.succeed(json({ items: [], next: null }));
               return Effect.succeed(json({ ...detail, headOid: null }));
             },
           }),
@@ -572,26 +628,24 @@ describe("deployed GitCafe PR API", () => {
     }).pipe(
       Effect.provide(
         withApi((input) => {
-          if (!input.endpoint.includes("/diff?")) return detail;
-          expect(input.endpoint).toContain("expectedVersion=1&limit=500");
+          // Too large for hunks, so it is listed without asking `/diff-files` for it.
+          expect(input.endpoint).not.toContain("/diff-files");
+          if (!input.endpoint.includes("/changes?")) return detail;
+          expect(input.endpoint).toContain("expectedVersion=1&limit=64");
           return {
             items: [
               {
                 path: "large.ts",
                 oldPath: null,
                 status: "modified",
-                additions: 0,
-                deletions: 0,
                 binary: false,
                 tooLarge: true,
-                hunks: [],
               },
             ],
-            truncated: false,
             version: 1,
             headOid: "renderedhead",
             comparisonBaseOid: "mergebase",
-            nextAfter: null,
+            next: null,
           };
         }),
       ),
@@ -603,27 +657,41 @@ describe("deployed GitCafe PR API", () => {
       const provider = yield* make;
       const first = yield* provider.getDiff(target);
       expect(first.nextCursor).not.toBeNull();
-      expect(first.reviewRevision).toBeUndefined();
+      expect(first.reviewRevision).toEqual({
+        version: 4,
+        headOid: "abcdef",
+        baseOid: "baseabcdef",
+      });
       expect(first.patch).toContain("a/src/a.ts b/src/a.ts");
+      expect(first.patch).toContain("@@ -1,1 +1,1 @@\n-old\n+new");
       const second = yield* provider.getDiff({ ...target, cursor: first.nextCursor! });
       expect(second.nextCursor).toBeNull();
       expect(second.patch).toContain("a/src/b.ts b/src/b.ts");
       expect(second.patch).not.toContain("src/a.ts");
-      const query = new URL(calls.at(-1)!.endpoint, "https://git.cafe").searchParams;
+      const pages = calls.filter((call) => call.endpoint.includes("/changes?"));
+      const query = new URL(pages.at(-1)!.endpoint, "https://git.cafe").searchParams;
       expect(query.get("expectedVersion")).toBe("4");
       expect(query.get("after")).toBe("src/a.ts");
-      expect(calls.filter((call) => !call.endpoint.includes("/diff?")).length).toBe(1);
+      expect(calls.filter((call) => call.endpoint === "/repos/owner/repo/pulls/7").length).toBe(1);
     }).pipe(
       Effect.provide(
         withApi((input) => {
           calls.push(input);
-          if (!input.endpoint.includes("/diff?")) return { ...detail, version: 4 };
+          if (input.endpoint.endsWith("/diff-files")) {
+            const [path] = (input.body as { paths: Array<string> }).paths;
+            return {
+              ...revision,
+              version: 4,
+              items: [{ path, status: "modified", hunks: [hunk] }],
+            };
+          }
+          if (!input.endpoint.includes("/changes?")) return { ...detail, version: 4 };
           const continued = new URL(input.endpoint, "https://git.cafe").searchParams.has("after");
           return {
-            items: [{ path: continued ? "src/b.ts" : "src/a.ts", status: "modified", hunks: [] }],
-            truncated: continued,
+            ...revision,
+            items: [{ path: continued ? "src/b.ts" : "src/a.ts", status: "modified" }],
             version: 4,
-            nextAfter: continued ? null : "src/a.ts",
+            next: continued ? null : "src/a.ts",
           };
         }),
       ),
@@ -638,8 +706,8 @@ describe("deployed GitCafe PR API", () => {
     }).pipe(
       Effect.provide(
         withApi((input) =>
-          input.endpoint.includes("/diff?")
-            ? { items: [], truncated: false, version: 5, nextAfter: null }
+          input.endpoint.includes("/changes?")
+            ? { ...revision, items: [], version: 5, next: null }
             : detail,
         ),
       ),
@@ -656,15 +724,14 @@ describe("deployed GitCafe PR API", () => {
     }).pipe(
       Effect.provide(
         withApi((input) => {
-          if (!input.endpoint.includes("/diff?")) return detail;
+          if (!input.endpoint.includes("/changes?")) return detail;
           const continued = new URL(input.endpoint, "https://git.cafe").searchParams.has("after");
           return {
             items: [],
-            truncated: false,
             version: 1,
             headOid: continued ? "advanced-head" : "reviewed-head",
             comparisonBaseOid: "reviewed-base",
-            nextAfter: continued ? null : "src/a.ts",
+            next: continued ? null : "src/a.ts",
           };
         }),
       ),

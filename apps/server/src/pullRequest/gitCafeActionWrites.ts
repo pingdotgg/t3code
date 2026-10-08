@@ -36,7 +36,7 @@ const MergeOutcome = Schema.Struct({
   resultOid: Schema.optional(Oid),
   reason: Schema.optional(Schema.String),
   waiting: Schema.optional(Schema.Struct({ reason: Schema.String })),
-  failure: Schema.optional(Schema.Struct({ code: Schema.String })),
+  failure: Schema.optional(Schema.String),
 });
 const StackOperationError = Schema.Struct({
   code: Schema.String,
@@ -134,7 +134,7 @@ export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
         ? `Merge accepted but not complete${outcome.waiting ? `: ${outcome.waiting.reason}` : ""}. Inspect this operation again.`
         : outcome.state === "completed"
           ? `Merge completed${outcome.resultOid ? ` at ${outcome.resultOid}` : ""}.`
-          : `Merge failed: ${outcome.reason ?? outcome.failure?.code ?? "unknown failure"}.`,
+          : `Merge failed: ${outcome.reason ?? outcome.failure ?? "unknown failure"}.`,
   });
   const normalizeStack = (
     kind: "stack-land" | "stack-restack",
