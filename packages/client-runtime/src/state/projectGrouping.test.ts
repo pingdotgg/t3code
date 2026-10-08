@@ -120,6 +120,33 @@ function settings(
 
 describe("buildProjectGroups", () => {
   it.each(["repository", "repository_path", "separate"] as const)(
+    "keeps scratch project ownership separate by default in %s mode",
+    (mode) => {
+      const projects = [
+        makeProject("scratch-local", "/local/scratch", {
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+        makeProject("scratch-remote", "/remote/scratch", {
+          environmentId: EnvironmentId.make("remote"),
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+      ];
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups.map((group) => group.key)).toEqual(projects.map(derivePhysicalProjectKey));
+      expect(groups.map((group) => group.memberProjectRefs)).toEqual(
+        projects.map((project) => [
+          { environmentId: project.environmentId, projectId: project.id },
+        ]),
+      );
+      expect(
+        buildProjectGroups({ projects, settings: settings(mode), groupScratchProjects: true }),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["repository", "repository_path", "separate"] as const)(
     "migrates a pre-config %s scratch selection and retains it after the original host is removed",
     (mode) => {
       const local = makeProject("scratch-local", "/local/repo/scratch", {
@@ -138,13 +165,19 @@ describe("buildProjectGroups", () => {
         loaded,
         groupingSettings,
       );
-      const scratchKey = buildProjectGroups({ projects: loaded, settings: groupingSettings })[0]!
-        .key;
+      const scratchKey = buildProjectGroups({
+        projects: loaded,
+        settings: groupingSettings,
+        groupScratchProjects: true,
+      })[0]!.key;
       expect(migrated).toBe(scratchKey);
       expect(resolveScratchProjectScopeKey(migrated, [remote], groupingSettings)).toBe(scratchKey);
       expect(
-        buildProjectGroups({ projects: [remote], settings: groupingSettings })[0]
-          ?.memberProjectRefs,
+        buildProjectGroups({
+          projects: [remote],
+          settings: groupingSettings,
+          groupScratchProjects: true,
+        })[0]?.memberProjectRefs,
       ).toEqual([{ environmentId: remote.environmentId, projectId: remote.id }]);
     },
   );
@@ -186,6 +219,7 @@ describe("buildProjectGroups", () => {
       ];
       const groups = buildProjectGroups({
         projects,
+        groupScratchProjects: true,
         settings: settings(mode, { [derivePhysicalProjectKey(projects[0]!)]: "separate" }),
         preferredEnvironmentId: remoteEnvironmentId,
       });

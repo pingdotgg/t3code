@@ -1,5 +1,9 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
-import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
+import {
+  buildProjectGroups,
+  derivePhysicalProjectKey,
+  type ProjectGroupingSettings,
+} from "./logicalProject";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
 
@@ -46,6 +50,28 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
+/** A merged filter still opens settings for the chosen physical project. */
+export function getSidebarProjectSettingsKey(
+  group: SidebarProjectSnapshot,
+  settings: ProjectGroupingSettings,
+  projects: ReadonlyArray<Project>,
+  projectRef?: ScopedProjectRef,
+): string {
+  if (!group.isScratch) return group.projectKey;
+  const project =
+    group.memberProjects.find(
+      (member) =>
+        member.environmentId === projectRef?.environmentId && member.id === projectRef.projectId,
+    ) ??
+    group.memberProjects.find((member) => member.environmentId === projectRef?.environmentId) ??
+    group;
+  return (
+    buildPhysicalToLogicalProjectKeyMap({ projects, settings, primaryEnvironmentId: null }).get(
+      derivePhysicalProjectKey(project),
+    ) ?? group.projectKey
+  );
+}
+
 /** Retains a saved physical scratch scope when its environment config coalesces the group. */
 export function resolveSidebarProjectScopeKey(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
@@ -87,6 +113,7 @@ export function buildPhysicalToLogicalProjectKeyMap(input: {
 export function buildSidebarProjectSnapshots(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
+  groupScratchProjects?: boolean;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
   // Returns true when an env id maps to a desktop-local saved-env
@@ -98,6 +125,7 @@ export function buildSidebarProjectSnapshots(input: {
 }): SidebarProjectSnapshot[] {
   return buildProjectGroups({
     projects: input.projects,
+    groupScratchProjects: input.groupScratchProjects ?? false,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
   }).map((group): SidebarProjectSnapshot => {

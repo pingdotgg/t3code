@@ -133,9 +133,10 @@ export function deriveLogicalProjectKey(
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
+    readonly groupScratchProjects?: boolean;
   },
 ): string {
-  if (project.isScratch) return SCRATCH_PROJECT_SCOPE_KEY;
+  if (options?.groupScratchProjects && project.isScratch) return SCRATCH_PROJECT_SCOPE_KEY;
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
@@ -154,9 +155,11 @@ export function deriveLogicalProjectKeyFromSettings(
     "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
   >,
   settings: ProjectGroupingSettings,
+  options?: { readonly groupScratchProjects?: boolean },
 ): string {
   return deriveLogicalProjectKey(project, {
     groupingMode: resolveProjectGroupingMode(project, settings),
+    groupScratchProjects: options?.groupScratchProjects ?? false,
   });
 }
 
@@ -175,7 +178,13 @@ export function resolveScratchProjectScopeKey(
   },
 ): string | null {
   if (key === null || key === SCRATCH_PROJECT_SCOPE_KEY) return key;
-  if (projects.some((project) => deriveLogicalProjectKeyFromSettings(project, settings) === key)) {
+  if (
+    projects.some(
+      (project) =>
+        deriveLogicalProjectKeyFromSettings(project, settings, { groupScratchProjects: true }) ===
+        key,
+    )
+  ) {
     return key;
   }
   return projects.some((project) => {
@@ -288,6 +297,8 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly projects: ReadonlyArray<TProject>;
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
+  /** Filter equivalence does not change the default ownership of mutable project settings. */
+  readonly groupScratchProjects?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
@@ -309,6 +320,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     const identitySource = selectProjectIdentitySource(physicalProjects, winner);
     const logicalKey = deriveLogicalProjectKey(identitySource, {
       groupingMode: resolveProjectGroupingMode(winner, input.settings),
+      groupScratchProjects: input.groupScratchProjects ?? false,
     });
     logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
     const member = { physicalProjectKey, project: winner };
@@ -326,7 +338,9 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const logicalKey =
       logicalKeyByPhysicalKey.get(physicalProjectKey) ??
-      deriveLogicalProjectKeyFromSettings(project, input.settings);
+      deriveLogicalProjectKeyFromSettings(project, input.settings, {
+        groupScratchProjects: input.groupScratchProjects ?? false,
+      });
     const projectRefKey = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
     if (seenProjectRefs.has(projectRefKey)) continue;
     seenProjectRefs.add(projectRefKey);
@@ -347,14 +361,15 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
         : null) ?? members[0]!.project;
     return {
       key,
-      label: representative.isScratch
-        ? "No project"
-        : members.length > 1
-          ? deriveProjectGroupLabel({
-              representative,
-              members: members.map((member) => member.project),
-            })
-          : representative.title,
+      label:
+        input.groupScratchProjects && representative.isScratch
+          ? "No project"
+          : members.length > 1
+            ? deriveProjectGroupLabel({
+                representative,
+                members: members.map((member) => member.project),
+              })
+            : representative.title,
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],

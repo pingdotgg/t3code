@@ -14,6 +14,7 @@ import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKey,
+  getSidebarProjectSettingsKey,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -53,6 +54,44 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it("opens physical scratch settings from the merged filter, including a remote thread target", () => {
+    const local = makeProject({
+      title: "No project",
+      workspaceRoot: "/local/scratch",
+      isScratch: true,
+    });
+    const remote = makeProject({
+      title: "No project",
+      id: ProjectId.make("remote-scratch"),
+      environmentId: remoteEnvironmentId,
+      workspaceRoot: "/remote/scratch",
+      isScratch: true,
+    });
+    const input = {
+      projects: [local, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    };
+    const filters = buildSidebarProjectSnapshots({ ...input, groupScratchProjects: true });
+    const settingsGroups = buildSidebarProjectSnapshots(input);
+    expect(filters).toHaveLength(1);
+    expect(settingsGroups).toHaveLength(2);
+    expect(settingsGroups.map((group) => group.memberProjectRefs)).toEqual([
+      [{ environmentId: local.environmentId, projectId: local.id }],
+      [{ environmentId: remote.environmentId, projectId: remote.id }],
+    ]);
+    expect(getSidebarProjectSettingsKey(filters[0]!, defaultGroupingSettings, input.projects)).toBe(
+      settingsGroups[0]?.projectKey,
+    );
+    expect(
+      getSidebarProjectSettingsKey(filters[0]!, defaultGroupingSettings, input.projects, {
+        environmentId: remote.environmentId,
+        projectId: remote.id,
+      }),
+    ).toBe(settingsGroups[1]?.projectKey);
+  });
+
   it.each(["repository", "repository_path"] as const)(
     "migrates a scratch scope selected before config in %s mode",
     (mode) => {
@@ -64,6 +103,7 @@ describe("environment grouping", () => {
       const key = deriveLogicalProjectKeyFromSettings(project, settings);
       const groups = buildSidebarProjectSnapshots({
         projects: [{ ...project, isScratch: true }],
+        groupScratchProjects: true,
         settings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
@@ -83,6 +123,7 @@ describe("environment grouping", () => {
     });
     const groups = buildSidebarProjectSnapshots({
       projects: [scratch, ordinary],
+      groupScratchProjects: true,
       settings: defaultGroupingSettings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: () => null,
@@ -107,6 +148,7 @@ describe("environment grouping", () => {
           ...project,
           ...(scratch ? { isScratch: true as const } : {}),
         })),
+        groupScratchProjects: true,
         settings: defaultGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (id) => id,
