@@ -17,11 +17,14 @@ import {
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadImportInput,
+  OrchestratorMcpThreadImportResult,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
+import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -165,8 +168,25 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadImportTool = Tool.make("t3_thread_import", {
+  ...shared,
+  description:
+    "Create a thread here that continues a conversation from another T3 Code environment, as when a thread is handed off to this one. The messages become the thread's history and its first run gets them as context; continuationPrompt, if given, starts that run. Retrying with the same source returns the thread the first call created. It runs within the caller's modes.",
+  parameters: OrchestratorMcpThreadImportInput,
+  success: OrchestratorMcpThreadImportResult,
+  dependencies: [
+    ...shared.dependencies,
+    ThreadImportService.ThreadImportService,
+    GitVcsDriver.GitVcsDriver,
+    FileSystem.FileSystem,
+  ],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
+  ThreadImportTool,
   ProjectListTool,
   ProjectReadTool,
   ProjectCreateTool,
