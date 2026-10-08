@@ -35,7 +35,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -43,14 +43,14 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import { handoffBudget } from "../ContextHandoffBudget.ts";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makePiAdapterV2,
   PiAdapterV2Driver,
   PI_PROVIDER,
   type PiAdapterV2Options,
-} from "./PiAdapterV2.ts";
-import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
+} from "./adapter.ts";
+import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,

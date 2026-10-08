@@ -29,7 +29,7 @@ import {
   checkCursorProviderStatus,
 } from "../CursorProvider.ts";
 import * as CursorSdkCatalog from "../CursorSdkCatalog.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -42,7 +42,7 @@ import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
-} from "../providerUpdateSettings.ts";
+} from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
 import * as CursorCredentialStore from "../CursorCredentialStore.ts";

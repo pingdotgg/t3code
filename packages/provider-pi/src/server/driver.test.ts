@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId, type PiSettings } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,27 +13,23 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderHostLive from "../ProviderHostLive.ts";
-import { PiDriver } from "./PiDriver.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import type { PiSettings } from "../settings.ts";
+import { PiDriver } from "./driver.ts";
 
-const layerDeps = Layer.mergeAll(
-  ServerConfig.layerTest("/machine", { prefix: "t3-pi-driver-" }),
-  IdAllocator.layer,
-  ServerSettings.layerTest({ enableProviderUpdateChecks: false }),
-  Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-    shouldRunScopeWork: () => Effect.succeed(false),
+const layerTest = Layer.mergeAll(
+  layerTestProviderHost({
+    cwd: "/machine",
+    settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
+    runBackgroundWork: false,
   }),
+  IdAllocator.layer,
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Unexpected HTTP")),
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
-
-const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 const decodeRequest = Schema.decodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),

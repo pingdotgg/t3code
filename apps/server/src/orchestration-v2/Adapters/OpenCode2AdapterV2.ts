@@ -88,7 +88,7 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { backgroundWorkNotification, type BackgroundWorkReport } from "../Notification.ts";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeSubagentChildThread,

@@ -353,6 +353,12 @@ importers:
       '@t3tools/mobile-terminal-native':
         specifier: file:./modules/t3-terminal
         version: file:apps/mobile/modules/t3-terminal
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
+      '@t3tools/provider-pi':
+        specifier: workspace:*
+        version: link:../../packages/provider-pi
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -597,6 +603,9 @@ importers:
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
+      '@t3tools/provider-pi':
+        specifier: workspace:*
+        version: link:../../packages/provider-pi
       diff:
         specifier: 8.0.3
         version: 8.0.3
@@ -724,6 +733,9 @@ importers:
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
+      '@t3tools/provider-pi':
+        specifier: workspace:*
+        version: link:../../packages/provider-pi
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -1080,6 +1092,37 @@ importers:
       '@effect/vitest':
         specifier: 4.0.1
         version: 4.0.1(patch_hash=359f6fb2f7b3ec145bb72208edb9034f02489791aa2491a55cdbd69bd56ee0d2)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
+  packages/provider-pi:
+    dependencies:
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
+      effect:
+        specifier: 4.0.1
+        version: 4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f)
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.1
+        version: 4.0.1(bufferutil@4.1.0)(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))(redis@6.2.1)(utf-8-validate@6.0.6)
+      '@effect/vitest':
+        specifier: 4.0.1
+        version: 4.0.1(patch_hash=359f6fb2f7b3ec145bb72208edb9034f02489791aa2491a55cdbd69bd56ee0d2)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@t3tools/provider-testing':
+        specifier: workspace:*
+        version: link:../provider-testing
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

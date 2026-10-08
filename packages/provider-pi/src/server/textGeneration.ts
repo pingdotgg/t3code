@@ -10,13 +10,11 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import { TextGenerationError, type PiSettings } from "@t3tools/contracts";
+import { TextGenerationError } from "@t3tools/contracts";
+import type { PiSettings } from "../settings.ts";
 
-import { makePiRpcConnection, parsePiModelSlug } from "../orchestration-v2/Adapters/PiRpc.ts";
-import {
-  buildPiRpcLaunch,
-  resolvePiLaunchArgs,
-} from "../orchestration-v2/Adapters/piT3McpInjection.ts";
+import { makePiRpcConnection, parsePiModelSlug } from "./rpc.ts";
+import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const PI_TIMEOUT_MS = 180_000;

@@ -15,12 +15,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import {
-  applyUsageLimitsUpdate,
-  resolveUsageLimitsAfterProbe,
-} from "@t3tools/provider-core/server/usageLimits";
-import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
+import { ProviderHost } from "./ProviderHost.ts";
+import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import type { ServerProviderShape } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;

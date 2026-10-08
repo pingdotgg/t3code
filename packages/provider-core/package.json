@@ -19,6 +19,10 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
+    "./server/continuationRequests": {
+      "types": "./src/server/continuationRequests.ts",
+      "import": "./src/server/continuationRequests.ts"
+    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
@@ -30,6 +34,10 @@
     "./server/failure": {
       "types": "./src/server/failure.ts",
       "import": "./src/server/failure.ts"
+    },
+    "./server/handoffBudget": {
+      "types": "./src/server/handoffBudget.ts",
+      "import": "./src/server/handoffBudget.ts"
     },
     "./server/IdAllocator": {
       "types": "./src/server/IdAllocator.ts",
@@ -46,6 +54,10 @@
     "./server/maintenanceResolver": {
       "types": "./src/server/maintenanceResolver.ts",
       "import": "./src/server/maintenanceResolver.ts"
+    },
+    "./server/managedProvider": {
+      "types": "./src/server/managedProvider.ts",
+      "import": "./src/server/managedProvider.ts"
     },
     "./server/mcpSession": {
       "types": "./src/server/mcpSession.ts",
@@ -90,6 +102,10 @@
     "./server/snapshotProbe": {
       "types": "./src/server/snapshotProbe.ts",
       "import": "./src/server/snapshotProbe.ts"
+    },
+    "./server/snapshotSettings": {
+      "types": "./src/server/snapshotSettings.ts",
+      "import": "./src/server/snapshotSettings.ts"
     },
     "./server/textGeneration": {
       "types": "./src/server/textGeneration.ts",
