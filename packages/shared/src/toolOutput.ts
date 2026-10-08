@@ -70,12 +70,9 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     let data: ResultEnvelope["data"];
     let failed = false;
     for (const block of value) {
-      const text = Predicate.isObject(block) ? block.text : undefined;
-      const result = readResult(
-        Predicate.isObject(text) ? (text.text ?? text) : text,
-        budget,
-        depth + 1,
-      );
+      const content = Predicate.isObject(block) ? (block.text ?? block.content) : block;
+      const text = Predicate.isObject(content) ? (content.text ?? content) : content;
+      const result = readResult(text, budget, depth + 1);
       data ??= result.data;
       failed ||= result.failed;
       if (budget.exceeded) break;
@@ -169,7 +166,10 @@ export function htmlRenderFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): HtmlRenderReference | undefined {
-  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  // OpenCode 2 Code Mode runs T3 tools inside `execute`, so the item keeps
+  // toolName "execute" even when the script returns html_render's result.
+  if (item.toolName !== "execute" && resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME)
+    return undefined;
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
 }
