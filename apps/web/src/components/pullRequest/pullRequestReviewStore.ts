@@ -72,7 +72,10 @@ interface PullRequestReviewStoreState {
   ) => { readonly submission: PendingReviewSubmission; readonly firstAttempt: boolean } | undefined;
   readonly finishSubmissionAttempt: (key: string, requestId: string) => void;
   readonly clearSubmission: (key: string, requestId: string) => void;
-  readonly setDisplayedRevision: (key: string, revision: PullRequestReviewRevision | undefined) => void;
+  readonly setDisplayedRevision: (
+    key: string,
+    revision: PullRequestReviewRevision | undefined,
+  ) => void;
 }
 
 const EMPTY: ReadonlyArray<PendingReviewComment> = [];

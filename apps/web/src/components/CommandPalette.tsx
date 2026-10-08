@@ -187,7 +187,14 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitCafeIcon, GitHubIcon, GitLabIcon, ForgejoIcon } from "./Icons";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  GitCafeIcon,
+  GitHubIcon,
+  GitLabIcon,
+  ForgejoIcon,
+} from "./Icons";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
