@@ -81,6 +81,37 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+/** An existing issue the failure may be. */
+export interface ProviderFailureKnownIssue {
+  number: number;
+  title: string;
+  state: string;
+}
+
+export interface ProviderFailureExplanationInput {
+  /**
+   * Plain-text description of the failure and the run around it. It comes
+   * from provider output, so providers run this operation with no project
+   * access: an empty temporary working directory and no tools where they can
+   * be turned off.
+   */
+  context: string;
+  /**
+   * Existing issues to match the failure against. The model is only asked
+   * about issues when this is non-empty.
+   */
+  knownIssues?: ReadonlyArray<ProviderFailureKnownIssue> | undefined;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ProviderFailureExplanationResult {
+  summary: string;
+  likelyFix: string;
+  /** The number of one of the input's `knownIssues` that clearly describes this failure, never any other. */
+  matchingIssueNumber: number | null;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -112,6 +143,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Explain the most probable cause of a provider failure and a likely fix. */
+    readonly explainProviderFailure: (
+      input: ProviderFailureExplanationInput,
+    ) => Effect.Effect<ProviderFailureExplanationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +155,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "explainProviderFailure";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -171,6 +208,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    explainProviderFailure: (input) =>
+      resolveInstance(registry, "explainProviderFailure", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.explainProviderFailure(input)),
       ),
   });
 });

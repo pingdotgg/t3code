@@ -1,4 +1,9 @@
-import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProviderFailureClass,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -6,6 +11,8 @@ import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { ThreadErrorExplanation } from "./ThreadErrorExplanation";
+import { canExplainThreadError, threadErrorExplanationKey } from "./ThreadErrorExplanation.logic";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -41,14 +48,24 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   chatGptUsageLimit = false,
+  explainTarget = null,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
+  /** The server thread the error belongs to. Omit for errors the server did not report. */
+  explainTarget?: {
+    environmentId: EnvironmentId;
+    threadId: ThreadId;
+    /** The run the error belongs to, when the client knows it. */
+    runId: RunId | null;
+  } | null;
 }) {
   if (!error) return null;
   const variant = errorClass === "usage_limit" ? "warning" : "error";
+  const canExplain =
+    !chatGptUsageLimit && canExplainThreadError({ errorClass, hasTarget: explainTarget !== null });
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="glass" controlAlignment="first-line" data-variant={variant}>
@@ -71,6 +88,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               </TooltipPopup>
             </Tooltip>
           )}
+          {canExplain && explainTarget !== null ? (
+            <ThreadErrorExplanation
+              key={threadErrorExplanationKey(explainTarget, error)}
+              environmentId={explainTarget.environmentId}
+              threadId={explainTarget.threadId}
+              runId={explainTarget.runId}
+              error={error}
+            />
+          ) : null}
         </AlertDescription>
         {(chatGptUsageLimit || onDismiss) && (
           <AlertAction>
