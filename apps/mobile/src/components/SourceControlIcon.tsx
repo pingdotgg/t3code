@@ -38,7 +38,7 @@ export function SourceControlIcon(props: {
       // the other marks.
       return (
         <Svg width={size} height={size} viewBox="0 0 64 64">
-          <Rect x={8} y={8} width={48} height={48} fill="#a78bfa" />
+          <Rect x={4.8} y={4.8} width={54.4} height={54.4} fill="#a78bfa" />
         </Svg>
       );
     case "github":
