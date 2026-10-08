@@ -4,7 +4,10 @@ const ICNS_HEADER_BYTES = 8;
 const ICNS_MAGIC = 0x69636e73; // "icns"
 const PNG_MAGIC = 0x89504e47; // "\x89PNG"
 
-/** Picks the smallest PNG at least `minSize` wide, else the largest; null when there is none. */
+/**
+ * Picks the smallest PNG at least `minSize` wide, else the largest; null when there is none.
+ * Returns a copy so the response does not pin the whole `.icns` buffer.
+ */
 export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array | null {
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < ICNS_HEADER_BYTES || data.getUint32(0) !== ICNS_MAGIC) return null;
@@ -23,5 +26,5 @@ export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array |
       (best.width < minSize ? width > best.width : width >= minSize && width < best.width);
     if (isBetter) best = { png: entry, width };
   }
-  return best?.png ?? null;
+  return best?.png.slice() ?? null;
 }
