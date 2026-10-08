@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -227,10 +228,29 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
+/**
+ * A signed-out CLI still initializes, reporting no token. So does an
+ * `apiKeyHelper` login, so this only nominates a probe for the
+ * `claude auth status` check that tells the two apart.
+ */
+function mayBeSignedOut(capabilities: ClaudeCapabilitiesProbe): boolean {
+  return (
+    (capabilities.apiProvider ?? "firstParty") === "firstParty" &&
+    capabilities.tokenSource === "none" &&
+    !capabilities.apiKeySource
+  );
+}
+
+const decodeClaudeAuthStatus = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ loggedIn: Schema.Boolean })),
+);
+
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  /** Set when an API key authenticates; `tokenSource` is then `"none"`. */
+  readonly apiKeySource?: string | undefined;
   /**
    * Active API backend reported by the SDK's `AccountInfo`. Anthropic OAuth
    * login only applies when `"firstParty"`; for Amazon Bedrock (`"bedrock"`)
@@ -386,6 +406,7 @@ const probeClaudeCapabilities = (
               readonly email?: string;
               readonly subscriptionType?: string;
               readonly tokenSource?: string;
+              readonly apiKeySource?: string;
               readonly apiProvider?: string;
             }
           | undefined;
@@ -393,6 +414,7 @@ const probeClaudeCapabilities = (
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
+          ...(account?.apiKeySource ? { apiKeySource: account.apiKeySource } : {}),
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
@@ -413,6 +435,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
   args: ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
@@ -421,6 +444,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     env: claudeEnvironment,
     shell: spawnCommand.shell,
+    ...(cwd ? { cwd } : {}),
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
@@ -583,6 +607,38 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+      },
+    });
+  }
+
+  // Left as "authenticated", a signed-out CLI publishes authoritative
+  // `unsupported` limits, which hide the Usage row and drop turn updates.
+  // Asked from the probe's cwd so project-scoped auth settings still apply.
+  const signedOut =
+    mayBeSignedOut(capabilities) &&
+    (yield* runClaudeCommand(claudeSettings, ["auth", "status"], resolvedEnvironment, cwd).pipe(
+      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      Effect.map((result) =>
+        Option.flatMap(result, (output) => decodeClaudeAuthStatus(output.stdout)).pipe(
+          Option.exists((status) => !status.loggedIn),
+        ),
+      ),
+      Effect.orElseSucceed(() => false),
+    ));
+  if (signedOut) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude is signed out. Run `claude` and use /login, then refresh.",
       },
     });
   }
