@@ -100,15 +100,11 @@ const make = Effect.gen(function* () {
       const key = keyOf(host, quota.resource, yield* SourceControlRateLimit.CredentialScope);
       yield* Ref.update(snapshots, (current) => {
         const previous = current.get(key);
-        // Within one window GitHub's count only falls, so an answer that finished out of order
-        // and reports more left is stale. An answer from an older window says nothing of this one.
-        if (
-          previous !== undefined &&
-          (quota.resetAtMs < previous.resetAtMs ||
-            (quota.resetAtMs === previous.resetAtMs && quota.remaining > previous.remaining))
-        ) {
-          return current;
-        }
+        // The latest answer wins. GitHub serves requests from several regions, so a later answer
+        // can report more left in the same window, and keeping the lower one would hold
+        // background work at the reserve until the reset. An answer from an older window says
+        // nothing of this one.
+        if (previous !== undefined && quota.resetAtMs < previous.resetAtMs) return current;
         const next = new Map(current);
         next.set(key, {
           limit: quota.limit,

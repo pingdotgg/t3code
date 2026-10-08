@@ -28,11 +28,15 @@ describe("GitHubQuota", () => {
     }).pipe(Effect.provide(GitHubQuota.layer)),
   );
 
-  it.effect("keeps the lower balance when answers arrive out of order", () =>
+  it.effect("takes the latest balance in a window, and ignores an older window", () =>
     Effect.gen(function* () {
       const quota = yield* GitHubQuota.GitHubQuota;
       yield* quota.observe("github.com", headers(400));
+      yield* Effect.flip(quota.admit("github.com", "graphql"));
+      // GitHub can report more left later in the same window, from another region.
       yield* quota.observe("github.com", headers(900));
+      yield* quota.admit("github.com", "graphql");
+      yield* quota.observe("github.com", headers(400));
       yield* Effect.flip(quota.admit("github.com", "graphql"));
       // An answer from an older window says nothing about this one.
       yield* quota.observe("github.com", headers(4000, "graphql", RESET - 3_600_000));
