@@ -2087,6 +2087,14 @@ code {
   color: var(--code-foreground);
 }
 
+/* Pierre's find panel and match highlights read these. */
+.diff-render-surface {
+  --diffs-search-panel-bg: var(--popover);
+  --diffs-search-panel-fg: var(--popover-foreground);
+  --diffs-search-panel-accent: var(--primary);
+  --diffs-search-panel-font: var(--font-sans);
+}
+
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
    preview on the same themeable code surface as the diff panel. */
 .diff-render-surface diffs-container,
