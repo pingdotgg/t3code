@@ -5,6 +5,7 @@ import {
   xAiRateLimitedErrorCode,
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
@@ -28,6 +29,7 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  currentGrokReasoningEffortFromSessionSetup,
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
@@ -254,21 +256,97 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
+    applyModelSelection: ({ runtime, startResult, modelSelection, previousSelection }) =>
       Effect.gen(function* () {
         const legacy = startResult.initializeResult.protocolVersion === 1;
         const options = legacy ? [] : yield* runtime.getConfigOptions;
         const configuredModel = options.find((option) => option.category === "model")?.currentValue;
+        // The composer stores effort under the capability id `reasoningEffort`, while the Grok
+        // session exposes it as the `thought_level` config option (`reasoning_effort`), so the
+        // generic id-matched option loop never applies it. Carry it the way text generation
+        // already does: protocol 1 takes it as `session/set_model` metadata; later protocols
+        // write the session's own thought-level option.
+        const effortOption = options.find(
+          (option) => option.category === "thought_level" && option.type === "select",
+        );
+        const configuredEffort = effortOption?.currentValue;
+        const currentModelId = legacy
+          ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
+          : typeof configuredModel === "string"
+            ? configuredModel
+            : undefined;
         return yield* applyGrokAcpModelSelection({
           runtime: legacy
             ? runtime
-            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
-          currentModelId: legacy
-            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
-            : typeof configuredModel === "string"
-              ? configuredModel
+            : {
+                setSessionModel: (model, meta) =>
+                  Effect.gen(function* () {
+                    if (model !== currentModelId) {
+                      yield* runtime.setModel(model);
+                    }
+                    const effort = meta?.reasoningEffort;
+                    if (effortOption === undefined || typeof effort !== "string") {
+                      return {};
+                    }
+                    // A model switch can change which efforts the session offers, so
+                    // check the live option and, like the generic option loop, skip a
+                    // value it no longer advertises or rejects instead of failing the
+                    // session open; the agent's default applies.
+                    const liveOption = (yield* runtime.getConfigOptions).find(
+                      (option) => option.id === effortOption.id,
+                    );
+                    if (
+                      liveOption === undefined ||
+                      (liveOption.type === "select" &&
+                        !liveOption.options
+                          .flatMap((entry) =>
+                            "value" in entry
+                              ? [entry.value]
+                              : entry.options.map((choice) => choice.value),
+                          )
+                          .includes(effort))
+                    ) {
+                      yield* Effect.logWarning(
+                        "Grok session does not offer the requested reasoning effort",
+                        { optionId: effortOption.id, value: effort },
+                      );
+                      return {};
+                    }
+                    yield* runtime.setConfigOption(effortOption.id, effort).pipe(
+                      Effect.catchTags({
+                        AcpRequestError: (error) =>
+                          Effect.logWarning(
+                            "Grok session rejected the requested reasoning effort",
+                            {
+                              optionId: effortOption.id,
+                              value: effort,
+                              detail: error.message,
+                            },
+                          ),
+                      }),
+                    );
+                    return {};
+                  }),
+              },
+          currentModelId,
+          // Protocol 1 has no live effort state: the stored setup only describes
+          // the session as activated, and same-runtime switches keep just its
+          // model id current. Once a selection has run on this session, baseline
+          // on the effort that selection carried. An effort-free selection left
+          // the live value unknown, so a requested effort is then sent rather
+          // than compared against stale setup metadata.
+          currentReasoningEffort: legacy
+            ? previousSelection === null
+              ? currentGrokReasoningEffortFromSessionSetup(startResult.sessionSetupResult)
+              : getModelSelectionStringOptionValue(previousSelection, "reasoningEffort")
+            : typeof configuredEffort === "string"
+              ? configuredEffort
               : undefined,
           requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
+          requestedReasoningEffort: getModelSelectionStringOptionValue(
+            modelSelection,
+            "reasoningEffort",
+          ),
           mapError: (cause) => cause,
         });
       }),
