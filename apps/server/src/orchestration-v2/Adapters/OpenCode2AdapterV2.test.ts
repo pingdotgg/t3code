@@ -19,6 +19,7 @@ import {
   ThreadId,
   type ModelSelection,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type ProviderReplayEntry,
@@ -2894,6 +2895,186 @@ describe("OpenCode2 adapter", () => {
           outputTokens: 40,
         },
       );
+    }).pipe(Effect.scoped),
+  );
+
+  const ASSISTANT = "msg_0eb735d5b001oAFVeY5jz3WD4Z";
+  const rateLimited = {
+    type: "provider.rate-limit",
+    message: "Rate limit exceeded: free-models-per-min.",
+    status: 429,
+  };
+  /**
+   * OpenCode numbers the request it retries with, so its first retry is
+   * attempt 2, and stamps `at` from the clock behind the event's `created` (1 here).
+   */
+  const retryScheduled = (attempt: number, delayMs: number) =>
+    event("session.retry.scheduled", {
+      sessionID: SESSION,
+      assistantMessageID: ASSISTANT,
+      attempt,
+      at: 1 + delayMs,
+      error: rateLimited,
+    });
+  const retrying = {
+    class: "provider_error",
+    message: rateLimited.message,
+    code: rateLimited.type,
+    retryable: true,
+  } satisfies OrchestrationV2ProviderFailure;
+  const errorRows = (collected: ReadonlyArray<ProviderAdapterV2Event>) =>
+    collected.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "error"
+        ? [
+            {
+              id: event.turnItem.id,
+              ordinal: event.turnItem.ordinal,
+              status: event.turnItem.status,
+              title: event.turnItem.title,
+              failure: event.turnItem.failure,
+              retry: event.turnItem.retry,
+            },
+          ]
+        : [],
+    );
+  const runRetryTurn = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        ...entries,
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      return yield* Fiber.join(collected);
+    });
+
+  it.effect("shows a scheduled provider retry until the provider answers", () =>
+    Effect.gen(function* () {
+      const seen = yield* runRetryTurn([
+        retryScheduled(2, 2_000),
+        event("session.text.started", {
+          sessionID: SESSION,
+          assistantMessageID: ASSISTANT,
+          ordinal: 0,
+        }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: ASSISTANT,
+          ordinal: 0,
+          text: "DONE",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      // Recovered as soon as the retried request answers, before its text lands.
+      assert.deepEqual(turnItems(seen), [
+        "error:running",
+        "error:completed",
+        "assistant_message:completed",
+      ]);
+      const rows = errorRows(seen);
+      assert.deepEqual(
+        rows.map(({ status, title, failure, retry }) => ({ status, title, failure, retry })),
+        [
+          {
+            status: "running",
+            title: "Provider retry",
+            failure: retrying,
+            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
+          },
+          {
+            status: "completed",
+            title: "Provider recovered",
+            failure: retrying,
+            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
+          },
+        ],
+      );
+      assert.equal(new Set(rows.map((row) => row.id)).size, 1);
+      assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails a provider retry with the error that ended its execution", () =>
+    Effect.gen(function* () {
+      const step = {
+        sessionID: SESSION,
+        assistantMessageID: ASSISTANT,
+        agent: "build",
+        model: { providerID: "opencode", id: "big-pickle", variant: "default" },
+        started: 1,
+      };
+      // OpenCode starts the step of each attempt that fails, so a step start is no recovery.
+      const seen = yield* runRetryTurn([
+        event("session.step.started", step),
+        retryScheduled(2, 2_000),
+        event("session.step.started", step),
+        retryScheduled(3, 4_000),
+        event("session.step.started", step),
+        event("session.step.failed", {
+          sessionID: SESSION,
+          assistantMessageID: ASSISTANT,
+          error: rateLimited,
+        }),
+        event("session.execution.failed", { sessionID: SESSION, error: rateLimited }),
+      ]);
+      const failed = { ...retrying, retryable: null };
+      const rows = errorRows(seen);
+      assert.deepEqual(
+        rows.map(({ status, title, failure, retry }) => ({ status, title, failure, retry })),
+        [
+          {
+            status: "running",
+            title: "Provider retry",
+            failure: retrying,
+            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
+          },
+          {
+            status: "running",
+            title: "Provider retry",
+            failure: retrying,
+            retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
+          },
+          {
+            status: "failed",
+            title: "Provider error",
+            failure: failed,
+            retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
+          },
+        ],
+      );
+      assert.equal(new Set(rows.map((row) => row.id)).size, 1);
+      // The terminal's failure item takes the row's place, so it keeps the retries.
+      assert.deepInclude(seen.at(-1), {
+        type: "turn.terminal",
+        status: "failed",
+        failure: failed,
+        failureItemOrdinal: rows[0]!.ordinal,
+        retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
+        retryStartedAt: DateTime.makeUnsafe(0),
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a provider retry when the user stops its execution", () =>
+    Effect.gen(function* () {
+      const seen = yield* runRetryTurn([
+        retryScheduled(2, 2_000),
+        event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
+      ]);
+      assert.deepEqual(
+        errorRows(seen).map(({ status, title }) => ({ status, title })),
+        [
+          { status: "running", title: "Provider retry" },
+          { status: "interrupted", title: "Provider retry stopped" },
+        ],
+      );
+      assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: "interrupted" });
     }).pipe(Effect.scoped),
   );
 
