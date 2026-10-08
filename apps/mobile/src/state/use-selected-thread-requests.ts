@@ -271,7 +271,9 @@ export function useSelectedThreadRequests() {
         question.id,
       );
       if ((appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0) return;
-      const attachments = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments ?? [];
+      const attachments = (appAtomRegistry.get(composerDraftsAtom)[key]?.attachments ?? []).filter(
+        (attachment) => attachment.type !== "location",
+      );
       if (attachments.length === 0) continue;
       if (
         attachments.some(

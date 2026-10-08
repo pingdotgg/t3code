@@ -8,15 +8,24 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { PreparedTurnAttachments } from "../lib/attachmentUpload";
 
 const harness = vi.hoisted(() => ({
   canOperate: true,
+  cleanups: [] as Array<() => void>,
+  connectedEnvironments: [] as Array<{ environmentId: string; connectionState: string }>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
+  operableEnvironments: new Set<string>(),
+  projects: [] as Array<unknown>,
+  serverConfig: null as unknown,
+  shellStatuses: new Map<string, string>(),
+  startTurn: vi.fn(),
+  threads: [] as Array<unknown>,
   removePersistedFile: vi.fn(async () => undefined),
   removeOutboxMessage: vi.fn(async (_message: QueuedThreadMessage) => undefined),
   prepareTurnAttachments: vi.fn<typeof import("../lib/attachmentUpload").prepareTurnAttachments>(),
@@ -56,6 +65,21 @@ const harness = vi.hoisted(() => ({
   })(),
 }));
 
+vi.mock("react", () => ({
+  useCallback: <A>(callback: A) => callback,
+  useEffect: (effect: () => void | (() => void)) => {
+    const cleanup = effect();
+    if (cleanup) harness.cleanups.push(cleanup);
+  },
+  useRef: <A>(value: A) => ({ current: value }),
+  useState: <A>(initial: A) => [initial, vi.fn()],
+}));
+
+vi.mock("@effect/atom-react", async () => {
+  const { appAtomRegistry } = await import("./atom-registry");
+  return { useAtomValue: (atom: never) => appAtomRegistry.get(atom) };
+});
+
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("expo-file-system", () => ({
@@ -64,7 +88,8 @@ vi.mock("expo-file-system", () => ({
   Paths: { document: "/documents" },
 }));
 
-vi.mock("../lib/composerImages", () => ({
+vi.mock("../lib/composerImages", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/composerImages")>()),
   removePersistedComposerAttachmentFile: harness.removePersistedFile,
 }));
 
@@ -78,40 +103,55 @@ vi.mock("../lib/attachmentUpload", () => ({
 }));
 
 vi.mock("./entities", () => ({
-  useProjects: () => [],
-  useServerConfigs: () => new Map(),
-  useThreadShells: () => [],
+  useProjects: () => harness.projects,
+  useServerConfigs: () => new Map([["environment-1", harness.serverConfig]]),
+  useThreadShells: () => harness.threads,
 }));
 
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
+  return {
+    serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(harness.serverConfig)) },
+  };
 });
 
-vi.mock("./threads", () => ({
-  threadEnvironment: {},
-}));
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    threadEnvironment: {
+      startTurn: harness.startTurn,
+      setRuntimeMode: vi.fn(),
+      setInteractionMode: vi.fn(),
+    },
+    environmentThreadShells: {
+      threadShellsAtom: Atom.make(() => harness.threads).pipe(Atom.keepAlive),
+    },
+  };
+});
 
 vi.mock("./use-atom-command", () => ({
-  useAtomCommand: () => async () => undefined,
+  useAtomCommand: (command: unknown) => command,
 }));
 
 vi.mock("./session", () => ({
   readEnvironmentScope: () => harness.canOperate,
-  useEnvironmentsWithScope: () => new Set(),
+  useEnvironmentsWithScope: () => harness.operableEnvironments,
 }));
 
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { appAtomRegistry } = await import("./atom-registry");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
-    useThreadOutboxMessages: () => ({}),
-    useThreadOutboxShellStatuses: () => new Map(),
+    dispatchingQueuedMessageIdAtom: Atom.make<string | null>(null).pipe(Atom.keepAlive),
+    useThreadOutboxMessages: () =>
+      appAtomRegistry.get(harness.manager.queuedMessagesByThreadKeyAtom),
+    useThreadOutboxShellStatuses: () => harness.shellStatuses,
   };
 });
 
 vi.mock("./use-remote-environment-registry", () => ({
-  useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
+  useRemoteConnectionStatus: () => ({ connectedEnvironments: harness.connectedEnvironments }),
 }));
 
 vi.mock("./thread-outbox", async () => {
@@ -156,7 +196,10 @@ import {
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
   restoreRejectedQueuedMessage,
+  useThreadOutboxDrain,
 } from "./use-thread-outbox-drain";
+import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
+import { environmentThreadShells } from "./threads";
 
 function queuedMessage(input: {
   readonly messageId: string;
@@ -207,9 +250,34 @@ function remainingMessages(): ReadonlyArray<QueuedThreadMessage> {
   return Object.values(appAtomRegistry.get(harness.manager.queuedMessagesByThreadKeyAtom)).flat();
 }
 
+function drainOutboxOnce(): Promise<void> {
+  const settled = Promise.withResolvers<void>();
+  let dispatching = false;
+  const unsubscribe = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (messageId) => {
+    if (messageId !== null) {
+      dispatching = true;
+    } else if (dispatching) {
+      settled.resolve();
+    }
+  });
+  useThreadOutboxDrain();
+  return settled.promise.finally(unsubscribe);
+}
+
 beforeEach(() => {
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
+  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
   harness.canOperate = true;
+  harness.cleanups.length = 0;
+  harness.connectedEnvironments = [];
+  harness.operableEnvironments = new Set();
+  harness.projects = [];
+  harness.serverConfig = null;
+  harness.shellStatuses = new Map();
+  harness.startTurn.mockReset();
+  harness.startTurn.mockResolvedValue(AsyncResult.success(undefined));
+  harness.threads = [];
+  appAtomRegistry.refresh(environmentThreadShells.threadShellsAtom);
   harness.draftFile.setDocument({ schemaVersion: 1, drafts: {} });
 });
 
@@ -224,6 +292,7 @@ afterEach(() => {
   harness.removePersistedFile.mockClear();
   harness.removeOutboxMessage.mockClear();
   harness.prepareTurnAttachments.mockReset();
+  harness.cleanups.splice(0).forEach((cleanup) => cleanup());
 });
 
 describe("thread outbox attachment preparation", () => {
@@ -357,6 +426,106 @@ describe("thread outbox attachment preparation", () => {
     expect(harness.prepareTurnAttachments).not.toHaveBeenCalled();
     expect(remainingMessages()).toEqual([edited]);
   });
+});
+
+describe("thread outbox location delivery", () => {
+  it.each([false, true])(
+    "sends a canonical location block in the actual startTurn payload (new task: %s)",
+    async (isCreation) => {
+      const location = {
+        id: "location-1",
+        type: "location" as const,
+        name: "T3 HQ",
+        address: "123 Main St, New York, NY",
+        latitude: 40.7128,
+        longitude: -74.006,
+        accuracy: 5,
+      };
+      const environmentId = EnvironmentId.make("environment-1");
+      const threadId = ThreadId.make(isCreation ? "new-thread" : "thread-1");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+      };
+      const message: QueuedThreadMessage = {
+        ...queuedMessage({
+          messageId: isCreation ? "new-location-message" : "existing-location-message",
+          text: "Meet me here",
+        }),
+        environmentId,
+        threadId,
+        commandId: CommandId.make(
+          isCreation ? "new-location-command" : "existing-location-command",
+        ),
+        attachments: [location],
+        ...(isCreation
+          ? {
+              modelSelection,
+              creation: {
+                projectId: ProjectId.make("project-1"),
+                projectCwd: "/repo",
+                workspaceMode: "local" as const,
+                branch: null,
+                worktreePath: null,
+              },
+            }
+          : {}),
+      };
+      const thread = {
+        environmentId,
+        id: threadId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        session: null,
+        latestRun: null,
+        runtime: null,
+      };
+      harness.connectedEnvironments = [{ environmentId, connectionState: "connected" }];
+      harness.operableEnvironments = new Set([environmentId]);
+      harness.serverConfig = {
+        providers: [{ instanceId: modelSelection.instanceId, driver: "codex" }],
+        environment: {
+          capabilities: { attachmentUploads: true, inlineMessageContext: true },
+        },
+      };
+      harness.shellStatuses = new Map([[environmentId, "live"]]);
+      harness.threads = isCreation ? [] : [thread];
+      appAtomRegistry.refresh(environmentThreadShells.threadShellsAtom);
+      harness.prepareTurnAttachments.mockImplementationOnce(async ({ attachments }) => ({
+        status: "ready",
+        attachments: [],
+        draftAttachments: attachments,
+        pendingAttachmentIds: [],
+      }));
+      await harness.manager.enqueue(message);
+
+      await drainOutboxOnce();
+
+      expect(harness.prepareTurnAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: [location] }),
+      );
+      expect(harness.startTurn).toHaveBeenCalledOnce();
+      const call = harness.startTurn.mock.calls[0]?.[0] as {
+        readonly input: { readonly message: { readonly text: string } };
+      };
+      expect(call.input.message.text).toBe(
+        [
+          "Meet me here",
+          "",
+          "<shared-location>",
+          "Place: T3 HQ",
+          "Address: 123 Main St, New York, NY",
+          "Coordinates: 40.7128, -74.006",
+          "Accuracy: ±5m",
+          "Map: https://maps.apple.com/?ll=40.7128,-74.006&q=T3%20HQ",
+          "</shared-location>",
+        ].join("\n"),
+      );
+      expect(call.input.message).toHaveProperty("attachments", []);
+      expect(remainingMessages()).toEqual([]);
+    },
+  );
 });
 
 describe("thread outbox drain delivery cleanup", () => {

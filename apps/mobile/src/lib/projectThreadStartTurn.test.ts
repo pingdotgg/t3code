@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { serializeSharedLocation } from "./sharedLocation";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,6 +15,38 @@ import {
 } from "./projectThreadStartTurn";
 
 describe("project thread title", () => {
+  it("keeps location markup and coordinates out of a location-only thread title", () => {
+    const text = serializeSharedLocation({
+      id: "location-1",
+      type: "location",
+      name: "Library",
+      address: "100 Larkin St",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracy: 12,
+    });
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "location-thread",
+      commandId: "location-command",
+      messageId: "location-message",
+      createdAt: "2026-09-04T00:00:00Z",
+      text,
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+    expect(input.titleSeed).toBe("Shared location");
+    expect(input.bootstrap.createThread.title).toBe("Shared location");
+    expect(input.message.text).toBe(text);
+  });
   it("keeps ordinary titles and the empty-prompt fallback", () => {
     expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
     expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");

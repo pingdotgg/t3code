@@ -86,6 +86,7 @@ import {
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { appendSharedLocations } from "../lib/sharedLocation";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
@@ -488,7 +489,10 @@ export function useThreadComposerState() {
     const edit = getQueuedRunEdit(threadKey);
     if (edit === null) return;
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
-    const text = draft.text.trim();
+    const text = appendSharedLocations(
+      draft.text.trim(),
+      draft.attachments.filter((attachment) => attachment.type === "location"),
+    );
     if (text.length === 0) {
       // The server rejects an empty queued message, attachments or not.
       Alert.alert("Add a message", "A queued message cannot be left empty.");

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   CommandId,
   ComposerContextId,
@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { appendPendingThreadMessages } from "./pending-thread-feed";
+
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 
 const pending = (id: string): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("env"),
@@ -36,6 +38,39 @@ describe("pending timeline messages", () => {
     if (entry?.type !== "message") throw new Error("Expected a pending message");
     expect(entry.message.text).toBe(text);
     expect(entry.message.context).toEqual(context);
+  });
+
+  it("shows a pending location as its canonical prompt block", () => {
+    const location = {
+      id: "location-1",
+      type: "location" as const,
+      name: "T3 HQ",
+      address: "123 Main St, New York, NY",
+      latitude: 40.7128,
+      longitude: -74.006,
+      accuracy: 5,
+    };
+    const entry = appendPendingThreadMessages(
+      [],
+      [],
+      [{ ...pending("location-message"), text: "Meet me here", attachments: [location] }],
+    )[0];
+
+    expect(entry?.type).toBe("message");
+    if (entry?.type !== "message") throw new Error("Expected a pending message");
+    expect(entry.message.text).toBe(
+      [
+        "Meet me here",
+        "",
+        "<shared-location>",
+        "Place: T3 HQ",
+        "Address: 123 Main St, New York, NY",
+        "Coordinates: 40.7128, -74.006",
+        "Accuracy: ±5m",
+        "Map: https://maps.apple.com/?ll=40.7128,-74.006&q=T3%20HQ",
+        "</shared-location>",
+      ].join("\n"),
+    );
   });
 
   it("keeps pending messages after newer agent activity in queue order", () => {

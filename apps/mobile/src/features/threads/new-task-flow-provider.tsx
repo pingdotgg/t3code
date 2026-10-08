@@ -1105,7 +1105,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
         ) ?? selectedModel;
-      if (text.length === 0 || !draftModelSelection) {
+      if (
+        (text.length === 0 &&
+          !draft.attachments.some((attachment) => attachment.type === "location")) ||
+        !draftModelSelection
+      ) {
         return null;
       }
       // A saved choice from before the project went no-project must not

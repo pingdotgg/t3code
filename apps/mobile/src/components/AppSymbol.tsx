@@ -72,6 +72,7 @@ import IconLayoutSidebar from "@tabler/icons-react-native/IconLayoutSidebar";
 import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebarRight";
 import IconLetterSpacing from "@tabler/icons-react-native/IconLetterSpacing";
 import IconMicrophone from "@tabler/icons-react-native/IconMicrophone";
+import IconMapPin from "@tabler/icons-react-native/IconMapPin";
 import IconLink from "@tabler/icons-react-native/IconLink";
 import IconListNumbers from "@tabler/icons-react-native/IconListNumbers";
 import IconMenu2 from "@tabler/icons-react-native/IconMenu2";
@@ -196,6 +197,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "person.2": IconUsers,
   photo: IconPhoto,
   pin: IconPin,
+  mappin: IconMapPin,
+  location: IconMapPin,
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
   plus: IconPlus,

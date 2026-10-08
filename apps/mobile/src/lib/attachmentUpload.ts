@@ -29,6 +29,7 @@ import {
   isComposerImageAttachment,
   isFileBackedComposerAttachment,
   type DraftComposerAttachment,
+  type DraftComposerMediaAttachment,
   type DraftComposerImageAttachment,
 } from "./composerImages";
 import { imageMimeType } from "@t3tools/shared/image";
@@ -78,8 +79,10 @@ export function withUploadedMobileAttachmentReferences(input: {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
 }): ReadonlyArray<DraftComposerAttachment> {
-  return input.attachments.map((attachment, index) => {
-    const uploaded = input.uploadedAttachments[index];
+  let uploadIndex = 0;
+  return input.attachments.map((attachment) => {
+    if (attachment.type === "location") return attachment;
+    const uploaded = input.uploadedAttachments[uploadIndex++];
     // A picture picked through Files stays `type: "file"` in the draft while it uploads as an
     // image, so compare against the type it was actually sent under: comparing draft types
     // drops the id, and the next send re-uploads bytes the server already holds.
@@ -174,13 +177,13 @@ export type PrepareTurnAttachmentsResult =
  * message reference — has to agree on this one value, or the turn describes bytes that are not
  * what was actually sent and `ChatImageAttachment` rejects it.
  */
-export function composerAttachmentWireMimeType(attachment: DraftComposerAttachment): string {
+export function composerAttachmentWireMimeType(attachment: DraftComposerMediaAttachment): string {
   if (!isComposerImageAttachment(attachment)) return attachment.mimeType;
   return supportedImageWireMimeType(attachment);
 }
 
 function supportedImageWireMimeType(
-  attachment: DraftComposerAttachment,
+  attachment: DraftComposerMediaAttachment,
 ): (typeof PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES)[number] {
   const inferred = imageMimeType(attachment);
   const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
@@ -191,7 +194,7 @@ function supportedImageWireMimeType(
 }
 
 function uploadedReference(
-  attachment: DraftComposerAttachment,
+  attachment: DraftComposerMediaAttachment,
   id: string,
 ): ChatImageAttachment | ChatFileAttachment {
   const fields = {
@@ -211,7 +214,7 @@ function uploadedReference(
       };
 }
 
-function attachmentUploadInput(attachment: DraftComposerAttachment) {
+function attachmentUploadInput(attachment: DraftComposerMediaAttachment) {
   const fields = { name: attachment.name, sizeBytes: attachment.sizeBytes };
   return isComposerImageAttachment(attachment)
     ? { ...fields, mimeType: supportedImageWireMimeType(attachment) }
@@ -262,7 +265,7 @@ async function composerImageAttachmentDataUrl(
 
 async function uploadFileBytes(
   environmentId: EnvironmentId,
-  attachment: DraftComposerAttachment,
+  attachment: DraftComposerMediaAttachment,
   url: string,
   signal: AbortSignal,
   onProgress?: (progress: number) => void,
@@ -334,7 +337,8 @@ export async function prepareTurnAttachments(input: {
 }): Promise<PrepareTurnAttachmentsResult> {
   const { environmentId } = input;
   if (input.signal?.aborted) return { status: "abandoned" };
-  const files = input.attachments.filter((attachment) => attachment.type === "file");
+  const mediaAttachments = input.attachments.filter((attachment) => attachment.type !== "location");
+  const files = mediaAttachments.filter((attachment) => attachment.type === "file");
   const ready = (
     attachments: ReadonlyArray<UploadedMobileAttachment>,
     pendingAttachmentIds: ReadonlyArray<string>,
@@ -346,10 +350,10 @@ export async function prepareTurnAttachments(input: {
     pendingAttachmentIds,
   });
 
-  if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
+  if (mediaAttachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
     try {
       const imageAttachments = await toUploadChatImageAttachments(
-        input.attachments.filter((attachment) => attachment.type === "image"),
+        mediaAttachments.filter((attachment) => attachment.type === "image"),
       );
       if (input.signal?.aborted) return { status: "abandoned" };
       return ready(imageAttachments, [], input.attachments);
@@ -380,7 +384,7 @@ export async function prepareTurnAttachments(input: {
   const abort = () => controller.abort();
   input.signal?.addEventListener("abort", abort, { once: true });
   try {
-    for (const attachment of input.attachments) {
+    for (const attachment of mediaAttachments) {
       if (controller.signal.aborted) throw new Error("Upload cancelled.");
       requireUploadAccess();
       if (attachment.type === "image" && !input.supportsImageUploads) {

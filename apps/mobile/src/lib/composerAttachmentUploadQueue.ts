@@ -65,6 +65,7 @@ export function canUploadComposerAttachment(
   attachment: DraftComposerAttachment,
   config: UploadServerConfig | null | undefined,
 ): boolean {
+  if (attachment.type === "location") return false;
   const capabilities = config?.environment.capabilities;
   return (
     capabilities?.attachmentUploads === true &&

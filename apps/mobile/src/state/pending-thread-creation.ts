@@ -8,6 +8,7 @@ import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
+import { appendSharedLocations } from "../lib/sharedLocation";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -119,7 +120,10 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
   return {
     id: message.messageId,
     role: "user",
-    text: message.text,
+    text: appendSharedLocations(
+      message.text,
+      message.attachments.filter((attachment) => attachment.type === "location"),
+    ),
     context: message.context,
     // Deliberately no attachments. Their ids are local draft ids the server
     // cannot resolve, so the feed's attachment rows would sit on a spinner
@@ -146,7 +150,12 @@ export function pendingThreadCreationShell(
   return presentThreadShell(message.environmentId, {
     id: message.threadId,
     projectId: creation.projectId,
-    title: deriveThreadTitleFromPrompt(message.text),
+    title: deriveThreadTitleFromPrompt(
+      message.text ||
+        (message.attachments.some((attachment) => attachment.type === "location")
+          ? "Shared location"
+          : ""),
+    ),
     providerInstanceId: message.modelSelection.instanceId,
     modelSelection: message.modelSelection,
     runtimeMode: message.runtimeMode ?? DEFAULT_RUNTIME_MODE,

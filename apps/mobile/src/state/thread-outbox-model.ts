@@ -247,7 +247,11 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   if (!message.creation) {
     return false;
   }
-  if (message.text.trim().length === 0 || message.modelSelection === undefined) {
+  if (
+    (message.text.trim().length === 0 &&
+      !message.attachments.some((attachment) => attachment.type === "location")) ||
+    message.modelSelection === undefined
+  ) {
     return false;
   }
   return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);

@@ -1414,6 +1414,26 @@ describe("thread outbox", () => {
       creationMessage,
     );
     expect(isQueuedThreadCreationSendable(creationMessage)).toBe(true);
+    const locationOnly = {
+      ...creationMessage,
+      text: "",
+      attachments: [
+        {
+          id: "location-1",
+          type: "location" as const,
+          name: "Library",
+          address: "100 Larkin St",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracy: 12,
+        },
+      ],
+    };
+    expect(isQueuedThreadCreationSendable(locationOnly)).toBe(true);
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(locationOnly))).toEqual(
+      locationOnly,
+    );
+    expect(isQueuedThreadCreationSendable({ ...locationOnly, attachments: [] })).toBe(false);
     expect(
       isQueuedThreadCreationSendable({
         ...creationMessage,

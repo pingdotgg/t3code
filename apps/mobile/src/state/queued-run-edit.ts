@@ -24,10 +24,12 @@ import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 
 import { uploadedComposerContext } from "../lib/composerContext";
+import { parseSharedLocations } from "../lib/sharedLocation";
 import { appAtomRegistry } from "./atom-registry";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   clearComposerDraft,
+  appendComposerDraftAttachments,
   setComposerDraftContext,
   setComposerDraftText,
 } from "./use-composer-drafts";
@@ -78,7 +80,9 @@ export function beginQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void
   }
   const draftKey = queuedEditDraftKey(threadKey, edit.runId);
   clearComposerDraft(draftKey);
-  setComposerDraftText(draftKey, edit.originalText);
+  const shared = parseSharedLocations(edit.originalText);
+  setComposerDraftText(draftKey, shared.text);
+  appendComposerDraftAttachments(draftKey, shared.locations);
   setComposerDraftContext(draftKey, edit.context);
   setQueuedRunEdit(threadKey, edit);
 }

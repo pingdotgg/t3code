@@ -141,12 +141,16 @@ export function ComposerEditor({
               const attachment = draft.attachments.find(
                 (entry) => entry.id === record.attachmentId,
               );
+              if (
+                !attachment ||
+                attachment.type === "location" ||
+                attachment.uploadEnvironmentId !== environmentId
+              ) {
+                return record;
+              }
               return {
                 ...record,
-                attachmentId:
-                  attachment?.uploadEnvironmentId === environmentId
-                    ? (attachment.uploadedAttachmentId ?? record.attachmentId)
-                    : record.attachmentId,
+                attachmentId: attachment.uploadedAttachmentId ?? record.attachmentId,
               };
             }),
           })

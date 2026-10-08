@@ -13,6 +13,7 @@ import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
+import { parseSharedLocations } from "./sharedLocation";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -42,7 +43,12 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.uploadedAttachments });
+  const shared = parseSharedLocations(spec.text);
+  const title = deriveThreadTitleSeed({
+    text: shared.text,
+    attachments: spec.uploadedAttachments,
+    fallbackLabels: [shared.locations.length > 0 ? "Shared location" : null],
+  });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),

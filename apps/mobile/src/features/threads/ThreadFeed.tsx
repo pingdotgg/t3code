@@ -32,6 +32,8 @@ import {
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
+import { LocationAttachmentCard } from "../../components/LocationAttachmentCard";
+import { parseSharedLocations } from "../../lib/sharedLocation";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
 import {
   codexArtifactTemplatePresentationLabel,
@@ -1738,28 +1740,30 @@ function renderFeedEntry(
                   : null),
             }}
           >
-            {entry.pendingMessage?.attachments.map((attachment) =>
-              attachment.type === "image" && attachment.uploadedAttachmentId ? (
-                <MessageAttachmentImage
-                  key={attachment.id}
-                  environmentId={props.environmentId}
-                  attachmentId={attachment.uploadedAttachmentId}
-                  name={attachment.name}
-                  mimeType={attachment.mimeType}
-                  className="h-[140px] w-[180px] rounded-[14px]"
-                  onPressPreview={props.onPressPreview}
-                />
-              ) : attachment.type === "image" ? (
-                <Image
-                  key={attachment.id}
-                  source={{ uri: attachment.previewUri }}
-                  accessibilityLabel={attachment.name}
-                  style={{ width: 180, height: 140, borderRadius: 14 }}
-                />
-              ) : (
-                <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-              ),
-            )}
+            {entry.pendingMessage?.attachments
+              .filter((attachment) => attachment.type !== "location")
+              .map((attachment) =>
+                attachment.type === "image" && attachment.uploadedAttachmentId ? (
+                  <MessageAttachmentImage
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachmentId={attachment.uploadedAttachmentId}
+                    name={attachment.name}
+                    mimeType={attachment.mimeType}
+                    className="h-[140px] w-[180px] rounded-[14px]"
+                    onPressPreview={props.onPressPreview}
+                  />
+                ) : attachment.type === "image" ? (
+                  <Image
+                    key={attachment.id}
+                    source={{ uri: attachment.previewUri }}
+                    accessibilityLabel={attachment.name}
+                    style={{ width: 180, height: 140, borderRadius: 14 }}
+                  />
+                ) : (
+                  <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                ),
+              )}
             {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
             {visibleAttachments.length > 0 ? (
               <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
@@ -2002,7 +2006,8 @@ function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const text = replaceComposerContextReferences(props.text, (ref) => {
+  const sharedLocations = parseSharedLocations(props.text);
+  const text = replaceComposerContextReferences(sharedLocations.text, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
@@ -2040,11 +2045,16 @@ function UserMessageContent(props: UserMessageContentProps) {
   };
   return (
     <>
-      <LegacyUserMessageContent
-        {...props}
-        text={text}
-        linkHandlers={{ ...props.linkHandlers, onLinkPress }}
-      />
+      {text.trim().length > 0 ? (
+        <LegacyUserMessageContent
+          {...props}
+          text={text}
+          linkHandlers={{ ...props.linkHandlers, onLinkPress }}
+        />
+      ) : null}
+      {sharedLocations.locations.map((location) => (
+        <LocationAttachmentCard key={location.id} location={location} />
+      ))}
       {selected ? (
         <ComposerContextSheet
           label={selected.label}

@@ -53,6 +53,7 @@ import {
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
+import { useComposerLocation } from "../../state/use-composer-location";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -519,6 +520,10 @@ export function NewTaskDraftScreen(props: {
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const location = useComposerLocation(
+    flow.draftKey,
+    !isComposerInteractionLocked && !voiceInput.isBusy,
+  );
   const preventRemove =
     (isIncomingShareTransferPending && !isProjectPickerReturnActive) ||
     isCancellingShareImport ||
@@ -1216,7 +1221,12 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
-    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+    if (
+      location.busy ||
+      voiceInput.blocksSubmission ||
+      pendingPastedTextAttachmentCountRef.current > 0
+    )
+      return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -1244,7 +1254,8 @@ export function NewTaskDraftScreen(props: {
     if (
       attachmentBlockReason !== null ||
       !modelSelection ||
-      initialMessageText.length === 0 ||
+      (initialMessageText.length === 0 &&
+        !draft.attachments.some((attachment) => attachment.type === "location")) ||
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
@@ -1325,7 +1336,12 @@ export function NewTaskDraftScreen(props: {
         environmentId: selectedProject.environmentId,
         threadTitle: deriveThreadTitleSeed({
           text: initialMessageText,
-          attachments: draft.attachments,
+          attachments: draft.attachments.filter((attachment) => attachment.type !== "location"),
+          fallbackLabels: [
+            draft.attachments.some((attachment) => attachment.type === "location")
+              ? "Shared location"
+              : null,
+          ],
         }),
         projectTitle: selectedProject.title,
       });
@@ -1390,6 +1406,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    !location.busy &&
     !isImportingContext &&
     !cloneBlocksStart &&
     taskPermissionReason === null &&
@@ -1397,7 +1414,8 @@ export function NewTaskDraftScreen(props: {
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
-    flow.prompt.trim().length > 0 &&
+    (flow.prompt.trim().length > 0 ||
+      flow.attachments.some((attachment) => attachment.type === "location")) &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
@@ -1694,6 +1712,15 @@ export function NewTaskDraftScreen(props: {
           paddingTop: 14,
         }}
       >
+        {location.busy || location.error ? (
+          <Text
+            accessibilityRole="text"
+            accessibilityLiveRegion="polite"
+            className="px-3 pb-2 text-xs text-muted-foreground"
+          >
+            {location.error ?? "Finding your location…"}
+          </Text>
+        ) : null}
         {stripAttachments.length > 0 ? (
           <View className="px-[14px] pb-2.5">
             <ComposerAttachmentStrip
@@ -1753,12 +1780,13 @@ export function NewTaskDraftScreen(props: {
               ) : (
                 <>
                   <ComposerAttachmentButton
-                    disabled={isComposerInteractionLocked}
+                    disabled={isComposerInteractionLocked || location.busy}
                     supportsFiles={Boolean(
                       selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
                     )}
                     onPickMedia={handlePickMedia}
                     onPickFiles={handlePickFiles}
+                    onPickLocation={location.pickLocation}
                   />
                   <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
                     <View className="min-w-0 shrink">

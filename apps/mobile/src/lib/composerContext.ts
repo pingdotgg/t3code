@@ -180,11 +180,15 @@ export function referencedComposerContext(text: string, context?: OrchestrationM
 /** Uploads change attachment ids; keep context bindings attached to the same ordered file. */
 export function uploadedComposerContext(
   context: OrchestrationMessageContext | undefined,
-  drafts: readonly { readonly id: string }[],
+  drafts: readonly { readonly id: string; readonly type?: string }[],
   uploaded: readonly { readonly id?: string }[],
 ): OrchestrationMessageContext | undefined {
   if (!context) return undefined;
-  const ids = new Map(drafts.map((draft, index) => [draft.id, uploaded[index]?.id]));
+  const ids = new Map(
+    drafts
+      .filter((draft) => draft.type !== "location")
+      .map((draft, index) => [draft.id, uploaded[index]?.id]),
+  );
   return {
     version: 1,
     records: context.records.map((record) =>
