@@ -1,6 +1,10 @@
 import { ArrowUpRightIcon, MapPinIcon } from "lucide-react";
 import type { LocationContextRecord } from "@t3tools/contracts";
-import { sharedLocationCaptureTime, sharedLocationMapsUrl } from "@t3tools/shared/sharedLocation";
+import {
+  sharedLocationCaptureTime,
+  sharedLocationMapsUrl,
+  sharedLocationMapPreviewUrl,
+} from "@t3tools/shared/sharedLocation";
 
 export function SharedLocationCard(props: { record: LocationContextRecord; copyMarkdown: string }) {
   const location = props.record.payload;
@@ -8,6 +12,7 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
   const address = location.address.trim();
   const coordinates = `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
   const mapsUrl = sharedLocationMapsUrl(location, "web");
+  const previewUrl = sharedLocationMapPreviewUrl(location);
   const capturedAt = sharedLocationCaptureTime(location);
   const accuracy =
     location.accuracy === null
@@ -24,32 +29,24 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
       className="group/location block overflow-hidden rounded-lg border border-border/70 bg-background/70 text-left transition-colors hover:border-border hover:bg-background focus-visible:outline-2 focus-visible:outline-ring"
     >
       <div
-        className="relative h-[112px] overflow-hidden bg-primary/10 text-muted-foreground"
+        className="relative h-[160px] overflow-hidden bg-muted text-muted-foreground"
         aria-hidden="true"
       >
-        <svg viewBox="0 0 420 112" className="size-full" preserveAspectRatio="xMidYMid slice">
-          <path
-            d="M0 18 420 94M-12 94 378 -8M92 112 176 -8M300 120 230 -8"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="12"
-            opacity=".4"
+        {previewUrl ? (
+          <iframe
+            src={previewUrl}
+            title={`Map of ${title}`}
+            tabIndex={-1}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            sandbox="allow-scripts"
+            className="pointer-events-none size-full border-0"
           />
-          <path
-            d="M0 18 420 94M-12 94 378 -8M92 112 176 -8M300 120 230 -8"
-            fill="none"
-            stroke="var(--background)"
-            strokeWidth="7"
-          />
-          <path
-            d="M210 39c-8.3 0-15 6.6-15 14.8 0 10.7 15 25.2 15 25.2s15-14.5 15-25.2c0-8.2-6.7-14.8-15-14.8Z"
-            fill="var(--primary)"
-          />
-          <circle cx="210" cy="54" r="5" fill="var(--primary-foreground)" />
-        </svg>
-        <span className="absolute right-2 top-2 rounded-full border border-border bg-background px-2 py-1 text-3xs font-medium text-muted-foreground">
-          Location snapshot
-        </span>
+        ) : (
+          <span className="flex size-full items-center justify-center text-xs">
+            Map preview unavailable
+          </span>
+        )}
       </div>
       <div className="flex min-w-0 items-start gap-3 p-3">
         <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">

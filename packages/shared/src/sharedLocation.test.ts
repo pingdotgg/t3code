@@ -9,6 +9,7 @@ import {
   sharedLocationMapsUrl,
   sharedLocationLocalCaptureTime,
   sharedLocationCaptureTime,
+  sharedLocationMapPreviewUrl,
 } from "./sharedLocation.ts";
 
 const location = {
@@ -110,6 +111,31 @@ describe("shared location codec", () => {
     expect(sharedLocationMapsUrl(location, "ios")).toContain("q=Central%20Library");
     expect(sharedLocationMapsUrl(location, "android")).toMatch(/^geo:40\.7128,-74\.006\?/u);
     expect(sharedLocationMapsUrl(location, "web")).toContain("query=40.7128%2C-74.006");
+  });
+
+  it("centers the real map embed on the coordinates without sending the address", () => {
+    const url = new URL(sharedLocationMapPreviewUrl(location)!);
+    expect(url.origin).toBe("https://www.openstreetmap.org");
+    expect(url.pathname).toBe("/export/embed.html");
+    expect(url.searchParams.get("marker")).toBe("40.7128,-74.006");
+    const [west, south, east, north] = url.searchParams.get("bbox")!.split(",").map(Number);
+    expect((west! + east!) / 2).toBeCloseTo(location.longitude);
+    expect((south! + north!) / 2).toBeCloseTo(location.latitude);
+    expect(west).toBeLessThan(east!);
+    expect(south).toBeLessThan(north!);
+    expect(url.href).not.toContain("Library");
+    expect(url.href).not.toContain("Main");
+  });
+
+  it("handles the date line and omits unsupported polar map previews", () => {
+    const dateLine = new URL(sharedLocationMapPreviewUrl({ ...location, longitude: 180 })!);
+    expect(dateLine.searchParams.get("marker")).toBe("40.7128,180");
+    const [west, , east] = dateLine.searchParams.get("bbox")!.split(",").map(Number);
+    expect(west).toBeLessThan(180);
+    expect(east).toBeGreaterThan(180);
+    expect(sharedLocationMapPreviewUrl({ ...location, latitude: 90 })).toBeUndefined();
+    expect(sharedLocationMapPreviewUrl({ ...location, latitude: -90 })).toBeUndefined();
+    expect(() => sharedLocationMapPreviewUrl({ ...location, longitude: Number.NaN })).toThrow();
   });
 
   it("creates typed context records with the original place and address", () => {

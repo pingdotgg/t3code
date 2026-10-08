@@ -22,6 +22,20 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
 
+    View(T3LocationMapView.self) {
+      ViewName("LocationMap")
+      Events("onStatusChange")
+      Prop("latitude") { (view: T3LocationMapView, value: Double) in
+        view.latitude = value
+      }
+      Prop("longitude") { (view: T3LocationMapView, value: Double) in
+        view.longitude = value
+      }
+      Prop("appearance") { (view: T3LocationMapView, value: String) in
+        view.appearance = value
+      }
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
-import Svg, { Path } from "react-native-svg";
 import { sharedLocationCaptureTime } from "@t3tools/shared/sharedLocation";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { sharedLocationMapsUrl, type DraftComposerLocationAttachment } from "../lib/sharedLocation";
 import { SymbolView } from "./AppSymbol";
 import { AppText } from "./AppText";
+import { LocationMapPreview } from "./LocationMapPreview";
 
 export function LocationAttachmentCard(props: {
   readonly location: DraftComposerLocationAttachment;
@@ -14,7 +14,7 @@ export function LocationAttachmentCard(props: {
   readonly compact?: boolean;
 }) {
   const { location, onRemove, compact = false } = props;
-  const { themeVariables: colors } = useAppearancePreferences();
+  const { themeAppearance } = useAppearancePreferences();
   const [openError, setOpenError] = useState(false);
 
   const openInMaps = async () => {
@@ -74,34 +74,7 @@ export function LocationAttachmentCard(props: {
         onPress={() => void openInMaps()}
         className="gap-2.5 px-3 pb-3 pt-2 active:opacity-80"
       >
-        <View
-          accessible={false}
-          className="relative h-[88px] items-center justify-center overflow-hidden rounded-xl bg-primary/10"
-        >
-          <Svg
-            pointerEvents="none"
-            style={{ position: "absolute", width: "100%", height: "100%" }}
-            viewBox="0 0 246 88"
-            preserveAspectRatio="xMidYMid slice"
-          >
-            <Path
-              d="M-12 64 258 8M-12 24 258 94M36 100 76 -12M208 100 154 -12"
-              fill="none"
-              stroke={colors["--color-foreground-muted"]}
-              strokeWidth={11}
-              opacity={0.4}
-            />
-            <Path
-              d="M-12 64 258 8M-12 24 258 94M36 100 76 -12M208 100 154 -12"
-              fill="none"
-              stroke={colors["--color-card"]}
-              strokeWidth={7}
-            />
-          </Svg>
-          <View className="size-9 items-center justify-center rounded-full bg-primary shadow-sm">
-            <SymbolView name="mappin" size={20} tintColorClassName="accent-primary-foreground" />
-          </View>
-        </View>
+        <LocationMapPreview location={location} appearance={themeAppearance} />
 
         {location.address ? (
           <AppText className="text-xs leading-snug text-foreground-secondary" numberOfLines={2}>

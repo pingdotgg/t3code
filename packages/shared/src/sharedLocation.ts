@@ -82,6 +82,27 @@ export function sharedLocationMapsUrl(
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
 }
 
+/** OpenStreetMap's attributed embed for clients without a native map snapshot. */
+export function sharedLocationMapPreviewUrl(location: SharedLocation): string | undefined {
+  assertValidLocation(location);
+  // Web Mercator cannot represent the poles; show the card's coordinates instead.
+  if (Math.abs(location.latitude) > 85) return undefined;
+  const latitudeSpan = 0.0032;
+  const longitudeSpan = 0.005 / Math.cos((location.latitude * Math.PI) / 180);
+  const bbox = [
+    location.longitude - longitudeSpan,
+    Math.max(-85, location.latitude - latitudeSpan),
+    location.longitude + longitudeSpan,
+    Math.min(85, location.latitude + latitudeSpan),
+  ];
+  const query = new URLSearchParams({
+    bbox: bbox.join(","),
+    layer: "mapnik",
+    marker: `${location.latitude},${location.longitude}`,
+  });
+  return `https://www.openstreetmap.org/export/embed.html?${query}`;
+}
+
 /** Serialize one location in the canonical text format, preserving the seven-line legacy shape. */
 export function serializeSharedLocation(location: SharedLocation): string {
   assertValidLocation(location);

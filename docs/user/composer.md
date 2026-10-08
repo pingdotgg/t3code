@@ -55,7 +55,8 @@ On mobile, choose **Location** from the attachment menu to share a one-time loca
 with your message. The agent receives the coordinates, nearest address, accuracy,
 and capture time, so you can ask questions about the surrounding area. Allow
 foreground location access when prompted; you can remove the attachment before
-sending. Tap a location card to open it in Maps.
+sending. Map previews load from Apple Maps on iOS and OpenStreetMap on Android
+and web. Tap a location card to open it in Maps.
 
 The shared location stays with that message and can be viewed on your other
 clients. It is a snapshot taken when you attached it; send a new location if you
