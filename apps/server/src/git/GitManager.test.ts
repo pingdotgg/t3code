@@ -1661,6 +1661,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/shared-pr-cache"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/shared-pr-cache"]);
+      // A merged PR only stays the branch's PR while the branch sits on its head.
+      const mergedHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
@@ -1672,7 +1674,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/220",
                 baseRefName: "main",
                 headRefName: "feature/shared-pr-cache",
-                headRefOid: "a".repeat(40),
+                headRefOid: mergedHead,
                 state: "MERGED",
                 updatedAt: "2026-04-07T15:00:00Z",
               },
@@ -1701,7 +1703,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(status.pr?.state).toBe("merged");
       expect(pullRequest?.state).toBe("merged");
-      expect(pullRequest?.headSha).toBe("a".repeat(40));
+      expect(pullRequest?.headSha).toBe(mergedHead);
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
       const refreshed = yield* manager.branchPullRequest(
         { cwd: repoDir, branch: "feature/shared-pr-cache" },
@@ -1869,6 +1871,304 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
     }),
+  );
+
+  it.effect("status drops a merged PR once its long-lived branch moves past it", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      // The commit the release PR was opened from.
+      const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      // `develop` is an integration branch, so work continues on it after the
+      // release merges into `main`.
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "next.md"), "next\n");
+      yield* runGit(repoDir, ["add", "next.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Work after the release merged"]);
+      yield* runGit(repoDir, ["push", "origin", "develop"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 3,
+                title: "Release develop into main",
+                url: "https://github.com/pingdotgg/t3code/pull/3",
+                baseRefName: "main",
+                headRefName: "develop",
+                headRefOid: releasedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.refName).toBe("develop");
+      expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("status drops a merged PR once its branch is committed to without pushing", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      // Local work that has not been pushed: `origin/develop` still sits on the
+      // released commit, but the branch a thread works on has moved past it.
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "local.md"), "local\n");
+      yield* runGit(repoDir, ["add", "local.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Unpushed work after the release merged"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 3,
+                title: "Release develop into main",
+                url: "https://github.com/pingdotgg/t3code/pull/3",
+                baseRefName: "main",
+                headRefName: "develop",
+                headRefOid: releasedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("branch PR lookup ignores a nested child ref once the branch itself is gone", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/foo"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/foo"]);
+
+      // Git forbids `feature/foo` and `feature/foo/child` at once, so the
+      // sibling only surfaces once the branch itself is gone — exactly when the
+      // merged badge is supposed to be kept. `for-each-ref` still reports the
+      // child for the pattern `refs/heads/feature/foo`, and standing in for the
+      // deleted branch is what would wrongly drop the badge.
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/foo"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/foo"]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Later work on main"]);
+      yield* runGit(repoDir, ["branch", "feature/foo/child"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 217,
+                title: "Merged then deleted",
+                url: "https://github.com/pingdotgg/t3code/pull/217",
+                baseRefName: "main",
+                headRefName: "feature/foo",
+                headRefOid: "0".repeat(40),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/foo",
+      });
+
+      expect(pullRequest?.state).toBe("merged");
+    }),
+  );
+
+  it.effect("branch lookup reports the terminal PR a reused branch has outgrown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "next.md"), "next\n");
+      yield* runGit(repoDir, ["add", "next.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Work after the release merged"]);
+      yield* runGit(repoDir, ["push", "origin", "develop"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 3,
+                title: "Release develop into main",
+                url: "https://github.com/pingdotgg/t3code/pull/3",
+                baseRefName: "main",
+                headRefName: "develop",
+                headRefOid: releasedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch: "develop" });
+      const outgrown = yield* manager.branchSupersededPullRequest({
+        cwd: repoDir,
+        branch: "develop",
+        pullRequest: { number: 3, url: "https://github.com/pingdotgg/t3code/pull/3" },
+      });
+      // A different change request on the same branch is not what was rejected,
+      // so a thread holding it keeps its historical reference.
+      const other = yield* manager.branchSupersededPullRequest({
+        cwd: repoDir,
+        branch: "develop",
+        pullRequest: { number: 9, url: "https://github.com/pingdotgg/t3code/pull/9" },
+      });
+
+      expect(pullRequest).toBeNull();
+      expect(outgrown).toBe(true);
+      expect(other).toBe(false);
+    }),
+  );
+
+  it.effect("status keeps a merged PR while its branch still sits on the merged commit", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merged-in-place"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/merged-in-place"]);
+      // Squash merges leave the head branch on its own last commit, so the
+      // recorded head commit still matches and the badge has to survive.
+      const mergedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 216,
+                title: "Merged in place",
+                url: "https://github.com/pingdotgg/t3code/pull/216",
+                baseRefName: "main",
+                headRefName: "feature/merged-in-place",
+                headRefOid: mergedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.number).toBe(216);
+      expect(status.pr?.state).toBe("merged");
+    }),
+  );
+
+  it.effect(
+    "status re-checks the local tip instead of reusing a stale moved-past verdict for minutes",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "fix/cursor-usage-cache-savings"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "fix/cursor-usage-cache-savings"]);
+        const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              encodeCliJson([
+                {
+                  number: 13731,
+                  title: "fix(usage): price Cursor cache savings by base model",
+                  url: "https://github.com/pingdotgg/t3code/pull/13731",
+                  baseRefName: "main",
+                  headRefName: "fix/cursor-usage-cache-savings",
+                  headRefOid: releasedHead.stdout.trim(),
+                  state: "MERGED",
+                  mergedAt: "2026-04-02T15:00:00Z",
+                  updatedAt: "2026-04-02T15:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+
+        // Move past the PR head and look it up once. The GitHub-side record
+        // (merged, this head commit) is now cached for minutes; the moved
+        // verdict must not be cached alongside it.
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(NodePath.join(repoDir, "next.md"), "next\n");
+        yield* runGit(repoDir, ["add", "next.md"]);
+        yield* runGit(repoDir, ["commit", "-m", "Work after the release merged"]);
+        const movedStatus = yield* manager.status({ cwd: repoDir });
+        expect(movedStatus.pr).toBeNull();
+
+        // An external `git reset` (outside the app, so nothing tells the PR
+        // cache to invalidate) puts the branch back on the PR's head commit.
+        // `prListSequence` has nothing left to hand out, so a passing re-check
+        // here proves the GitHub-side answer came from cache, not a second
+        // `gh` call, while the local-tip verdict is still correct.
+        yield* runGit(repoDir, ["reset", "--hard", releasedHead.stdout.trim()]);
+        // Only the 1-second outer status cache, standing in for the next
+        // periodic poll; the slower PR-lookup cache (and its single-shot fake
+        // `gh` answer) stays warm, same as it would for a real external change.
+        yield* manager.invalidateRemoteStatus(repoDir);
+        const restoredStatus = yield* manager.status({ cwd: repoDir });
+
+        expect(restoredStatus.pr?.number).toBe(13731);
+        expect(restoredStatus.pr?.state).toBe("merged");
+      }),
   );
 
   it.effect("status still looks up PRs for a branch pushed without --set-upstream", () =>
