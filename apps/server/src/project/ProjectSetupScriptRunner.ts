@@ -5,8 +5,10 @@ import {
   resolveProjectScripts,
   settleProjectScript,
   setupProjectScript,
+  worktreeRemoveProjectScript,
 } from "@t3tools/shared/projectScripts";
 
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -62,7 +64,7 @@ export interface ProjectSetupScriptRunnerInput {
   readonly worktreePath: string;
   readonly preferredTerminalId?: string;
   /** Which project script to run. Defaults to the worktree setup script. */
-  readonly trigger?: "setup" | "settle";
+  readonly trigger?: "setup" | "settle" | "remove";
   readonly project?: {
     readonly id: ProjectId;
     readonly workspaceRoot: string;
@@ -114,12 +116,27 @@ export const ProjectSetupScriptRunnerError = Schema.Union([
 ]);
 export type ProjectSetupScriptRunnerError = typeof ProjectSetupScriptRunnerError.Type;
 
+export interface ProjectWorktreeRemoveScriptInput {
+  readonly projectId?: string;
+  readonly projectCwd: string;
+  readonly worktreePath: string;
+}
+
 export class ProjectSetupScriptRunner extends Context.Service<
   ProjectSetupScriptRunner,
   {
     readonly runForThread: (
       input: ProjectSetupScriptRunnerInput,
     ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
+    /**
+     * Runs the project's worktree remove script in `worktreePath` and waits for
+     * it, so it can tear down what setup started while the checkout still
+     * exists. Call it just before removing the worktree. It never fails:
+     * removal goes ahead after a missing, failed, or timed-out script.
+     */
+    readonly runBeforeWorktreeRemove: (
+      input: ProjectWorktreeRemoveScriptInput,
+    ) => Effect.Effect<void>;
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
@@ -133,6 +150,15 @@ const COMPLETION_SENTINEL_PREFIX = "__T3_SETUP_DONE__";
 const OUTPUT_LINE_MAX_LENGTH = 400;
 /** A partial line longer than this is a byte stream, not a line. Keep only the tail. */
 const PARTIAL_LINE_MAX_LENGTH = 4_096;
+/**
+ * Remove scripts run for worktrees that may belong to no thread anymore, so
+ * their shells are owned by this id instead and close once the script is done.
+ */
+const WORKTREE_REMOVE_TERMINAL_OWNER = "worktree-remove";
+/** A hung remove script must not hold the removal, or every later cleanup, forever. */
+const WORKTREE_REMOVE_SCRIPT_TIMEOUT = "5 minutes";
+/** Output lines kept from a remove script, logged when it fails. */
+const WORKTREE_REMOVE_OUTPUT_TAIL_LINES = 20;
 
 function completionSentinel(token: string): string {
   return `${COMPLETION_SENTINEL_PREFIX}_${token}:`;
@@ -368,7 +394,11 @@ export const make = Effect.gen(function* () {
     const trigger = input.trigger ?? "setup";
     const scripts = resolveProjectScripts(settings, project);
     const script =
-      trigger === "settle" ? settleProjectScript(scripts) : setupProjectScript(scripts);
+      trigger === "settle"
+        ? settleProjectScript(scripts)
+        : trigger === "remove"
+          ? worktreeRemoveProjectScript(scripts)
+          : setupProjectScript(scripts);
     if (!script) {
       return {
         status: "no-script",
@@ -377,11 +407,12 @@ export const make = Effect.gen(function* () {
 
     // A thread settles again after it is resumed, and an earlier settle shell
     // may still be busy; typing into it would feed its foreground program.
+    // Remove shells share one owner across worktrees, so they are unique too.
     const terminalId =
       input.preferredTerminalId ??
-      (trigger === "settle"
-        ? `settle-${script.id}-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 8)}`
-        : `setup-${script.id}`);
+      (trigger === "setup"
+        ? `setup-${script.id}`
+        : `${trigger}-${script.id}-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 8)}`);
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({
@@ -479,7 +510,66 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
-  return ProjectSetupScriptRunner.of({ runForThread });
+  const runBeforeWorktreeRemove: ProjectSetupScriptRunner["Service"]["runBeforeWorktreeRemove"] =
+    Effect.fn("ProjectSetupScriptRunner.runBeforeWorktreeRemove")(
+      function* (input) {
+        const outputTail: Array<string> = [];
+        const run = yield* runForThread({
+          threadId: WORKTREE_REMOVE_TERMINAL_OWNER,
+          ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+          projectCwd: input.projectCwd,
+          worktreePath: input.worktreePath,
+          trigger: "remove",
+          observeCompletion: {
+            onOutputLine: (line) =>
+              Effect.sync(() => {
+                outputTail.push(line);
+                if (outputTail.length > WORKTREE_REMOVE_OUTPUT_TAIL_LINES) outputTail.shift();
+              }),
+          },
+        }).pipe(
+          // A worktree outside any known project has no scripts to run.
+          Effect.catchTags({
+            ProjectSetupScriptProjectNotFoundError: () =>
+              Effect.succeed({ status: "no-script" } as const),
+          }),
+        );
+        if (run.status !== "started" || !run.completion) return;
+        const completion = yield* run.completion.pipe(
+          Effect.timeoutOption(WORKTREE_REMOVE_SCRIPT_TIMEOUT),
+        );
+        // The worktree is about to go, so its shell goes too, even after a
+        // failure; nothing can attach to the owner to read its history.
+        yield* terminalManager.close({
+          threadId: WORKTREE_REMOVE_TERMINAL_OWNER,
+          terminalId: run.terminalId,
+          deleteHistory: true,
+        });
+        const exitCode = Option.isSome(completion) ? completion.value.exitCode : null;
+        if (exitCode !== 0) {
+          yield* Effect.logWarning("worktree remove script did not succeed", {
+            worktreePath: input.worktreePath,
+            scriptId: run.scriptId,
+            exitCode,
+            timedOut: Option.isNone(completion),
+            output: outputTail.join("\n"),
+          });
+        }
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("running the worktree remove script failed", {
+                  worktreePath: input.worktreePath,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        ),
+    );
+
+  return ProjectSetupScriptRunner.of({ runForThread, runBeforeWorktreeRemove });
 });
 
 export const layer = Layer.effect(ProjectSetupScriptRunner, make);

@@ -698,7 +698,10 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
-  setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  setupScriptRunner?: Pick<
+    ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"],
+    "runForThread"
+  >;
   gitConfigReads?: string[];
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
@@ -761,8 +764,7 @@ function makeManager(input?: {
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed([]),
     }),
-    Layer.succeed(
-      ProjectSetupScriptRunner.ProjectSetupScriptRunner,
+    Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)(
       input?.setupScriptRunner ?? {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
@@ -831,6 +833,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               Layer.provide(VcsProcess.layer),
             ),
           ),
+          Layer.provide(Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({})),
         ),
       );
       const broadcasterContext = yield* Layer.build(

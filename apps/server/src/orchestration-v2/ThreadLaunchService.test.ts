@@ -176,7 +176,7 @@ function makeHarness(options: HarnessOptions = {}) {
       resolveRemoteTrackingCommit: () =>
         Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
     }),
-    Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+    Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: runSetup,
     }),
     Layer.mock(TextGeneration.TextGeneration)({

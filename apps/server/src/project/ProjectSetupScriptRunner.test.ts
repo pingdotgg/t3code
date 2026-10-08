@@ -1,10 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -180,3 +182,138 @@ it.effect("resolves setup scripts through the standalone project service", () =>
     });
   }).pipe(Effect.provide(layer));
 });
+
+const makeRemoveScriptHarness = Effect.gen(function* () {
+  const written = yield* Deferred.make<string>();
+  const open = vi.fn((input: Parameters<TerminalManager.TerminalManager["Service"]["open"]>[0]) =>
+    Effect.succeed({
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      cwd: input.cwd,
+      worktreePath: input.worktreePath ?? null,
+      status: "running" as const,
+      pid: 123,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      label: "Shell",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    }),
+  );
+  const close = vi.fn(
+    (_input: Parameters<TerminalManager.TerminalManager["Service"]["close"]>[0]) => Effect.void,
+  );
+  const listeners: Array<Parameters<TerminalManager.TerminalManager["Service"]["subscribe"]>[0]> =
+    [];
+  const project = {
+    id: ProjectId.make("project:remove-script"),
+    title: "Project",
+    workspaceRoot: "/repo",
+    repositoryIdentity: null,
+    faviconPath: null,
+    defaultModelSelection: null,
+    scripts: [
+      {
+        id: "down",
+        name: "Down",
+        command: "docker compose down",
+        icon: "configure" as const,
+        runOnWorktreeCreate: false,
+        runOnWorktreeRemove: true,
+      },
+    ],
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+    deletedAt: null,
+  };
+  const layer = ProjectSetupScriptRunner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(id === project.id ? Option.some(project) : Option.none()),
+          getByWorkspaceRoot: () => Effect.succeedNone,
+        }),
+        Layer.mock(TerminalManager.TerminalManager)({
+          open,
+          close,
+          closeIdle: () => Effect.void,
+          write: (input) => Deferred.succeed(written, input.data).pipe(Effect.asVoid),
+          subscribe: (listener) =>
+            Effect.sync(() => {
+              listeners.push(listener);
+              return () => undefined;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  return { written, open, close, listeners, project, layer };
+});
+
+it.effect("waits for the remove script and closes its shell before a worktree goes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeRemoveScriptHarness;
+    return yield* Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const removal = yield* Effect.forkChild(
+        runner.runBeforeWorktreeRemove({
+          projectId: harness.project.id,
+          projectCwd: "/repo",
+          worktreePath: "/repo-worktree",
+        }),
+      );
+      const data = yield* Deferred.await(harness.written);
+      const opened = harness.open.mock.calls[0]![0];
+      assert.equal(opened.cwd, "/repo-worktree");
+      assert.equal(opened.threadId, "worktree-remove");
+      assert.match(opened.terminalId, /^remove-down-/);
+      assert.include(data, "docker compose down");
+      // Removal waits on the script, so its shell is still open.
+      assert.equal(harness.close.mock.calls.length, 0);
+
+      const token = /__T3_SETUP_DONE___(\w+):/.exec(data)?.[1];
+      yield* harness.listeners[0]!({
+        type: "output",
+        threadId: "worktree-remove",
+        terminalId: opened.terminalId,
+        data: `no such container\r\n__T3_SETUP_DONE___${token}:1\r\n$ `,
+      });
+      yield* Fiber.join(removal);
+      // A failed script does not hold the removal, and its shell closes with it.
+      assert.deepEqual(harness.close.mock.calls[0]?.[0], {
+        threadId: "worktree-remove",
+        terminalId: opened.terminalId,
+        deleteHistory: true,
+      });
+
+      // Worktrees outside a known project have no script to run.
+      yield* runner.runBeforeWorktreeRemove({
+        projectCwd: "/elsewhere",
+        worktreePath: "/elsewhere-worktree",
+      });
+      assert.equal(harness.open.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("stops waiting on a remove script that never finishes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeRemoveScriptHarness;
+    return yield* Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const removal = yield* Effect.forkChild(
+        runner.runBeforeWorktreeRemove({
+          projectId: harness.project.id,
+          projectCwd: "/repo",
+          worktreePath: "/repo-worktree",
+        }),
+      );
+      yield* Deferred.await(harness.written);
+      yield* TestClock.adjust("5 minutes");
+      yield* Fiber.join(removal);
+      assert.equal(harness.close.mock.calls[0]?.[0].deleteHistory, true);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

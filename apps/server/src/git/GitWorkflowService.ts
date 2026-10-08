@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import {
   GitManagerError,
@@ -29,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -97,6 +100,14 @@ export class GitWorkflowService extends Context.Service<
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
+    /**
+     * Removes a worktree for the user after running the project's worktree
+     * remove action in it. Rolling back a worktree that never finished setting
+     * up uses `removeWorktree`, which runs no action.
+     */
+    readonly removeWorktreeWithAction: (
+      input: VcsRemoveWorktreeInput,
+    ) => Effect.Effect<void, GitCommandError>;
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
@@ -159,6 +170,9 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -182,6 +196,22 @@ export const make = Effect.gen(function* () {
         detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
       });
     }
+  });
+
+  const realPathOr = (value: string) =>
+    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
+
+  // `path` resolved against `cwd`, as Git resolves it, when it is a worktree
+  // linked to `cwd`. Any other path, such as the main checkout, gets no remove
+  // action, because the removal then refuses it.
+  const linkedWorktreePath = Effect.fn("GitWorkflowService.linkedWorktreePath")(function* (
+    input: VcsRemoveWorktreeInput,
+  ) {
+    const worktreePath = path.resolve(input.cwd, input.path);
+    const target = yield* realPathOr(worktreePath);
+    // `git worktree list` starts with the main worktree.
+    const linked = (yield* git.listWorktreePaths(input.cwd)).slice(1);
+    return (yield* Effect.forEach(linked, realPathOr)).includes(target) ? worktreePath : null;
   });
 
   const ensureGitCommand = Effect.fn("GitWorkflowService.ensureGitCommand")(function* (
@@ -371,6 +401,16 @@ export const make = Effect.gen(function* () {
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+        Effect.andThen(git.removeWorktree(input)),
+      ),
+    removeWorktreeWithAction: (input) =>
+      ensureGitCommand("GitWorkflowService.removeWorktreeWithAction", input.cwd).pipe(
+        Effect.andThen(linkedWorktreePath(input)),
+        Effect.flatMap((worktreePath) =>
+          worktreePath === null
+            ? Effect.void
+            : projectScripts.runBeforeWorktreeRemove({ projectCwd: input.cwd, worktreePath }),
+        ),
         Effect.andThen(git.removeWorktree(input)),
       ),
     pruneWorktrees: (input) =>

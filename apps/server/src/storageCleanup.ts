@@ -31,6 +31,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
@@ -147,6 +148,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
@@ -342,87 +344,106 @@ export const make = Effect.gen(function* () {
           }
         }
         if (!eligible) return;
+        // New terminals wait on this lease, so one check covers the whole removal.
+        if (hasTerminal(worktreePath)) return;
         // Re-read after Git/host calls so a queued turn, resumed session or new
         // thread sharing this path cancels the removal.
-        const latestSnapshot = yield* readThreads();
-        if (yield* containsProjectRoot(worktreePath, [project, ...latestSnapshot.projects])) return;
-        const latest = latestSnapshot.threads.filter(
-          (entry) =>
-            entry.worktreePath !== null && path.resolve(entry.worktreePath) === worktreePath,
-        );
-        if (hasTerminal(worktreePath)) return;
-        if (deleted) {
-          if (
-            latest.length > 0 ||
-            !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
-              .worktreeOnDelete
+        const stillRemovable = Effect.gen(function* () {
+          const checkedAt = yield* Clock.currentTimeMillis;
+          const latestSnapshot = yield* readThreads();
+          if (yield* containsProjectRoot(worktreePath, [project, ...latestSnapshot.projects]))
+            return false;
+          const latest = latestSnapshot.threads.filter(
+            (entry) =>
+              entry.worktreePath !== null && path.resolve(entry.worktreePath) === worktreePath,
+          );
+          if (deleted) {
+            if (
+              latest.length > 0 ||
+              !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
+                .worktreeOnDelete
+            )
+              return false;
+            // V2 deletion queues durable cleanup. Do not remove its checkout until
+            // every effect has finished successfully or was explicitly cancelled.
+            const pendingCleanup = yield* sql`
+              SELECT 1 FROM orchestration_v2_effect_outbox
+              WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
+            `;
+            if (pendingCleanup.length > 0) return false;
+          } else if (
+            latest.length !== 1 ||
+            latest[0]!.id !== thread.id ||
+            !storageCleanupThreadIdle(latest[0]!, checkedAt) ||
+            storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
           )
-            return;
-          // V2 deletion queues durable cleanup. Do not remove its checkout until
-          // every effect has finished successfully or was explicitly cancelled.
-          const pendingCleanup = yield* sql`
-            SELECT 1 FROM orchestration_v2_effect_outbox
-            WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
+            return false;
+          // Sessions can outlive their run and can be shared across app threads.
+          const sessionRows = yield* sql<{ payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+            WHERE status != 'stopped'
           `;
-          if (pendingCleanup.length > 0) return;
-        } else if (
-          latest.length !== 1 ||
-          latest[0]!.id !== thread.id ||
-          !storageCleanupThreadIdle(latest[0]!, now) ||
-          storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
-        )
-          return;
-        // Sessions can outlive their run and can be shared across app threads.
-        const sessionRows = yield* sql<{ payload_json: string }>`
-          SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-          WHERE status != 'stopped'
-        `;
-        const sessions = yield* Effect.forEach(sessionRows, (row) =>
-          decodeCleanupSession(row.payload_json),
-        );
-        if (
-          sessions.some((session) => {
-            const cwd = path.resolve(session.cwd);
-            return cwd === worktreePath || inside(worktreePath, cwd);
-          })
-        )
-          return;
-        const finalStatus = yield* git.statusDetailsLocal(worktreePath);
-        if (
-          !finalStatus.isRepo ||
-          finalStatus.branch !== thread.branch ||
-          finalStatus.hasWorkingTreeChanges
-        )
-          return;
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return;
-        const finalIgnored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        if (
-          finalIgnored.stdoutTruncated ||
-          finalIgnored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
-        const current = resolveWorktreeCleanup(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        );
-        if (
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
+          const sessions = yield* Effect.forEach(sessionRows, (row) =>
+            decodeCleanupSession(row.payload_json),
+          );
+          if (
+            sessions.some((session) => {
+              const cwd = path.resolve(session.cwd);
+              return cwd === worktreePath || inside(worktreePath, cwd);
+            })
           )
-        )
-          return;
+            return false;
+          const finalStatus = yield* git.statusDetailsLocal(worktreePath);
+          if (
+            !finalStatus.isRepo ||
+            finalStatus.branch !== thread.branch ||
+            finalStatus.hasWorkingTreeChanges
+          )
+            return false;
+          if (
+            (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+            head.commitSha
+          )
+            return false;
+          const finalIgnored = yield* git.execute({
+            operation: "StorageCleanup.ignoredFiles",
+            cwd: worktreePath,
+            args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+            maxOutputBytes: 64 * 1024,
+          });
+          if (
+            finalIgnored.stdoutTruncated ||
+            finalIgnored.stdout
+              .split("\0")
+              .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
+          )
+            return false;
+          const current = resolveWorktreeCleanup(
+            yield* settingsService.getSettings,
+            thread.projectId,
+          );
+          if (
+            Object.keys(settings).some(
+              (key) =>
+                current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
+            )
+          )
+            return false;
+          return true;
+        });
+        if (!(yield* stillRemovable)) return;
+        yield* projectScripts.runBeforeWorktreeRemove({
+          projectId: thread.projectId,
+          projectCwd: project.workspaceRoot,
+          worktreePath,
+        });
+        // The action can run for minutes, and a turn start does not wait on the
+        // lease, so a thread resumed meanwhile keeps its worktree.
+        if (!(yield* stillRemovable)) {
+          return yield* Effect.logInfo("storage cleanup kept worktree after its remove action", {
+            threadId: thread.id,
+          });
+        }
         yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout

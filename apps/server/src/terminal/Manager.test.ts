@@ -42,6 +42,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -433,6 +434,20 @@ it.layer(
       assert.equal(first.terminalId, DEFAULT_TERMINAL_ID);
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("opens in a checkout whose workspace lease the caller holds", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const path = yield* Path.Path;
+      // Worktree removal holds the lease while its remove script opens a shell there.
+      const snapshot = yield* withWorkspaceLease(
+        path.resolve(process.cwd()),
+        manager.open(openInput()),
+      );
+      assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );

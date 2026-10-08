@@ -49,6 +49,12 @@ export const T3ProjectFileScript = Schema.Struct({
         "When true, the script runs in the thread's worktree each time the thread settles, for example to delete build output. Threads without their own worktree skip it.",
     }),
   ),
+  runOnWorktreeRemove: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, the script runs in a thread's worktree just before T3 Code removes that worktree, for example to stop containers the setup script started. The worktree is removed even if the script fails.",
+    }),
+  ),
   async: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:

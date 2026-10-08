@@ -149,6 +149,7 @@ export default function ProjectScriptsControl({
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
+      runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false,
       ...(readEnvironmentScope(environmentId, AuthSettingsWriteScope) ? { keybinding: null } : {}),
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -370,7 +371,7 @@ export default function ProjectScriptsControl({
           </Menu>
         </ActionGroup>
       ) : scripts.length > 0 || importableScripts.length > 0 ? (
-        // No one-click action (only a settle action, or only t3.json imports),
+        // No one-click action (only cleanup actions, or only t3.json imports),
         // so the saved actions stay reachable through this menu.
         isPanel ? (
           <div

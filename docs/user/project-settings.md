@@ -154,6 +154,13 @@ thread is deleted, including archived threads and worktrees left by earlier dele
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
 
+To tear down what a worktree's setup started, such as containers or a database, turn on **Run in
+a worktree before it is removed** for one of the project's actions, or set
+`"runOnWorktreeRemove": true` on a `t3.json` script. It runs in the worktree whenever T3 Code
+removes one, by automatic cleanup or when you delete a thread together with its worktree. The
+worktree is removed even if the script fails or runs longer than five minutes; failures are
+written to the server log.
+
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 

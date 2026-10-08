@@ -1,13 +1,16 @@
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -22,6 +25,9 @@ function layer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({})),
+    Layer.provide(FileSystem.layerNoop({})),
+    Layer.provide(Path.layer),
   );
 }
 
@@ -131,6 +137,9 @@ describe("GitWorkflowService", () => {
           status,
         }),
       ),
+      Layer.provide(Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({})),
+      Layer.provide(FileSystem.layerNoop({})),
+      Layer.provide(Path.layer),
     );
 
     return Effect.gen(function* () {
@@ -219,5 +228,61 @@ describe("GitWorkflowService", () => {
         }),
       ),
     );
+  });
+
+  it.effect("runs the remove action only in a worktree linked to the checkout", () => {
+    const calls: Array<string> = [];
+    const workflowLayer = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          resolve: () =>
+            Effect.succeed({ kind: "git" } as unknown as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          listWorktreePaths: () => Effect.succeed(["/repo", "/private/worktrees/a"]),
+          removeWorktree: (input) =>
+            Effect.sync(() => {
+              calls.push(`remove ${input.path}`);
+            }),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+      Layer.provide(
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runBeforeWorktreeRemove: (input) =>
+            Effect.sync(() => {
+              calls.push(`action ${input.worktreePath}`);
+            }),
+        }),
+      ),
+      Layer.provide(
+        FileSystem.layerNoop({
+          // `/worktrees` is a symlink to `/private/worktrees`, as `/tmp` is on macOS.
+          realPath: (path) => Effect.succeed(path.replace(/^\/worktrees\//, "/private/worktrees/")),
+        }),
+      ),
+      Layer.provide(Path.layer),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      yield* workflow.removeWorktreeWithAction({ cwd: "/repo", path: "/worktrees/a" });
+      // Git resolves a relative path against `cwd`, so the check does too.
+      yield* workflow.removeWorktreeWithAction({ cwd: "/repo", path: "../worktrees/a" });
+      yield* workflow.removeWorktreeWithAction({ cwd: "/repo", path: "/repo" });
+      yield* workflow.removeWorktreeWithAction({ cwd: "/repo", path: "/elsewhere" });
+
+      assert.deepStrictEqual(calls, [
+        "action /worktrees/a",
+        "remove /worktrees/a",
+        "action /worktrees/a",
+        "remove ../worktrees/a",
+        // The main checkout and unrelated directories never run the action.
+        "remove /repo",
+        "remove /elsewhere",
+      ]);
+    }).pipe(Effect.provide(workflowLayer));
   });
 });
