@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
+  type UsageSource,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -31,6 +32,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CursorUsageReader from "./cursorUsageReader.ts";
+import type { UsageRecord } from "./usageTranscripts.ts";
 import * as UsageService from "./UsageService.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -90,6 +93,7 @@ const layerService = (input: {
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CursorUsageReader.layer),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
@@ -157,6 +161,71 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
+/** Inside `WINDOW`: the time Cursor tests run at. */
+const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
+const HOUR_MS = 60 * 60 * 1000;
+/** The service's cache retention, which the Cursor account cache always covers. */
+const CURSOR_RETENTION_MS = 92 * 24 * HOUR_MS;
+
+/**
+ * Stands in for Cursor's dashboard API. Each read returns the account's events
+ * in its range, keyed like the real reader: occurrences count within one read.
+ * While `gate` is set, reads wait for it.
+ */
+function makeFakeCursor() {
+  const state = {
+    accountKey: "account-a",
+    events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
+    error: null as string | null,
+    gate: undefined as Deferred.Deferred<void> | undefined,
+    calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
+  };
+  const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
+    Effect.gen(function* () {
+      state.calls.push({ sinceMs, untilMs });
+      if (state.gate !== undefined) yield* Deferred.await(state.gate);
+      const { accountKey, error } = state;
+      if (error !== null) return { accountKey, records: [], missing: false, error };
+      const occurrences = new Map<string, number>();
+      const records = state.events
+        .filter(({ timestampMs }) => timestampMs >= sinceMs && timestampMs <= untilMs)
+        .map(({ timestampMs, outputTokens }): UsageRecord => {
+          const key = `${timestampMs}:${outputTokens}`;
+          const occurrence = occurrences.get(key) ?? 0;
+          occurrences.set(key, occurrence + 1);
+          return {
+            provider: "cursor",
+            timestampMs,
+            model: "claude-fable-5",
+            sessionId: "conversation-1",
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens,
+              reasoningTokens: 0,
+            },
+            reportedCostUsd: null,
+            speed: "standard",
+            dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
+          };
+        });
+      return { accountKey, records, missing: false, error: null };
+    });
+  return { state, read };
+}
+
+const writeCursorLogin = (home: string) =>
+  Effect.promise(async () => {
+    const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+    await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
+    await NodeFSP.writeFile(authPath, "{}");
+  });
+
+function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
+  return summary.sources.find((source) => source.fingerprint.provider === "cursor");
+}
+
 describe("UsageService", () => {
   it.live.each([
     { explicitDefault: true, label: "explicit" },
@@ -196,6 +265,9 @@ describe("UsageService", () => {
           const service = yield* UsageService.make;
           return yield* service.readSummary(WINDOW);
         }).pipe(
+          // Scoped inside the state directory, so pending cache writes land
+          // before it is removed.
+          Effect.scoped,
           Effect.provide(
             layerService({
               prefix: "usage-managed-accounts",
@@ -282,10 +354,199 @@ describe("UsageService", () => {
           layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
         ),
       );
-      const summary = yield* service.readSummary(WINDOW);
+      const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
       assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
     }).pipe(Effect.scoped),
+  );
+
+  it.live("answers Cursor from its cache while one shared refresh runs", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 }];
+      const gate = yield* Deferred.make<void>();
+      cursor.state.gate = gate;
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: cursor.read }),
+        );
+        // Cold: nothing cached yet, so Cursor answers empty while it refreshes.
+        const cold = yield* service.readSummary(WINDOW);
+        assert.strictEqual(cursorSource(cold)?.refreshing, true);
+        assert.strictEqual(cursorSource(cold)?.status, "ok");
+        assert.strictEqual(totalOutputTokens(cold), 0);
+        // A second reader joins the refresh in flight.
+        const joined = yield* service.readSummary(WINDOW);
+        assert.strictEqual(cursorSource(joined)?.refreshing, true);
+
+        const waited = yield* service
+          .readSummary({ ...WINDOW, awaitRefresh: true })
+          .pipe(Effect.forkChild);
+        yield* Deferred.succeed(gate, undefined);
+        const refreshed = yield* Fiber.join(waited);
+        assert.isFalse(refreshed.sources.some((source) => source.refreshing));
+        assert.strictEqual(cursorSource(refreshed)?.status, "ok");
+        assert.strictEqual(totalOutputTokens(refreshed), 5);
+        assert.strictEqual(cursor.state.calls.length, 1);
+
+        // Inside the TTL a plain read answers from the cache without refreshing.
+        yield* TestClock.adjust(Duration.seconds(30));
+        const cached = yield* service.readSummary(WINDOW);
+        assert.isUndefined(cursorSource(cached)?.refreshing);
+        assert.strictEqual(totalOutputTokens(cached), 5);
+        assert.strictEqual(cursor.state.calls.length, 1);
+
+        // Past it, a plain read answers from the stale cache and refreshes.
+        yield* TestClock.adjust(Duration.seconds(31));
+        cursor.state.events.push({ timestampMs: CURSOR_NOW, outputTokens: 7 });
+        const stale = yield* service.readSummary(WINDOW);
+        assert.strictEqual(cursorSource(stale)?.refreshing, true);
+        assert.strictEqual(totalOutputTokens(stale), 5);
+        const fresh = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isUndefined(cursorSource(fresh)?.refreshing);
+        assert.strictEqual(totalOutputTokens(fresh), 12);
+        assert.strictEqual(cursor.state.calls.length, 2);
+      }).pipe(Effect.provide(layerService({ prefix: "usage-service-cursor-swr", home, settings })));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("caches Cursor's whole retention and then refetches only the newest edge", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      // Two identical billed rows inside the refetched hour must both survive it, once each.
+      cursor.state.events = [
+        { timestampMs: Date.parse("2026-07-10T10:00:00Z"), outputTokens: 17 },
+        { timestampMs: CURSOR_NOW - 24 * HOUR_MS, outputTokens: 5 },
+        { timestampMs: CURSOR_NOW - HOUR_MS / 2, outputTokens: 7 },
+        { timestampMs: CURSOR_NOW - HOUR_MS / 2, outputTokens: 7 },
+      ];
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: cursor.read }),
+        );
+        const read = (input: UsageSummaryInput) =>
+          service.readSummary({ ...input, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(yield* read(WINDOW)), 19);
+        assert.deepStrictEqual(cursor.state.calls, [
+          { sinceMs: CURSOR_NOW - CURSOR_RETENTION_MS, untilMs: CURSOR_NOW },
+        ]);
+
+        // A wider window is answered from the same cache.
+        const wide = { ...WINDOW, sinceDay: UsageDay.make("2026-07-01") };
+        assert.strictEqual(totalOutputTokens(yield* read(wide)), 36);
+        assert.strictEqual(cursor.state.calls.length, 1);
+
+        // An event finalized late, inside the overlap, and a new one.
+        cursor.state.events.push(
+          { timestampMs: CURSOR_NOW - HOUR_MS / 6, outputTokens: 11 },
+          { timestampMs: CURSOR_NOW + HOUR_MS, outputTokens: 13 },
+        );
+        yield* TestClock.adjust(Duration.hours(2));
+        assert.strictEqual(totalOutputTokens(yield* read(WINDOW)), 43);
+        assert.deepStrictEqual(cursor.state.calls[1], {
+          sinceMs: CURSOR_NOW - HOUR_MS,
+          untilMs: CURSOR_NOW + 2 * HOUR_MS,
+        });
+
+        // Another login replaces the cached account's history instead of adding to it.
+        cursor.state.accountKey = "account-b";
+        yield* TestClock.adjust(Duration.minutes(2));
+        assert.strictEqual(totalOutputTokens(yield* read(wide)), 60);
+        assert.strictEqual(cursor.state.calls.length, 4);
+        assert.strictEqual(cursorSource(yield* read(wide))?.fingerprint.volumeId, "account-b");
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-cursor-incremental", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("reports a failed Cursor refresh from its cache without refreshing", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - HOUR_MS * 3, outputTokens: 5 }];
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: cursor.read }),
+        );
+        yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+
+        yield* TestClock.adjust(Duration.minutes(2));
+        cursor.state.error = "Sign in to Cursor again to read account usage.";
+        const failed = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursorSource(failed)?.status, "partial");
+        assert.strictEqual(cursorSource(failed)?.message, cursor.state.error);
+        assert.isUndefined(cursorSource(failed)?.refreshing);
+        assert.strictEqual(totalOutputTokens(failed), 5);
+
+        // The failure stands for the TTL; a plain read does not retry it.
+        const again = yield* service.readSummary(WINDOW);
+        assert.strictEqual(cursorSource(again)?.status, "partial");
+        assert.isUndefined(cursorSource(again)?.refreshing);
+        assert.strictEqual(cursor.state.calls.length, 2);
+
+        // A failing read of another login drops the previous account's history.
+        yield* TestClock.adjust(Duration.minutes(2));
+        cursor.state.accountKey = "account-b";
+        const switched = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursorSource(switched)?.status, "missing");
+        assert.strictEqual(cursorSource(switched)?.message, cursor.state.error);
+        assert.strictEqual(totalOutputTokens(switched), 0);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-cursor-failure", home, settings })),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("restores the Cursor account cache after a restart", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const before = makeFakeCursor();
+      before.state.events = [
+        { timestampMs: CURSOR_NOW - 30 * HOUR_MS, outputTokens: 5 },
+        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 },
+      ];
+      yield* Effect.gen(function* () {
+        const first = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: before.read }),
+        );
+        const original = yield* first.readSummary({ ...WINDOW, awaitRefresh: true });
+        yield* first.awaitPersisted;
+
+        const after = makeFakeCursor();
+        after.state.events = before.state.events;
+        const restarted = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: after.read }),
+        );
+        const restored = yield* restarted.readSummary(WINDOW);
+        assert.isUndefined(cursorSource(restored)?.refreshing);
+        assert.deepStrictEqual(restored.buckets, original.buckets);
+        assert.deepStrictEqual(cursorSource(restored), cursorSource(original));
+        assert.strictEqual(after.state.calls.length, 0);
+
+        // Once stale, the restored cache refreshes only its newest edge.
+        yield* TestClock.adjust(Duration.minutes(2));
+        const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(refreshed.buckets, original.buckets);
+        assert.deepStrictEqual(after.state.calls, [
+          { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
+        ]);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-cursor-restart", home, settings })),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
@@ -642,6 +903,7 @@ describe("UsageService", () => {
             environmentProjects,
           );
         }).pipe(
+          Effect.scoped,
           Effect.provide(
             layerService({
               prefix: "usage-service-home-refresh-test",
@@ -747,6 +1009,7 @@ describe("UsageService", () => {
         const restored = yield* service.readSummary(WINDOW);
         assert.deepStrictEqual(restored.buckets, original.buckets);
       }).pipe(
+        Effect.scoped,
         Effect.provide(
           layerService({ prefix: "usage-service-price-overrides-test", home, settings }),
         ),
@@ -801,9 +1064,11 @@ describe("UsageService", () => {
             appended.buckets.reduce((sum, bucket) => sum + bucket.totals.uncachedInputTokens, 0),
             20,
           );
+          yield* service.awaitPersisted;
           const restarted = yield* UsageService.make;
           const restored = yield* restarted.readSummary(WINDOW);
           assert.deepStrictEqual(restored.buckets, appended.buckets);
+          yield* restarted.awaitPersisted;
           yield* Effect.promise(() => NodeFSP.rm(transcript));
           const afterCleanup = yield* UsageService.make;
           assert.deepStrictEqual(
@@ -811,6 +1076,7 @@ describe("UsageService", () => {
             appended.buckets,
           );
         }).pipe(
+          Effect.scoped,
           Effect.provide(
             layerService({
               prefix: "usage-service-large-record-test",
@@ -865,7 +1131,9 @@ describe("UsageService", () => {
           const { stateDir } = yield* ServerConfig.ServerConfig;
           const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
-          yield* (yield* UsageService.make).readSummary(WINDOW);
+          const first = yield* UsageService.make;
+          yield* first.readSummary(WINDOW);
+          yield* first.awaitPersisted;
 
           // Rewrite the cache as a v4 server left it: every Codex record at
           // speed 0 (standard), and no tier in the reducer state.
@@ -937,6 +1205,7 @@ describe("UsageService", () => {
         assert.deepStrictEqual(deleted.buckets, first.buckets);
         assert.deepStrictEqual(deleted.sources, first.sources);
 
+        yield* service.awaitPersisted;
         const restarted = yield* UsageService.make;
         const restored = yield* restarted.readSummary(WINDOW);
         assert.deepStrictEqual(restored.buckets, first.buckets);
@@ -947,6 +1216,7 @@ describe("UsageService", () => {
         const moved = yield* restarted.readSummary(WINDOW);
         assert.deepStrictEqual(moved.buckets, first.buckets);
         assert.strictEqual(moved.sources[0]?.distinctSessions, 1);
+        yield* restarted.awaitPersisted;
 
         const replacementProjects = NodePath.join(home, "replacement-projects");
         yield* Effect.promise(() => NodeFSP.mkdir(replacementProjects));
@@ -994,6 +1264,9 @@ describe("UsageService", () => {
         assert.deepStrictEqual(outsideWindow.buckets, []);
         assert.strictEqual(outsideWindow.sources[0]?.distinctSessions, 0);
       }).pipe(
+        // Scoped inside the state directory, so pending cache writes land
+        // before it is removed.
+        Effect.scoped,
         Effect.provide(
           layerService({
             prefix: "usage-service-cleanup-test",
@@ -1039,6 +1312,7 @@ describe("UsageService", () => {
         const saved = yield* service.readSummary(WINDOW);
         assert.deepStrictEqual(saved.buckets, live.buckets);
         assert.deepStrictEqual(saved.sources, live.sources);
+        yield* service.awaitPersisted;
         const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
         assert.deepStrictEqual(restored.buckets, live.buckets);
       }).pipe(
