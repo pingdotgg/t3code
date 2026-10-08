@@ -54,6 +54,7 @@ const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 type CodexRateLimitsProbe =
   | {
       readonly snapshot: CodexRateLimitSnapshot;
+      readonly accountId?: string | null | undefined;
       readonly rateLimitsByLimitId?:
         | Readonly<Record<string, CodexRateLimitSnapshot>>
         | null
@@ -451,6 +452,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         : client.request("account/rateLimits/read", null).pipe(
             Effect.map((response): CodexRateLimitsProbe => ({
               snapshot: response.rateLimits,
+              accountId: response.accountId,
               rateLimitsByLimitId: response.rateLimitsByLimitId,
               resetCredits: response.rateLimitResetCredits,
             })),
@@ -678,6 +680,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           })
         : codexRateLimitsToLimits({
             snapshot: snapshot.rateLimits.snapshot,
+            accountId: snapshot.rateLimits.accountId,
             rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
             resetCredits: snapshot.rateLimits.resetCredits,
             checkedAt,

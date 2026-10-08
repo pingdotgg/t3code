@@ -403,6 +403,11 @@ it.layer(
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
           Effect.succeed(
             makeCodexProbeSnapshot({
+              rateLimits: {
+                snapshot: { primary: { usedPercent: 9 } },
+                accountId: "business-account",
+                resetCredits: undefined,
+              },
               skills: [
                 {
                   name: "github:gh-fix-ci",
@@ -422,6 +427,7 @@ it.layer(
         assert.strictEqual(status.auth.type, "chatgpt");
         assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
         assert.strictEqual(status.auth.email, "test@example.com");
+        assert.strictEqual(status.usageLimits?.accountId, "business-account");
         assert.deepStrictEqual(status.models, [
           {
             slug: "gpt-live-codex",

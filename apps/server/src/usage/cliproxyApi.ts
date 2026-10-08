@@ -268,6 +268,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
+            accountId: account.id_token?.chatgpt_account_id,
             snapshot: {
               planType: usage.plan_type ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),

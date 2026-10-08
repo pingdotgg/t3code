@@ -121,6 +121,38 @@ function AccountName({
   );
 }
 
+/** A visible label key; initials chips can collide even when the emails differ. */
+function accountNameKey(account: LimitAccount): string {
+  return (
+    account.displayName ??
+    (account.email
+      ? accountInitials(account.email)
+      : (getDriverOption(account.driver)?.label ?? String(account.driver)))
+  );
+}
+
+/** Preserve distinct labels and allocate collision-free suffixes in stable key order. */
+function disambiguateAccountNames(accounts: readonly LimitAccount[]): readonly LimitAccount[] {
+  const names = accounts.map(accountNameKey);
+  const used = new Set(names);
+  const labels = new Map<string, string>();
+  accounts
+    .toSorted((left, right) => left.key.localeCompare(right.key))
+    .forEach((account, index) => {
+      const name = accountNameKey(account);
+      if (names.indexOf(name) === names.lastIndexOf(name)) return;
+      let suffix = index + 1;
+      let label = `${account.displayName ?? "Account"} ${suffix}`;
+      while (used.has(label)) label = `${account.displayName ?? "Account"} ${++suffix}`;
+      used.add(label);
+      labels.set(account.key, label);
+    });
+  return accounts.map((account) => {
+    const displayName = labels.get(account.key);
+    return displayName ? { ...account, displayName } : account;
+  });
+}
+
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
@@ -194,7 +226,9 @@ function SegmentPopover({
           </Row>
         ) : null}
         {reset && reset.restoresPercent > 0 ? (
-          <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
+          <Row label="Restores">
+            +{reset.restoresPercent}% {account.driver === "codex" ? "of quota" : "of pool"}
+          </Row>
         ) : null}
       </div>
       {credits && redeem ? (
@@ -274,12 +308,14 @@ function PoolSegment({
             }}
           />
         ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
+        {account.driver !== "codex" ? (
+          <span
+            aria-hidden
+            className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          >
+            {index}
+          </span>
+        ) : null}
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
           {showAccountName ? (
             <AccountName
@@ -360,15 +396,17 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
-        />
-        <span className="sr-only">Segment </span>
-        <span className="relative">{index}</span>
-      </span>
+      {account.driver !== "codex" ? (
+        <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
+          <span
+            aria-hidden
+            className="absolute inset-0 rounded-sm opacity-35"
+            style={{ backgroundColor: color }}
+          />
+          <span className="sr-only">Segment </span>
+          <span className="relative">{index}</span>
+        </span>
+      ) : null}
       <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
@@ -499,7 +537,7 @@ function PoolWindowCard({
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
-  readonly label?: string | undefined;
+  readonly label?: ReactNode;
   readonly description?: string | undefined;
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
@@ -507,7 +545,9 @@ function PoolWindowCard({
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+          {label ?? pool.label}
+        </span>
         <span className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
@@ -532,7 +572,13 @@ function PoolWindowCard({
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
-  const windows = displayLimitWindows(pool);
+  // Codex workspaces can share an email but have independent subscription quotas.
+  const separateAccounts = pool.driver === "codex" && pool.accounts.length > 1;
+  const windows = separateAccounts
+    ? disambiguateAccountNames(pool.accounts).flatMap((account) =>
+        displayLimitWindows(collectLimitPools([account], now)[0]!),
+      )
+    : displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -547,13 +593,23 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
       </h2>
       {windows.map((window) => {
         const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+        const account = separateAccounts ? window.members[0]!.account : undefined;
         return (
           <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
+            key={`${account?.key ?? ""}:${window.kind}:${window.id}`}
             pool={window}
             color={color}
             now={now}
-            label={details?.label}
+            label={
+              account ? (
+                <>
+                  <AccountName account={account} className="min-w-0 truncate" />
+                  <span className="shrink-0 text-muted-foreground">· {window.label}</span>
+                </>
+              ) : (
+                details?.label
+              )
+            }
             description={details?.description}
           />
         );

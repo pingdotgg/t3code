@@ -115,6 +115,7 @@ export function codexResetCreditsToContract(
 
 export function codexRateLimitsToLimits(input: {
   readonly snapshot: CodexRateLimitSnapshot;
+  readonly accountId?: string | null | undefined;
   readonly rateLimitsByLimitId?:
     | Readonly<Record<string, CodexRateLimitSnapshot>>
     | null
@@ -123,6 +124,7 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
+  const accountId = input.accountId?.trim();
   // Select the main bucket explicitly; the legacy snapshot can name another limit.
   const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
   return {
@@ -130,6 +132,7 @@ export function codexRateLimitsToLimits(input: {
       checkedAt: input.checkedAt,
       windows,
     }),
+    ...(accountId ? { accountId } : {}),
     ...(resetCredits ? { resetCredits } : {}),
   };
 }

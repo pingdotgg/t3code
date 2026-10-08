@@ -50,6 +50,8 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  /** Provider account or workspace ID; Codex quotas also depend on the signed-in user. */
+  accountId: Schema.optional(TrimmedNonEmptyString),
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),

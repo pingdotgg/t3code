@@ -180,6 +180,119 @@ it.each([0, 1])(
   },
 );
 
+it.each([
+  ["codex", "named"],
+  ["codex", "unnamed"],
+  ["codex", "duplicate"],
+  ["claudeAgent", "named"],
+  ["cursor", "named"],
+])("shows account quotas for %s with %s labels", async (driver, labels) => {
+  const [id, presentation] = [...state.presentations][0]!;
+  const provider = presentation.serverConfig.providers[0];
+  state.presentations = new Map([
+    [
+      id,
+      {
+        ...presentation,
+        serverConfig: {
+          ...presentation.serverConfig,
+          providers: [
+            { accountId: "personal", displayName: "Personal", usedPercent: 33 },
+            { accountId: "business", displayName: "Corebio", usedPercent: 9 },
+          ].map(({ accountId, displayName, usedPercent }) => ({
+            ...provider,
+            driver,
+            instanceId: ProviderInstanceId.make(accountId),
+            displayName:
+              labels === "unnamed" ? undefined : labels === "duplicate" ? "Codex" : displayName,
+            auth: { status: "authenticated", email: "same@example.com" },
+            usageLimits: {
+              ...provider.usageLimits,
+              accountId,
+              windows: [{ ...provider.usageLimits.windows[0], usedPercent }],
+            },
+          })),
+        },
+      },
+    ],
+  ]);
+  await act(() => {
+    renderer = create(<UsagePage />);
+  });
+  const text = renderer.root
+    .findAll(
+      (node) =>
+        typeof node.type === "string" && node.children.every((child) => typeof child === "string"),
+    )
+    .map((node) => node.children.join(""))
+    .join("\n");
+  if (labels === "named") {
+    expect(text).toContain("Personal");
+    expect(text).toContain("Corebio");
+  } else {
+    const name = labels === "duplicate" ? "Codex" : "Account";
+    expect(text).toContain(`${name} 1`);
+    expect(text).toContain(`${name} 2`);
+  }
+  expect(text).toContain("67%");
+  expect(text).toContain("91%");
+  if (driver === "codex") expect(text).not.toContain("79%");
+  else expect(text).toContain("79%");
+});
+
+it.each([
+  {
+    names: [undefined, undefined, undefined, undefined],
+    expected: ["Account 1", "Account 2", "Account 3", "Account 4"],
+  },
+  { names: ["Codex", "Codex", "Codex 1"], expected: ["Codex 2", "Codex 3", "Codex 1"] },
+  { names: [undefined, "Codex"], expected: ["Account 1", "Codex 2"], noEmail: true },
+])("keeps generated quota labels unique across the pool: $names", async (scenario) => {
+  const { names, expected } = scenario;
+  const [id, presentation] = [...state.presentations][0]!;
+  const provider = presentation.serverConfig.providers[0];
+  const providers = names.map((displayName, index) => ({
+    ...provider,
+    instanceId: ProviderInstanceId.make(`account-${index}`),
+    displayName,
+    auth: {
+      status: "authenticated",
+      email: "noEmail" in scenario ? undefined : `${index < 2 ? "a" : "b"}@example.com`,
+    },
+    usageLimits: {
+      ...provider.usageLimits,
+      accountId: `workspace-${index}`,
+      windows: [{ ...provider.usageLimits.windows[0], usedPercent: (index + 1) * 10 }],
+    },
+  }));
+  for (const [position, ordered] of [providers, providers.toReversed()].entries()) {
+    state.presentations = new Map([
+      [
+        id,
+        {
+          ...presentation,
+          serverConfig: { ...presentation.serverConfig, providers: ordered },
+        },
+      ],
+    ]);
+    await act(() => {
+      if (position === 0) renderer = create(<UsagePage />);
+      else renderer.update(<UsagePage />);
+    });
+    const text = renderer.root
+      .findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          node.children.every((child) => typeof child === "string"),
+      )
+      .map((node) => node.children.join(""))
+      .join("\n");
+    expected.forEach((label, index) => {
+      expect(text).toContain(`${label}\n· Session\n${100 - (index + 1) * 10}%`);
+    });
+  }
+});
+
 it("uses the current time when returning to limits from tokens", async () => {
   await act(() => {
     renderer = create(<UsagePage />);

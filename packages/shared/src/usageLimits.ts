@@ -112,8 +112,7 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
   return [...links.values()];
 }
 
-/** Prefer the reported email; use an identical credential when no email is available. */
-function accountKey(
+function fallbackAccountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
   limits?: ServerProviderUsageLimits,
@@ -125,11 +124,50 @@ function accountKey(
     : null;
 }
 
+/** Resolve legacy reports only when their fallback identifies one explicit account. */
+function accountKeyResolver(
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+) {
+  const reports = [
+    ...providersWithLimits(providers).map((provider) => ({
+      driver: provider.driver,
+      email: provider.auth.email,
+      limits: provider.usageLimits,
+    })),
+    ...sources.flatMap((source) =>
+      source.accounts.map((account) => ({
+        driver: account.driver,
+        email: account.email,
+        limits: account.usageLimits,
+      })),
+    ),
+  ];
+  const aliases = new Map<string, string | null>();
+  for (const { driver, email, limits } of reports) {
+    if (!limits?.accountId || limitsNotice(limits) !== null) continue;
+    const fallback = fallbackAccountKey(driver, email, limits);
+    if (!fallback) continue;
+    const key = `${fallback}:account:${limits.accountId}`;
+    aliases.set(fallback, aliases.has(fallback) && aliases.get(fallback) !== key ? null : key);
+  }
+  return (
+    driver: ServerProvider["driver"],
+    email: string | undefined,
+    limits?: ServerProviderUsageLimits,
+  ) => {
+    const fallback = fallbackAccountKey(driver, email, limits);
+    // Codex account IDs identify workspaces; different users have separate quotas.
+    if (limits?.accountId) return fallback ? `${fallback}:account:${limits.accountId}` : null;
+    return fallback ? (aliases.get(fallback) ?? fallback) : null;
+  };
+}
+
 /**
  * One subscription account as the pooled views see it, whichever way it was
- * reported. Matching emails or credentials across environments name
- * one account. Its quota is one bucket, so counting it twice would misstate
- * what is left.
+ * reported. An account id plus its signed-in email or credential names one
+ * quota; legacy reports use the email or credential alone. Counting the same
+ * quota twice would misstate what is left.
  */
 export interface LimitAccount {
   readonly key: string;
@@ -160,6 +198,14 @@ export interface LimitAccount {
  * native instances supply names and environment labels.
  */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+  const accountKey = accountKeyResolver(
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.providers ?? [],
+    ),
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
+  );
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -187,7 +233,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
     const previous = accounts.get(key);
     if (!previous) {
-      accounts.set(key, next);
+      accounts.set(key, { ...next, key: next.limits.accountId ? key : next.key });
       return;
     }
     const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
@@ -205,6 +251,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
+      key: next.limits.accountId ? key : previous.key,
       displayName: previous.displayName ?? next.displayName,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
@@ -255,11 +302,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
+        const reportKey = `${source.id}:${account.id}`;
         merge(
           accountKey(account.driver, account.email, account.usageLimits) ??
-            `${source.id}:${account.id}`,
+            (account.usageLimits.accountId ? `${environmentId}:${reportKey}` : reportKey),
           {
-            key: `${source.id}:${account.id}`,
+            key: reportKey,
             driver: account.driver,
             displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
             email: account.email,
@@ -633,6 +681,7 @@ export function collectProviderUsageLimits(
   const native = providersWithLimits(providers).filter(
     (provider) => provider.driver === selected.driver,
   );
+  const accountKey = accountKeyResolver(native, sources);
   const nativeAccounts = new Set(
     native.flatMap((provider) => {
       const key = accountKey(provider.driver, provider.auth.email, provider.usageLimits);

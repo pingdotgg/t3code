@@ -13,6 +13,16 @@ import {
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("carries the quota account identity into the client snapshot", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        accountId: "business-account",
+        snapshot: { primary: { usedPercent: 9 } },
+      }),
+    ).toMatchObject({ accountId: "business-account" });
+  });
+
   it("maps primary and secondary onto the session and weekly windows", () => {
     expect(
       codexRateLimitsToLimits({

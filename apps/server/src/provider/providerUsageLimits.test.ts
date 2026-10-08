@@ -21,6 +21,16 @@ const weekly = {
 const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
+  it("retains account identity when a streamed update changes the quota", () => {
+    expect(
+      applyUsageLimitsUpdate({
+        previous: { ...published, accountId: "business-account" },
+        checkedAt,
+        update: { windows: [{ ...session, usedPercent: 55 }] },
+      }),
+    ).toMatchObject({ accountId: "business-account" });
+  });
+
   it("returns the published object itself when no window moved", () => {
     // Codex repeats the same numbers beside every token-usage tick; the
     // ingestion path relies on identity to skip the publish.
