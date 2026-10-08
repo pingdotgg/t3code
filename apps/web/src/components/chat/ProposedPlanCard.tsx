@@ -16,7 +16,7 @@ import {
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { CHAT_TEXT_SIZE_CLASS_NAME } from "../ChatMarkdown";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -189,6 +189,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               environmentId={environmentId}
               threadRef={threadRef}
+              className={CHAT_TEXT_SIZE_CLASS_NAME}
               isStreaming={false}
               headingLevelOffset={3}
             />
@@ -198,6 +199,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               environmentId={environmentId}
               threadRef={threadRef}
+              className={CHAT_TEXT_SIZE_CLASS_NAME}
               isStreaming={false}
               headingLevelOffset={3}
             />

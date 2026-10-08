@@ -1,5 +1,6 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ChatMarkdown, { CHAT_TEXT_SIZE_CLASS_NAME } from "../ChatMarkdown";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -26,6 +27,23 @@ const PROMPT_PREVIEW_TEXT =
   "[SettingsPanels.tsx](apps/web/src/components/settings/SettingsPanels.tsx) before shipping.";
 
 function noop() {}
+
+const CHAT_TEXT_PREVIEW_MARKDOWN =
+  "The flaky test waited on a fixed timeout. It now awaits the persisted event, " +
+  "so `surface.test.ts` passes without sleeping.";
+
+/** A reply rendered by the conversation's own markdown renderer. */
+export function ChatTextPreview() {
+  return (
+    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
+      <ChatMarkdown
+        text={CHAT_TEXT_PREVIEW_MARKDOWN}
+        cwd={undefined}
+        className={CHAT_TEXT_SIZE_CLASS_NAME}
+      />
+    </div>
+  );
+}
 
 /** A live composer editor: type in it to feel the family and size. */
 export function PromptFontPreview() {

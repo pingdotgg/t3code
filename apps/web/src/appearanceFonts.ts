@@ -9,9 +9,11 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_PROMPT_FONT_SIZE,
+  MAX_CHAT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
+  MIN_CHAT_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
@@ -50,6 +52,20 @@ export function resolveTerminalFontSizePreference(input: {
   return input.code;
 }
 
+/**
+ * Simple typography sizes the composer like the conversation it writes into
+ * once a chat size is chosen. While the chat size is unset (Auto), the prompt
+ * keeps its own size, so existing settings render unchanged.
+ */
+export function resolvePromptFontSizePreference(input: {
+  readonly advanced: boolean;
+  readonly chat: number | null;
+  readonly prompt: number;
+}): number {
+  if (input.advanced || input.chat === null) return input.prompt;
+  return input.chat;
+}
+
 function quoteFontFamilyName(name: string): string {
   const bare = name.trim();
   if (bare.length === 0) return "";
@@ -82,6 +98,8 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  /** Null follows the interface size. */
+  readonly sizeChat: number | null;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   /** Grayscale `antialiased` rendering; false keeps the heavier platform default. */
@@ -92,9 +110,10 @@ export interface AppearanceFontPreferences {
  * Apply the preferences to the root element. Unset families remove the
  * override so the stylesheet defaults (and theme changes) stay in charge.
  *
- * Sizes are always written: the interface size drives the root font size (and
- * with it every rem-based dimension), while the prompt and code sizes stay in
- * absolute pixels so they do not scale twice.
+ * The interface size drives the root font size (and with it every rem-based
+ * dimension), while the chat, prompt and code sizes stay in absolute pixels so
+ * they do not scale twice. An unset chat size removes its override, so the
+ * conversation falls back to its rem-based size and follows the interface.
  */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
@@ -116,6 +135,11 @@ export function applyAppearanceFontVariables(
   }
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  if (preferences.sizeChat === null) {
+    root.style.removeProperty("--font-size-chat");
+  } else {
+    root.style.setProperty("--font-size-chat", `${clampChatFontSize(preferences.sizeChat)}px`);
+  }
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
@@ -149,6 +173,18 @@ export function clampInterfaceFontSize(value: number): number {
 
 export function clampPromptFontSize(value: number): number {
   return clampFontSize(value, MIN_PROMPT_FONT_SIZE, MAX_PROMPT_FONT_SIZE, DEFAULT_PROMPT_FONT_SIZE);
+}
+
+// What an unset (Auto) chat size renders at under the default interface size.
+const AUTO_CHAT_FONT_SIZE_AT_DEFAULT_INTERFACE = 14;
+
+export function clampChatFontSize(value: number): number {
+  return clampFontSize(
+    value,
+    MIN_CHAT_FONT_SIZE,
+    MAX_CHAT_FONT_SIZE,
+    AUTO_CHAT_FONT_SIZE_AT_DEFAULT_INTERFACE,
+  );
 }
 
 export function clampCodeFontSize(value: number): number {

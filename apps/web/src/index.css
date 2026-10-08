@@ -1761,6 +1761,10 @@ code {
   margin: 0.65rem 0;
 }
 
+/* Secondary text sizes are written as their rem size at the default 0.875rem
+   body. The conversation sets --chat-text-size (CHAT_TEXT_SIZE_CLASS_NAME), so
+   headings, inline code, tables and footnotes keep their proportion to a Chat
+   text size; elsewhere the fallback yields the original rem sizes. */
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -1774,21 +1778,21 @@ code {
 }
 
 :is(.chat-markdown, .composer-tiptap) h1 {
-  font-size: 1.25rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 1.25 / 0.875);
 }
 
 :is(.chat-markdown, .composer-tiptap) h2 {
-  font-size: 1.125rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 1.125 / 0.875);
 }
 
 :is(.chat-markdown, .composer-tiptap) h3 {
-  font-size: 1rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 1 / 0.875);
 }
 
 :is(.chat-markdown, .composer-tiptap) h4,
 :is(.chat-markdown, .composer-tiptap) h5,
 :is(.chat-markdown, .composer-tiptap) h6 {
-  font-size: 0.875rem;
+  font-size: var(--chat-text-size, 0.875rem);
 }
 
 :is(.chat-markdown, .composer-tiptap) h6 {
@@ -1907,7 +1911,7 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 0.75 / 0.875);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1926,7 +1930,7 @@ code {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 0.6875 / 0.875);
   font-weight: 600;
 }
 
@@ -1936,7 +1940,7 @@ code {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 0.75 / 0.875);
 }
 
 .chat-markdown pre {
@@ -2012,7 +2016,7 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: calc(var(--chat-text-size, 0.875rem) * 0.75 / 0.875);
 }
 
 .chat-markdown th,

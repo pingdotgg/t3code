@@ -111,7 +111,7 @@ import {
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
-import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import ChatMarkdown, { CHAT_TEXT_SIZE_CLASS_NAME, ChatMarkdownAssetImage } from "../ChatMarkdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
@@ -2579,6 +2579,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             text={messageText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            className={CHAT_TEXT_SIZE_CLASS_NAME}
             isStreaming={Boolean(row.message.streaming)}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
@@ -4610,7 +4611,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className={cn("text-foreground", CHAT_TEXT_SIZE_CLASS_NAME)}
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}

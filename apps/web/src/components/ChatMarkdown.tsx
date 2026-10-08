@@ -551,6 +551,17 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
+/**
+ * Conversation text size for replies and sent messages: the Chat text
+ * preference when set, otherwise the rem-based default that follows the
+ * interface size. `--chat-text-size` scales the markdown's secondary sizes
+ * (headings, inline code, tables) with it; see index.css. The leading is
+ * restated because tailwind-merge drops an earlier `leading-*` when a later
+ * class sets the font size.
+ */
+export const CHAT_TEXT_SIZE_CLASS_NAME =
+  "[--chat-text-size:var(--font-size-chat,var(--text-sm))] text-(length:--chat-text-size) leading-relaxed";
+
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkKeepWindowsPathDestinations,

@@ -31,6 +31,12 @@ describe("typography settings restore", () => {
       }),
     ).toEqual(["Interface font", "Code font"]);
   });
+
+  it("reports a chat text size apart from the interface font", () => {
+    expect(
+      getChangedTypographySettingLabels({ ...DEFAULT_UNIFIED_SETTINGS, fontSizeChat: 16 }),
+    ).toEqual(["Chat text"]);
+  });
 });
 
 describe("background activity settings restore", () => {

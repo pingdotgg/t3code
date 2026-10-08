@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyAppearanceFontVariables,
   areFontAdvancesMonospace,
+  clampChatFontSize,
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
@@ -10,6 +12,7 @@ import {
   appearanceFontStack,
   cssFontFamilies,
   resolveDefaultFamilyLabel,
+  resolvePromptFontSizePreference,
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
 } from "./appearanceFonts";
@@ -108,12 +111,67 @@ describe("resolveTerminalFontSizePreference", () => {
   });
 });
 
+describe("resolvePromptFontSizePreference", () => {
+  it("sizes the prompt like a chosen chat text size in simple mode", () => {
+    expect(resolvePromptFontSizePreference({ advanced: false, chat: 17, prompt: 14 })).toBe(17);
+  });
+
+  it("keeps the prompt's own size while the chat size is Auto", () => {
+    expect(resolvePromptFontSizePreference({ advanced: false, chat: null, prompt: 16 })).toBe(16);
+  });
+
+  it("keeps the prompt size independent in advanced mode", () => {
+    expect(resolvePromptFontSizePreference({ advanced: true, chat: 17, prompt: 14 })).toBe(14);
+    expect(resolvePromptFontSizePreference({ advanced: true, chat: null, prompt: 14 })).toBe(14);
+  });
+});
+
+describe("applyAppearanceFontVariables", () => {
+  function fakeRoot() {
+    const properties = new Map<string, string>();
+    const style = {
+      fontSize: "",
+      setProperty: (name: string, value: string) => properties.set(name, value),
+      removeProperty: (name: string) => properties.delete(name),
+    };
+    return { root: { style } as unknown as HTMLElement, style, properties };
+  }
+  const preferences = {
+    sans: "",
+    code: "",
+    composer: "",
+    sizeInterface: 16,
+    sizeChat: null,
+    sizePrompt: 14,
+    sizeCode: 13,
+    smoothing: false,
+  };
+
+  it("leaves chat text on the interface scale when unset", () => {
+    const { root, style, properties } = fakeRoot();
+    properties.set("--font-size-chat", "18px");
+    applyAppearanceFontVariables(root, { ...preferences, sizeInterface: 18 });
+    expect(style.fontSize).toBe("18px");
+    expect(properties.has("--font-size-chat")).toBe(false);
+    expect(properties.get("--font-size-prompt")).toBe("14px");
+  });
+
+  it("sizes chat text independently of the interface", () => {
+    const { root, style, properties } = fakeRoot();
+    applyAppearanceFontVariables(root, { ...preferences, sizeChat: 17, sizePrompt: 17 });
+    expect(style.fontSize).toBe("16px");
+    expect(properties.get("--font-size-chat")).toBe("17px");
+    expect(properties.get("--font-size-prompt")).toBe("17px");
+  });
+});
+
 describe("font size clamping", () => {
   it("keeps sizes inside the ranges the UI can absorb", () => {
     expect(clampInterfaceFontSize(16)).toBe(16);
     expect(clampInterfaceFontSize(2)).toBe(12);
     expect(clampInterfaceFontSize(96)).toBe(20);
     expect(clampPromptFontSize(40)).toBe(20);
+    expect(clampChatFontSize(8)).toBe(12);
     expect(clampCodeFontSize(1)).toBe(10);
   });
 

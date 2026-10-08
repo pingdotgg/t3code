@@ -33,6 +33,7 @@ import {
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PANEL_ANIMATION_DURATION_MS,
+  MAX_CHAT_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
@@ -41,6 +42,7 @@ import {
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PANEL_ANIMATION_DURATION_MS,
+  MIN_CHAT_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
@@ -127,7 +129,12 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import {
+  ChatTextPreview,
+  CodeFontPreview,
+  PromptFontPreview,
+  TerminalFontPreview,
+} from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
   NumberField,
@@ -696,6 +703,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontFamilyComposer,
       settings.fontFamilySans,
       settings.fontFamilyTerminal,
+      settings.fontSizeChat,
       settings.fontSizeCode,
       settings.fontSizeInterface,
       settings.fontSizePrompt,
@@ -837,6 +845,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+      fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat,
       fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
@@ -1568,6 +1577,41 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   );
 }
 
+/**
+ * Reading size for the conversation, separate from the interface scale. Auto
+ * keeps today's behavior: the text follows the interface size.
+ */
+function ChatTextRow({ description, preview }: { description: string; preview: ReactNode }) {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("chat-text")}
+      description={description}
+      resetAction={
+        settings.fontSizeChat !== DEFAULT_UNIFIED_SETTINGS.fontSizeChat ? (
+          <SettingResetButton
+            label="chat text"
+            onClick={() => updateSettings({ fontSizeChat: DEFAULT_UNIFIED_SETTINGS.fontSizeChat })}
+          />
+        ) : null
+      }
+      control={
+        <FontSizeSelect
+          label="Chat text size"
+          min={MIN_CHAT_FONT_SIZE}
+          max={MAX_CHAT_FONT_SIZE}
+          value={settings.fontSizeChat}
+          auto={{ label: "Auto", onSelect: () => updateSettings({ fontSizeChat: null }) }}
+          onChange={(fontSizeChat) => updateSettings({ fontSizeChat })}
+        />
+      }
+    >
+      {preview}
+    </SettingsRow>
+  );
+}
+
 function PromptFontRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1740,6 +1784,10 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ChatTextRow
+        description="Replies and your messages in the conversation."
+        preview={<ChatTextPreview />}
+      />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -1749,15 +1797,25 @@ function FontSettingsGroup() {
 }
 
 /**
- * The two-font view: one sans, one monospace. The prompt follows the
- * interface font and the terminal follows the monospace font, so the demos
- * under each row show every surface the choice reaches.
+ * The two-font view: one sans, one monospace, plus the reading size. The
+ * prompt takes the interface font (and a chosen chat text size) and the
+ * terminal follows the monospace font, so the demos under each row show every
+ * surface the choice reaches.
  */
 function SimpleFontRows() {
   const settings = useScopedSettings();
   return (
     <>
-      <InterfaceFontRow preview={<PromptFontPreview />} />
+      <InterfaceFontRow />
+      <ChatTextRow
+        description="Replies, your messages, and the prompt box once you pick a size."
+        preview={
+          <>
+            <ChatTextPreview />
+            <PromptFontPreview />
+          </>
+        }
+      />
       <CodeFontRow
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."
@@ -1998,29 +2056,13 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
-      <Select
-        value={String(size.value)}
-        onValueChange={(next) => {
-          if (typeof next !== "string") return;
-          const parsed = Number(next);
-          if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
-            size.onChange(parsed);
-          }
-        }}
-      >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
-          <SelectValue>{size.value} px</SelectValue>
-        </SelectTrigger>
-        <SelectPopup align="end" alignItemWithTrigger={false}>
-          {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
-            (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
-                {px} px
-              </SelectItem>
-            ),
-          )}
-        </SelectPopup>
-      </Select>
+      <FontSizeSelect
+        label={size.label}
+        min={size.min}
+        max={size.max}
+        value={size.value}
+        onChange={size.onChange}
+      />
     </div>
   );
   return (
@@ -2033,6 +2075,58 @@ function FontFamilySettingsRow({
     >
       {preview}
     </SettingsRow>
+  );
+}
+
+const AUTO_FONT_SIZE_VALUE = "auto";
+
+/** Pixel size picker. `auto` adds a first option for an unset (null) size. */
+function FontSizeSelect({
+  label,
+  min,
+  max,
+  value,
+  auto,
+  onChange,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  value: number | null;
+  auto?: { label: string; onSelect: () => void };
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Select
+      value={value === null ? AUTO_FONT_SIZE_VALUE : String(value)}
+      onValueChange={(next) => {
+        if (typeof next !== "string") return;
+        if (next === AUTO_FONT_SIZE_VALUE) {
+          auto?.onSelect();
+          return;
+        }
+        const parsed = Number(next);
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
+          onChange(parsed);
+        }
+      }}
+    >
+      <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={label}>
+        <SelectValue>{value === null ? auto?.label : `${value} px`}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {auto !== undefined ? (
+          <SelectItem hideIndicator value={AUTO_FONT_SIZE_VALUE}>
+            {auto.label}
+          </SelectItem>
+        ) : null}
+        {Array.from({ length: max - min + 1 }, (_, index) => min + index).map((px) => (
+          <SelectItem hideIndicator key={px} value={String(px)}>
+            {px} px
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
   );
 }
 

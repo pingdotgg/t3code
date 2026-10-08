@@ -11,6 +11,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 import { Check, Copy } from "lucide";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
@@ -52,7 +53,12 @@ import {
 } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
-import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import {
+  applyAppearanceFontVariables,
+  resolvePromptFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "~/appearanceFonts";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -308,7 +314,19 @@ function FontAppearanceSync() {
   const fontFamilyCode = useClientSettings((settings) => settings.fontFamilyCode);
   const fontFamilyComposer = useClientSettings((settings) => settings.fontFamilyComposer);
   const fontSizeInterface = useClientSettings((settings) => settings.fontSizeInterface);
-  const fontSizePrompt = useClientSettings((settings) => settings.fontSizePrompt);
+  const fontSizeChat = useClientSettings((settings) => settings.fontSizeChat);
+  const [advancedTypography] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const fontSizePrompt = useClientSettings((settings) =>
+    resolvePromptFontSizePreference({
+      advanced: advancedTypography,
+      chat: settings.fontSizeChat,
+      prompt: settings.fontSizePrompt,
+    }),
+  );
   const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
   const fontSmoothing = useClientSettings((settings) => settings.fontSmoothing);
 
@@ -318,6 +336,7 @@ function FontAppearanceSync() {
       code: fontFamilyCode,
       composer: fontFamilyComposer,
       sizeInterface: fontSizeInterface,
+      sizeChat: fontSizeChat,
       sizePrompt: fontSizePrompt,
       sizeCode: fontSizeCode,
       smoothing: fontSmoothing,
@@ -326,6 +345,7 @@ function FontAppearanceSync() {
     fontFamilyCode,
     fontFamilyComposer,
     fontFamilySans,
+    fontSizeChat,
     fontSizeCode,
     fontSizeInterface,
     fontSizePrompt,
