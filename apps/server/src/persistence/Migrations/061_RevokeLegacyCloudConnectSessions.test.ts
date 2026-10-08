@@ -7,8 +7,29 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../Migrations.ts";
 
 const now = "2026-10-08T20:00:00.000Z";
-const preSplit = ["orchestration:read", "orchestration:operate", "terminal:operate", "relay:read"];
-const standard = [...preSplit, "filesystem:read", "filesystem:write", "settings:write"];
+// Minted for a current client by a server from before the split.
+const preSplit = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "review:write",
+  "relay:read",
+];
+// An older client narrows its request to the scopes it knows.
+const narrowedPreSplit = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "relay:read",
+];
+const standard = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "filesystem:read",
+  "filesystem:write",
+  "relay:read",
+];
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
   "061_RevokeLegacyCloudConnectSessions",
@@ -29,6 +50,12 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
               '2026-10-08T19:39:38.320Z', ${expiresAt})
           `;
         yield* insert("legacy-connect", "cloud-connect", preSplit, "2026-10-08T20:39:38.320Z");
+        yield* insert(
+          "narrowed-connect",
+          "cloud-connect",
+          narrowedPreSplit,
+          "2026-10-08T20:39:38.320Z",
+        );
         yield* insert("current-connect", "cloud-connect", standard, "2026-10-08T20:39:38.320Z");
         yield* insert("expired-connect", "cloud-connect", preSplit, "2026-10-08T19:00:00.000Z");
         // A paired client keeps the grant the user chose, even a pre-split one.
@@ -45,6 +72,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { sessionId: "current-connect", revokedAt: null },
           { sessionId: "expired-connect", revokedAt: null },
           { sessionId: "legacy-connect", revokedAt: now },
+          { sessionId: "narrowed-connect", revokedAt: now },
           { sessionId: "paired", revokedAt: null },
         ]);
       }),
