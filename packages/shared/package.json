@@ -359,6 +359,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./orchestrationV2BoundedSnapshot": {
+      "types": "./src/orchestrationV2BoundedSnapshot.ts",
+      "import": "./src/orchestrationV2BoundedSnapshot.ts"
+    },
     "./orchestrationV2Timeline": {
       "types": "./src/orchestrationV2Timeline.ts",
       "import": "./src/orchestrationV2Timeline.ts"

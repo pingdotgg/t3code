@@ -3,7 +3,12 @@ import type {
   OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 
-import { buildBoundedThreadProjection } from "./threadHistoryPaging.ts";
+import { omitLocalVisibleTurnItems } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
+
+import {
+  buildBoundedThreadProjection,
+  type BoundedProjectionResult,
+} from "./threadHistoryPaging.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 /** Maximum number of reducer applications allowed during a thread resume. */
@@ -39,10 +44,34 @@ type ThreadSnapshotStreamItem = Extract<
   { readonly kind: "snapshot" }
 >;
 
+/**
+ * Bounded snapshot fields shared by the HTTP route and socket fallbacks. Only
+ * clients that opted in get compact `turnItems` and the marker; everyone else
+ * gets the unchanged representation.
+ */
+export function boundedSnapshotResponseFields(input: {
+  readonly bounded: BoundedProjectionResult;
+  readonly compactTurnItems: boolean;
+}) {
+  const { bounded } = input;
+  const compactProjection = input.compactTurnItems
+    ? omitLocalVisibleTurnItems(bounded.projection)
+    : null;
+  return {
+    projection: compactProjection ?? bounded.projection,
+    historyCursor: bounded.historyCursor,
+    hasMoreHistory: bounded.hasMoreHistory,
+    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+    ...(compactProjection === null ? {} : { turnItemsOmitLocalVisible: true as const }),
+  };
+}
+
 /** Build the same bounded, wire-projected snapshot for every socket fallback path. */
 export function buildBoundedThreadStreamSnapshot(input: {
   readonly snapshotSequence: number;
   readonly projection: OrchestrationV2ThreadProjection;
+  readonly compactTurnItems?: boolean;
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
@@ -51,11 +80,10 @@ export function buildBoundedThreadStreamSnapshot(input: {
   return {
     kind: "snapshot",
     snapshotSequence: input.snapshotSequence,
-    projection: bounded.projection,
-    historyCursor: bounded.historyCursor,
-    hasMoreHistory: bounded.hasMoreHistory,
-    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+    ...boundedSnapshotResponseFields({
+      bounded,
+      compactTurnItems: input.compactTurnItems === true,
+    }),
   };
 }
 
