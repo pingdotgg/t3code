@@ -12,7 +12,7 @@ import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { AllowGitHubReserve } from "../sourceControl/GitHubRepositoryApi.ts";
+import { AllowGitHubReserve } from "../sourceControl/GitHubApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";

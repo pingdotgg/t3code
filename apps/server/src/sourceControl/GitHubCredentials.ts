@@ -81,10 +81,6 @@ export type GitHubCredentialUnavailableError =
   | GitHubHostDisabledError
   | GitHubCliFailedError;
 
-export const isGitHubCredentialUnavailableError = Schema.is(
-  Schema.Union([GitHubCliMissingError, GitHubNotSignedInError, GitHubHostDisabledError]),
-);
-
 /**
  * Where GitHub tokens come from. Callers ask per host and never see how the token was found,
  * so another source (an in-app OAuth login) slots in here without touching any of them.

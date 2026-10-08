@@ -598,3 +598,13 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(GitHubApi, make);
+
+/**
+ * The transport with the credential, GraphQL budget and rate-limit pause it reads through. An
+ * application builds this once so every GitHub reader shares one budget and one pause per host.
+ */
+export const layerWithDependencies = layer.pipe(
+  Layer.provideMerge(GitHubCredentials.layer),
+  Layer.provideMerge(GitHubGraphQlBudget.layer),
+  Layer.provideMerge(SourceControlRateLimit.layer),
+);

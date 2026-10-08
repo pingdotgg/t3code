@@ -7,7 +7,7 @@ import type {
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
-import * as GitHubRepositoryApi from "../sourceControl/GitHubRepositoryApi.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import {
   PullRequestProviderError,
@@ -526,7 +526,7 @@ export const make = Effect.gen(function* () {
       // comparison, so one read usually answers what used to take three. When that heavier read
       // fails, the light access read still answers, withholding only update-branch.
       return cli.getPullRequestDetail(input).pipe(
-        Effect.provideService(GitHubRepositoryApi.AllowGitHubReserve, true),
+        Effect.provideService(GitHubApi.AllowGitHubReserve, true),
         Effect.map((pullRequest) =>
           gitHubViewerPermissions({
             ...pullRequest.viewerAccess,

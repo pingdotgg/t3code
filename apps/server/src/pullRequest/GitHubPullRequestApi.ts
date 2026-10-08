@@ -42,7 +42,6 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
-import { AllowGitHubReserve } from "../sourceControl/GitHubRepositoryApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import { readGraphQlPages } from "../sourceControl/githubGraphQl.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -1524,7 +1523,7 @@ export const make = Effect.gen(function* () {
 
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
-    return AllowGitHubReserve.pipe(
+    return GitHubApi.AllowGitHubReserve.pipe(
       Effect.flatMap((allowReserve) =>
         graphqlRead({
           allowReserve,

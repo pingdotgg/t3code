@@ -6,9 +6,6 @@ import type { SourceControlProviderKind } from "@t3tools/contracts";
 import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
-import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
@@ -63,12 +60,8 @@ export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
   Layer.provide(
     GitHubPullRequestApi.layer.pipe(
       Layer.provide(
-        GitHubApi.layer.pipe(
-          Layer.provide(GitHubCredentials.layer),
-          // The same layers GitHubRepositoryApi merges, so both share one budget and one pause per host.
-          Layer.provide(GitHubGraphQlBudget.layer),
-          Layer.provide(SourceControlRateLimit.layer),
-        ),
+        // Built here too, so a registry built alone still has one budget and pause per host.
+        GitHubApi.layerWithDependencies,
       ),
     ),
   ),
