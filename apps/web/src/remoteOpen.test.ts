@@ -160,8 +160,25 @@ describe("buildRemoteOpenUrl", () => {
     );
   });
 
+  it("builds a Toolbox ssh deep link for JetBrains IDEs", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "pycharm",
+        host: "sol.tail1234.ts.net",
+        absolutePath: "/home/theo/code/my repo",
+      }),
+    ).toBe(
+      "jetbrains://gateway/ssh/environment?h=sol.tail1234.ts.net&launchIde=true&ideHint=PY&projectHint=%2Fhome%2Ftheo%2Fcode%2Fmy+repo",
+    );
+    expect(
+      buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "C:\\Users\\theo" }),
+    ).toBe(
+      "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=IU&projectHint=C%3A%2FUsers%2Ftheo",
+    );
+  });
+
   it("returns undefined for editors without remote support", () => {
-    expect(buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "/tmp/x" })).toBe(
+    expect(buildRemoteOpenUrl({ editor: "kiro", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
     );
   });
