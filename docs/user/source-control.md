@@ -158,6 +158,10 @@ Tick a file off in the **Code** tab once you have read it and it collapses; the 
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
 
+Turn on **Hide viewed files** (the crossed-out eye in the toolbar) to list only the files you still
+have to read, in the diff and in the file tree. Ticking a file then takes it out of the list, and a
+file that changes after you viewed it comes back on its own. The setting is remembered.
+
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
 in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
 server you are connected to keeps them instead: they follow you across the apps connected to that

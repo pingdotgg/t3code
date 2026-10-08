@@ -14,6 +14,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
+  EyeOffIcon,
   FolderTreeIcon,
   InfoIcon,
   MessageSquareOffIcon,
@@ -107,6 +108,7 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+const PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestHideViewedFiles";
 
 /** One answer from the host: a whole number of files, and where the next one carries on. */
 interface DiffSlice {
@@ -236,6 +238,11 @@ function PullRequestCodeTab({
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const [hideViewedFiles, setHideViewedFiles] = useLocalStorage(
+    PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY,
     false,
     Schema.Boolean,
   );
@@ -428,6 +435,24 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  // Only where the host keeps viewed marks; anywhere else every file stays listed. A file pushed
+  // to since it was ticked no longer reads as viewed, so it comes back on its own. The file holding
+  // a comment being written stays until it is posted or dropped: hiding it would unmount the box
+  // and lose the text.
+  const hidingViewedFiles = hideViewedFiles && filesViewedEnabled;
+  const draftPath = draft?.path ?? null;
+  const isHiddenAsViewed = useCallback(
+    (path: string) => hidingViewedFiles && path !== draftPath && isFileViewed(path),
+    [draftPath, hidingViewedFiles, isFileViewed],
+  );
+  const visibleFiles = useMemo(
+    () =>
+      hidingViewedFiles
+        ? files.filter((file) => !isHiddenAsViewed(resolveFileDiffPath(file)))
+        : files,
+    [files, hidingViewedFiles, isHiddenAsViewed],
+  );
+  const hiddenViewedFileCount = files.length - visibleFiles.length;
   // The button goes around the host's cache, so everything the tab reads from it starts over:
   // the diff from its first page, and with it the ticks, which a push since the last read can
   // have marked as standing against an older version of the file.
@@ -560,9 +585,18 @@ function PullRequestCodeTab({
     [commit, detail.reviewThreads, draft, files, pendingComments, placedThreadIds],
   );
 
+  // Filtered after the annotations rather than before, so a tick never recomputes them.
+  const shownAnnotatedFiles = useMemo(
+    () =>
+      hidingViewedFiles
+        ? annotatedFiles.filter(({ path }) => !isHiddenAsViewed(path))
+        : annotatedFiles,
+    [annotatedFiles, hidingViewedFiles, isHiddenAsViewed],
+  );
+
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
     () =>
-      annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+      shownAnnotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
         const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
         // Ticking a file that is already folded changes no fold, so without this the box on
         // screen would keep saying the opposite of what the count says.
@@ -579,7 +613,7 @@ function PullRequestCodeTab({
         };
       }),
     [
-      annotatedFiles,
+      shownAnnotatedFiles,
       filesViewedEnabled,
       effectiveFoldOverride,
       isFileViewed,
@@ -602,7 +636,7 @@ function PullRequestCodeTab({
     [items],
   );
   const allFilesCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys);
-  const fileTreeEntries = useMemo(() => diffFileTreeEntries(files), [files]);
+  const fileTreeEntries = useMemo(() => diffFileTreeEntries(visibleFiles), [visibleFiles]);
 
   // A failed slice must not be asked for again on its own. The files already loaded keep the
   // sentinel on screen, so re-arming it after a failure would request the same slice forever.
@@ -1121,7 +1155,8 @@ function PullRequestCodeTab({
             competed for a strip this narrow and every one of them truncated to nothing. */}
         <PullRequestMetaLine className="shrink-0">
           <span className="shrink-0 tabular-nums">
-            {files.length} {files.length === 1 ? "file" : "files"}
+            {hiddenViewedFileCount > 0 ? `${visibleFiles.length} of ${files.length}` : files.length}{" "}
+            {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
           {filesViewed.enabled && files.length > 0 ? (
@@ -1234,6 +1269,28 @@ function PullRequestCodeTab({
             {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
           </TooltipPopup>
         </Tooltip>
+        {/* Keyed on every file rather than the ones on screen, so the way back stays put once the
+            last unread file has been ticked and the list is empty. */}
+        {filesViewedEnabled && files.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={hideViewedFiles ? "Show viewed files" : "Hide viewed files"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideViewedFiles}
+                  onPressedChange={(pressed) => setHideViewedFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <EyeOffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideViewedFiles ? "Show viewed files" : "Hide viewed files"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1359,6 +1416,28 @@ function PullRequestCodeTab({
             <pre className="whitespace-pre-wrap break-words font-mono text-xs">{slice.text}</pre>
           </div>
         ))}
+      </div>,
+    );
+  }
+
+  // Nothing on screen because everything is read, which is not the same as nothing changed. A raw
+  // slice the viewer could not structure carries no tick, so it still needs the full layout below.
+  if (
+    items.length === 0 &&
+    nextCursor === null &&
+    hiddenViewedFileCount > 0 &&
+    rawSlices.length === 0
+  ) {
+    return withToolbar(
+      <div className="flex flex-col items-start gap-3 px-4 py-5">
+        <p className="text-sm text-muted-foreground">
+          {hiddenViewedFileCount === 1
+            ? "The only file is viewed."
+            : `All ${hiddenViewedFileCount} files are viewed.`}
+        </p>
+        <Button type="button" size="sm" variant="outline" onClick={() => setHideViewedFiles(false)}>
+          Show viewed files
+        </Button>
       </div>,
     );
   }
