@@ -9,6 +9,7 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
 export type ModelOption = {
   readonly key: string;
@@ -24,12 +25,15 @@ export type ModelOption = {
   readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
+  readonly providerUpdateRequiredNotice?: string;
 };
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
+  /** Announced models the installed CLI is too old to run. */
+  readonly updateRequiredNotice?: string;
 };
 
 function providerDisplayLabel(provider: {
@@ -174,6 +178,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const updateRequiredNotice = formatProviderUpdateRequiredNotice(provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -189,6 +194,7 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        ...(updateRequiredNotice ? { providerUpdateRequiredNotice: updateRequiredNotice } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -252,15 +258,20 @@ export function buildModelOptions(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<
+    string,
+    { providerLabel: string; models: ModelOption[]; updateRequiredNotice: string | undefined }
+  >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);
+      existing.updateRequiredNotice ??= option.providerUpdateRequiredNotice;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
+        updateRequiredNotice: option.providerUpdateRequiredNotice,
       });
     }
   }
@@ -269,6 +280,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerKey,
     providerLabel: group.providerLabel,
     models: group.models,
+    ...(group.updateRequiredNotice ? { updateRequiredNotice: group.updateRequiredNotice } : {}),
   }));
 }
 
