@@ -340,17 +340,47 @@ export function ResetCredits({
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
+  hiddenProviders,
   now,
   cursorPrompt,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selected =
-    selectedEnvironmentIds === null
-      ? presentations
-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const hiddenDrivers = new Set<ServerProvider["driver"]>(
+    [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
+  );
+  const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
+  // Hidden drivers leave both native accounts and hub accounts, so their
+  // bars, notices, and external links all drop out together.
+  const selected = new Map(
+    [...presentations].flatMap(([id, presentation]) => {
+      if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
+      const config = presentation.serverConfig;
+      if (hiddenDrivers.size === 0 || config === null) return [[id, presentation] as const];
+      return [
+        [
+          id,
+          {
+            ...presentation,
+            serverConfig: {
+              ...config,
+              providers: config.providers.filter((provider) => isVisible(provider.driver)),
+              // A hub left with no visible accounts is dropped, not reported as empty.
+              usageLimitSources: config.usageLimitSources?.flatMap((source) => {
+                const accounts = source.accounts.filter((account) => isVisible(account.driver));
+                return accounts.length === 0 && source.accounts.length > 0
+                  ? []
+                  : [{ ...source, accounts }];
+              }),
+            },
+          },
+        ] as const,
+      ];
+    }),
+  );
   return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
 }
