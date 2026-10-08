@@ -207,6 +207,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
+  applyImageContextAction: (action) =>
+    ipcRenderer.invoke(IpcChannels.IMG_CONTEXT_ACTION_CHANNEL, action),
+  onImageContextMenu: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (typeof payload !== "object" || payload === null) return;
+      const { x, y, linkURL } = payload as { x?: unknown; y?: unknown; linkURL?: unknown };
+      if (typeof x !== "number" || typeof y !== "number") return;
+      if (linkURL !== undefined && typeof linkURL !== "string") return;
+      listener({ x, y, ...(typeof linkURL === "string" ? { linkURL } : {}) });
+    };
+
+    ipcRenderer.on(IpcChannels.IMG_CONTEXT_MENU_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.IMG_CONTEXT_MENU_CHANNEL, wrappedListener);
+    };
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

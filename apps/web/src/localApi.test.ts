@@ -150,6 +150,60 @@ describe("LocalApi", () => {
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);
   });
 
+  it("routes context menus to the styled fallback when nativeContextMenus is off", async () => {
+    const showContextMenu = vi.fn();
+    const getClientSettings = vi
+      .fn()
+      .mockResolvedValue({ ...DEFAULT_CLIENT_SETTINGS, nativeContextMenus: false });
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    testWindow().desktopBridge = {
+      showContextMenu,
+      getClientSettings,
+      setClientSettings,
+    } as unknown as DesktopBridge;
+    showContextMenuFallbackMock.mockResolvedValue("rename");
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+    await api.persistence.getClientSettings();
+
+    const items = [{ id: "rename", label: "Rename" }] as const;
+    await expect(api.contextMenu.show(items, { x: 3, y: 4 })).resolves.toBe("rename");
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 3, y: 4 });
+    expect(showContextMenu).not.toHaveBeenCalled();
+
+    await api.contextMenu.close();
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the native bridge for context menus when nativeContextMenus is on", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("rename");
+    const getClientSettings = vi
+      .fn()
+      .mockResolvedValue({ ...DEFAULT_CLIENT_SETTINGS, nativeContextMenus: true });
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    testWindow().desktopBridge = {
+      showContextMenu,
+      getClientSettings,
+      setClientSettings,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+    await api.persistence.setClientSettings({
+      ...DEFAULT_CLIENT_SETTINGS,
+      nativeContextMenus: true,
+    });
+
+    const items = [{ id: "rename", label: "Rename" }] as const;
+    await expect(api.contextMenu.show(items, { x: 1, y: 2 })).resolves.toBe("rename");
+    expect(showContextMenu).toHaveBeenCalledWith(items, { x: 1, y: 2 });
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+
+    await api.contextMenu.close();
+    expect(dismissContextMenuMock).not.toHaveBeenCalled();
+  });
+
   it("persists client settings in browser storage", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();

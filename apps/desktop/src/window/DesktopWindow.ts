@@ -8,7 +8,11 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+  type ImageContextMenuRequest,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -19,6 +23,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  IMG_CONTEXT_MENU_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
@@ -71,6 +76,13 @@ const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
   -106, // ERR_INTERNET_DISCONNECTED
   -118, // ERR_CONNECTION_TIMED_OUT
 ]);
+
+/**
+ * Coordinates of the last right-click on an image in the main renderer,
+ * keyed by webContents id. Written when `nativeContextMenus` is off (the
+ * renderer draws its own menu); consumed by the image-context IPC handler.
+ */
+export const imageContextMenuRequests = new Map<number, ImageContextMenuRequest>();
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -562,59 +574,91 @@ export const make = Effect.gen(function* () {
         // the host renderer when the user right-clicks inside a browser guest.
         contents.focus();
 
-        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+        void runPromise(
+          Effect.map(
+            clientSettings.get,
+            Option.match({
+              onNone: () => DEFAULT_CLIENT_SETTINGS.nativeContextMenus,
+              onSome: (settings) => settings.nativeContextMenus,
+            }),
+          ),
+        ).then((nativeContextMenus) => {
+          if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
 
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+          // Main-window renders with native menus off get the styled DOM menu
+          // instead of the ad-hoc native one. Guests and popups keep native.
+          if (
+            !nativeContextMenus &&
+            params.mediaType === "image" &&
+            contents === window.webContents
+          ) {
+            const linkURL = Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))
+              ? params.linkURL
+              : undefined;
+            const request: ImageContextMenuRequest = {
+              x: params.x,
+              y: params.y,
+              ...(linkURL === undefined ? {} : { linkURL }),
+            };
+            imageContextMenuRequests.set(contents.id, request);
+            void runPromise(dispatchRendererEvent(IMG_CONTEXT_MENU_CHANNEL, request));
+            return;
+          }
+
+          const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+
+          if (params.misspelledWord) {
+            for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+              menuTemplate.push({
+                label: suggestion,
+                click: () => {
+                  if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+                },
+              });
+            }
+            if (params.dictionarySuggestions.length === 0) {
+              menuTemplate.push({ label: "No suggestions", enabled: false });
+            }
+            menuTemplate.push({ type: "separator" });
+          }
+
+          if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
+            menuTemplate.push(
+              {
+                label: "Copy Link",
+                click: () => {
+                  void runPromise(electronShell.copyText(params.linkURL));
+                },
+              },
+              { type: "separator" },
+            );
+          }
+
+          if (params.mediaType === "image") {
             menuTemplate.push({
-              label: suggestion,
+              label: "Copy Image",
               click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+                if (!contents.isDestroyed()) contents.copyImageAt(params.x, params.y);
               },
             });
+            menuTemplate.push({ type: "separator" });
           }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
 
-        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(
-            {
-              label: "Copy Link",
-              click: () => {
-                void runPromise(electronShell.copyText(params.linkURL));
-              },
-            },
-            { type: "separator" },
+            { role: "cut", enabled: params.editFlags.canCut },
+            { role: "copy", enabled: params.editFlags.canCopy },
+            { role: "paste", enabled: params.editFlags.canPaste },
+            { role: "selectAll", enabled: params.editFlags.canSelectAll },
           );
-        }
 
-        if (params.mediaType === "image") {
-          menuTemplate.push({
-            label: "Copy Image",
-            click: () => {
-              if (!contents.isDestroyed()) contents.copyImageAt(params.x, params.y);
-            },
-          });
-          menuTemplate.push({ type: "separator" });
-        }
-
-        menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
-        );
-
-        void runPromise(
-          electronMenu.popupTemplate({
-            window: ownerWindow,
-            template: menuTemplate,
-            ...(params.frame ? { frame: params.frame } : {}),
-          }),
-        );
+          void runPromise(
+            electronMenu.popupTemplate({
+              window: ownerWindow,
+              template: menuTemplate,
+              ...(params.frame ? { frame: params.frame } : {}),
+            }),
+          );
+        });
       });
       contents.on("did-create-window", (popup) => {
         installContextMenu(popup, popup.webContents);

@@ -1,10 +1,17 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ClientSettings,
+  ConfirmDialogOptions,
+  ContextMenuItem,
+  LocalApi,
+} from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
+let cachedClientSettings: ClientSettings = DEFAULT_CLIENT_SETTINGS;
 
 function createBrowserLocalApi(): LocalApi {
   return {
@@ -47,6 +54,9 @@ function createBrowserLocalApi(): LocalApi {
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
+          if (!cachedClientSettings.nativeContextMenus) {
+            return showContextMenuFallback(items, position);
+          }
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
@@ -57,21 +67,32 @@ function createBrowserLocalApi(): LocalApi {
       close: async () => {
         if (!window.desktopBridge) {
           dismissContextMenu();
+          return;
+        }
+        if (!cachedClientSettings.nativeContextMenus) {
+          dismissContextMenu();
         }
       },
     },
     persistence: {
       getClientSettings: async () => {
         if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
+          const settings = await window.desktopBridge.getClientSettings();
+          cachedClientSettings = settings ?? DEFAULT_CLIENT_SETTINGS;
+          return settings;
         }
-        return readBrowserClientSettings();
+        const settings = readBrowserClientSettings();
+        cachedClientSettings = settings ?? DEFAULT_CLIENT_SETTINGS;
+        return settings;
       },
       setClientSettings: async (settings) => {
         if (window.desktopBridge) {
-          return window.desktopBridge.setClientSettings(settings);
+          await window.desktopBridge.setClientSettings(settings);
+          cachedClientSettings = settings;
+          return;
         }
         writeBrowserClientSettings(settings);
+        cachedClientSettings = settings;
       },
     },
   };

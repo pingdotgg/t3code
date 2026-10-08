@@ -36,6 +36,16 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
+## Right click menus
+
+In the desktop app, find **Right click menus** under **Settings → Appearance → Interface**. It
+controls the style of right-click menus:
+
+- **Off** (default): menus use the operating system's native style.
+- **On**: menus use T3 Code styling.
+
+The setting only applies to the desktop app; web and mobile always use T3 Code styling.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

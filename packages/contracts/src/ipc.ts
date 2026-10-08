@@ -36,6 +36,15 @@ export interface ContextMenuItem<T extends string = string> {
   children?: readonly ContextMenuItem<T>[];
 }
 
+export const ImageContextMenuActionSchema = Schema.Literals(["copy-image", "copy-link"]);
+export type ImageContextMenuAction = typeof ImageContextMenuActionSchema.Type;
+
+export interface ImageContextMenuRequest {
+  readonly x: number;
+  readonly y: number;
+  readonly linkURL?: string;
+}
+
 export type QuitShortcutHintEvent =
   | { readonly state: "down"; readonly mode: Exclude<QuitConfirmationMode, "direct"> }
   | { readonly state: "up" };
@@ -1225,6 +1234,10 @@ export interface DesktopBridge {
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /** Pushes the ad-hoc image context menu request when native menus are off. */
+  onImageContextMenu: (listener: (payload: ImageContextMenuRequest) => void) => () => void;
+  /** Applies the chosen image context menu action to the last stashed click. */
+  applyImageContextAction: (action: ImageContextMenuAction) => Promise<void>;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit

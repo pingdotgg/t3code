@@ -41,6 +41,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -48,6 +49,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  IMG_CONTEXT_MENU_CHANNEL,
   MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
@@ -75,6 +77,7 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    id: 1,
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -233,6 +236,7 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly nativeContextMenus?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -303,7 +307,14 @@ function layerTest(input: {
         }),
         layerDesktopEnvironment,
         layerDesktopAppSettings,
-        layerDesktopClientSettings,
+        input.nativeContextMenus === undefined
+          ? layerDesktopClientSettings
+          : Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+              get: Effect.succeedSome({
+                ...DEFAULT_CLIENT_SETTINGS,
+                nativeContextMenus: input.nativeContextMenus,
+              }),
+            }),
         layerDesktopServerExposure,
         DesktopState.layer,
         layerElectronApp,
@@ -573,6 +584,106 @@ describe("DesktopWindow", () => {
         }
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "forwards main-renderer image context menus to the styled menu when native menus are off",
+    () =>
+      Effect.gen(function* () {
+        const host = makeFakeBrowserWindow();
+        let popupCount = 0;
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({
+          window: host.window,
+          createCount,
+          mainWindow,
+          nativeContextMenus: false,
+          onPopupTemplate: () =>
+            Effect.sync(() => {
+              popupCount += 1;
+            }),
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          const emit = host.webContentsListeners.get("context-menu");
+          assert.isDefined(emit);
+          const preventDefault = vi.fn();
+          emit!(
+            { preventDefault },
+            {
+              frame: null,
+              x: 12,
+              y: 34,
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              linkURL: "https://example.com/image.png",
+              mediaType: "image",
+              editFlags: { canCut: false, canCopy: true, canPaste: true, canSelectAll: true },
+            },
+          );
+
+          // The styled branch now runs after one async settings read. Under the
+          // vitest Effect test clock, advance virtual time past the settings-read
+          // hop instead of awaiting a real timer.
+          yield* TestClock.adjust(20);
+
+          assert.equal(popupCount, 0);
+          assert.deepEqual(host.send.mock.calls, [
+            [IMG_CONTEXT_MENU_CHANNEL, { x: 12, y: 34, linkURL: "https://example.com/image.png" }],
+          ]);
+          assert.deepEqual(DesktopWindow.imageContextMenuRequests.get(1), {
+            x: 12,
+            y: 34,
+            linkURL: "https://example.com/image.png",
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect(
+    "keeps the native popup for main-renderer image context menus when native menus are on",
+    () =>
+      Effect.gen(function* () {
+        const host = makeFakeBrowserWindow();
+        const menus = yield* Queue.unbounded<ElectronMenu.ElectronMenuTemplateInput>();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({
+          window: host.window,
+          createCount,
+          mainWindow,
+          nativeContextMenus: true,
+          onPopupTemplate: (input) => Queue.offer(menus, input).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          const emit = host.webContentsListeners.get("context-menu");
+          assert.isDefined(emit);
+          const preventDefault = vi.fn();
+          emit!(
+            { preventDefault },
+            {
+              frame: null,
+              x: 12,
+              y: 34,
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              linkURL: "",
+              mediaType: "image",
+              editFlags: { canCut: false, canCopy: true, canPaste: true, canSelectAll: true },
+            },
+          );
+
+          const menu = yield* Queue.take(menus);
+          assert.ok(menu.template.some((item) => item.label === "Copy Image"));
+          assert.equal(host.send.mock.calls.length, 0);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it("leaves fullscreen before concealing a pending quit", () => {

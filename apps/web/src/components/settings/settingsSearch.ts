@@ -218,6 +218,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "setting-native-context-menus",
+    title: "Right click menus",
+    to: "/settings/appearance",
+    searchTerms: ["context menu", "native", "right click", "menu styling"],
+    desktopOnly: true,
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/appearance",

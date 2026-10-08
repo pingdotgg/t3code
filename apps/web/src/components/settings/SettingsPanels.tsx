@@ -591,6 +591,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Snooze limited threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.nativeContextMenus !== DEFAULT_UNIFIED_SETTINGS.nativeContextMenus
+        ? ["Right click menus"]
+        : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
         ? ["Composer context"]
@@ -718,6 +721,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.timestampFormat,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
+      settings.nativeContextMenus,
       settings.wordWrap,
       followSystem,
       theme,
@@ -794,6 +798,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
+      nativeContextMenus: DEFAULT_UNIFIED_SETTINGS.nativeContextMenus,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -1456,6 +1461,32 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        {isElectron ? (
+          <SettingsRow
+            {...searchableSetting("setting-native-context-menus")}
+            description="In the desktop app, right-click menus can use the OS's native style or T3 Code styling."
+            resetAction={
+              settings.nativeContextMenus !== DEFAULT_UNIFIED_SETTINGS.nativeContextMenus ? (
+                <SettingResetButton
+                  label="right-click menus"
+                  onClick={() =>
+                    updateSettings({
+                      nativeContextMenus: DEFAULT_UNIFIED_SETTINGS.nativeContextMenus,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={!settings.nativeContextMenus}
+                onCheckedChange={(checked) => updateSettings({ nativeContextMenus: !checked })}
+                aria-label="Use T3 Code styling for right-click menus"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection id="motion" title="Motion">
