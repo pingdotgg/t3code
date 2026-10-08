@@ -106,6 +106,7 @@ export async function readCursorAccountUsage(
     };
   }
   let accountKey: string | null = null;
+  const cancel = new AbortController();
   try {
     const payload = accessToken.split(".")[1];
     const subject = object(
@@ -117,14 +118,14 @@ export async function readCursorAccountUsage(
     accountKey = accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       throw new Error("Invalid date window");
-    const deadline = AbortSignal.timeout(60_000);
+    const deadline = AbortSignal.any([cancel.signal, AbortSignal.timeout(60_000)]);
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
     let completed = false;
     const pageSize = 1000;
     let total: number | undefined;
-    for (let page = 1; ; page++) {
+    const readPage = async (page: number) => {
       // A count can include overlapping page boundaries. Allow room to
       // reconcile them without imposing a fixed account-size limit.
       if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
@@ -181,6 +182,21 @@ export async function readCursorAccountUsage(
         throw new Error("Inconsistent account usage page");
       }
       if (typeof count === "number") total = count;
+      return events;
+    };
+    // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
+    // the first one's count implies are requested up to six ahead and consumed in page order.
+    const ahead: ReturnType<typeof readPage>[] = [];
+    for (let page = 1; ; page++) {
+      while (ahead.length < Math.min(6, Math.ceil((total ?? 0) / pageSize) - page + 1)) {
+        const pending = readPage(page + ahead.length);
+        // Handled when its turn comes, or cancelled if the read ends first.
+        pending.catch(() => undefined);
+        ahead.push(pending);
+      }
+      const events = await (ahead.shift() ?? readPage(page));
+      // A rejected login comes back as the finished result instead of a page.
+      if (!Array.isArray(events)) return events;
       pages.push(events);
       if (events.length < pageSize) {
         completed = true;
@@ -268,5 +284,8 @@ export async function readCursorAccountUsage(
       missing: false,
       error: "Cursor account usage could not be read.",
     };
+  } finally {
+    // An early exit leaves the pages requested ahead of it in flight.
+    cancel.abort();
   }
 }
