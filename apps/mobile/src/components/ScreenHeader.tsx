@@ -1,5 +1,6 @@
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { useId } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../native/StackHeader";
@@ -139,14 +140,25 @@ export function ScreenHeader(props: ScreenHeaderProps) {
         props.trailing) &&
       props.options?.unstable_headerRightItems === undefined ? (
         <NativeHeaderToolbar placement="right">
-          {props.actions?.map((action) => (
-            <ScreenHeaderButton
-              key={action.accessibilityLabel}
-              {...action}
-              icon={iosIcon(action.icon)}
-              separateBackground
-            />
-          ))}
+          {props.actions?.map(({ loading, ...action }) =>
+            loading ? (
+              <NativeHeaderToolbar.Custom key={action.accessibilityLabel}>
+                <View
+                  accessibilityLabel={action.accessibilityLabel}
+                  className="size-9 items-center justify-center"
+                >
+                  <ActivityIndicator color={action.tintColor} />
+                </View>
+              </NativeHeaderToolbar.Custom>
+            ) : (
+              <ScreenHeaderButton
+                key={action.accessibilityLabel}
+                {...action}
+                icon={iosIcon(action.icon)}
+                separateBackground
+              />
+            ),
+          )}
           {refresh && !compactSearch ? (
             <ScreenHeaderButton
               accessibilityLabel={search?.refreshAccessibilityLabel}
