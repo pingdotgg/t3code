@@ -1154,6 +1154,25 @@ export function EnvironmentProviderSettings({
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
+        titleAction={
+          !readOnly ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    aria-label="Add provider"
+                  >
+                    <PlusIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Add provider</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
@@ -1181,23 +1200,6 @@ export function EnvironmentProviderSettings({
               />
               <TooltipPopup side="top">Refresh provider status</TooltipPopup>
             </Tooltip>
-            {!readOnly ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      onClick={() => setIsAddInstanceDialogOpen(true)}
-                      aria-label="Add provider"
-                    >
-                      <PlusIcon />
-                    </Button>
-                  }
-                />
-                <TooltipPopup side="top">Add provider</TooltipPopup>
-              </Tooltip>
-            ) : null}
           </div>
         }
       >
@@ -1227,6 +1229,16 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                  >
+                    <PlusIcon className="size-4 shrink-0" />
+                    Add provider
+                  </button>
+                ) : null}
               </div>
             </ScrollArea>
           </div>
