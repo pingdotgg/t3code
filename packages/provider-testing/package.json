@@ -18,6 +18,10 @@
     "./host": {
       "types": "./src/host.ts",
       "import": "./src/host.ts"
+    },
+    "./fakeCli": {
+      "types": "./src/fakeCli.ts",
+      "import": "./src/fakeCli.ts"
     }
   },
   "scripts": {
@@ -28,6 +32,7 @@
     "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

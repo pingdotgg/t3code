@@ -29,6 +29,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
+    "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",

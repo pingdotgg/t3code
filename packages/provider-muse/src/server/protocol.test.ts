@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { museApprovalChoices } from "./museProtocol.ts";
+import { museApprovalChoices } from "./protocol.ts";
 
 // Muse 1.4.3 shell approvals offer only `abort`; the muse_permission replay covers that case.
 describe("Muse approval choices", () => {

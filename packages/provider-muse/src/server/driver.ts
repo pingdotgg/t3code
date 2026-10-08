@@ -1,4 +1,5 @@
-import { MuseSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { MuseSettings } from "../settings.ts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,18 +9,17 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
-import { makeMuseAdapterV2 } from "../../orchestration-v2/Adapters/MuseAdapterV2.ts";
+import { makeMuseTextGeneration } from "./textGeneration.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { makeMuseAdapterV2 } from "./adapter.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
-import { checkMuseProviderStatus, makePendingMuseProvider } from "../MuseProvider.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { checkMuseProviderStatus, makePendingMuseProvider } from "./status.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "../museMaintenance.ts";
-import { makeMuseEnvironment } from "../museSdk.ts";
+import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
+import { makeMuseEnvironment } from "./sdk.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -47,8 +47,7 @@ export type MuseDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig;
+  | ProviderEventLoggers.ProviderEventLoggers;
 
 export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -63,8 +62,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const host = yield* ProviderHost;
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const { cwd } = serverConfig;
+      const { cwd } = host.paths;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const hostEnvironment = yield* HostProcessEnvironment;
@@ -155,7 +153,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         settings: effectiveConfig,
         environment: processEnvironment,
         idAllocator,
-        serverConfig,
+        host,
         fileSystem,
         modelCatalog,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),

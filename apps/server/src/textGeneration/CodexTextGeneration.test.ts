@@ -16,7 +16,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
-import { writeFakeCli } from "../testUtils/fakeCli.ts";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(

@@ -1,7 +1,7 @@
 import type { OrchestrationV2TurnItem, OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { MuseItem } from "../../provider/museProtocol.ts";
+import type { MuseItem } from "./protocol.ts";
 
 const decodeToolArgs = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),

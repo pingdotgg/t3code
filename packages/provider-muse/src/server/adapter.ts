@@ -1,7 +1,6 @@
 import { MspError, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
-  type MuseSettings,
   ProviderDriverKind,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -22,6 +21,7 @@ import {
   type RuntimeRequestId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import type { MuseSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -35,14 +35,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import * as ServerConfig from "../../config.ts";
+import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import {
-  museModelCapabilities,
-  resolveMuseReasoningEffort,
-} from "../../provider/museModelCatalog.ts";
+import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
   MuseApproval,
   MuseCompactResult,
@@ -60,14 +56,14 @@ import {
   museApprovalDecision,
   museApprovalOptions,
   type MuseItem,
-} from "../../provider/museProtocol.ts";
+} from "./protocol.ts";
 import {
   createMuseSdkHostEffect,
   museApprovalMode,
   type createMuseSdkHost,
   type MuseSdkHost,
-} from "../../provider/museSdk.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+} from "./sdk.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   providerMessageTextWithAttachmentPaths,
   isProviderNativeImageAttachment,
@@ -103,7 +99,7 @@ import {
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { museItemStatus, museToolPresentation } from "./MuseItemPresentation.ts";
+import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const isOpenSessionError = Schema.is(ProviderAdapterOpenSessionError);
@@ -208,7 +204,7 @@ export interface MuseAdapterV2Options {
   readonly settings: MuseSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly host: ProviderHostShape;
   readonly fileSystem: FileSystem.FileSystem;
   readonly modelCatalog?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly createHost?: typeof createMuseSdkHost;
@@ -293,7 +289,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       const scope = yield* Effect.scope;
       // Muse rejects non-canonical workspace roots (for example macOS /tmp) and
       // reports canonical paths in approvals, so resolve symlinks once here.
-      const requestedCwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
+      const requestedCwd = input.runtimePolicy.cwd ?? options.host.paths.cwd;
       const cwd = yield* options.fileSystem
         .realPath(requestedCwd)
         .pipe(Effect.orElseSucceed(() => requestedCwd));
@@ -1601,19 +1597,12 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         const text = providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
-          resolveAttachmentPath: (attachment) =>
-            resolveAttachmentPath({
-              attachmentsDir: options.serverConfig.attachmentsDir,
-              attachment,
-            }),
+          resolveAttachmentPath: options.host.resolveAttachmentPath,
         });
         if (text) parts.push({ type: "text", text });
         for (const attachment of message.attachments)
           if (isProviderNativeImageAttachment(attachment)) {
-            const path = resolveAttachmentPath({
-              attachmentsDir: options.serverConfig.attachmentsDir,
-              attachment,
-            });
+            const path = options.host.resolveAttachmentPath(attachment);
             if (!path) return yield* protocolError("Muse image attachment is missing");
             const bytes = yield* options.fileSystem
               .readFile(path)

@@ -11,7 +11,7 @@ import {
   museMaintenance,
   latestMuseVersion,
   parseMuseVersion,
-} from "./museMaintenance.ts";
+} from "./maintenance.ts";
 import {
   ProviderVersionCache,
   makeManualOnlyProviderMaintenanceCapabilities,

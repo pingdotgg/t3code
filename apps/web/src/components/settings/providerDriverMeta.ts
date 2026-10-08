@@ -6,10 +6,10 @@ import {
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
-  MuseSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
+import { museClient } from "@t3tools/provider-muse/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 /** The provider client definitions this web build ships, in presentation order. */
@@ -53,12 +53,7 @@ export const providerClients = makeProviderClientRegistry([
     label: "Antigravity",
     settingsSchema: AntigravitySettings,
   },
-  {
-    driverKind: ProviderDriverKind.make("muse"),
-    label: "Muse Code",
-    settingsSchema: MuseSettings,
-    badgeLabel: "Beta",
-  },
+  museClient,
   piClient,
   {
     driverKind: ProviderDriverKind.make("acpRegistry"),
