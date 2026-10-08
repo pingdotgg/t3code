@@ -1,18 +1,22 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import { mapRemoteEnvironmentError } from "../connection/errors.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -39,6 +43,20 @@ function initialConfigOption<E>(
 // Bounded so a wedged environment cannot pin the permissions check (and with it
 // the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
+const SESSION_STATE_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+
+function isTransientSessionError(
+  error: SessionHttpClientUnavailable | RemoteEnvironmentRequestError,
+): boolean {
+  return (
+    error._tag !== "SessionHttpClientUnavailable" &&
+    mapRemoteEnvironmentError(error)._tag === "ConnectionTransientError"
+  );
+}
 
 /**
  * Read the granted scopes of this client's session on one environment via its
@@ -138,7 +156,17 @@ function makeEnvironmentSessionAtoms<R, E>(
         if (prepared === null) {
           return Effect.never;
         }
-        return Effect.gen(function* () {
+        // Scope checks reject a Failure outright, so one slow response would
+        // revoke a grant this connection already confirmed until the client
+        // reloads. With a confirmed grant, keep it (the result stays waiting)
+        // and retry transient failures; rejected credentials still fail.
+        const hasConfirmedGrant = Option.isSome(
+          Option.flatMap(
+            get.self<AsyncResult.AsyncResult<AuthSessionState, unknown>>(),
+            AsyncResult.value,
+          ),
+        );
+        const fetchSession = Effect.gen(function* () {
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
           const remoteAuthorization = yield* Effect.serviceOption(
             RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
@@ -151,6 +179,14 @@ function makeEnvironmentSessionAtoms<R, E>(
             remoteAuthorization,
           }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
         });
+        return hasConfirmedGrant
+          ? fetchSession.pipe(
+              Effect.retry({
+                while: isTransientSessionError,
+                schedule: SESSION_STATE_RETRY_SCHEDULE,
+              }),
+            )
+          : fetchSession;
       })
       .pipe(
         Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
