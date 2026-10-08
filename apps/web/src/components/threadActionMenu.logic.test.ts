@@ -46,12 +46,14 @@ describe("buildThreadActionMenuItems", () => {
       const items = buildThreadActionMenuItems({
         ...baseState,
         canOperate: false,
+        canBringToLocal: true,
         isPinned: reversed,
         isSettled: reversed,
         isSnoozed: reversed,
       });
       const expected = reversed
         ? [
+            "bring-to-local",
             "unpin",
             "unsettle",
             "unsnooze",
@@ -62,6 +64,7 @@ describe("buildThreadActionMenuItems", () => {
             "delete",
           ]
         : [
+            "bring-to-local",
             "pin",
             "settle",
             "snooze",
@@ -87,7 +90,11 @@ describe("buildThreadActionMenuItems", () => {
       "copy",
       "project-settings",
     ]);
-    const allowed = buildThreadActionMenuItems({ ...baseState, canOperate: true });
+    const allowed = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: true,
+      canBringToLocal: true,
+    });
     expect(allowed.every((item) => !item.disabled)).toBe(true);
   });
 

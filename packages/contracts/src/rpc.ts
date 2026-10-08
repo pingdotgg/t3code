@@ -1,3 +1,11 @@
+import {
+  SessionTransferExportInput,
+  SessionTransferExportResult,
+  SessionTransferImportInput,
+  SessionTransferImportResult,
+  SessionTransferFinishInput,
+  SessionTransferError,
+} from "./sessionTransfer.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   McpAppCallToolInput,
@@ -372,6 +380,9 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  sessionTransferExport: "sessionTransfer.export",
+  sessionTransferImport: "sessionTransfer.import",
+  sessionTransferFinish: "sessionTransfer.finish",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1208,6 +1219,21 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsSessionTransferExportRpc = Rpc.make(WS_METHODS.sessionTransferExport, {
+  payload: SessionTransferExportInput,
+  success: SessionTransferExportResult,
+  error: Schema.Union([SessionTransferError, EnvironmentAuthorizationError]),
+});
+const WsSessionTransferImportRpc = Rpc.make(WS_METHODS.sessionTransferImport, {
+  payload: SessionTransferImportInput,
+  success: SessionTransferImportResult,
+  error: Schema.Union([SessionTransferError, EnvironmentAuthorizationError]),
+});
+const WsSessionTransferFinishRpc = Rpc.make(WS_METHODS.sessionTransferFinish, {
+  payload: SessionTransferFinishInput,
+  error: Schema.Union([SessionTransferError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1889,6 +1915,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsSessionTransferExportRpc,
+  WsSessionTransferImportRpc,
+  WsSessionTransferFinishRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,

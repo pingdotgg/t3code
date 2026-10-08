@@ -391,6 +391,10 @@
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
     },
+    "./state/session-transfer": {
+      "types": "./src/state/session-transfer.ts",
+      "default": "./src/state/session-transfer.ts"
+    },
     "./mcp-apps": {
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"

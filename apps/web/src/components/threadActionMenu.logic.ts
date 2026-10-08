@@ -7,6 +7,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  * remains data-driven.
  */
 export type ThreadActionMenuId =
+  | "bring-to-local"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -70,6 +71,7 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
+  readonly canBringToLocal?: boolean;
   readonly canOperate: boolean;
   readonly branch: string | null;
   /**
@@ -123,6 +125,9 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canBringToLocal
+      ? [{ id: "bring-to-local" as const, label: "Bring to local", icon: "download" }]
+      : []),
     ...(state.branch
       ? [
           {

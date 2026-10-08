@@ -63,4 +63,5 @@ export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
+export * from "./sessionTransfer.ts";
 export * from "./clientRpcPermissions.ts";

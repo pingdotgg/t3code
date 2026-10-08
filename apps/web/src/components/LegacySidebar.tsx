@@ -1,3 +1,4 @@
+import { bringThreadToLocal, localTransferDestination } from "../lib/bringThreadToLocal";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -2329,6 +2330,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          ...(localTransferDestination(thread.environmentId)
+            ? [
+                {
+                  id: "bring-to-local",
+                  label: "Bring to local",
+                  icon: "download",
+                  disabled: !canOperateThread,
+                },
+              ]
+            : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2399,6 +2410,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           return;
         }
         copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+        return;
+      }
+      if (clicked === "bring-to-local") {
+        try {
+          const result = await bringThreadToLocal(threadRef, thread.modelSelection);
+          if (result) {
+            await router.navigate({
+              to: "/$environmentId/$threadId",
+              params: { environmentId: result.environmentId, threadId: result.local.threadId },
+            });
+            toastManager.add({
+              type: result.status === "complete" ? "success" : "error",
+              title:
+                result.status === "complete"
+                  ? "Thread brought to local"
+                  : "Local copy ready; transfer needs attention",
+              description:
+                result.status === "complete"
+                  ? "The remote thread has been stopped."
+                  : result.error instanceof Error
+                    ? result.error.message
+                    : "Check the remote thread and local setup before continuing.",
+            });
+          }
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Could not bring thread to local",
+            description:
+              error instanceof Error ? error.message : "The remote thread was not stopped.",
+          });
+        }
         return;
       }
       if (clicked === "copy-thread-id") {

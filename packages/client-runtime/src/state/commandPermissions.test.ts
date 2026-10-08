@@ -58,6 +58,26 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect.each([
+    WS_METHODS.sessionTransferExport,
+    WS_METHODS.sessionTransferImport,
+    WS_METHODS.sessionTransferFinish,
+  ])("requires the target environment's operate grant for %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const transferPermissions = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(transferPermissions.permissionAtom(env))).toBe(false);
+        expect((yield* transferPermissions.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(transferPermissions.permissionAtom(env))).toBe(true);
+        yield* transferPermissions.authorize(registry, env);
+      }),
+    ),
+  );
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

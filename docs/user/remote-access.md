@@ -334,3 +334,32 @@ history, and saved connections are kept, and you keep working through pairing, T
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.
+
+## Bring remote work to local
+
+To continue a remote conversation on your own machine, connect both environments in
+the desktop app (or in a web client hosted by your local T3 server). Configure the
+same provider and model locally, let the remote turn finish, and clear any queued
+messages. Open the remote thread's sidebar menu and choose **Bring to local**.
+Both servers must support transfers.
+
+T3 creates a new local project and thread. It copies the workspace's files, current
+Git commit and branch, staged and unstaged changes, saved conversation messages,
+and message attachments. Ignored configuration files such as `.env` are included.
+Untracked `node_modules`, `.t3`, `.next`, and `.cache` directories are skipped;
+tracked files in those directories are retained. Existing local projects are not
+modified. The transfer is limited to 100 MB, with a 4 MB serialized conversation
+limit. Symbolic links, nested repositories, and submodules must be handled separately.
+
+The remote session stops after the local files and conversation have been prepared.
+Its original history and files remain available. If the source changes during
+transfer, or importing fails, T3 leaves the remote session available. If stopping
+the remote session fails after copying, T3 opens the local copy and reports that
+it needs attention; it does not start a second agent automatically.
+
+The local provider starts a new native session using the imported conversation as
+context. Its first request checks that the workspace is ready and waits for your
+next instruction. Native provider state, running processes, Git remote configuration
+and hooks, and server automations are not moved. Install dependencies, configure
+Git remotes if needed, and start development services locally to continue editing
+or use the local Browser.

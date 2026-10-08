@@ -1,3 +1,4 @@
+import { bringThreadToLocal, localTransferDestination } from "../lib/bringThreadToLocal";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -4585,6 +4586,7 @@ export default function Sidebar() {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              canBringToLocal: localTransferDestination(thread.environmentId) !== null,
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -4738,6 +4740,36 @@ export default function Sidebar() {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
             }
             return;
+          case "bring-to-local": {
+            try {
+              const result = await bringThreadToLocal(threadRef, thread.modelSelection);
+              if (!result) return;
+              await navigateToThread(scopeThreadRef(result.environmentId, result.local.threadId));
+              toastManager.add({
+                type: result.status === "complete" ? "success" : "error",
+                title:
+                  result.status === "complete"
+                    ? "Thread brought to local"
+                    : "Local copy ready; transfer needs attention",
+                description:
+                  result.status === "complete"
+                    ? "The remote thread has been stopped. Continue in this local thread."
+                    : result.error instanceof Error
+                      ? result.error.message
+                      : "The local copy is available. Check the remote thread and local setup before continuing.",
+              });
+            } catch (error) {
+              toastManager.add({
+                type: "error",
+                title: "Could not bring thread to local",
+                description:
+                  error instanceof Error
+                    ? error.message
+                    : "The transfer failed. The remote thread was not stopped.",
+              });
+            }
+            return;
+          }
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
@@ -4817,6 +4849,7 @@ export default function Sidebar() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      navigateToThread,
       openProjectSettings,
       projectScopeKey,
       projectByKey,
