@@ -849,7 +849,7 @@ const layerEnvironmentRegistration = toolkitRegistration(
   EnvironmentHandlers.layer,
 );
 
-const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 const layerAttachmentRegistration = toolkitRegistration(
   AttachmentToolkit,

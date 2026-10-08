@@ -11,7 +11,8 @@ not introduce another execution model. See
 An environment keeps its ID across server restarts and endpoint changes. Saved
 connections are local to a client profile; the server's identity and state are
 not. A repository identity can correlate clones across environments, but never
-routes work between them. A project and its threads belong to one environment.
+routes work between them. A project and its threads belong to one environment;
+an agent reaches another environment's threads only through a peer link.
 The canonical key follows the `upstream` remote when one exists, so pull request
 features target the repository a fork tracks. A fork also reports its own
 `origin`, and clients group and label by that, so a fork never collapses into a
@@ -54,6 +55,34 @@ learned route still has to answer as this environment before it is used.
 
 GitHub routing trust covers the whole route list. Adding or changing a route
 revokes it; reordering does not, because the same addresses remain trusted.
+
+## Peer links
+
+A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's
+agents work in another. The linking environment signs in to the other's `/mcp`
+as an outside MCP client, with a pairing code from it, and keeps that session's
+token in its own secret store. The other environment needs nothing new: it
+sees one more OAuth client, lists it in Connections, and revokes it there.
+Unlinking on the linking side only forgets the token.
+
+- **Every forwarded call carries the calling agent's modes** in
+  `T3-Mode-Limit`, which the receiving `/mcp` only ever narrows the client's
+  approved access with. A plan-mode agent therefore cannot start full-access
+  work through a full-access link. The tool's own access declaration also
+  runs on the linking side first, so a read-only or ended caller is refused
+  before anything is sent.
+- **The token goes only to an address that proves it is the linked
+  environment**: its descriptor must report the linked environment id. A LAN
+  address that now belongs to another machine never receives it.
+- **All callers on one side share the link's single session on the other**,
+  so idempotency keys are hashed with the caller's namespace before they
+  leave. Without that, two agents reusing a key would collide on the far side.
+- **A forwarded wait is split into calls of at most 50 s**, because the
+  receiving `/mcp` sends nothing while a wait is open and T3 Connect's edge
+  drops idle requests after about 100 s.
+
+The link is routing, not isolation: an agent the link starts runs as the
+receiving environment's user, inside the limits above.
 
 ## Hosted web is a client
 

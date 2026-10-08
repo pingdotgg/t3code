@@ -1,11 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  EnvironmentHttpApi,
-  EnvironmentId,
-  type ExecutionEnvironmentDescriptor,
-  OrchestratorMcpFailure,
-} from "@t3tools/contracts";
+import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -16,41 +10,18 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
-import { FetchHttpClient, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
-import * as HttpApi from "effect/http-api/HttpApi";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as AuthHttp from "../auth/http.ts";
-import * as McpOAuth from "../auth/McpOAuth.ts";
-import * as McpOAuthHttp from "../auth/mcpOAuthHttp.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ServerHttp from "../http.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
-import * as Sqlite from "../persistence/Sqlite.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import {
+  descriptorOf,
+  layerLinkingEnvironment,
+  servePeer,
+  type ServedPeer,
+} from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
-
-class PeerTestApi extends HttpApi.make("environment")
-  .add(EnvironmentHttpApi.groups.metadata)
-  .add(EnvironmentHttpApi.groups.mcpOAuth) {}
-
-const descriptorOf = (
-  environmentId: string,
-  label: string,
-  capabilities: Partial<ExecutionEnvironmentDescriptor["capabilities"]> = {},
-): ExecutionEnvironmentDescriptor => ({
-  environmentId: EnvironmentId.make(environmentId),
-  label,
-  platform: { os: "linux", arch: "x64" },
-  serverVersion: "0.0.0-test",
-  capabilities: { repositoryIdentity: true, mcpModeLimitHeader: true, ...capabilities },
-});
 
 /** What B's probe saw: the calling client and the modes it may start work with. */
 const Probe = Schema.Struct({ caller: Schema.String, modes: Schema.String });
@@ -71,126 +42,37 @@ const ProbeToolkit = Toolkit.make(
   }),
 );
 
-/**
- * Environment B as it runs: its descriptor, MCP OAuth, and `/mcp` behind the
- * real client authenticator, on a real socket. The descriptor can be swapped,
- * as when B's address comes to answer as another environment.
- */
-const serveB = (initial: ExecutionEnvironmentDescriptor) =>
-  Effect.gen(function* () {
-    const descriptor = yield* Ref.make(initial);
-    const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
-    const probes = yield* Ref.make(0);
-    const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
-      getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
-      getDescriptor: Ref.get(descriptor),
-    });
-    const authContext = yield* EnvironmentAuth.layer.pipe(
-      Layer.provide(Sqlite.layerMemory),
-      Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-b-" })),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.fresh,
-      Layer.build,
-    );
-    // Every bearer B receives, on any route, so a test can show one was never sent.
-    const layerRecordBearers = HttpRouter.middleware(
-      (httpEffect) =>
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          if (request.url.startsWith("/.well-known/t3/environment")) {
-            yield* Ref.update(probes, (count) => count + 1);
-          }
-          const authorization = request.headers.authorization;
-          if (authorization !== undefined) {
-            yield* Ref.update(bearers, (seen) => [...seen, authorization]);
-          }
-          return yield* httpEffect;
-        }),
-      { global: true },
-    );
-    const layerRoutes = Layer.mergeAll(
-      HttpApiBuilder.layer(PeerTestApi).pipe(
-        Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
-        Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-        Layer.provide(AuthHttp.layerAuthenticatedAuth),
-      ),
-      McpHttpServer.toolkitRegistration(
-        ProbeToolkit,
-        McpToolAccess.toLayer(ProbeToolkit, {
-          probe: McpToolAccess.reads(() =>
-            McpInvocationContext.McpInvocationContext.pipe(
-              Effect.map((scope) => {
-                const modes = McpInvocationContext.clientModeCeiling(scope.client);
-                return {
-                  caller: scope.client?.label ?? "none",
-                  modes: `${modes.runtimeMode}/${modes.interactionMode}`,
-                };
-              }),
-            ),
-          ),
-          refuse: McpToolAccess.reads(() =>
-            Effect.fail(
-              new OrchestratorMcpFailure({ code: "thread_not_found", message: "No such thread." }),
-            ),
-          ),
-        }),
-      ).pipe(
-        Layer.provideMerge(McpHttpServer.layerMcpTransport),
-        Layer.provide(
-          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-            resolve: () => Effect.succeed(undefined),
-          }),
-        ),
-        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-      ),
-    ).pipe(
-      Layer.provide(layerRecordBearers),
-      Layer.provide(layerEnvironment),
-      Layer.provide(Layer.succeedContext(authContext)),
-    );
-    yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-      Layer.build,
-    );
-    const address = (yield* HttpServer.HttpServer).address;
-    if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
-    return {
-      url: `http://127.0.0.1:${address.port}`,
-      auth: Context.get(authContext, EnvironmentAuth.EnvironmentAuth),
-      descriptor,
-      bearers,
-      /** How often its descriptor was asked for, as a probe of whether it answers. */
-      probes,
-    };
-  });
+const probeHandlers = McpToolAccess.toLayer(ProbeToolkit, {
+  probe: McpToolAccess.reads(() =>
+    McpInvocationContext.McpInvocationContext.pipe(
+      Effect.map((scope) => {
+        const modes = McpInvocationContext.clientModeCeiling(scope.client);
+        return {
+          caller: scope.client?.label ?? "none",
+          modes: `${modes.runtimeMode}/${modes.interactionMode}`,
+        };
+      }),
+    ),
+  ),
+  refuse: McpToolAccess.reads(() =>
+    Effect.fail(
+      new OrchestratorMcpFailure({ code: "thread_not_found", message: "No such thread." }),
+    ),
+  ),
+});
 
-/** Environment A: its own database and secret store, reaching B over plain HTTP. */
+const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
+  servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers));
+
+/** Environment A, which links to B. */
 const makeA = (descriptor: ExecutionEnvironmentDescriptor) =>
-  Effect.gen(function* () {
-    const context = yield* PeerMcpClient.layer.pipe(
-      Layer.provideMerge(PeerLinks.layer),
-      Layer.provide(
-        Layer.mergeAll(
-          Sqlite.layerMemory,
-          ServerSecretStore.layer,
-          FetchHttpClient.layer,
-          Layer.succeed(ServerEnvironment.ServerEnvironment, {
-            getEnvironmentId: Effect.succeed(descriptor.environmentId),
-            getDescriptor: Effect.succeed(descriptor),
-          }),
-        ),
-      ),
-      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-a-" })),
-      Layer.provide(NodeServices.layer),
-      Layer.fresh,
-      Layer.build,
-    );
-    return {
+  layerLinkingEnvironment(descriptor).pipe(
+    Layer.build,
+    Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
       peer: Context.get(context, PeerMcpClient.PeerMcpClient),
-    };
-  });
+    })),
+  );
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
@@ -207,14 +89,7 @@ const probe = (
     success: Probe,
   });
 
-const linkedSessions = (b: Effect.Success<ReturnType<typeof serveB>>) =>
-  b.auth
-    .listSessions()
-    .pipe(
-      Effect.map((sessions) =>
-        sessions.filter((session) => session.client.label?.startsWith("T3 Code · ")),
-      ),
-    );
+const linkedSessions = (b: ServedPeer) => b.linkedSessions;
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
   Effect.scoped(

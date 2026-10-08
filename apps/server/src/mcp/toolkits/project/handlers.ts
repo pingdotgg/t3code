@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type EnvironmentId,
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
@@ -13,7 +14,9 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -57,13 +60,40 @@ const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
 });
+
+/** The linked environment a call names, or nothing for this one. */
+const remoteTarget = (input: { readonly environmentId?: EnvironmentId | undefined }) =>
+  McpInvocationContext.McpInvocationContext.pipe(
+    Effect.map((scope) => ({
+      scope,
+      target: PeerForwarding.remoteTarget(scope, input.environmentId),
+    })),
+  );
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode }) =>
       Effect.gen(function* () {
+        const { scope, target } = yield* remoteTarget(input);
+        if (target !== undefined) {
+          // A pending upload lives here, so it cannot go with the launch.
+          if ((input.attachments ?? []).length > 0)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "A launch in a linked environment cannot carry attachments yet.",
+            });
+          // The call carries the caller's modes, so omitted modes inherit
+          // them there too, capped by the link's access.
+          const forwarding = yield* PeerForwarding.PeerForwarding;
+          return yield* forwarding.call(
+            scope,
+            ProjectToolkit.tools.t3_thread_launch,
+            target,
+            input,
+          );
+        }
         const context = yield* readCaller();
-        const { caller, scope } = context;
+        const { caller } = context;
         // A retry with the same key replays the first launch: the ids derive
         // from the caller and the key, and the launch service replays a
         // command it already accepted.
@@ -169,6 +199,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
+      const { scope, target } = yield* remoteTarget(input);
+      if (target !== undefined) {
+        const forwarding = yield* PeerForwarding.PeerForwarding;
+        return yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_list, target, input);
+      }
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
       const rows = snapshot.projects.filter((project) => project.deletedAt === null);

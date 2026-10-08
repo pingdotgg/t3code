@@ -2449,6 +2449,38 @@ const make = Effect.gen(function* () {
         yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
         yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
         const key = yield* requestKey(input.clientRequestId);
+        // A peer from before `stop` drops it when decoding, so it interrupts
+        // the run instead, as this call did then.
+        if (input.stop === true) {
+          const commandId = stableCommandId({ scope, requestKey: key, operation: "thread-stop" });
+          const stopFailed = (error: unknown) =>
+            failure(
+              "orchestration_error",
+              `Unable to stop thread ${input.threadId}: ${errorMessage(error)}`,
+            );
+          const stopped = yield* threadManagement
+            .dispatch({
+              type: "thread.stop",
+              commandId,
+              threadId: input.threadId,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            })
+            .pipe(Effect.mapError(stopFailed));
+          // A retry with the same clientRequestId repeats only the stops that failed.
+          yield* threadManagement
+            .stopDelegatedTasks({ threadId: input.threadId, commandId, reason: input.reason })
+            .pipe(Effect.mapError(stopFailed));
+          // The run this stop interrupted, from its own events, so a retry
+          // reports the same run even if another has started since.
+          const interrupted = stopped.storedEvents.find(
+            (stored) => stored.event.type === "run.updated",
+          )?.event.runId;
+          return {
+            threadId: input.threadId,
+            runId: interrupted ?? null,
+            status: interrupted === undefined ? "no_active_run" : "interrupt_requested",
+          } satisfies OrchestratorMcpThreadInterruptResult;
+        }
         const result = yield* threadManagement
           .interruptThread({
             projectId: target.thread.projectId,

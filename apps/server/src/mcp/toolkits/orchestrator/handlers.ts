@@ -1,18 +1,45 @@
-import { OrchestratorToolkit } from "./tools.ts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { Tool } from "effect/ai";
 
+import { OrchestratorToolkit } from "./tools.ts";
+
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
+const { tools } = OrchestratorToolkit;
+
+/**
+ * Runs `here` in this environment, or the same tool in the linked
+ * environment `input.environmentId` names. The tool's declaration has already
+ * checked the caller here either way.
+ */
+const routed = <T extends (typeof tools)[keyof typeof tools], A, E, R>(
+  tool: T,
+  input: Tool.Parameters<T> & { readonly environmentId?: EnvironmentId | undefined },
+  here: Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (PeerForwarding.remoteTarget(scope, input.environmentId) === undefined) return yield* here;
+    const forwarding = yield* PeerForwarding.PeerForwarding;
+    return yield* forwarding.route(scope, tool, input, here);
+  });
+
 const handlers = {
-  orchestrator_capabilities: McpToolAccess.reads(() =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.capabilities(scope);
-    }),
+  orchestrator_capabilities: McpToolAccess.reads((input) =>
+    routed(
+      tools.orchestrator_capabilities,
+      input,
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.capabilities(scope);
+      }),
+    ),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -81,21 +108,29 @@ const handlers = {
     }),
   ),
   t3_thread_list: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listThreads(scope, input);
-    }),
+    routed(
+      tools.t3_thread_list,
+      input,
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.listThreads(scope, input);
+      }),
+    ),
   ),
   // Reading a child's finished result also acknowledges its delivery to the
   // reader's own thread. That is bookkeeping on the caller's own subagent, not
   // a change to anything it reads, so this stays a read.
   t3_thread_read: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.readThread(scope, input);
-    }),
+    routed(
+      tools.t3_thread_read,
+      input,
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.readThread(scope, input);
+      }),
+    ),
   ),
   t3_thread_update: McpToolAccess.writesThreads(
     (input) => [input.threadId],
@@ -107,29 +142,55 @@ const handlers = {
       }),
   ),
   t3_thread_send: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
+    // A thread in a linked environment is checked there, where it lives.
+    // This environment's own id names a thread here, which is checked here.
+    (input, scope) =>
+      PeerForwarding.remoteTarget(scope, input.environmentId) === undefined ? [input.threadId] : [],
     (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.sendToThread(scope, input);
-      }),
+      routed(
+        tools.t3_thread_send,
+        input,
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.sendToThread(scope, input);
+        }),
+      ),
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
+      const target = PeerForwarding.remoteTarget(scope, input.environmentId);
+      if (target !== undefined) {
+        const forwarding = yield* PeerForwarding.PeerForwarding;
+        return yield* forwarding.waitForThread(scope, target, input);
+      }
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
     }),
   ),
+  t3_environment_links: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const forwarding = yield* PeerForwarding.PeerForwarding;
+      return yield* forwarding.links(scope);
+    }),
+  ),
   t3_thread_interrupt: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
+    // A thread in a linked environment is checked there, where it lives.
+    // This environment's own id names a thread here, which is checked here.
+    (input, scope) =>
+      PeerForwarding.remoteTarget(scope, input.environmentId) === undefined ? [input.threadId] : [],
     (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.interruptThread(scope, input);
-      }),
+      routed(
+        tools.t3_thread_interrupt,
+        input,
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.interruptThread(scope, input);
+        }),
+      ),
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 
