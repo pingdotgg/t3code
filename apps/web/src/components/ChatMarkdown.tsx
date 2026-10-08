@@ -88,7 +88,9 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { parseThreadLinkHref, THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import remarkGfm from "remark-gfm";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
@@ -538,7 +540,13 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation", "t3-context"],
+    href: [
+      ...(defaultSchema.protocols?.href ?? []),
+      "file",
+      "t3-citation",
+      "t3-context",
+      THREAD_LINK_PROTOCOL,
+    ],
     src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
@@ -982,6 +990,63 @@ function MarkdownDetails({
 }
 
 /**
+ * The code block frame, shared with the composer so an editable fence and a
+ * rendered one cannot drift apart: the wrapper, its header row with the
+ * language title, an optional actions slot, and the body as children. The
+ * composer passes Tiptap's node view wrapper as the outer element.
+ */
+export function MarkdownCodeBlockFrame({
+  as: Wrapper = "div",
+  language,
+  fenceTitle,
+  theme,
+  wrapped = true,
+  title,
+  actions,
+  headerProps,
+  children,
+}: {
+  as?: React.ElementType;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  wrapped?: boolean;
+  /** Replaces the language title, as the composer does with its language picker. */
+  title?: React.ReactNode;
+  actions?: React.ReactNode;
+  headerProps?: React.HTMLAttributes<HTMLDivElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <Wrapper
+      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      data-language={language}
+      data-wrap={wrapped ? "true" : "false"}
+    >
+      <div
+        {...headerProps}
+        className={cn(
+          "chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none",
+          headerProps?.className,
+        )}
+      >
+        {title ?? (
+          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
+            <MarkdownCodeBlockTitleContent
+              fenceTitle={fenceTitle}
+              language={language}
+              theme={theme}
+            />
+          </span>
+        )}
+        {actions}
+      </div>
+      {children}
+    </Wrapper>
+  );
+}
+
+/**
  * Filename titles render icon + text; language-only titles render just the
  * icon (redundant next to its own name) and fall back to the language text
  * when no specific icon exists or it fails to load.
@@ -1133,19 +1198,12 @@ function MarkdownCodeBlock({
   }
 
   return (
-    <div
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
-      data-language={language}
-      data-wrap={wrapped ? "true" : "false"}
-    >
-      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
-          <MarkdownCodeBlockTitleContent
-            fenceTitle={fenceTitle}
-            language={language}
-            theme={theme}
-          />
-        </span>
+    <MarkdownCodeBlockFrame
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={theme}
+      wrapped={wrapped}
+      actions={
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
           {leadingActions}
           {canWrap ? (
@@ -1187,9 +1245,10 @@ function MarkdownCodeBlock({
           ) : null}
           {copyButton}
         </span>
-      </div>
+      }
+    >
       {children}
-    </div>
+    </MarkdownCodeBlockFrame>
   );
 }
 
@@ -2645,6 +2704,7 @@ function useChatMarkdownState({
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
+    if (parseThreadLinkHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -3107,6 +3167,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
+    // A thread link names a thread in this message's environment and opens it in the app.
+    const linkedThreadId = href ? parseThreadLinkHref(href) : null;
+    if (linkedThreadId) {
+      const label = hastPlainTextDeep(node) || linkedThreadId;
+      return environmentId ? (
+        <MarkdownThreadLink environmentId={environmentId} threadId={linkedThreadId} label={label} />
+      ) : (
+        <span>{label}</span>
+      );
+    }
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;

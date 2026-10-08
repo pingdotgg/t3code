@@ -10,6 +10,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import {
+  CalendarDaysIcon,
   CircleAlertIcon,
   ChevronDownIcon,
   CircleDashedIcon,
@@ -358,8 +359,8 @@ export function UsagePage() {
   }, [showingLimits, connectedLimitsEnvironments]);
 
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:flex">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="col-span-2 min-w-0">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 xl:flex">
+      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
@@ -431,14 +432,13 @@ export function UsagePage() {
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
-      <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
+      <div className="ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
         {!showingLimits ? (
-          <span className="me-auto min-w-0 truncate text-xs">
-            <UsageRangePicker
-              window={window}
-              onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
-            />
-          </span>
+          <UsageRangePicker
+            compact
+            window={window}
+            onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
+          />
         ) : null}
         <Select
           value={metric}
@@ -536,9 +536,7 @@ export function UsagePage() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron} className="h-auto">
-          {topbarContent}
-        </WorkspacePageHeader>
+        <WorkspacePageHeader electron={isElectron}>{topbarContent}</WorkspacePageHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
@@ -660,13 +658,18 @@ export function UsagePage() {
   );
 }
 
-/** The shown range, which opens to pick exact days. */
+/**
+ * The shown range, which opens to pick exact days. Compact, for the one-row
+ * header on narrow windows, it is a calendar button named after the range.
+ */
 function UsageRangePicker({
   window,
   onChange,
+  compact = false,
 }: {
   readonly window: UsageSummaryInput;
   readonly onChange: (sinceDay: string, untilDay: string) => void;
+  readonly compact?: boolean;
 }) {
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: window.timeZone,
@@ -688,10 +691,20 @@ function UsageRangePicker({
         setUntil(window.untilDay);
       }}
     >
-      <PopoverTrigger render={<InlineButton tone="muted" />} aria-label="Choose dates">
-        {formatWindow(window)}
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="start">
+      {compact ? (
+        <PopoverTrigger
+          render={<Button size="icon-sm" variant="ghost" />}
+          aria-label={`Choose dates, now ${formatWindow(window)}`}
+          title={formatWindow(window)}
+        >
+          <CalendarDaysIcon aria-hidden />
+        </PopoverTrigger>
+      ) : (
+        <PopoverTrigger render={<InlineButton tone="muted" />} aria-label="Choose dates">
+          {formatWindow(window)}
+        </PopoverTrigger>
+      )}
+      <PopoverPopup side="bottom" align={compact ? "end" : "start"}>
         <form
           className="flex flex-col gap-3"
           onSubmit={(event) => {
