@@ -31,6 +31,7 @@ const workspaceFiles = [
   "packages/provider-core/package.json",
   "packages/provider-testing/package.json",
   "packages/provider-pi/package.json",
+  "packages/provider-muse/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",

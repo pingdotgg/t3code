@@ -1,14 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
-import { MuseSettings } from "@t3tools/contracts";
+import { MuseSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { MuseSdkHost } from "./museSdk.ts";
+import type { MuseSdkHost } from "./sdk.ts";
 import {
   discoverMuseModels,
   museModelCapabilities,
   resolveMuseReasoningEffort,
-} from "./museModelCatalog.ts";
+} from "./modelCatalog.ts";
 
 const settings = Schema.decodeSync(MuseSettings)({});
 const host = (catalog: Record<string, unknown>): MuseSdkHost => ({

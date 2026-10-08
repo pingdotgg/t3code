@@ -5,7 +5,6 @@ import {
   MUSE_DEFAULT_MODEL,
   EnvironmentId,
   MessageId,
-  MuseSettings,
   NodeId,
   ProjectId,
   ProviderInstanceId,
@@ -19,6 +18,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -31,10 +31,11 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as ServerConfig from "../../config.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import type { MuseItem } from "../../provider/museProtocol.ts";
-import type { MuseSdkHost } from "../../provider/museSdk.ts";
+import type { MuseItem } from "./protocol.ts";
+import type { MuseSdkHost } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -42,14 +43,12 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
-import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./MuseAdapterV2.ts";
+import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-muse-v2-adapter-" }).pipe(
-    Layer.provide(NodeServices.layer),
-  ),
+  layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
 );
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const INSTANCE_ID = ProviderInstanceId.make("muse_work");
@@ -205,7 +204,7 @@ const makeHarness = Effect.fnUntraced(function* (
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
     idAllocator: yield* IdAllocator.IdAllocatorV2,
-    serverConfig: yield* ServerConfig.ServerConfig,
+    host: yield* ProviderHost,
     fileSystem: yield* FileSystem.FileSystem,
     createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
     ...overrides,
@@ -437,7 +436,7 @@ describe("MuseAdapterV2", () => {
           settings: museSettings,
           environment: { PATH: "/fake/bin" },
           idAllocator: yield* IdAllocator.IdAllocatorV2,
-          serverConfig: yield* ServerConfig.ServerConfig,
+          host: yield* ProviderHost,
           fileSystem: yield* FileSystem.FileSystem,
           createHost: async () => fake.host,
         });

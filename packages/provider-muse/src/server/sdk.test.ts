@@ -9,7 +9,7 @@ import {
   makeMuseEnvironment,
   museApprovalMode,
   type MuseSdkHost,
-} from "./museSdk.ts";
+} from "./sdk.ts";
 
 vi.mock("@muse-code/sdk", () => ({ spawnMspConnection: vi.fn() }));
 

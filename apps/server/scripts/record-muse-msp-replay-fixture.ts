@@ -33,8 +33,11 @@ import {
   MuseOrchestratorReplayHarness,
 } from "../src/orchestration-v2/Adapters/MuseAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { parseMuseVersion } from "../src/provider/museMaintenance.ts";
-import { makeMuseEnvironment, museServeArgs } from "../src/provider/museSdk.ts";
+import {
+  makeMuseEnvironment,
+  museServeArgs,
+  parseMuseVersion,
+} from "@t3tools/provider-muse/testing";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
