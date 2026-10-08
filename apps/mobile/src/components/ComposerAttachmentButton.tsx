@@ -1,5 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
+import { KeyboardController } from "react-native-keyboard-controller";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { SymbolView } from "./AppSymbol";
@@ -49,6 +50,8 @@ export function ComposerAttachmentButton(props: {
       accessible
       accessibilityLabel="Add attachment"
       accessibilityRole="button"
+      // The native editor is outside React Native's TextInput focus registry.
+      onMenuInteractionStart={() => void KeyboardController.dismiss({ animated: false })}
       actions={ATTACHMENT_MENU_ACTIONS.filter((action) =>
         action.id === "files"
           ? props.supportsFiles
