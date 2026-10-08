@@ -973,8 +973,8 @@ describe("MessagesTimeline", () => {
     ).toBe(100);
     // Comfortable width: the column is capped at 768px.
     expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter(855, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(856, 768)).toBe(true);
     // Wider Chat width settings consume the gutter the minimap relies on.
     expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
     expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);

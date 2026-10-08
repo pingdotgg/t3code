@@ -288,7 +288,8 @@ export function workEntryIsVisibleInGroup(
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
-const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+// Matches the chat lane padding from `sm` up, so a full-width column keeps the minimap.
+const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 44;
 
 export interface WorkGroupScrollAnchor {
   readonly entryId: string;
