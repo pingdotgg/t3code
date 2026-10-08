@@ -28,16 +28,7 @@ function loadNativeMap(): ComponentType<NativeMapProps> | null {
   }
 }
 
-export function LocationMapPreview(props: LocationMapPreviewProps) {
-  return (
-    <MapPreview
-      key={`${props.location.latitude}:${props.location.longitude}:${props.appearance}`}
-      {...props}
-    />
-  );
-}
-
-function MapPreview({ location, appearance }: LocationMapPreviewProps) {
+export function LocationMapPreview({ location, appearance }: LocationMapPreviewProps) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     NativeMap ? "loading" : "error",
   );
