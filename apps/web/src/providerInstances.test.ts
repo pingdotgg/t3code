@@ -143,7 +143,6 @@ describe("applyProviderInstanceSettings", () => {
           enabled: false,
         },
       },
-      providers: {} as never,
     });
 
     expect(entry?.enabled).toBe(false);
@@ -158,7 +157,6 @@ describe("applyProviderInstanceSettings", () => {
     ]);
     const [entry] = applyProviderInstanceSettings(entries, {
       providerInstances: {},
-      providers: {} as never,
     });
 
     expect(entry?.enabled).toBe(false);
@@ -175,7 +173,6 @@ describe("applyProviderInstanceSettings", () => {
       ]);
       const [entry] = applyProviderInstanceSettings(entries, {
         providerInstances: {},
-        providers: {} as never,
       });
 
       expect(entry?.enabled).toBe(false);
@@ -197,7 +194,6 @@ describe("applyProviderInstanceSettings", () => {
           enabled: false,
         },
       },
-      providers: {} as never,
     });
 
     expect(entry?.enabled).toBe(false);
@@ -213,26 +209,22 @@ describe("applyProviderInstanceSettings", () => {
     ]);
     const [entry] = applyProviderInstanceSettings(entries, {
       providerInstances: {},
-      providers: {} as never,
     });
 
     expect(entry?.isDefault).toBe(true);
     expect(entry?.enabled).toBe(false);
   });
 
-  it("uses legacy settings for a built-in default instance", () => {
+  it("uses the driver default for an unconfigured built-in default instance", () => {
     const entries = deriveProviderInstanceEntries([
-      provider({
-        provider: ProviderDriverKind.make("codex"),
-        instanceId: "codex",
-      }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex", enabled: false }),
+      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok", enabled: true }),
     ]);
-    const [entry] = applyProviderInstanceSettings(entries, {
-      providerInstances: {},
-      providers: { codex: { enabled: false } } as never,
-    });
+    const [codex, grok] = applyProviderInstanceSettings(entries, { providerInstances: {} });
 
-    expect(entry?.enabled).toBe(false);
+    // Settings decide over a stale probe: Codex starts on, Grok starts off.
+    expect(codex?.enabled).toBe(true);
+    expect(grok?.enabled).toBe(false);
   });
 });
 
@@ -261,7 +253,6 @@ describe("deriveProviderEntriesByEnvironment", () => {
             agentId,
             [snapshot],
             {
-              providers: {} as never,
               providerInstances: {
                 [instanceId]: {
                   driver: ProviderDriverKind.make("acpRegistry"),
@@ -629,7 +620,6 @@ describe("provider icon metadata", () => {
     const registryConfig = { agentId: "swe-agent", registryIconUrl: iconUrl };
     const brandedEntries = applyProviderInstanceSettings(snapshots, {
       providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
-      providers: {} as never,
     });
     expect(brandedEntries[0]?.acpRegistryAgentId).toBe("swe-agent");
     expect(brandedEntries[0]?.acpRegistryIconUrl).toBe(iconUrl);
@@ -642,7 +632,6 @@ describe("provider icon metadata", () => {
           config: { ...registryConfig, source: "local", commandPath: "dsh" },
         },
       },
-      providers: {} as never,
     });
     expect(localEntry?.acpRegistryAgentId).toBeUndefined();
     expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
@@ -651,7 +640,6 @@ describe("provider icon metadata", () => {
 
     const [restoredEntry] = applyProviderInstanceSettings(localEntry ? [localEntry] : [], {
       providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
-      providers: {} as never,
     });
     expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
     expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);

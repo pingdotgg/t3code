@@ -31,12 +31,12 @@ import { OPENCODE_PROVIDER } from "./Adapters/OpenCodeAdapterV2.ts";
 import { provideDeterministicTestRuntime } from "./testkit/DeterministicRuntime.ts";
 import type { OrchestratorV2ScenarioStep } from "./testkit/OrchestratorScenario.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   decodeProviderReplayNdjson,
   readProviderReplayTranscript,
-} from "./testkit/ReplayTranscriptNdjson.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+} from "@t3tools/provider-testing/replayTranscript";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 /** Held until the scenario releases it, so the turn is still running meanwhile. */

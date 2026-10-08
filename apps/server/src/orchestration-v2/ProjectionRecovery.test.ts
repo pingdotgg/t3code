@@ -231,7 +231,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
     const now = yield* DateTime.now;
     const parent = yield* createThread("subagent-parent");
     const children: Array<ThreadId> = [];
-    for (const name of ["terminal", "archived", "deleted", "running"]) {
+    for (const name of ["terminal", "archived", "deleted", "running", "held", "queued"]) {
       const child = yield* createThread(`subagent-${name}`, {
         lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
         forkedFrom: { type: "node", nodeId: NodeId.make(`node:${name}`) },
@@ -239,12 +239,22 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
         deletedAt: name === "deleted" ? now : null,
       });
       yield* createRun(child, name === "running" ? "running" : "completed");
+      // A wake queued behind the result: held by Stop or a restart, or still deliverable.
+      if (name === "held" || name === "queued") {
+        yield* createRun(child, "queued", {
+          ordinal: 2,
+          startedAt: null,
+          ...(name === "held" ? { queueHeld: true } : {}),
+        });
+      }
       children.push(child);
     }
+    const terminalChildren = new Set([children[0]!, children[1]!, children[4]!]);
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
-      new Set(children.slice(0, 2)),
+      terminalChildren,
     );
+
     const completed = children[0]!;
     const transferId = ContextTransferId.make("transfer:recovery:subagent-result");
     yield* projections.apply({
@@ -273,7 +283,10 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
     });
     const archivedChild = children[1];
     assert.isDefined(archivedChild);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [archivedChild]);
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+      new Set([archivedChild, children[4]!]),
+    );
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
     yield* sql`
       UPDATE orchestration_v2_projection_context_transfers SET payload_json = '{}'

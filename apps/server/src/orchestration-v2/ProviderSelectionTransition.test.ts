@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
-import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";
+import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 
 const selection = (model: string, effort = "medium"): ModelSelection => ({
   instanceId: ProviderInstanceId.make("acp_test"),

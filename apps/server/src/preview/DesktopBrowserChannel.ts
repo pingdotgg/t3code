@@ -55,6 +55,8 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     /** Desktop tabs as they detach. */
     readonly detached: Stream.Stream<DesktopTabKey>;
+    /** Desktop tabs as they attach, including a tab coming back after its DevTools close. */
+    readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /** The latest page-load failure the desktop reported for an attached tab. */
     readonly loadFailure: (
@@ -89,6 +91,7 @@ const make = Effect.gen(function* () {
       available: false,
       awaitAttached: () => Effect.succeed(false),
       detached: Stream.empty,
+      attached: Stream.empty,
       isAttached: () => Effect.succeed(false),
       loadFailure: () => Effect.succeedNone,
       endpoint: () => Effect.die("No desktop app is attached to this server."),
@@ -231,6 +234,10 @@ const make = Effect.gen(function* () {
       ),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
+      Stream.map((change) => change.key),
+    ),
+    attached: Stream.fromPubSub(changes).pipe(
+      Stream.filter((change) => change.attached),
       Stream.map((change) => change.key),
     ),
     isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),

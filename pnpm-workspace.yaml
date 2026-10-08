@@ -56,6 +56,19 @@ catalog:
   vite-plus: 1.0.0
   ws: 8.22.0
   yaml: ^2.9.0
+  # Markdown pipeline: the server counts find matches with the same parser the
+  # web renders with, so both must resolve to one version.
+  mdast-util-directive: 3.1.0
+  micromark-extension-directive: 4.0.0
+  micromark-util-character: 2.1.1
+  micromark-util-types: 2.0.2
+  rehype-raw: 7.0.0
+  rehype-sanitize: 6.0.0
+  remark-breaks: 4.0.0
+  remark-gfm: 4.0.1
+  remark-parse: 11.0.0
+  remark-rehype: 11.1.2
+  unified: 11.0.5
 
 minimumReleaseAgeExclude:
   - expo-glass-effect@58.0.3
@@ -117,7 +130,7 @@ minimumReleaseAgeExclude:
   - expo-sharing@58.0.13
   - expo-sqlite@58.0.8
   - expo-symbols@58.0.3
-  - electron@44.4.2
+  - electron@44.4.5
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
   - "@alchemy.run/cloudflare-runtime@2.0.0-beta.80"
   - "@alchemy.run/floci@2.0.0-beta.80"
@@ -284,7 +297,8 @@ patchedDependencies:
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
-  react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
+  # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
+  react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
 
 peerDependencyRules:
   allowAny:

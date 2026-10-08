@@ -743,6 +743,10 @@ export function createVividThemeColors(
   const mutedForeground = themeRgbToThemeColor(readableThemeText(mutedRgb, textRgb, 1, 4.6));
   const placeholder = themeRgbToThemeColor(readableThemeText(surfaceRaisedRgb, textRgb, 1, 4.6));
 
+  // Keep matches visible even when an imported theme has no accent colour.
+  const searchMatch = themeOklchToRgb(surfaceAt(0.22, Math.min(0.12, accent.C)));
+  const searchMatchActive = themeOklchToRgb(surfaceAt(0.4, Math.min(0.18, accent.C)));
+
   const actionHover: ThemeOklch = { ...action, L: action.L + (dark ? 0.06 : -0.06) };
 
   return {
@@ -786,6 +790,10 @@ export function createVividThemeColors(
     messageActionHover: themeColor(actionHover),
     codeBackground: themeColor(codeBackground),
     codeForeground: themeRgbToThemeColor(textRgb),
+    searchMatchBackground: themeRgbToThemeColor(searchMatch),
+    searchMatchForeground: themeRgbToThemeColor(readableThemeForeground(searchMatch)),
+    searchMatchActiveBackground: themeRgbToThemeColor(searchMatchActive),
+    searchMatchActiveForeground: themeRgbToThemeColor(readableThemeForeground(searchMatchActive)),
     sidebar: themeColor(sidebar),
     sidebarForeground: foregroundOn(sidebarRgb),
     sidebarMutedForeground: themeRgbToThemeColor(standardMutedThemeText(sidebarRgb, textRgb)),
@@ -1004,6 +1012,18 @@ export function updateThemeColorFamily(
         ...colors,
         messageSurface: normalized,
         messageForeground: foregroundOn(selectedOnCanvas),
+      };
+    case "searchMatchBackground":
+      return {
+        ...colors,
+        searchMatchBackground: colorOf(selectedOnCanvas),
+        searchMatchForeground: foregroundOn(selectedOnCanvas),
+      };
+    case "searchMatchActiveBackground":
+      return {
+        ...colors,
+        searchMatchActiveBackground: colorOf(selectedOnCanvas),
+        searchMatchActiveForeground: foregroundOn(selectedOnCanvas),
       };
     case "codeBackground":
       return {
@@ -1469,6 +1489,10 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   messageActionHover: "--app-theme-message-action-hover",
   codeBackground: "--app-theme-code-background",
   codeForeground: "--app-theme-code-foreground",
+  searchMatchBackground: "--app-theme-search-match-background",
+  searchMatchForeground: "--app-theme-search-match-foreground",
+  searchMatchActiveBackground: "--app-theme-search-match-active-background",
+  searchMatchActiveForeground: "--app-theme-search-match-active-foreground",
   sidebar: "--app-theme-sidebar",
   sidebarForeground: "--app-theme-sidebar-foreground",
   sidebarMutedForeground: "--app-theme-sidebar-muted-foreground",

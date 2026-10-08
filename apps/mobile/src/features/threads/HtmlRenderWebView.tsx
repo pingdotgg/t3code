@@ -51,20 +51,26 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-// Reports whether the page overflows its frame, so a feed row only takes scroll
-// gestures from a page that can use them.
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var o=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1||Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},overflow:o}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
+// Reports which ways the page overflows its frame, so a feed row only takes
+// scroll gestures from a page that can use them.
+const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
 
-function readOverflowMessage(data: string) {
+type Overflow = { readonly x: boolean; readonly y: boolean };
+
+const NO_OVERFLOW: Overflow = { x: false, y: false };
+
+function readOverflowMessage(data: string): Overflow | null {
   try {
     const message: unknown = JSON.parse(data);
     return typeof message === "object" &&
       message !== null &&
       "type" in message &&
       message.type === OVERFLOW_MESSAGE_TYPE &&
-      "overflow" in message &&
-      typeof message.overflow === "boolean"
-      ? message.overflow
+      "x" in message &&
+      typeof message.x === "boolean" &&
+      "y" in message &&
+      typeof message.y === "boolean"
+      ? { x: message.x, y: message.y }
       : null;
   } catch {
     return null;
@@ -88,7 +94,7 @@ export function HtmlRenderWebView(props: {
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
+  const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
   // The theme the loaded document shows; null until it loads.
@@ -111,10 +117,10 @@ export function HtmlRenderWebView(props: {
     }
     shownTheme.current = null;
     setLoaded(false);
-    setOverflows(false);
+    setOverflow(NO_OVERFLOW);
     setGeneration((value) => value + 1);
   };
-  const scrollable = !props.nested || overflows;
+  const scrollable = !props.nested || overflow.x || overflow.y;
   // Pages have no horizontal padding of their own, so full screen adds the
   // feed's gutter in the page's background color.
   return (
@@ -141,7 +147,10 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        nestedScrollEnabled={props.nested && overflows}
+        // Android only: the page holds vertical drags until it reaches an edge,
+        // then hands them to the feed (patches/react-native-webview). A page
+        // that only overflows sideways leaves vertical drags to the feed.
+        nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
         // Only the page itself loads here; other top-frame navigations are
         // dropped. A link the reader taps opens as a new window, which the
@@ -167,8 +176,8 @@ export function HtmlRenderWebView(props: {
           ? {
               injectedJavaScript: OVERFLOW_SCRIPT,
               onMessage: (event: WebViewMessageEvent) => {
-                const overflow = readOverflowMessage(event.nativeEvent.data);
-                if (overflow !== null) setOverflows(overflow);
+                const next = readOverflowMessage(event.nativeEvent.data);
+                if (next !== null) setOverflow(next);
               },
             }
           : {})}
