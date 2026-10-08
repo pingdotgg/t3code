@@ -265,7 +265,7 @@ patchedDependencies:
   "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch
   expo-sharing@58.0.13: patches/expo-sharing@58.0.13.patch
   expo-widgets@58.0.11: patches/expo-widgets@58.0.11.patch
-  "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
+  "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   "@opencode/client@2.0.23": patches/@opencode__client@2.0.23.patch
   "@opencode/protocol@2.0.23": patches/@opencode__protocol@2.0.23.patch
