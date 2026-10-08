@@ -173,6 +173,7 @@ export default defineConfig({
       "t3code/no-unscoped-has": "error",
       "t3code/namespace-node-imports": "error",
       "t3code/prefer-catch-tags": "error",
+      "t3code/require-centered-scroll-gutter": "error",
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
