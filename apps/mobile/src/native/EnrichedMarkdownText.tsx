@@ -104,6 +104,7 @@ function enrichedStyle(
     blockquote: {
       ...body,
       color: style.mutedColor,
+      backgroundColor: "transparent",
       borderColor: style.quoteMarkerColor,
       borderWidth: 2,
       gapWidth: 12,
