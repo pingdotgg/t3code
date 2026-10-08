@@ -1,3 +1,4 @@
+import { preserveRunRecordedFields } from "@t3tools/shared/orchestrationV2RunProjection";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
@@ -187,7 +188,17 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {
-      const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
+      const next = {
+        ...base,
+        runs: upsertEntity(
+          base.runs,
+          preserveRunRecordedFields(
+            base.runs.find((run) => run.id === event.payload.id),
+            event.payload,
+            base.attempts,
+          ),
+        ),
+      };
       return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
     }
     case "run.background-work-cancelled":
