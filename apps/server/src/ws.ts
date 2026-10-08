@@ -125,6 +125,7 @@ import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
+  archivedShellStream,
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
@@ -1775,36 +1776,36 @@ const layerWsRpc = (
         "ws.orchestrationV2.subscribeArchivedShell",
       )(function* () {
         const snapshot = yield* getOrchestrationV2ArchivedShellSnapshot;
-        const live = threadManagement
-          .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
-          .pipe(
-            Stream.groupedWithin(512, Duration.millis(50)),
-            Stream.mapEffect((events) =>
-              Effect.forEach(
-                coalesceStoredThreadEvents(Array.from(events)),
-                (stored) =>
-                  threadManagement
-                    .getThreadShell(stored.event.threadId)
-                    .pipe(
-                      Effect.map((shell) =>
-                        archivedShellStreamItemFromThreadShell({ stored, shell }),
+        return archivedShellStream({
+          snapshot,
+          loadSnapshot: getOrchestrationV2ArchivedShellSnapshot,
+          batchesFrom: (afterSequence) =>
+            threadManagement.streamStoredEventsFrom({ afterSequence }).pipe(
+              Stream.groupedWithin(512, Duration.millis(50)),
+              Stream.mapEffect((events) =>
+                Effect.forEach(
+                  coalesceStoredThreadEvents(Array.from(events)),
+                  (stored) =>
+                    threadManagement
+                      .getThreadShell(stored.event.threadId)
+                      .pipe(
+                        Effect.map((shell) =>
+                          archivedShellStreamItemFromThreadShell({ stored, shell }),
+                        ),
                       ),
-                    ),
-                { concurrency: 8 },
+                  { concurrency: 8 },
+                ).pipe(Effect.map((items) => items.filter((item) => item !== null))),
               ),
             ),
-            Stream.flatMap(Stream.fromIterable),
-            Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
-            (stream) => bufferLiveStream(stream),
-            Stream.mapError(
-              (cause) =>
-                new OrchestrationV2GetShellSnapshotError({
-                  message: "Failed while streaming archived threads",
-                  cause,
-                }),
-            ),
-          );
-        return Stream.concat(rpcInitialItems([{ kind: "snapshot" as const, snapshot }]), live);
+        }).pipe(
+          Stream.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed while streaming archived threads",
+                cause,
+              }),
+          ),
+        );
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
