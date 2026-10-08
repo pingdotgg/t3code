@@ -591,6 +591,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Snooze limited threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.filePathChips !== DEFAULT_UNIFIED_SETTINGS.filePathChips
+        ? ["File path chips"]
+        : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
         ? ["Composer context"]
@@ -719,6 +722,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
+      settings.filePathChips,
       followSystem,
       theme,
       themeHalves,
@@ -795,6 +799,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      filePathChips: DEFAULT_UNIFIED_SETTINGS.filePathChips,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1736,6 +1741,34 @@ function WordWrapRow() {
   );
 }
 
+function FilePathChipsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("file-path-chips")}
+      description="Show file paths in agent messages as chips you can click to open. Turn off to show them as plain text."
+      resetAction={
+        settings.filePathChips !== DEFAULT_UNIFIED_SETTINGS.filePathChips ? (
+          <SettingResetButton
+            label="file path chips"
+            onClick={() =>
+              updateSettings({ filePathChips: DEFAULT_UNIFIED_SETTINGS.filePathChips })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.filePathChips}
+          onCheckedChange={(checked) => updateSettings({ filePathChips: Boolean(checked) })}
+          aria-label="Show file paths in agent messages as chips"
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1834,6 +1867,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <FilePathChipsRow />
     </SettingsSection>
   );
 }

@@ -280,6 +280,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "file-path-chips",
+    title: "File path chips",
+    to: "/settings/appearance",
+    searchTerms: ["file links badges paths backticks inline code chat messages"],
+  },
+  {
     id: "composer-context",
     title: "Composer context",
     to: "/settings/appearance",
