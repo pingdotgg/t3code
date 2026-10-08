@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 vi.mock("~/components/files/projectFilesQueryState", () => ({
   getProjectFileQueryAtom: vi.fn(),
@@ -28,10 +28,7 @@ describe("readT3ProjectFile", () => {
     vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
     vi.mocked(getProjectFileQueryAtom).mockReturnValue(Atom.make(Effect.never));
 
-    const pending = readT3ProjectFile(
-      EnvironmentId.make("remote"),
-      "/remote/project",
-    );
+    const pending = readT3ProjectFile(EnvironmentId.make("remote"), "/remote/project");
     // Fire the deadline deterministically; executeAtomQuery still uses the
     // real registry and interruptible query wait.
     deadline.abort();
