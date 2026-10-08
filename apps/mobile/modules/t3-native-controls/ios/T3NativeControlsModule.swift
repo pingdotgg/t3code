@@ -9,6 +9,7 @@ public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
   private var videoPresentation: T3NativeVideoPresentation?
   private var filePresentation: T3NativeFilePresentation?
+  private var locationMapSnapshots: [String: T3LocationMapSnapshot] = [:]
 
   public func definition() -> ModuleDefinition {
     Constants {
@@ -22,19 +23,27 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
 
-    View(T3LocationMapView.self) {
-      ViewName("LocationMap")
-      Events("onStatusChange")
-      Prop("latitude") { (view: T3LocationMapView, value: Double) in
-        view.latitude = value
+    AsyncFunction("createLocationMapSnapshot") { (identifier: String, latitude: Double, longitude: Double, width: Double, appearance: String, promise: Promise) in
+      self.locationMapSnapshots[identifier]?.cancel()
+      let snapshot = try T3LocationMapSnapshot(
+        latitude: latitude,
+        longitude: longitude,
+        width: width,
+        appearance: appearance
+      ) { [weak self] result in
+        self?.locationMapSnapshots.removeValue(forKey: identifier)
+        switch result {
+        case .success(let image): promise.resolve(image)
+        case .failure(let error): promise.reject(error)
+        }
       }
-      Prop("longitude") { (view: T3LocationMapView, value: Double) in
-        view.longitude = value
-      }
-      Prop("appearance") { (view: T3LocationMapView, value: String) in
-        view.appearance = value
-      }
-    }
+      self.locationMapSnapshots[identifier] = snapshot
+      snapshot.start()
+    }.runOnQueue(.main)
+
+    AsyncFunction("cancelLocationMapSnapshot") { (identifier: String) in
+      self.locationMapSnapshots[identifier]?.cancel()
+    }.runOnQueue(.main)
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
@@ -57,6 +66,8 @@ public final class T3NativeControlsModule: Module {
       DispatchQueue.main.async {
         presentation?.dismiss()
         file?.dismiss()
+        for snapshot in Array(self.locationMapSnapshots.values) { snapshot.cancel() }
+        self.locationMapSnapshots.removeAll()
       }
     }
 
