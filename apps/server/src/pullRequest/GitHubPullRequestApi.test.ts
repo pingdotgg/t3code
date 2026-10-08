@@ -15,7 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { AllowGitHubReserve } from "../sourceControl/GitHubApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
-import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
+import * as GitHubQuota from "../sourceControl/githubQuota.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
@@ -69,26 +69,29 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
 );
 
 /**
- * A transport that answers from the mocks above but spends the real GraphQL budget, the way
- * GitHubApi does, so the reserve and pause behaviour is still the module's to prove.
+ * A transport that answers from the mocks above but spends the real GraphQL quota from each
+ * answer's headers, the way GitHubApi does, so the reserve behaviour is still the module's to prove.
  */
 const mockApi = Layer.effect(
   GitHubApi.GitHubApi,
   Effect.gen(function* () {
-    const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+    const quota = yield* GitHubQuota.GitHubQuota;
     return GitHubApi.GitHubApi.of({
       graphql: (input) =>
-        budget
-          .query(input.host, input.query, input.allowReserve ? { allowReserve: true } : undefined)
-          .pipe(
-            Effect.flatMap((query) =>
-              (input.query.includes("query PullRequestStackMemberships")
-                ? mockedStackMemberships
-                : mockedExecute)({ kind: "graphql", ...input, query }),
-            ),
-            Effect.map((answer) => answer.body),
-            Effect.tap((body) => budget.observe(input.host, body)),
+        GitHubApi.AllowGitHubReserve.pipe(
+          Effect.flatMap((interactive) =>
+            quota.admit(input.host, "graphql", {
+              allowReserve: input.allowReserve ?? interactive,
+            }),
           ),
+          Effect.andThen(() =>
+            (input.query.includes("query PullRequestStackMemberships")
+              ? mockedStackMemberships
+              : mockedExecute)({ kind: "graphql", ...input }),
+          ),
+          Effect.tap((answer) => quota.observe(input.host, answer.headers)),
+          Effect.map((answer) => answer.body),
+        ),
       rest: (input) => mockedExecute({ kind: "rest", ...input }),
       credential: (host) => mockedCredential(host),
     });
@@ -98,7 +101,7 @@ const mockApi = Layer.effect(
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
     Layer.provideMerge(mockApi),
-    Layer.provideMerge(GitHubGraphQlBudget.layer),
+    Layer.provideMerge(GitHubQuota.layer),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   ),
@@ -109,8 +112,19 @@ function output(
   body: string,
   truncated = false,
   invalidUtf8 = false,
+  headers: Readonly<Record<string, string>> = {},
 ): GitHubApi.GitHubRestResponse {
-  return { status: 200, headers: {}, body, truncated, invalidUtf8 };
+  return { status: 200, headers, body, truncated, invalidUtf8 };
+}
+
+/** GitHub's GraphQL quota headers, leaving `remaining` of 5,000 until `resetAt`. */
+function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
+  return {
+    "x-ratelimit-resource": "graphql",
+    "x-ratelimit-limit": "5000",
+    "x-ratelimit-remaining": String(remaining),
+    "x-ratelimit-reset": String(Date.parse(resetAt) / 1000),
+  };
 }
 
 /**
@@ -493,7 +507,7 @@ it.effect(
         Effect.provide(
           GitHubApi.layer.pipe(
             Layer.provide(Layer.mergeAll(credentials, http)),
-            Layer.provide(GitHubGraphQlBudget.layer),
+            Layer.provide(GitHubQuota.layer),
             Layer.provide(SourceControlRateLimit.layer),
             Layer.merge(VcsProcess.layer),
             Layer.provideMerge(NodeServices.layer),
@@ -538,15 +552,13 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
-  it.effect("admits only one concurrent preview above the reserve and resumes after reset", () =>
+  it.effect("holds background previews once an answer reports the reserve, until it resets", () =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const quota = yield* GitHubQuota.GitHubQuota;
       const resetAt = "2099-08-13T14:00:00Z";
-      yield* budget.observe(
-        "preview-budget.example",
-        encodeJson({ data: { rateLimit: { cost: 1, limit: 5_000, remaining: 501, resetAt } } }),
-      );
+      yield* quota.observe("preview-budget.example", graphqlQuota(501, resetAt));
+      // GitHub's count, not ours: the answer below reports the reserve has been reached.
       mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
@@ -563,9 +575,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     author: null,
                   },
                 },
-                rateLimit: { cost: 1, limit: 5_000, remaining: 500, resetAt },
               },
             }),
+            false,
+            false,
+            graphqlQuota(499, resetAt),
           ),
         ),
       );
@@ -576,18 +590,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         host: "preview-budget.example",
         number: 7,
       };
-      const results = yield* Effect.all(
-        Array.from({ length: 20 }, (_, index) =>
-          cli.getPullRequestPreview({ ...input, number: index + 1 }).pipe(Effect.result),
-        ),
-        { concurrency: "unbounded" },
-      );
-      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
-      for (const result of results) {
-        if (result._tag === "Failure") {
-          expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
-        }
-      }
+      yield* cli.getPullRequestPreview(input);
+      const held = yield* Effect.flip(cli.getPullRequestPreview({ ...input, number: 8 }));
+      expect(held._tag).toBe("SourceControlRateLimitPausedError");
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       yield* TestClock.setTime(Date.parse(resetAt));
       yield* cli.getPullRequestPreview(input);
@@ -3220,7 +3225,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("accounts for the avatar lookup in the GraphQL budget", () =>
+  it.effect("looks up avatars by node id in one GraphQL read", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -3228,12 +3233,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson({
               data: {
                 nodes: [{ login: "octocat", avatarUrl: "https://avatars/octocat" }],
-                rateLimit: {
-                  cost: 1,
-                  limit: 5_000,
-                  remaining: 4_999,
-                  resetAt: "2099-08-13T14:00:00Z",
-                },
               },
             }),
           ),
@@ -3249,7 +3248,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(varsAt(0)).toEqual({ ids: ["MDQ6VXNlcjE="] });
-      expect(queryAt(0)).toContain("rateLimit { cost limit remaining resetAt }");
       expect(avatars.get("octocat")).toBe("https://avatars/octocat");
     }),
   );
@@ -3852,22 +3850,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       const response = coreResponse();
       mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            encodeJson({
-              ...response,
-              data: {
-                ...response.data,
-                rateLimit: {
-                  cost: 1,
-                  limit: 5000,
-                  remaining: 500,
-                  resetAt: "2099-08-13T14:00:00Z",
-                },
-              },
-            }),
-          ),
-        ),
+        Effect.succeed(output(encodeJson(response), false, false, graphqlQuota(499))),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const input = {
@@ -4125,14 +4108,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   viewerPermission: "READ",
                   pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                 },
-                rateLimit: {
-                  cost: 1,
-                  limit: 5_000,
-                  remaining: 500,
-                  resetAt: "2099-08-13T14:00:00Z",
-                },
               },
             }),
+            false,
+            false,
+            graphqlQuota(499),
           ),
         ),
       );
@@ -4145,7 +4125,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       } as const;
 
       yield* cli.getViewerAccess(input);
-      expect(queryAt(0)).toContain("rateLimit { cost limit remaining resetAt }");
 
       const error = yield* Effect.flip(cli.getViewerAccess(input));
 
@@ -4173,14 +4152,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     viewerPermission: "READ",
                     pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
-                  rateLimit: {
-                    cost: 1,
-                    limit: 5_000,
-                    remaining: 500,
-                    resetAt: "2099-08-13T14:00:00Z",
-                  },
                 },
               }),
+              false,
+              false,
+              graphqlQuota(499),
             ),
           ),
         )
