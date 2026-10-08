@@ -14,6 +14,7 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
+import type { MorningBriefPromptGroup } from "./TextGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -76,6 +77,18 @@ export interface ThreadTitleGenerationInput {
   modelSelection: ModelSelection;
 }
 
+export interface MorningBriefGenerationInput {
+  cwd: string;
+  groups: ReadonlyArray<MorningBriefPromptGroup>;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface MorningBriefGenerationResult {
+  /** One line per group key the model answered. */
+  lines: ReadonlyMap<string, string>;
+}
+
 export interface ThreadTitleGenerationResult {
   title: string;
   needsRefinement?: boolean | undefined;
@@ -112,6 +125,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Write one brief line per group of threads that ended while the owner was away. */
+    readonly generateMorningBrief: (
+      input: MorningBriefGenerationInput,
+    ) => Effect.Effect<MorningBriefGenerationResult, TextGenerationError>;
   }
 >()("cz/textGeneration/TextGeneration") {}
 
@@ -119,7 +137,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateMorningBrief";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -171,6 +190,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    generateMorningBrief: (input) =>
+      resolveInstance(registry, "generateMorningBrief", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateMorningBrief(input)),
       ),
   });
 });

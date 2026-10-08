@@ -76,11 +76,24 @@ const hostLoadSamples = Effect.gen(function* () {
   `;
 });
 
+/** When the owner last looked at the brief, and the brief last written (MorningBriefService). */
+const briefState = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS brief_state (
+      name TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `;
+});
+
 const loader = Migrator.fromRecord({
   "1_DecisionItems": decisionItems,
   "2_QueuedRuns": queuedRuns,
   "3_ProjectBlurbs": projectBlurbs,
   "4_HostLoadSamples": hostLoadSamples,
+  "5_BriefState": briefState,
 });
 
 /** Brings `cz.sqlite` up to date. Needs the fork SqlClient. */

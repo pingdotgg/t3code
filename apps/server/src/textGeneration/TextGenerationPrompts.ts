@@ -344,3 +344,48 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Morning brief
+// ---------------------------------------------------------------------------
+
+export interface MorningBriefPromptGroup {
+  /** Echoed back so each line lands on its group. */
+  readonly key: string;
+  readonly kind: "done" | "failed" | "stopped";
+  /** The project for done work, the cause for failures. */
+  readonly label: string;
+  readonly threads: ReadonlyArray<{
+    readonly title: string;
+    /** The agent's last message, or the error for a failed run. */
+    readonly result: string;
+  }>;
+}
+
+const MORNING_BRIEF_PROMPT = `You write the owner's brief: what their coding agents did while they were away. They read it on a phone in about 20 seconds.
+Return JSON {"lines":[{"key":"...","text":"..."}]} with exactly one line per group below, using each group's key.
+
+Each line is one plain sentence fragment, at most 120 characters, no trailing period:
+- done: what actually got done, in outcome words, several results joined with "; " ("Andras rigged in game; level editor parts 2-7 merged"). Do not repeat the project name.
+- failed: why it failed, in plain words, from the errors ("Claude hit its usage limit; resets 09:00").
+- stopped: these runs were stopped before finishing, not failed. Say where they got to ("Lavrov likeness and drip geometry half written").
+Name things, not threads. No thread titles copied verbatim, no "the agent", no markdown, no hedging.`;
+
+export function buildMorningBriefPrompt(groups: ReadonlyArray<MorningBriefPromptGroup>) {
+  const body = groups
+    .map((group) =>
+      [
+        `## key=${group.key} kind=${group.kind} label=${group.label}`,
+        ...group.threads.map(
+          (thread) =>
+            `- ${thread.title}: ${thread.result.replace(/\s+/g, " ").trim().slice(0, 700)}`,
+        ),
+      ].join("\n"),
+    )
+    .join("\n\n");
+  const prompt = `${MORNING_BRIEF_PROMPT}\n\nGroups:\n\n${limitSection(body, 40_000)}`;
+  const outputSchema = Schema.Struct({
+    lines: Schema.Array(Schema.Struct({ key: Schema.String, text: Schema.String })),
+  });
+  return { prompt, outputSchema };
+}

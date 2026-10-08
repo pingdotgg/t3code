@@ -330,6 +330,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateMorningBrief: () => Effect.succeed({ lines: new Map() }),
     ...overrides,
   };
 
@@ -378,6 +379,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateMorningBrief: (input) => implementation.generateMorningBrief(input),
   };
 }
 

@@ -19,6 +19,7 @@ export * as DecisionsHttp from "./decisionsHttp.ts";
 
 /** How often an open feed re-reads a host's decisions (agents add them at any time). */
 const DECISION_REFRESH_INTERVAL_MS = 15_000;
+const BRIEF_REFRESH_INTERVAL_MS = 30_000;
 
 const withPrepared = <A, E, R>(
   run: (
@@ -74,6 +75,26 @@ export function createDecisionEnvironmentAtoms<R, E>(
         withPrepared((client, prepared) =>
           client.threadDigests(prepared, threadDigestIdsFromKey(key)),
         ),
+    }),
+    /**
+     * The owner's brief. Re-read every half minute so a thread that ended, or
+     * lines the model finished writing, show up; the server answers from its
+     * cache unless a thread ended.
+     */
+    brief: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:threads:brief",
+      staleTimeMs: BRIEF_REFRESH_INTERVAL_MS,
+      refreshIntervalMs: BRIEF_REFRESH_INTERVAL_MS,
+      execute: (_: "brief") => withPrepared((client, prepared) => client.brief(prepared)),
+    }),
+    briefSeen: createEnvironmentCommand(runtime, {
+      label: "environment-data:threads:brief-seen",
+      execute: (_: void) => withPrepared((client, prepared) => client.briefSeen(prepared)),
+    }),
+    retryThreads: createEnvironmentCommand(runtime, {
+      label: "environment-data:threads:retry",
+      execute: (input: { readonly threadIds: ReadonlyArray<string> }) =>
+        withPrepared((client, prepared) => client.retryThreads(prepared, input.threadIds)),
     }),
     answer: createEnvironmentCommand(runtime, {
       label: "environment-data:decisions:answer",

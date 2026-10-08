@@ -8,6 +8,7 @@ import type {
   DecisionMediaUploadQuery,
   DecisionProjectBlurb,
   DecisionProjectBlurbInput,
+  ThreadBrief,
   ThreadDigest,
 } from "@cz/contracts";
 import * as Context from "effect/Context";
@@ -26,6 +27,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+const BRIEF_TIMEOUT_MS = 45_000;
 
 /** Decisions on one environment, over its authenticated HTTP API (ccez/DECISIONS.md). */
 export class DecisionsHttpClient extends Context.Service<
@@ -62,6 +64,19 @@ export class DecisionsHttpClient extends Context.Service<
       prepared: PreparedConnection,
       threadIds: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<ThreadDigest>, RemoteEnvironmentRequestError>;
+    /** The owner's brief: threads that ended since they last looked. */
+    readonly brief: (
+      prepared: PreparedConnection,
+    ) => Effect.Effect<ThreadBrief, RemoteEnvironmentRequestError>;
+    /** The owner opened the feed. */
+    readonly briefSeen: (
+      prepared: PreparedConnection,
+    ) => Effect.Effect<void, RemoteEnvironmentRequestError>;
+    /** Asks stopped or failed threads to pick up where they left off. */
+    readonly retryThreads: (
+      prepared: PreparedConnection,
+      threadIds: ReadonlyArray<string>,
+    ) => Effect.Effect<number, RemoteEnvironmentRequestError>;
   }
 >()("@cz/client-runtime/state/decisionsHttp/DecisionsHttpClient") {}
 
@@ -75,6 +90,8 @@ export const layer: Layer.Layer<DecisionsHttpClient, never, HttpClient.HttpClien
     );
     const common = (prepared: PreparedConnection) =>
       ({ prepared, signer, remoteAuthorization, group: "decisions" }) as const;
+    const threads = (prepared: PreparedConnection) =>
+      ({ prepared, signer, remoteAuthorization, group: "threads" }) as const;
     const urls = (httpBaseUrl: string) => makeEnvironmentHttpApiUrlBuilder(httpBaseUrl).decisions;
     const run = <A>(
       effect: Effect.Effect<A, RemoteEnvironmentRequestError, HttpClient.HttpClient>,
@@ -155,6 +172,37 @@ export const layer: Layer.Layer<DecisionsHttpClient, never, HttpClient.HttpClien
             timeoutMs: REQUEST_TIMEOUT_MS,
             request: ({ client, headers }) => client.digests({ payload: { threadIds }, headers }),
           }).pipe(Effect.map((result) => result.digests)),
+        ),
+      brief: (prepared) =>
+        run(
+          executeAuthenticatedEnvironmentHttpRequest({
+            ...threads(prepared),
+            method: "GET",
+            url: (base) => makeEnvironmentHttpApiUrlBuilder(base).threads.brief(),
+            // The server waits up to 20 s for the model before answering with counts.
+            timeoutMs: BRIEF_TIMEOUT_MS,
+            request: ({ client, headers }) => client.brief({ headers }),
+          }),
+        ),
+      briefSeen: (prepared) =>
+        run(
+          executeAuthenticatedEnvironmentHttpRequest({
+            ...threads(prepared),
+            method: "POST",
+            url: (base) => makeEnvironmentHttpApiUrlBuilder(base).threads.briefSeen(),
+            timeoutMs: REQUEST_TIMEOUT_MS,
+            request: ({ client, headers }) => client.briefSeen({ headers }),
+          }),
+        ),
+      retryThreads: (prepared, threadIds) =>
+        run(
+          executeAuthenticatedEnvironmentHttpRequest({
+            ...threads(prepared),
+            method: "POST",
+            url: (base) => makeEnvironmentHttpApiUrlBuilder(base).threads.retry(),
+            timeoutMs: REQUEST_TIMEOUT_MS,
+            request: ({ client, headers }) => client.retry({ payload: { threadIds }, headers }),
+          }).pipe(Effect.map((result) => result.retried)),
         ),
     });
   }),

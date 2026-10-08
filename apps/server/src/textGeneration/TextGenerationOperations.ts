@@ -17,6 +17,7 @@ import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildMorningBriefPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
@@ -144,10 +145,30 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
       };
     });
 
+  const generateMorningBrief: TextGeneration.TextGeneration["Service"]["generateMorningBrief"] =
+    Effect.fn(`${name}.generateMorningBrief`)(function* (input) {
+      const generated = yield* run({
+        operation: "generateMorningBrief",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...buildMorningBriefPrompt(input.groups),
+      });
+      const keys = new Set(input.groups.map((group) => group.key));
+      return {
+        lines: new Map(
+          generated.lines.flatMap((line) => {
+            const text = line.text.replace(/\s+/g, " ").trim().replace(/[.]+$/, "");
+            return keys.has(line.key) && text.length > 0 ? [[line.key, text] as const] : [];
+          }),
+        ),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateMorningBrief,
   } satisfies TextGeneration.TextGeneration["Service"];
 }

@@ -26,6 +26,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { threadSummaries } from "./summaries.ts";
+import * as MorningBriefService from "./MorningBriefService.ts";
 import * as ThreadDigestService from "./ThreadDigestService.ts";
 
 export const threadsHttpApiLayer = HttpApiBuilder.group(
@@ -37,6 +38,7 @@ export const threadsHttpApiLayer = HttpApiBuilder.group(
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const crypto = yield* Crypto.Crypto;
     const digests = yield* ThreadDigestService.ThreadDigestService;
+    const briefs = yield* MorningBriefService.MorningBriefService;
 
     return handlers
       .handle("list", (args) =>
@@ -62,6 +64,27 @@ export const threadsHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return { digests: yield* digests.digests(args.payload.threadIds) };
+        }),
+      )
+      .handle("brief", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* briefs.brief;
+        }),
+      )
+      .handle("briefSeen", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* briefs.markSeen;
+        }),
+      )
+      .handle("retry", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return { retried: yield* briefs.retry(args.payload.threadIds) };
         }),
       )
       .handle("stop", (args) =>

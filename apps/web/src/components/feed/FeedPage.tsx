@@ -1,5 +1,4 @@
 import { answerSummary, VERDICT_BUTTONS, optionMedia } from "@cz/client-runtime/decisions/draft";
-import { briefWindow, buildMorningBrief } from "@cz/client-runtime/decisions/morningBrief";
 import {
   buildOneFeed,
   type FeedProjectGroup,
@@ -246,26 +245,12 @@ export function FeedPage() {
     [machine, presentationById],
   );
   const jobs = useJobsOn(shownMachineIds);
-  const briefDay = briefWindow(now);
-  // Keyed on `since`, which changes once a day, not on `now`, which ticks every minute.
-  const since = briefDay?.since ?? null;
-  const brief = useMemo(
+  const shownThreads = useMemo(
     () =>
-      since === null
-        ? null
-        : buildMorningBrief({
-            decisions: reachable,
-            threads: threads.filter(
-              (thread) => machine.type === "all" || thread.environmentId === machine.environmentId,
-            ),
-            jobs,
-            groupOf: (project) => blurbs.get(project)?.group ?? "software",
-            since,
-          }),
-    [since, reachable, threads, machine, jobs, blurbs],
-  );
-  const briefDigests = useThreadDigests(
-    brief ? [...brief.threads.failed, ...brief.threads.finished].slice(0, 5) : [],
+      threads.filter(
+        (thread) => machine.type === "all" || thread.environmentId === machine.environmentId,
+      ),
+    [threads, machine],
   );
 
   // Answered items stay hidden until the next refresh drops them from the feed.
@@ -534,13 +519,15 @@ export function FeedPage() {
           {selectedBlurbs.map(({ project, description }) => (
             <ProjectBlurbLine key={project} project={project} description={description} />
           ))}
-          {tab === "needs" && briefDay && brief ? (
+          {tab === "needs" ? (
             <MorningBriefCard
-              brief={brief}
-              placement={(thread) => ({
-                excerpt: briefDigests.get(`${thread.environmentId}:${thread.id}`)?.excerpt ?? null,
-              })}
+              environmentIds={shownMachineIds}
+              decisions={reachable}
+              threads={shownThreads}
+              jobs={jobs}
+              now={now}
               machineLabel={machineLabel}
+              onOpenDecision={showDecision}
             />
           ) : null}
 

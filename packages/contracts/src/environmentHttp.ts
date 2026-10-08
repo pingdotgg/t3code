@@ -89,6 +89,9 @@ import {
   ThreadStopInput,
   ThreadDigestInput,
   ThreadDigestResult,
+  ThreadBrief,
+  ThreadRetryInput,
+  ThreadRetryResult,
   ThreadStopResult,
 } from "./threadControl.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
@@ -960,6 +963,28 @@ class EnvironmentThreadsHttpApi extends HttpApiGroup.make("threads")
       headers: OptionalBearerHeaders,
       payload: ThreadDigestInput,
       success: ThreadDigestResult,
+      error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("brief", "/api/threads/brief", {
+      headers: OptionalBearerHeaders,
+      success: ThreadBrief,
+      error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("briefSeen", "/api/threads/brief/seen", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Void,
+      error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("retry", "/api/threads/retry", {
+      headers: OptionalBearerHeaders,
+      payload: ThreadRetryInput,
+      success: ThreadRetryResult,
       error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

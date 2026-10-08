@@ -85,6 +85,7 @@ import { queueHttpApiLayer } from "./resetQueue/http.ts";
 import { threadsHttpApiLayer } from "./threadControl/http.ts";
 import { jobsHttpApiLayer } from "./scheduleJobs/http.ts";
 import * as ScheduleJobsService from "./scheduleJobs/ScheduleJobsService.ts";
+import * as MorningBriefService from "./threadControl/MorningBriefService.ts";
 import * as ThreadDigestService from "./threadControl/ThreadDigestService.ts";
 import { mobileReleaseApkRouteLayer, mobileReleaseHttpApiLayer } from "./mobileRelease/http.ts";
 import * as HostWakeService from "./hostWake/HostWakeService.ts";
@@ -717,6 +718,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(hostWakeHttpApiLayer),
       Layer.provide(
         threadsHttpApiLayer.pipe(
+          Layer.provide(MorningBriefService.layer),
           Layer.provide(ThreadDigestService.layer),
           Layer.provide(ProjectionStoreV2.layer),
         ),

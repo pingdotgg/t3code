@@ -73,3 +73,40 @@ export type ThreadDigest = typeof ThreadDigest.Type;
 
 export const ThreadDigestResult = Schema.Struct({ digests: Schema.Array(ThreadDigest) });
 export type ThreadDigestResult = typeof ThreadDigestResult.Type;
+
+/**
+ * One line of the owner's brief: threads on this machine that ended since
+ * they last looked, grouped by what they did (done, by project) or why they
+ * ended (failed, by cause; stopped, when someone or something interrupted them).
+ */
+export const ThreadBriefGroup = Schema.Struct({
+  kind: Schema.Literals(["done", "failed", "stopped"]),
+  /** The project for done work ("hll"), the cause for failures ("Usage limit"). */
+  label: Schema.String,
+  /** One plain line from the text-generation model, or a count when it couldn't write one. */
+  text: Schema.String,
+  /**
+   * The one thing to do about it: retry a failure that may pass, dismiss
+   * (archive) stopped runs, or open the threads to look.
+   */
+  action: Schema.Literals(["retry", "dismiss", "open"]),
+  threads: Schema.Array(Schema.Struct({ threadId: Schema.String, title: Schema.String })),
+});
+export type ThreadBriefGroup = typeof ThreadBriefGroup.Type;
+
+export const ThreadBrief = Schema.Struct({
+  /** Epoch ms the brief starts at: when the owner last looked. */
+  since: Schema.Number,
+  groups: Schema.Array(ThreadBriefGroup),
+  /** "pending": the model is still writing and `text` is a count; "plain": it failed. */
+  lines: Schema.Literals(["written", "pending", "plain"]),
+});
+export type ThreadBrief = typeof ThreadBrief.Type;
+
+export const ThreadRetryInput = Schema.Struct({
+  threadIds: Schema.Array(Schema.String).check(Schema.isMaxLength(THREAD_DIGEST_MAX_THREADS)),
+});
+export type ThreadRetryInput = typeof ThreadRetryInput.Type;
+
+export const ThreadRetryResult = Schema.Struct({ retried: Schema.Number });
+export type ThreadRetryResult = typeof ThreadRetryResult.Type;

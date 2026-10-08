@@ -12,6 +12,7 @@ import {
   waitingOnOtherDevice,
 } from "@cz/client-runtime/decisions/oneFeed";
 import { useMemo } from "react";
+import type { BriefMachine } from "@cz/client-runtime/decisions/morningBrief";
 import { compareFeedItems } from "@cz/client-runtime/decisions/feed";
 import {
   createDecisionEnvironmentAtoms,
@@ -246,4 +247,23 @@ export function useThreadDigests(
       .join("\u0001");
   }, [threads]);
   return useAtomValue(threadDigestsAtom(spec));
+}
+
+const machineBriefsAtom = Atom.family((spec: string) =>
+  Atom.make((get): ReadonlyArray<BriefMachine> =>
+    spec === ""
+      ? []
+      : spec.split("\u0001").map((part) => {
+          const environmentId = part as EnvironmentId;
+          const result = get(decisionEnvironment.brief({ environmentId, input: "brief" }));
+          return { environmentId, brief: Option.getOrNull(AsyncResult.value(result)) };
+        }),
+  ),
+);
+
+/** Each machine's brief: what happened there since the owner last looked. */
+export function useMachineBriefs(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyArray<BriefMachine> {
+  return useAtomValue(machineBriefsAtom(environmentIds.join("\u0001")));
 }

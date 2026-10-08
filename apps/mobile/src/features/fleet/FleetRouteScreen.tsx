@@ -7,7 +7,6 @@ import {
   formatSince,
   formatUsedOfTotal,
 } from "@cz/client-runtime/fleet";
-import { createFleetAtom } from "@cz/client-runtime/state/fleet";
 import type { EnvironmentId } from "@cz/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useState } from "react";
@@ -17,25 +16,15 @@ import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/A
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { MaterialButton } from "../../components/MaterialButton";
-import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { fleetAtom } from "../../state/fleet";
 import { useWakeEnvironment } from "../../state/hostWake";
 import { serverEnvironment } from "../../state/server";
-import { environmentSnapshotAtom } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 /** How often host readings refresh while the screen is open and the app is active. */
 const REFRESH_MS = 3000;
-
-const fleetAtom = createFleetAtom({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
-  connectionStateAtom: environmentCatalog.stateAtom,
-  shellSnapshotAtom: environmentSnapshotAtom,
-  hostResourcesAtom: (environmentId) =>
-    serverEnvironment.hostResources({ environmentId, input: {} }),
-  onlinePeersAtom: (environmentId) => serverEnvironment.onlinePeers({ environmentId, input: {} }),
-});
 
 const levelClass = (ratio: number) =>
   ratio >= 0.9 ? "bg-danger-foreground" : ratio >= 0.7 ? "bg-warning-foreground" : "bg-primary";
