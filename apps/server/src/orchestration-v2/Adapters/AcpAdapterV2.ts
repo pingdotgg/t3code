@@ -73,6 +73,7 @@ import {
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
+  toolCallVisibleOutputChanged,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
   type AcpSessionModeState,
@@ -1162,6 +1163,8 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
+  /** Streamed tool updates skipped since the last persisted one; see `shouldPersistToolUpdate`. */
+  readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
@@ -1458,6 +1461,34 @@ interface SnapshotMessageState {
   loadingRole: "user" | "assistant" | "thought" | null;
   loadingMessageId: string | null;
   loadingIndex: number;
+}
+
+const TOOL_UPDATE_PERSIST_EVERY = 10;
+
+/**
+ * Some agents stream a tool's arguments (a file write's diff, `rawInput`) and
+ * resend the whole call each time. Persist every 10th of those. Status, title,
+ * and output the user watches live always persist, as does the agent's own
+ * completed/failed when a flavor normalizes it to a non-terminal status.
+ */
+function shouldPersistToolUpdate(
+  context: ActiveAcpTurn,
+  key: string,
+  previous: AcpToolCallState | undefined,
+  next: AcpToolCallState,
+  reportedStatus: AcpToolCallState["status"],
+): boolean {
+  const skipped = context.toolUpdatesSkipped.get(key) ?? 0;
+  const persist =
+    reportedStatus === "completed" ||
+    reportedStatus === "failed" ||
+    previous === undefined ||
+    previous.status !== next.status ||
+    previous.title !== next.title ||
+    toolCallVisibleOutputChanged(previous, next) ||
+    skipped + 1 >= TOOL_UPDATE_PERSIST_EVERY;
+  context.toolUpdatesSkipped.set(key, persist ? 0 : skipped + 1);
+  return persist;
 }
 
 export function makeAcpAdapterV2(
@@ -3196,6 +3227,19 @@ export function makeAcpAdapterV2(
               return;
             }
           }
+          if (
+            projectedStatus === undefined &&
+            !shouldPersistToolUpdate(
+              context,
+              toolCall.toolCallId,
+              previous,
+              toolCall,
+              merged.status,
+            )
+          ) {
+            yield* rearmDeferredFinalize(context);
+            return;
+          }
           const status = projectedStatus ?? toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
@@ -4369,8 +4413,11 @@ export function makeAcpAdapterV2(
                   continue;
                 }
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
-                const merged = mergeToolCallState(context.tools.get(key), toolCall);
+                const previous = context.tools.get(key);
+                const merged = mergeToolCallState(previous, toolCall);
                 context.tools.set(key, merged);
+                if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status))
+                  continue;
                 // Terminals are remembered under the raw session id: the child's
                 // own session, or the root one when the flavor routes child
                 // updates out of it (Devin).
@@ -6953,6 +7000,7 @@ export function makeAcpAdapterV2(
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
