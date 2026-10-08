@@ -378,9 +378,8 @@ export function makeGitCafeConversationWrites(cli: GitCafeCli.GitCafeCli["Servic
       Effect.gen(function* () {
         const pr = yield* pull(input, "setReaction");
         const path = `${pullPath(input.number)}/reactions/`;
-        const reactions = yield* request(input, path, ReactionsSchema, {
-          operation: "setReaction",
-        });
+        // Every page: a reaction past the first is still this viewer's to find or remove.
+        const reactions = { items: yield* pages(input, path, ReactionsSchema, "setReaction") };
         const emoji = EMOJI[input.content];
         const subject =
           input.subjectId === undefined

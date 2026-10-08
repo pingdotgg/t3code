@@ -233,6 +233,7 @@ describe("deployed GitCafe PR normalization", () => {
       "abcdef",
       "git.cafe",
       decodeReactions({
+        next: null,
         items: [
           {
             subject: { kind: "pull_request_comment", id: "comment-b" },
@@ -279,6 +280,7 @@ describe("deployed GitCafe PR normalization", () => {
       undefined,
       "git.cafe",
       decodeReactions({
+        next: null,
         items: [
           {
             subject: { kind: "pull_request", id: "pr-one" },

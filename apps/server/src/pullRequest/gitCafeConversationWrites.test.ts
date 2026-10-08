@@ -95,20 +95,52 @@ describe("GitCafe conversation writes", () => {
               reactors: [actor],
             },
           ],
+          next: null,
         });
         const present = fixture((call) =>
-          call.endpoint.endsWith("/reactions/") ? reactions("viewer_reaction") : pull,
+          call.endpoint.includes("/reactions/?") ? reactions("viewer_reaction") : pull,
         );
         yield* present.writes.setReaction({ ...target, content: "heart", reacted: false });
         expect(present.calls[2]?.endpoint.endsWith("/reactions/viewer_reaction")).toBe(true);
         expect(present.calls[2]?.method).toBe("DELETE");
 
         const absent = fixture((call) =>
-          call.endpoint.endsWith("/reactions/") ? reactions(null) : pull,
+          call.endpoint.includes("/reactions/?") ? reactions(null) : pull,
         );
         yield* absent.writes.setReaction({ ...target, content: "heart", reacted: false });
         expect(absent.calls).toHaveLength(2);
       }),
+  );
+
+  it.effect("finds the viewer's reaction on a later page instead of reacting twice", () =>
+    Effect.gen(function* () {
+      const other = {
+        subject: { kind: "pull_request", id: "pull" },
+        emoji: { kind: "unicode", value: "👍" },
+        count: 1,
+        viewerReactionId: null,
+        reactors: [actor],
+      };
+      const respond = (call: Call) => {
+        if (!call.endpoint.includes("/reactions/?")) return pull;
+        return call.endpoint.includes("after=")
+          ? {
+              items: [
+                { ...other, emoji: { kind: "unicode", value: "❤" }, viewerReactionId: "mine" },
+              ],
+              next: null,
+            }
+          : { items: [other], next: "page-2" };
+      };
+      const remove = fixture(respond);
+      yield* remove.writes.setReaction({ ...target, content: "heart", reacted: false });
+      expect(remove.calls.at(-1)).toMatchObject({ method: "DELETE" });
+      expect(remove.calls.at(-1)?.endpoint.endsWith("/reactions/mine")).toBe(true);
+
+      const add = fixture(respond);
+      yield* add.writes.setReaction({ ...target, content: "heart", reacted: true });
+      expect(add.calls.some((call) => call.method === "POST")).toBe(false);
+    }),
   );
 
   it.effect("replaces asymmetric reviewer and label sets only after every page", () =>

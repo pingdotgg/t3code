@@ -77,6 +77,7 @@ const ChecksSchema = Schema.Struct({
       detailsUrl: Schema.NullOr(Schema.String),
     }),
   ),
+  next: Schema.NullOr(Schema.String),
 });
 /** A pull request's files at one revision, without hunks. */
 const ChangesPageSchema = Schema.Struct({
@@ -372,51 +373,64 @@ export const make = Effect.gen(function* () {
       deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
     };
   });
-  const readComments = Effect.fn("GitCafePullRequestProvider.readComments")(function* (
-    input: ProviderRepositoryRef & { readonly number: number },
-  ) {
-    const base = yield* target(input);
-    const items: Array<(typeof Json.CommentsSchema.Type.items)[number]> = [];
-    let next: string | null = null;
-    for (let page = 0; page < CONVERSATION_PAGES; page++) {
-      const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (next !== null) query.set("after", next);
-      const batch = yield* read(
+  /**
+   * Every page of a cursor-paged list, up to `CONVERSATION_PAGES`. `next` is still set when more
+   * remained, so a caller can say the list is incomplete instead of presenting it as whole.
+   */
+  const readPages = <
+    S extends Schema.Top & {
+      readonly DecodingServices: never;
+      readonly Type: { readonly items: ReadonlyArray<unknown>; readonly next: string | null };
+    },
+  >(
+    input: Pick<ProviderRepositoryRef, "cwd" | "host">,
+    endpoint: (query: URLSearchParams) => string,
+    schema: S,
+    operation: string,
+    maxOutputBytes?: number,
+  ) =>
+    Effect.gen(function* () {
+      const items: Array<S["Type"]["items"][number]> = [];
+      let next: string | null = null;
+      for (let page = 0; page < CONVERSATION_PAGES; page++) {
+        const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
+        if (next !== null) query.set("after", next);
+        const batch: S["Type"] = yield* read(
+          input,
+          endpoint(query),
+          schema,
+          operation,
+          maxOutputBytes,
+        );
+        items.push(...batch.items);
+        const previous: string | null = next;
+        next = batch.next;
+        if (next === null || next === previous || batch.items.length === 0) break;
+      }
+      return { items, next };
+    }).pipe(Effect.withSpan("GitCafePullRequestProvider.readPages", { attributes: { operation } }));
+  const readComments = (input: ProviderRepositoryRef & { readonly number: number }) =>
+    Effect.gen(function* () {
+      const base = yield* target(input);
+      return yield* readPages(
         input,
-        `${base}/${input.number}/comments?${query}`,
+        (query) => `${base}/${input.number}/comments?${query}`,
         Json.CommentsSchema,
         "listComments",
         8 * 1024 * 1024,
       );
-      items.push(...batch.items);
-      next = batch.next;
-      if (next === null || batch.items.length === 0) break;
-    }
-    return { items, next };
-  });
-  const readReviews = Effect.fn("GitCafePullRequestProvider.readReviews")(function* (
-    input: ProviderRepositoryRef & { readonly number: number },
-  ) {
-    const base = yield* target(input);
-    const items: Array<(typeof Json.ReviewsSchema.Type.items)[number]> = [];
-    let next: string | null = null;
-    for (let page = 0; page < CONVERSATION_PAGES; page++) {
-      const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (next !== null) query.set("after", next);
-      const batch = yield* read(
+    });
+  const readReviews = (input: ProviderRepositoryRef & { readonly number: number }) =>
+    Effect.gen(function* () {
+      const base = yield* target(input);
+      return yield* readPages(
         input,
-        `${base}/${input.number}/reviews?${query}`,
+        (query) => `${base}/${input.number}/reviews?${query}`,
         Json.ReviewsSchema,
         "listReviews",
         8 * 1024 * 1024,
       );
-      items.push(...batch.items);
-      const previous: string | null = next;
-      next = batch.next;
-      if (next === null || next === previous || batch.items.length === 0) break;
-    }
-    return { items, next };
-  });
+    });
   const writes = makeGitCafeConversationWrites(cli);
   const reviewWrites = makeGitCafeReviewWrites(cli);
   const actionWrites = makeGitCafeActionWrites(cli);
@@ -522,9 +536,10 @@ export const make = Effect.gen(function* () {
               ),
           pull.headOid === null
             ? Effect.succeed(null)
-            : read(
+            : readPages(
                 input,
-                `${base.slice(0, -6)}/commits/${encodeURIComponent(pull.headOid)}/checks`,
+                (query) =>
+                  `${base.slice(0, -6)}/commits/${encodeURIComponent(pull.headOid!)}/checks?${query}`,
                 ChecksSchema,
                 "getChecks",
               ),
@@ -597,21 +612,22 @@ export const make = Effect.gen(function* () {
     getChangeRequestActivity: Effect.fn("GitCafePullRequestProvider.getChangeRequestActivity")(
       function* (input) {
         const pull = yield* readPull(input);
-        const [comments, reviews, commits, reactions] = yield* Effect.all(
+        const base = yield* target(input);
+        const [comments, reviews, commitPages, reactions] = yield* Effect.all(
           [
             readComments(input),
             readReviews(input),
             pull.headOid === null
-              ? Effect.succeed({ items: [], truncated: false, next: null, headOid: "" })
-              : read(
+              ? Effect.succeed({ items: [], next: null })
+              : readPages(
                   input,
-                  `${yield* target(input)}/${input.number}/commits?limit=100`,
+                  (query) => `${base}/${input.number}/commits?${query}`,
                   Json.CommitListSchema,
                   "listCommits",
                 ),
-            read(
+            readPages(
               input,
-              `${yield* target(input)}/${input.number}/reactions`,
+              (query) => `${base}/${input.number}/reactions/?${query}`,
               Json.ReactionsSchema,
               "listReactions",
               8 * 1024 * 1024,
@@ -619,6 +635,12 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: 4 },
         );
+        const commits = {
+          items: commitPages.items,
+          next: commitPages.next,
+          truncated: commitPages.next !== null,
+          headOid: pull.headOid ?? "",
+        };
         return Json.toActivity(
           comments,
           reviews,

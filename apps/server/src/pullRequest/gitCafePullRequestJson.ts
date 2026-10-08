@@ -212,7 +212,10 @@ const ReactionSchema = Schema.Struct({
   viewerReactionId: Schema.NullOr(Schema.String),
   reactors: Schema.Array(ActorSchema),
 });
-export const ReactionsSchema = Schema.Struct({ items: Schema.Array(ReactionSchema) });
+export const ReactionsSchema = Schema.Struct({
+  items: Schema.Array(ReactionSchema),
+  next: Schema.NullOr(Schema.String),
+});
 
 const REACTION_CONTENT_BY_EMOJI: Readonly<Record<string, PullRequestReactionContent>> = {
   "👍": "thumbs-up",

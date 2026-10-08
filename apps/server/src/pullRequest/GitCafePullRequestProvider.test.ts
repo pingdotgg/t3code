@@ -119,7 +119,8 @@ describe("deployed GitCafe PR API", () => {
               if (input.endpoint.includes("/reviewers?"))
                 return Effect.succeed(json({ items: [], next: null }));
               if (input.endpoint.includes("/labels?")) return Effect.succeed(json({ items: [] }));
-              if (input.endpoint.includes("/commits/")) return Effect.succeed(json({ items: [] }));
+              if (input.endpoint.includes("/commits/"))
+                return Effect.succeed(json({ items: [], next: null }));
               if (input.endpoint.endsWith("/status"))
                 return Effect.succeed(
                   json({
@@ -304,8 +305,9 @@ describe("deployed GitCafe PR API", () => {
             return { ...revision, items: [{ path: "src/a.ts", additions: 7, deletions: 2 }] };
           }
           if (input.endpoint.includes("/commits/")) {
-            expect(input.endpoint).toBe("/repos/owner/repo/commits/abcdef/checks");
+            expect(input.endpoint).toBe("/repos/owner/repo/commits/abcdef/checks?limit=100");
             return {
+              next: null,
               items: [
                 {
                   origin: "buildkite",
@@ -377,7 +379,7 @@ describe("deployed GitCafe PR API", () => {
               next: continued ? null : "page-2",
             };
           }
-          if (input.endpoint.includes("/commits/")) return { items: [] };
+          if (input.endpoint.includes("/commits/")) return { items: [], next: null };
           if (input.endpoint.endsWith("/status"))
             return {
               merge: { conflicts: "unknown", fastForward: null, strategies: [] },
@@ -412,7 +414,8 @@ describe("deployed GitCafe PR API", () => {
             if (input.endpoint.includes("/reviewers?"))
               return Effect.succeed(json({ items: [], next: null }));
             if (input.endpoint.includes("/labels?")) return Effect.succeed(json({ items: [] }));
-            if (input.endpoint.includes("/commits/")) return Effect.succeed(json({ items: [] }));
+            if (input.endpoint.includes("/commits/"))
+              return Effect.succeed(json({ items: [], next: null }));
             if (input.endpoint.endsWith("/status"))
               return Effect.succeed(
                 json({
@@ -439,6 +442,63 @@ describe("deployed GitCafe PR API", () => {
       ),
     ),
   );
+  it.effect("reads every page of checks and reactions", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getChangeRequest(target);
+      expect(result.checks.map((check) => check.name)).toEqual(["first", "second"]);
+      const activity = yield* provider.getChangeRequestActivity(target);
+      expect(activity.reactions?.map((reaction) => reaction.content)).toEqual([
+        "thumbs-up",
+        "heart",
+      ]);
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          const continued = input.endpoint.includes("after=");
+          if (input.endpoint.includes("/reviewers?")) return { items: [], next: null };
+          if (input.endpoint.includes("/labels?")) return { items: [] };
+          if (input.endpoint.includes("/changes?")) return { ...revision, items: [], next: null };
+          if (input.endpoint.includes("/checks?"))
+            return {
+              items: [
+                {
+                  name: continued ? "second" : "first",
+                  status: "completed",
+                  conclusion: "success",
+                  summary: null,
+                  detailsUrl: null,
+                },
+              ],
+              next: continued ? null : "check-page-2",
+            };
+          if (input.endpoint.includes("/reactions/?"))
+            return {
+              items: [
+                {
+                  subject: { kind: "pull_request", id: "pr_one" },
+                  emoji: { kind: "unicode", value: continued ? "❤" : "👍" },
+                  count: 1,
+                  viewerReactionId: null,
+                  reactors: [],
+                },
+              ],
+              next: continued ? null : "reaction-page-2",
+            };
+          if (input.endpoint.includes("/commits?"))
+            return { items: [], headOid: "abcdef", truncated: false, next: null };
+          if (input.endpoint.includes("/comments?") || input.endpoint.includes("/reviews?"))
+            return { items: [], next: null };
+          if (input.endpoint.endsWith("/status"))
+            return {
+              merge: { conflicts: "unknown", fastForward: null, strategies: [] },
+              checks: { pending: 0, failing: 0, successful: 2, total: 2 },
+            };
+          return detail;
+        }),
+      ),
+    ),
+  );
   it.effect("loads detail labels from the dedicated bounded endpoint", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
@@ -456,7 +516,7 @@ describe("deployed GitCafe PR API", () => {
           if (input.endpoint.includes("/labels?"))
             return { items: [{ name: "detail-label", color: "#123456" }] };
           if (input.endpoint.includes("/changes?")) return { ...revision, items: [], next: null };
-          if (input.endpoint.includes("/commits/")) return { items: [] };
+          if (input.endpoint.includes("/commits/")) return { items: [], next: null };
           if (input.endpoint.endsWith("/status"))
             return {
               merge: { conflicts: "unknown", fastForward: null, strategies: [] },
@@ -510,15 +570,15 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
-  it.effect("pages reviews while keeping commits to one bounded page", () => {
+  it.effect("pages reviews and commits until GitCafe has no more", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
       const provider = yield* make;
       const result = yield* provider.getChangeRequestActivity(target);
-      expect(result.commits.map((commit) => commit.oid)).toEqual(["first"]);
+      expect(result.commits.map((commit) => commit.oid)).toEqual(["first", "second"]);
       expect(result.commentsTruncated).toBe(false);
       expect(result.comments).toHaveLength(2);
-      expect(calls.filter((call) => call.endpoint.includes("/commits?"))).toHaveLength(1);
+      expect(calls.filter((call) => call.endpoint.includes("/commits?"))).toHaveLength(2);
     }).pipe(
       Effect.provide(
         withApi((input) => {
@@ -624,7 +684,7 @@ describe("deployed GitCafe PR API", () => {
         Effect.provide(
           Layer.mock(GitCafeCli.GitCafeCli)({
             api: (input) => {
-              if (input.endpoint.endsWith("/reactions")) {
+              if (input.endpoint.includes("/reactions/?")) {
                 if (fails)
                   return Effect.fail(
                     new GitCafeCli.GitCafeCliError({
@@ -646,6 +706,7 @@ describe("deployed GitCafe PR API", () => {
                         reactors: [],
                       },
                     ],
+                    next: null,
                   }),
                 );
               }
