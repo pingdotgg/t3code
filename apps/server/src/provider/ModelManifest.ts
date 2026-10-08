@@ -269,7 +269,7 @@ function codexUpdateRequiredModels(
   if (!version || parseSemver(version) === null) return [];
   const discovered = new Set(draft.models.map((model) => codexModelFamily(model.slug)));
   return (manifest.providers?.codex?.models ?? []).flatMap((entry) => {
-    if (entry.status !== "current" || discovered.has(entry.slug)) return [];
+    if (entry.status !== "current" || discovered.has(codexModelFamily(entry.slug))) return [];
     const minVersion = Option.getOrUndefined(decodeCodexModelAdapter(entry.adapter ?? {}))?.codex
       ?.minVersion;
     if (!minVersion || parseSemver(minVersion) === null) return [];

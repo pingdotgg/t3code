@@ -206,6 +206,20 @@ describe("applyModelManifest", () => {
       ),
       // An unknown version cannot be compared.
       ModelManifest.applyModelManifest(draft(null), manifest, CODEX),
+      // A qualified manifest slug still matches the discovered family.
+      ModelManifest.applyModelManifest(
+        draft("1.1.9", [model({ slug: "gpt-next" })]),
+        {
+          ...manifest,
+          providers: {
+            codex: {
+              profiles: {},
+              models: [{ ...manifest.providers!.codex!.models[0]!, slug: "openai.gpt-next" }],
+            },
+          },
+        },
+        CODEX,
+      ),
     ]) {
       assert.isUndefined(result.updateRequiredModels);
     }

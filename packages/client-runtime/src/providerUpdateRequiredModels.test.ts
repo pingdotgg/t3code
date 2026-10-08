@@ -32,4 +32,16 @@ describe("formatProviderUpdateRequiredNotice", () => {
     );
     expect(formatProviderUpdateRequiredNotice(provider, "gpt")).toBeNull();
   });
+
+  it("names the release, not a prerelease of it", () => {
+    expect(
+      formatProviderUpdateRequiredNotice({
+        driver: ProviderDriverKind.make("codex"),
+        updateRequiredModels: [
+          { slug: "a", name: "A", minVersion: "2.1.0-beta" },
+          { slug: "b", name: "B", minVersion: "2.1.0" },
+        ],
+      }),
+    ).toBe("Update the Codex CLI to v2.1.0 or newer to use A and B.");
+  });
 });

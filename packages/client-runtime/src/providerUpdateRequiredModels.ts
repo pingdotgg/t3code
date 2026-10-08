@@ -1,4 +1,5 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 
 // Name the thing the user updates; "Claude" alone reads like the app or model.
 const RUNTIME_NAMES: Partial<Record<string, string>> = {
@@ -33,7 +34,9 @@ export function formatProviderUpdateRequiredNotice(
   // The highest bar unlocks every listed model.
   const minVersion = models
     .map((model) => model.minVersion)
-    .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }))[0]!;
+    .reduce((highest, version) =>
+      compareSemverVersions(version, highest) > 0 ? version : highest,
+    );
   const providerName =
     RUNTIME_NAMES[provider.driver] ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
   const version = minVersion.startsWith("v") ? minVersion : `v${minVersion}`;

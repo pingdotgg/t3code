@@ -1092,26 +1092,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 ))}
               </div>
             ) : (
-              <>
-                <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
-                {updateRequiredNotices.map(({ instanceId, notice }) => (
-                  <p
-                    key={instanceId}
-                    className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
-                  >
-                    {notice}{" "}
-                    <InlineButton
-                      onClick={() => {
-                        props.onRequestClose?.();
-                        void navigate({ to: "/settings/providers" });
-                      }}
-                    >
-                      Provider settings
-                    </InlineButton>
-                  </p>
-                ))}
-              </>
+              <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
             )}
+            {updateRequiredNotices.map(({ instanceId, notice }) => (
+              <p
+                key={instanceId}
+                className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+              >
+                {notice}{" "}
+                <InlineButton
+                  onClick={() => {
+                    props.onRequestClose?.();
+                    void navigate({ to: "/settings/providers" });
+                  }}
+                >
+                  Provider settings
+                </InlineButton>
+              </p>
+            ))}
           </div>
         </Combobox>
       </div>
