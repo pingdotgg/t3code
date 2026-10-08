@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
@@ -588,12 +589,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
       }
+      const statements: Array<string> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") statements.push(query);
+          };
+          return span;
+        },
+      });
       const initial = yield* Effect.acquireUseRelease(
         Effect.sync(() => vi.spyOn(JSON, "parse")),
         (parse) =>
           projectionStore
             .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
             .pipe(
+              Effect.withTracer(tracer),
               Effect.tap(() =>
                 Effect.sync(() => {
                   // Tool outputs must not be allocated again just to collect cohort IDs.
@@ -605,6 +620,35 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               ),
             ),
         (parse) => Effect.sync(() => parse.mockRestore()),
+      );
+      // Large threads blocked the server for over a second here. The boundary
+      // must come from the user-message index rather than a scan of every tool
+      // row, and payloads must not go through a sort after they are fetched.
+      const windowStatement = statements.find((statement) => statement.includes("turn_anchors"));
+      assert.isDefined(windowStatement);
+      const windowPlan = yield* sql.unsafe<{ readonly parent: number; readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${windowStatement}`,
+      );
+      assert.match(
+        windowPlan.map((row) => row.detail).join("\n"),
+        /SEARCH item USING INDEX orchestration_v2_projection_turn_items_user_message_idx \(thread_id=\? AND ordinal<\?\)/,
+      );
+      const topLevel = windowPlan.filter((row) => row.parent === 0).map((row) => row.detail);
+      assert.include(
+        topLevel,
+        "SEARCH item USING INDEX sqlite_autoindex_orchestration_v2_projection_turn_items_1 (turn_item_id=?)",
+      );
+      assert.notInclude(topLevel, "USE TEMP B-TREE FOR ORDER BY");
+      const nodeStatement = statements.find((statement) =>
+        statement.includes("WITH RECURSIVE retained"),
+      );
+      assert.isDefined(nodeStatement);
+      const nodePlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${nodeStatement}`,
+      );
+      assert.include(
+        nodePlan.map((row) => row.detail),
+        "SEARCH orchestration_v2_projection_nodes USING INDEX orchestration_v2_projection_nodes_live_idx (thread_id=?)",
       );
       // Only the selected turn cohort and two lookahead anchors are decoded.
       assert.lengthOf(initial.projection.turnItems, 12 * 102);
