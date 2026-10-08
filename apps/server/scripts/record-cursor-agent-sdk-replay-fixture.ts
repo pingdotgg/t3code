@@ -15,7 +15,7 @@ import {
   recordCursorAgentSdkReplayTranscript,
   type CursorAgentSdkReplayTranscript,
 } from "../src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts";
-import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   CURSOR_MODEL_SELECTION,
   MESSAGE_STEERING_INITIAL_PROMPT,

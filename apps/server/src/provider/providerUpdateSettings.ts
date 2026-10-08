@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Stream from "effect/Stream";
 
-import type * as ServerSettingsModule from "../serverSettings.ts";
+import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
 
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
@@ -29,7 +29,7 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
 
 export function makeProviderSnapshotSettingsSource<Settings>(
   provider: Settings,
-  serverSettings: ServerSettingsModule.ServerSettingsService["Service"],
+  settings: ProviderHostShape["settings"],
 ): {
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
@@ -37,7 +37,7 @@ export function makeProviderSnapshotSettingsSource<Settings>(
   const mapSettings = (settings: ServerSettings) =>
     makeProviderSnapshotSettings(provider, settings);
   return {
-    getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
-    streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),
+    getSettings: settings.get.pipe(Effect.map(mapSettings)),
+    streamSettings: settings.changes.pipe(Stream.map(mapSettings)),
   };
 }

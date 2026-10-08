@@ -32,18 +32,18 @@ import {
   museRecordLabel,
   MuseOrchestratorReplayHarness,
 } from "../src/orchestration-v2/Adapters/MuseAdapterV2.testkit.ts";
-import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { parseMuseVersion } from "../src/provider/museMaintenance.ts";
 import { makeMuseEnvironment, museServeArgs } from "../src/provider/museSdk.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { materializeReplayTranscriptWorkspace } from "../src/orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import {
   checkpointWorkspace,
   makeCheckpointWorkspace,
-} from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+} from "@t3tools/provider-testing/replayWorkspace";
 
 const CLOCK_TICK = Duration.millis(20);
 

@@ -10,7 +10,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
-import { signalProcessGroup } from "../process/processGroup.ts";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 
 const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.String });
 type ProcessIdentity = typeof ProcessIdentity.Type;

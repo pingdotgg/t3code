@@ -21,7 +21,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
-import { expandHomePathWith } from "../pathExpansion.ts";
+import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseGitCloneProgressLine,
   type GitCloneProgressLine,

@@ -7,8 +7,8 @@ import type {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 
-import type { ProviderContinuationIdentity } from "../provider/ProviderDriver.ts";
-import type { ProviderSelectionTransitionPlan } from "./ProviderSelectionTransition.ts";
+import type { ProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import type { ProviderSelectionTransitionPlan } from "@t3tools/provider-core/server/selectionTransition";
 
 export type ProviderSessionTransition =
   | { readonly type: "reuse" }

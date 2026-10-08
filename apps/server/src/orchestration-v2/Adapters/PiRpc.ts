@@ -30,7 +30,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { signalProcessGroup } from "../../process/processGroup.ts";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,

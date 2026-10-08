@@ -2,7 +2,8 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2HistoricalContext } from "@t3tools/provider-core/server/ProviderAdapter";
+import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudget.ts";
@@ -146,14 +147,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   },
 );
 
-export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
-  "ContextHandoffBudgetError",
-  {},
-) {
-  override get message() {
-    return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
-  }
-}
 export class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<ContextHandoffDeliveryUncertainError>()(
   "ContextHandoffDeliveryUncertainError",
   {},

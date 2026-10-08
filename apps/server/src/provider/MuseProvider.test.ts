@@ -8,7 +8,7 @@ import { vi } from "vite-plus/test";
 
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 import type { MuseSdkHost } from "./museSdk.ts";
-import { COMPACT_SLASH_COMMAND } from "./providerSnapshot.ts";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 import { checkMuseProviderStatus } from "./MuseProvider.ts";
 
 const settings = Schema.decodeSync(MuseSettings);

@@ -15,7 +15,7 @@ import {
 import {
   ProviderVersionCache,
   makeManualOnlyProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 
 const maintenanceCapabilities = {
   ...makeManualOnlyProviderMaintenanceCapabilities({

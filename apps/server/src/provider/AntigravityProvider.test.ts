@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -18,7 +19,9 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
 import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
 import {
   buildAntigravityModelsFromSession,
@@ -106,11 +109,18 @@ const expectedCommands = [
   { name: "logout", description: "Sign out of Google" },
 ];
 
-const layerTest = Layer.merge(
-  Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-    shouldRunScopeWork: () => Effect.succeed(false),
-  }),
-  ServerSettings.layerTest(),
+const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(
+    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+      shouldRunScopeWork: () => Effect.succeed(false),
+    }),
+  ),
+  Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provide(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  ),
 );
 
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;

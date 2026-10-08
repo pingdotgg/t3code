@@ -41,7 +41,7 @@ import { sha256 } from "@noble/hashes/sha2";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
 

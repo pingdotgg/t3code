@@ -19,7 +19,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import type { OpenCode2Connection } from "../provider/opencode2/OpenCode2Server.ts";
 import * as OpenCode2Server from "../provider/opencode2/OpenCode2Server.ts";
 import { parseOpenCodeModelSlug } from "../provider/opencodeRuntime.ts";
-import * as TextGenerationOperations from "./TextGenerationOperations.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 

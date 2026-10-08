@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./githubQuota.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";

@@ -18,7 +18,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
-import type { ProviderClientDefinition } from "./providerDriverMeta";
+import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import { SettingsRow } from "./settingsLayout";
 
 export interface ProviderSettingsFieldModel {
@@ -81,7 +81,8 @@ export function deriveProviderSettingsFields(
   value?: unknown,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
   const isLocalAcp =
-    definition.value === "acpRegistry" && readProviderConfigString(value, "source") === "local";
+    definition.driverKind === "acpRegistry" &&
+    readProviderConfigString(value, "source") === "local";
   const schemaAnnotation = readProviderSettingsFormSchemaAnnotation(definition);
   const orderedKeys = new Map(
     (schemaAnnotation.order ?? []).map((key, index) => [key, index] as const),
@@ -537,7 +538,8 @@ export function ProviderSettingsForm({
     [definition, value],
   );
   const isLocalAcp =
-    definition.value === "acpRegistry" && readProviderConfigString(value, "source") === "local";
+    definition.driverKind === "acpRegistry" &&
+    readProviderConfigString(value, "source") === "local";
 
   if (fields.length === 0) {
     return null;

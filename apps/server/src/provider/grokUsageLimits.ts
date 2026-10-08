@@ -11,7 +11,7 @@ import {
   clampPercent,
   makeUnavailableUsageLimits,
   makeUsageLimits,
-} from "./providerUsageLimits.ts";
+} from "@t3tools/provider-core/server/usageLimits";
 
 const GrokCredentials = Schema.Record(
   Schema.String,

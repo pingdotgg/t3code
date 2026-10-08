@@ -15,10 +15,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
-import type { ServerProviderShape } from "./ServerProvider.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+} from "@t3tools/provider-core/server/usageLimits";
+import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -54,13 +56,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
-}): Effect.fn.Return<
-  ServerProviderShape,
-  ServerSettingsError,
-  Scope.Scope | BackgroundPolicy.BackgroundPolicy | ServerSettings.ServerSettingsService
-> {
-  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+}): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope | ProviderHost> {
+  const host = yield* ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
@@ -213,8 +210,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const state = yield* Ref.get(snapshotStateRef);
     const instanceId = state.snapshot.instanceId;
     const [genericDemand, instanceDemand] = yield* Effect.all([
-      backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }),
-      backgroundPolicy.shouldRunScopeWork({ type: "provider-status", instanceId }),
+      host.shouldRunBackgroundWork({ type: "provider-status" }),
+      host.shouldRunBackgroundWork({ type: "provider-status", instanceId }),
     ]);
     return genericDemand || instanceDemand;
   });
@@ -222,7 +219,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const getRefreshInterval =
     input.refreshInterval !== undefined
       ? Effect.succeed(input.refreshInterval)
-      : serverSettings.getSettings.pipe(
+      : host.settings.get.pipe(
           Effect.map(
             (settings) =>
               resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
@@ -232,7 +229,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const refreshIntervalChanges = yield* Queue.sliding<void>(1);
   if (input.refreshInterval === undefined) {
-    const serverSettingsChanges = yield* serverSettings.subscribeChanges;
+    const serverSettingsChanges = yield* host.settings.subscribe;
     yield* serverSettingsChanges.pipe(
       Stream.map((settings) =>
         Duration.toMillis(

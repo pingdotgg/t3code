@@ -119,7 +119,7 @@ vi.mock("../settings/CodexSetupSection", () => ({
   AddManagedCodexAccountDialog: () => null,
 }));
 vi.mock("../settings/providerDriverMeta", () => ({
-  getDriverOption: (driver: string) => ({ label: driver }),
+  providerClients: { get: (driver: string) => ({ label: driver }) },
 }));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Setup required" }),

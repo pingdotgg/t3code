@@ -35,7 +35,7 @@ import {
   type MuseSdkHost,
   type MuseSdkHostOptions,
 } from "../../provider/museSdk.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import {

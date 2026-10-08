@@ -32,8 +32,8 @@ import {
   makeGrokAdapterV2,
 } from "../src/orchestration-v2/Adapters/GrokAdapterV2.ts";
 import { ACP_PROTOCOL } from "../src/orchestration-v2/Adapters/AcpAdapterV2.ts";
-import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../src/orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "../src/orchestration-v2/ProviderContinuationRequests.ts";
 import * as ProviderAdapterRegistry from "../src/orchestration-v2/ProviderAdapterRegistry.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
@@ -42,7 +42,7 @@ import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixture
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
 import { makeReplayServerConfig } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "../src/provider/acp/GrokAcpSupport.ts";
 import { buildRuntimeInstructions } from "../src/provider/RuntimeInstructions.ts";
 
