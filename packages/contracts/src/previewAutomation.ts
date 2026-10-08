@@ -72,6 +72,14 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+/** Why the tab shows the browser's error page instead of the page it tried to load. */
+export const PreviewAutomationLoadError = Schema.Struct({
+  url: Schema.String,
+  code: Schema.Int,
+  description: Schema.String,
+});
+export type PreviewAutomationLoadError = typeof PreviewAutomationLoadError.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -79,6 +87,7 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  loadError: Schema.optional(PreviewAutomationLoadError),
   control: Schema.optional(
     Schema.Struct({
       owner: Schema.Literals(["agent", "human", "unclaimed"]),
@@ -697,6 +706,7 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
+  loadError: Schema.optional(PreviewAutomationLoadError),
   visibleText: Schema.String,
   interactiveElements: Schema.Array(PreviewAutomationElement),
   accessibilityTree: Schema.Unknown,

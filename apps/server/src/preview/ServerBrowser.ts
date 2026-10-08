@@ -14,6 +14,7 @@ import {
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
   type PreviewAutomationHoverInput,
+  type PreviewAutomationLoadError,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationNetworkEntry,
   type PreviewAutomationOpenInput,
@@ -314,6 +315,11 @@ interface ServerTab {
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   loading: boolean;
+  /**
+   * Why the latest main-frame navigation this server saw failed, null while it
+   * has not failed, and undefined until the server sees a navigation at all.
+   */
+  loadError: PreviewAutomationLoadError | null | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -775,6 +781,7 @@ const make = Effect.gen(function* () {
       colorScheme: "system",
       zoomFactor: 1,
       loading: false,
+      loadError: undefined,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -796,6 +803,7 @@ const make = Effect.gen(function* () {
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
+      tab.loadError = null;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
     });
     page.on("load", () => {
@@ -840,13 +848,9 @@ const make = Effect.gen(function* () {
       }
       tab.loading = false;
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
-      report(tab, {
-        _tag: "LoadFailed",
-        url: request.url().slice(0, 2048),
-        title: "",
-        code,
-        description,
-      });
+      const url = request.url().slice(0, 2048);
+      tab.loadError = { url, code, description };
+      report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
     page.on("response", (response) => {
       pushBounded(tab.networkEntries, {
@@ -1204,6 +1208,19 @@ const make = Effect.gen(function* () {
       .filter((tab) => tab.threadId === threadId && tab.control.agentId === agentSessionId)
       .sort((left, right) => right.createdAt - left.createdAt)[0];
 
+  /**
+   * Why the tab shows the browser's error page. A desktop tab's first load can
+   * fail before this server connects, so the desktop's own report fills in.
+   */
+  const loadErrorOf = async (tab: ServerTab) => {
+    if (!tab.page.url().startsWith("chrome-error://")) return undefined;
+    if (tab.loadError !== undefined || !tab.desktop) return tab.loadError ?? undefined;
+    const reported = await Effect.runPromise(
+      desktopChannel.loadFailure({ threadId: tab.threadId, tabId: tab.tabId }),
+    );
+    return Option.getOrUndefined(reported);
+  };
+
   const statusWithTitle = async (
     tab: ServerTab | undefined,
     agentSessionId?: string,
@@ -1220,6 +1237,7 @@ const make = Effect.gen(function* () {
     }
     const url = tab.page.url();
     const viewport = tab.page.viewportSize();
+    const loadError = await loadErrorOf(tab);
     const status = {
       available: true,
       visible: tab.viewers.size > 0,
@@ -1227,6 +1245,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      ...(loadError ? { loadError } : {}),
       control: {
         owner:
           tab.control.controller !== null
@@ -1767,9 +1786,11 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
+        const snapshot = await withScreencastsPaused(tab, () =>
           ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
         );
+        const loadError = await loadErrorOf(tab);
+        return loadError ? { ...snapshot, loadError } : snapshot;
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
