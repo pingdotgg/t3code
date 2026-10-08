@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 const harness = vi.hoisted(() => ({
   setOptionsCalls: 0,
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
+  navigatedRoutes: [] as string[],
 }));
 
 vi.mock("@react-navigation/native", () => {
@@ -16,7 +17,9 @@ vi.mock("@react-navigation/native", () => {
     canGoBack: () => true,
     dispatch: () => {},
     goBack: () => {},
-    navigate: () => {},
+    navigate: (route: string) => {
+      harness.navigatedRoutes.push(route);
+    },
     addListener: () => () => {},
     setOptions: (options: { unstable_headerRightItems?: () => Array<Record<string, unknown>> }) => {
       harness.setOptionsCalls += 1;
@@ -28,6 +31,7 @@ vi.mock("@react-navigation/native", () => {
     useNavigation: () => navigation,
   };
 });
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
@@ -49,7 +53,10 @@ import { ThreadHeader } from "./ThreadHeader";
 
 const projectScripts: never[] = [];
 
-function status(files: ReadonlyArray<string>): VcsStatusResult {
+function status(
+  files: ReadonlyArray<string>,
+  overrides: Partial<VcsStatusResult> = {},
+): VcsStatusResult {
   return {
     isRepo: true,
     hasPrimaryRemote: false,
@@ -65,6 +72,7 @@ function status(files: ReadonlyArray<string>): VcsStatusResult {
     aheadCount: 0,
     behindCount: 0,
     pr: null,
+    ...overrides,
   } as unknown as VcsStatusResult;
 }
 
@@ -85,6 +93,7 @@ function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly ti
         onPull: async () => {},
         onRunAction: async () => null,
         canOpenTerminal: true,
+        canOperateTerminal: true,
         canOpenFiles: true,
         projectScripts,
         terminalSessions: [],
@@ -103,12 +112,20 @@ function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly ti
   );
 }
 
-function renderedGitStatusDescription(): unknown {
+function renderedGitMenuItems(): Array<{
+  description?: unknown;
+  label?: unknown;
+  onPress?: () => void;
+}> {
   const items = harness.renderedRightItems.at(-1) ?? [];
   const git = items.find((item) => item.identifier === "thread-right-git") as
-    | { menu: { items: Array<{ description?: unknown }> } }
+    | { menu: { items: Array<{ description?: unknown; label?: unknown; onPress?: () => void }> } }
     | undefined;
-  return git?.menu.items[0]?.description;
+  return git?.menu.items ?? [];
+}
+
+function renderedGitStatusDescription(): unknown {
+  return renderedGitMenuItems()[0]?.description;
 }
 
 let root: Root | null = null;
@@ -124,6 +141,7 @@ afterEach(() => {
   root = null;
   harness.setOptionsCalls = 0;
   harness.renderedRightItems = [];
+  harness.navigatedRoutes = [];
 });
 
 describe("ThreadHeader", () => {
@@ -149,5 +167,24 @@ describe("ThreadHeader", () => {
       render(<Header gitStatus={status([])} />);
     }
     expect(harness.setOptionsCalls).toBe(applied);
+  });
+
+  it("re-applies menu actions when the default ref changes behind the same label", async () => {
+    // An unpushed commit on a branch with an open PR shows "Push" whether or not the
+    // branch is the default one, but only the default branch asks for confirmation.
+    const pushable = (isDefaultRef: boolean) =>
+      status([], {
+        isDefaultRef,
+        aheadCount: 1,
+        hasPrimaryRemote: true,
+        pr: { state: "open", url: "https://example.com/pr/1" },
+      } as Partial<VcsStatusResult>);
+    render(<Header gitStatus={pushable(false)} />);
+    expect(renderedGitMenuItems()[1]?.label).toBe("Push");
+
+    render(<Header gitStatus={pushable(true)} />);
+    expect(renderedGitMenuItems()[1]?.label).toBe("Push");
+    await act(async () => renderedGitMenuItems()[1]?.onPress?.());
+    expect(harness.navigatedRoutes).toEqual(["GitConfirm"]);
   });
 });
