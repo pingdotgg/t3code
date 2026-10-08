@@ -176,8 +176,27 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "linked-environments",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
+  });
+
+  it("offers Linked environments only when a connected environment shows its links", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const itemIds = (hasPeerLinkHost: boolean) =>
+      filterAvailableSettingsSearchItems({ ...availability, hasPeerLinkHost }).map(
+        (item) => item.id,
+      );
+    expect(itemIds(false)).not.toContain("linked-environments");
+    expect(itemIds(true)).toContain("linked-environments");
   });
 
   it("offers Cursor Keychain settings only when a macOS provider environment is available", () => {
