@@ -252,35 +252,83 @@ describe("resolveInitialServerAuthGateState", () => {
     });
   });
 
-  it("retries transient auth session bootstrap failures after restart", async () => {
-    vi.useFakeTimers();
-    let attempts = 0;
-    const request = HttpClientRequest.get("http://localhost/api/auth/session");
-    const response = HttpClientResponse.fromWeb(
-      request,
-      new Response("Bad Gateway", { status: 502 }),
-    );
-    const runner: PrimaryHttpEffectRunner = async <A>() => {
-      attempts += 1;
-      if (attempts < 4) {
-        throw new HttpClientError.HttpClientError({
-          reason: new HttpClientError.StatusCodeError({ request, response }),
-        });
-      }
-      return unauthenticatedSession(LOOPBACK_AUTH) as A;
-    };
-    __setPrimaryHttpRunnerForTests(runner);
+  it.each(["gateway", "transport", "fetch", "abort"])(
+    "retries %s auth session bootstrap failures after restart",
+    async (failure) => {
+      vi.useFakeTimers();
+      let attempts = 0;
+      const request = HttpClientRequest.get("http://localhost/api/auth/session");
+      const response = HttpClientResponse.fromWeb(
+        request,
+        new Response("Bad Gateway", { status: 502 }),
+      );
+      const cause =
+        failure === "fetch"
+          ? new TypeError("Failed to fetch")
+          : failure === "abort"
+            ? new DOMException("Aborted", "AbortError")
+            : new HttpClientError.HttpClientError({
+                reason:
+                  failure === "transport"
+                    ? new HttpClientError.TransportError({ request })
+                    : new HttpClientError.StatusCodeError({ request, response }),
+              });
+      const runner: PrimaryHttpEffectRunner = async <A>() => {
+        attempts += 1;
+        if (attempts < 4) {
+          throw cause;
+        }
+        return unauthenticatedSession(LOOPBACK_AUTH) as A;
+      };
+      __setPrimaryHttpRunnerForTests(runner);
 
+      const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+      const gateStatePromise = resolveInitialServerAuthGateState();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(gateStatePromise).resolves.toEqual({
+        status: "requires-auth",
+        auth: LOOPBACK_AUTH,
+      });
+      expect(attempts).toBe(4);
+    },
+  );
+
+  it.each([400, 401, 403, 500])("does not retry HTTP %s bootstrap failures", async (status) => {
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const response = HttpClientResponse.fromWeb(request, new Response(null, { status }));
+    const cause = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.StatusCodeError({ request, response }),
+    });
+    const runner = vi.fn(async () => {
+      throw cause;
+    });
+    __setPrimaryHttpRunnerForTests(runner);
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
-    const gateStatePromise = resolveInitialServerAuthGateState();
-    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(resolveInitialServerAuthGateState()).rejects.toMatchObject({ status, cause });
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
 
-    await expect(gateStatePromise).resolves.toEqual({
-      status: "requires-auth",
-      auth: LOOPBACK_AUTH,
+  it("stops retrying transport failures at the bootstrap deadline", async () => {
+    vi.useFakeTimers();
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const cause = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({ request }),
     });
-    expect(attempts).toBe(4);
+    const runner = vi.fn(async () => {
+      throw cause;
+    });
+    __setPrimaryHttpRunnerForTests(runner);
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    const failure = resolveInitialServerAuthGateState().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(failure).resolves.toMatchObject({ operation: "fetch-session-state", cause });
+    expect(runner).toHaveBeenCalledTimes(31);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {
