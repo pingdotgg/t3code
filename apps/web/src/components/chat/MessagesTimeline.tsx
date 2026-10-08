@@ -5419,7 +5419,30 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     setExpanded(next);
   };
   if (workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)) {
-    return <QuestionAnswerHistory answer={workEntry.questionAnswer} highlightAnswers />;
+    return (
+      <>
+        {workEntryDisplayIndicatesToolFailure(workEntry) ? (
+          <WorkLogRow
+            icon={
+              <XIcon
+                role="img"
+                aria-label="Tool call failed"
+                className={cn("size-4", failedToolIconClassName)}
+              />
+            }
+            label="User input request failed"
+            trailing={
+              <TimelineRowTimestamp
+                createdAt={workEntry.createdAt}
+                timestampFormat={timestampFormat}
+                alwaysVisible
+              />
+            }
+          />
+        ) : null}
+        <QuestionAnswerHistory answer={workEntry.questionAnswer} highlightAnswers />
+      </>
+    );
   }
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {

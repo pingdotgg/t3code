@@ -22,6 +22,7 @@ import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
@@ -594,6 +595,69 @@ describe("MessagesTimeline", () => {
       ).toBeDefined();
     } finally {
       await act(() => renderer?.unmount());
+    }
+  });
+
+  it("keeps the saved reply, failure indicator and timestamp when an answered request fails", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const renderRequest = (status: "completed" | "failed") => (
+      <MessagesTimeline
+        {...buildProps()}
+        timestampFormat="24-hour"
+        timelineEntries={[
+          {
+            id: "answered-request",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "answered-request",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "User input submitted",
+              tone: "tool",
+              itemType: "user_input_request",
+              toolLifecycleStatus: status,
+              questionAnswer: {
+                requestId: ApprovalRequestId.make("failed-request"),
+                answers: { scope: "Continue with the focused checks." },
+                questionTextById: { scope: "How should I proceed?" },
+                attachmentsByQuestionId: {},
+              },
+            },
+          },
+        ]}
+      />
+    );
+    try {
+      await act(() => root.render(renderRequest("completed")));
+      expect(container.textContent).toContain("Continue with the focused checks.");
+      expect(container.querySelector('[aria-label="Tool call failed"]')).toBeNull();
+
+      await act(() => root.render(renderRequest("failed")));
+      expect(container.querySelector('[aria-label="Tool call failed"]')).not.toBeNull();
+      expect(container.textContent).toContain("User input request failed");
+      expect(container.textContent).toContain(
+        formatDayAwareTimestamp(MESSAGE_CREATED_AT, "24-hour"),
+      );
+      expect(container.textContent).toContain("How should I proceed?");
+      expect(container.textContent).toContain("Continue with the focused checks.");
+      expect(container.querySelector("h3")?.textContent).toBe("You");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
     }
   });
 
