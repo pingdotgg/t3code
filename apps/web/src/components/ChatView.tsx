@@ -7366,7 +7366,14 @@ export default function ChatView(props: ChatViewProps) {
   // the turn; once it settles, the composer stop button is gone, so this
   // banner is the only visible stop affordance. The interrupt path also
   // accepts a completed run while its provider still has background work.
-  const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
+  // While a turn is in progress the derived list is empty unless Grok published
+  // shell tasks or monitors. Those stay visible. Foreground tools do not.
+  const hasActiveRootRun =
+    serverProjection?.runs.some(
+      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+    ) === true;
+  const activeBackgroundTasks =
+    activeThread && (!isWorking || hasActiveRootRun) ? pendingBackgroundTasks : [];
   const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
   const isStoppingBackgroundWork =
     stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;

@@ -97,7 +97,13 @@ type PendingBackgroundWorkPullRequest = Pick<
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
   "id" | "pendingBackgroundTasks"
->;
+> & {
+  /**
+   * Stored provider threads carry this. Callers that omit it keep the
+   * active-run list empty, which is the pre-Grok behavior.
+   */
+  readonly driver?: OrchestrationV2ProviderThread["driver"];
+};
 
 type PendingBackgroundWorkTurnItem = {
   readonly id: OrchestrationV2TurnItem["id"] | string;
@@ -202,23 +208,70 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
   );
 }
 
+const LIVE_GROK_BACKGROUND_KINDS = new Set<PendingBackgroundWorkTask["kind"]>([
+  "command",
+  "monitor",
+]);
+
+function providerThreadsForPendingWork(input: {
+  readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
+  readonly activeProviderThreadId?: string | null;
+}): ReadonlyArray<PendingBackgroundWorkProviderThread> {
+  if (input.activeProviderThreadId === undefined || input.activeProviderThreadId === null) {
+    return input.providerThreads;
+  }
+  return input.providerThreads.filter((thread) => thread.id === input.activeProviderThreadId);
+}
+
+function namedRosterTask(task: PendingBackgroundWorkTask): PendingBackgroundWorkTask {
+  const { description: rawDescription, ...named } = task;
+  const description = rawDescription?.trim();
+  return {
+    ...named,
+    ...(description === undefined || description.length === 0 ? {} : { description }),
+  };
+}
+
+/**
+ * Grok shell tasks and monitors keep running after their tool call acknowledges,
+ * and the root run stays active for that whole time. Their roster entries are
+ * the only work the strip may name during that run. Foreground turn items and
+ * every other provider stay hidden until the run settles.
+ */
+function grokLiveBackgroundRoster(input: {
+  readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
+  readonly activeProviderThreadId?: string | null;
+}): ReadonlyArray<PendingBackgroundWorkTask> {
+  const byTaskId = new Map<string, PendingBackgroundWorkTask>();
+  for (const providerThread of providerThreadsForPendingWork(input)) {
+    if (providerThread.driver !== "grok") continue;
+    for (const task of providerThread.pendingBackgroundTasks ?? []) {
+      if (task.taskId.length === 0 || byTaskId.has(task.taskId)) continue;
+      if (!LIVE_GROK_BACKGROUND_KINDS.has(task.kind)) continue;
+      byTaskId.set(task.taskId, namedRosterTask(task));
+    }
+  }
+  return Array.from(byTaskId.values());
+}
+
 /**
  * Derive one normalized pending-background-work list for post-settlement UI.
  *
  * Sources:
- * - Provider-thread roster (Claude SDK background tasks)
+ * - Provider-thread roster (Claude SDK background tasks, Grok shell tasks and monitors)
  * - Active command_execution / dynamic_tool / subagent turn items
  * - Pull request watches, as monitors: a watch wakes the agent, so the thread
  *   stays working between wakes instead of returning to the inbox. Callers
  *   that pick a run to interrupt leave `pullRequests` out; Stop ends watches
  *   on its own.
  *
- * Gated on latest root run settlement. Dedupes by native task ID. Excludes
- * the roster while any interruptible foreground run remains active. Excludes
- * Grok persistent monitors (`dynamic_tool` input with `persistent: true`).
- * Excludes turn items whose run resolves to `rolled_back` (abandoned work);
- * items with a null or absent run id stay eligible (matches SQL shell path).
- * Does not consult subagent entities (those double-count turn items).
+ * Gated on latest root run settlement. Dedupes by native task ID. While any
+ * interruptible foreground run remains active, returns only the active Grok
+ * provider thread's command and monitor roster. Excludes Grok persistent
+ * monitors (`dynamic_tool` input with `persistent: true`). Excludes turn items
+ * whose run resolves to `rolled_back` (abandoned work); items with a null or
+ * absent run id stay eligible (matches SQL shell path). Does not consult
+ * subagent entities (those double-count turn items).
  */
 export function derivePendingBackgroundWork(input: {
   readonly latestRun: PendingBackgroundWorkRun | null | undefined;
@@ -241,7 +294,7 @@ export function derivePendingBackgroundWork(input: {
     ) ??
     false;
   if (hasActiveRun) {
-    return [];
+    return grokLiveBackgroundRoster(input);
   }
   // A thread that never ran waits on nothing else, but a watch started on it still wakes it.
   if (input.latestRun == null) {
@@ -253,22 +306,12 @@ export function derivePendingBackgroundWork(input: {
 
   const byTaskId = new Map<string, PendingBackgroundWorkTask>();
 
-  const providerThreads =
-    input.activeProviderThreadId === undefined || input.activeProviderThreadId === null
-      ? input.providerThreads
-      : input.providerThreads.filter((thread) => thread.id === input.activeProviderThreadId);
-
-  for (const providerThread of providerThreads) {
+  for (const providerThread of providerThreadsForPendingWork(input)) {
     for (const task of providerThread.pendingBackgroundTasks ?? []) {
       if (task.taskId.length === 0 || byTaskId.has(task.taskId)) {
         continue;
       }
-      const { description: rawDescription, ...named } = task;
-      const description = rawDescription?.trim();
-      byTaskId.set(task.taskId, {
-        ...named,
-        ...(description === undefined || description.length === 0 ? {} : { description }),
-      });
+      byTaskId.set(task.taskId, namedRosterTask(task));
     }
   }
 

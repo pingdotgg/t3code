@@ -18,6 +18,7 @@ import {
   extractXAiAcpSubagentUpdate,
   extractXAiAskUserQuestions,
   extractXAiBackgroundTaskCompletion,
+  describeXAiBackgroundTask,
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
   isGenericAcpToolTitle,
@@ -521,6 +522,63 @@ describe("XAiAcpExtension", () => {
     expect(isXAiMonitorTool(toolCall)).toBe(true);
     expect(normalizeXAiAcpToolCallState(toolCall).status).toBe("inProgress");
     expect(extractXAiMonitorTaskId(toolCall)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
+    expect(describeXAiBackgroundTask(toolCall)).toEqual({
+      taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+      kind: "monitor",
+      description: "Demo monitor without variant",
+    });
+  });
+
+  it("names a background shell from its description and leaves foreground bash unnamed", () => {
+    const shell = {
+      toolCallId: "call-shell",
+      title: "Tool",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          command: "echo hi\nsleep 180",
+          description: "Visible shell task",
+        },
+        rawOutput: {
+          type: "BackgroundTaskStarted",
+          task_id: "01a11146-8e29-7d40-9c21-eda2ef2d2bcc",
+          command: "echo hi\nsleep 180",
+        },
+      },
+    };
+    expect(describeXAiBackgroundTask(shell)).toEqual({
+      taskId: "01a11146-8e29-7d40-9c21-eda2ef2d2bcc",
+      kind: "command",
+      description: "Visible shell task",
+    });
+
+    const foreground = {
+      toolCallId: "call-fg",
+      title: "ls",
+      status: "completed" as const,
+      data: {
+        rawInput: { command: "ls" },
+        rawOutput: { type: "Bash", command: "ls", exit_code: 0 },
+      },
+    };
+    expect(describeXAiBackgroundTask(foreground)).toBeUndefined();
+  });
+
+  it("leaves persistent monitors off the background roster", () => {
+    const toolCall = {
+      toolCallId: "call-mon-persistent",
+      title: "Monitor",
+      status: "inProgress" as const,
+      data: {
+        rawInput: { description: "Watch the log", persistent: true },
+        rawOutput: {
+          type: "Monitor",
+          taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+          persistent: true,
+        },
+      },
+    };
+    expect(describeXAiBackgroundTask(toolCall)).toBeUndefined();
   });
 
   it("completes status-less Bash results despite generic titles", () => {

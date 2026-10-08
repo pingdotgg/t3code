@@ -343,6 +343,41 @@ export function isXAiPersistentMonitor(toolCall: AcpToolCallState): boolean {
 }
 
 /**
+ * Name a Grok background shell or monitor for the provider-thread roster.
+ * Persistent monitors stay off that roster: they stream after the turn and
+ * must not hold the thread open. Foreground tools return nothing.
+ */
+export function describeXAiBackgroundTask(toolCall: AcpToolCallState):
+  | {
+      readonly taskId: string;
+      readonly kind: "command" | "monitor";
+      readonly description: string;
+    }
+  | undefined {
+  if (isXAiPersistentMonitor(toolCall)) return undefined;
+  const taskId = extractXAiMonitorTaskId(toolCall);
+  if (taskId === undefined) return undefined;
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  if (xAiBackgroundShellTaskId(toolCall) !== undefined) {
+    const command = nonEmptyString(rawOutput?.command) ?? nonEmptyString(rawInput?.command);
+    const description =
+      nonEmptyString(rawInput?.description) ??
+      (command === undefined ? undefined : command.split("\n")[0]!.slice(0, 200)) ??
+      nonEmptyString(toolCall.title) ??
+      "Shell task";
+    return { taskId, kind: "command", description };
+  }
+  if (!isXAiMonitorTool(toolCall)) return undefined;
+  return {
+    taskId,
+    kind: "monitor",
+    description:
+      nonEmptyString(rawInput?.description) ?? nonEmptyString(toolCall.title) ?? "Monitor",
+  };
+}
+
+/**
  * When get_command_or_subagent_output / TaskOutput completes registered monitor
  * task(s), return hydration for each completed background tool id.
  */

@@ -115,6 +115,55 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("shows a Grok shell task and monitor while the run is still active", () => {
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
+      hasActiveRun: true,
+      providerThreads: [
+        {
+          id: "pt-1" as never,
+          driver: "grok" as never,
+          pendingBackgroundTasks: [
+            { taskId: "shell-1", description: "Visible shell task", kind: "command" },
+            { taskId: "mon-1", description: "  Visible session monitor  ", kind: "monitor" },
+            { taskId: "agent-1", description: "Review the diff", kind: "subagent" },
+          ],
+        },
+      ],
+      turnItems: [
+        {
+          id: "item-1" as never,
+          type: "command_execution",
+          status: "running",
+          title: "npm test",
+          nativeItemRef: { nativeId: "cmd-foreground" },
+          input: "npm test",
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      { taskId: "shell-1", description: "Visible shell task", kind: "command" },
+      { taskId: "mon-1", description: "Visible session monitor", kind: "monitor" },
+    ]);
+  });
+
+  it("keeps another provider's roster hidden while its run is active", () => {
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
+        runs: [{ id: "run-1" as never, ordinal: 1, status: "running" }],
+        providerThreads: [
+          {
+            id: "pt-1" as never,
+            driver: "claude" as never,
+            pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20", kind: "command" }],
+          },
+        ],
+        turnItems: [],
+      }),
+    ).toEqual([]);
+  });
+
   it("excludes rolled_back items when the latest run is waiting", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-2" as never, ordinal: 2, status: "waiting" },

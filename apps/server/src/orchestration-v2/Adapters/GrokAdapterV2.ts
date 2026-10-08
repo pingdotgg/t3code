@@ -41,6 +41,7 @@ import {
   extractXAiAskUserQuestions,
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
+  describeXAiBackgroundTask,
   extractXAiMonitorTaskId,
   isXAiPersistentMonitor,
   extractXAiExitPlanMarkdown,
@@ -316,6 +317,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
         environment: options.environment,
       }),
     extractBackgroundTaskId: extractXAiMonitorTaskId,
+    describeBackgroundTask: describeXAiBackgroundTask,
     extractBackgroundToolMutation: extractXAiAcpBackgroundToolMutation,
     extractBackgroundTaskCompletion: (toolCall) => [
       ...extractXAiBackgroundTaskCompletion(toolCall),
