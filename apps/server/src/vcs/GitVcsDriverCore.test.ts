@@ -3246,6 +3246,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("removes a worktree without deleting what its junctions point to", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, ".gitignore", "node_modules\n");
+        yield* writeTextFile(cwd, "packages/app/package.json", "{}\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add app"]);
+        yield* writeTextFile(cwd, "node_modules/dep/index.js", "keep\n");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/linked",
+        });
+        // Sharing the main checkout's install the usual Windows way: a junction
+        // there, a directory symlink elsewhere.
+        const shared = pathService.join(cwd, "node_modules");
+        NodeFS.symlinkSync(shared, pathService.join(worktreePath, "node_modules"), "junction");
+        NodeFS.symlinkSync(
+          shared,
+          pathService.join(worktreePath, "packages", "app", "node_modules"),
+          "junction",
+        );
+
+        yield* driver.removeWorktree({ cwd, path: worktreePath });
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(shared, "dep", "index.js")),
+          "keep\n",
+        );
+      }),
+    );
+
     it.effect("allows worktree removal to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;

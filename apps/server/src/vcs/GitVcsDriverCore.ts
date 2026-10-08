@@ -1,4 +1,8 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's FileSystem has no lstat or typed directory entries.
+import * as NodeFSP from "node:fs/promises";
+
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -3781,6 +3785,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.branch,
     ]);
 
+  /**
+   * Unlinks every link to a directory below `directory`, NTFS junctions
+   * included, without following it. Links to files are left to git, so a
+   * tracked one doesn't make a clean worktree look modified.
+   */
+  const unlinkDirectoryLinks = Effect.fnUntraced(function* (
+    directory: string,
+  ): Effect.fn.Return<void, Cause.UnknownError | PlatformError.PlatformError> {
+    // Typed entries tell links from directories without a stat per file, which
+    // matters in a large node_modules.
+    const entries = yield* Effect.tryPromise(() =>
+      NodeFSP.readdir(directory, { withFileTypes: true }),
+    );
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== ".git") {
+          yield* unlinkDirectoryLinks(entryPath);
+        }
+      } else if (entry.isSymbolicLink()) {
+        const target = yield* fileSystem.stat(entryPath).pipe(Effect.option);
+        if (Option.isNone(target) || target.value.type === "Directory") {
+          yield* fileSystem.remove(entryPath);
+        }
+      }
+    }
+  });
+
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
   )(function* (input) {
@@ -3791,6 +3823,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("--force");
     }
     args.push(input.path);
+    // Git for Windows before 2.54 follows junctions while removing a worktree
+    // and deletes what they point to, such as the main checkout's node_modules.
+    // Later versions skip them but leave the worktree directory behind. Git
+    // elsewhere only unlinks links. Only a linked worktree has a `.git` file,
+    // so the main checkout is never touched.
+    const worktreePath = path.resolve(input.cwd, input.path);
+    if (
+      hostPlatform === "win32" &&
+      (yield* fileSystem.stat(path.join(worktreePath, ".git")).pipe(
+        Effect.map((info) => info.type === "File"),
+        Effect.orElseSucceed(() => false),
+      ))
+    ) {
+      yield* unlinkDirectoryLinks(worktreePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              ...gitCommandContext({
+                operation: "GitVcsDriver.removeWorktree",
+                cwd: input.cwd,
+                args,
+              }),
+              detail: "Could not unlink directory links inside the worktree.",
+              cause,
+            }),
+        ),
+      );
+    }
     const result = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.removeWorktree",
       input.cwd,
