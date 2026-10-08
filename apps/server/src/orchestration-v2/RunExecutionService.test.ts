@@ -3463,6 +3463,7 @@ it.effect("closes the run's open tool calls when its provider stream is lost", (
     const finishedItemId = TurnItemId.make(`turn-item:${key}:finished`);
     const commandItemId = TurnItemId.make(`turn-item:${key}:command`);
     const imageData = "iVBORw0KGgo".repeat(16);
+    const unpairedNodeId = NodeId.make(`node:${key}:unpaired`);
     const { written, observed } = yield* captureRootRunTermination({
       key,
       shouldFinalizeRun: () => Effect.succeed(true),
@@ -3477,6 +3478,8 @@ it.effect("closes the run's open tool calls when its provider stream is lost", (
               { source: { type: "base64", media_type: "image/png", data: imageData } },
             ),
             backgroundTurnItemEvent(ids, "command_execution", "running", 4, commandItemId),
+            // The stream ends before this node's item arrives.
+            toolCallNodeEvent(ids, "running", unpairedNodeId),
           ]),
           // A provider switch releases the session, which fails its event stream.
           Stream.fail(
@@ -3490,6 +3493,7 @@ it.effect("closes the run's open tool calls when its provider stream is lost", (
     });
     assert.deepEqual(observed, [
       `node:${toolItemId}:node:interrupted`,
+      `node:${unpairedNodeId}:interrupted`,
       "run:failed",
       "pull-requests-refreshed",
     ]);
@@ -3833,12 +3837,13 @@ function backgroundTurnItemEvent(
 function toolCallNodeEvent(
   ids: BackgroundScenarioIds,
   status: "running" | "completed",
+  nodeId: NodeId = NodeId.make(`${ids.itemId}:node`),
 ): ProviderAdapterV2Event {
   return {
     type: "node.updated",
     driver,
     node: {
-      id: NodeId.make(`${ids.itemId}:node`),
+      id: nodeId,
       threadId: ids.threadId,
       runId: ids.runId,
       kind: "tool_call",

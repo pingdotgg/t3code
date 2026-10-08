@@ -350,20 +350,20 @@ function interruptOpenRunToolCalls(input: {
 > {
   return Effect.gen(function* () {
     const events: Array<OrchestrationV2DomainEvent> = [];
+    // A node can arrive without its item when the stream ends between the two.
+    for (const node of input.open.nodes.values()) {
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "node.updated",
+        threadId: node.threadId,
+        runId: input.run.id,
+        nodeId: node.id,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: { ...node, status: "interrupted", completedAt: input.completedAt },
+      });
+    }
     for (const turnItem of input.open.turnItems.values()) {
-      const node = turnItem.nodeId === null ? undefined : input.open.nodes.get(turnItem.nodeId);
-      if (node !== undefined) {
-        events.push({
-          id: yield* input.allocateEventId(),
-          type: "node.updated",
-          threadId: node.threadId,
-          runId: input.run.id,
-          nodeId: node.id,
-          providerInstanceId: input.run.providerInstanceId,
-          occurredAt: input.completedAt,
-          payload: { ...node, status: "interrupted", completedAt: input.completedAt },
-        });
-      }
       events.push({
         id: yield* input.allocateEventId(),
         type: "turn-item.updated",
