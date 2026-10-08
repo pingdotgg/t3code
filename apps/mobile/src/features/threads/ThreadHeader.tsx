@@ -20,7 +20,7 @@ export function ThreadHeader(
 ) {
   const navigation = useNavigation();
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack } = props.gitControls;
+  const { onOpenTerminal, onMergeBack, onContinueOn } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
@@ -59,6 +59,13 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
+    if (onContinueOn) {
+      actions.push({
+        accessibilityLabel: "Continue on another environment",
+        icon: "arrow.up.right",
+        onPress: onContinueOn,
+      });
+    }
     return actions;
   }, [
     props.inspectorMode,
@@ -66,6 +73,7 @@ export function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
+    onContinueOn,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
     props.onReturnToThread,

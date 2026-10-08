@@ -255,7 +255,9 @@ that session; otherwise paste a pairing code from that machine's
 ### Continue a thread on another machine
 
 A thread can move to a linked machine with its conversation and its code:
-commits you have not pushed, uncommitted edits and new files. It continues
+commits you have not pushed, uncommitted edits and new files. Choose
+**Continue on…** from the thread's menu or the command palette, or from the
+thread's long-press or header menu on mobile, then pick the machine. It continues
 there in a new worktree of the project with the same repository, and the copy
 here becomes read-only with a link to it. Ignored files such as `.env` stay
 behind, and a move larger than 50 MB asks you to push the branch first.

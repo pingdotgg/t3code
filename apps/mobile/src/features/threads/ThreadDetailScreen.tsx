@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
+import { ThreadHandoffCard, threadHandoffClosesComposer } from "./ThreadHandoffCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -562,7 +563,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   // A pending user-input request or a failed creation owns the composer slot.
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    activeUserInputRequestId !== null ||
+    props.creationState?.kind === "failed" ||
+    threadHandoffClosesComposer(props.selectedThread);
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -1238,6 +1241,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       />
                     </Animated.View>
                   ) : null}
+                  <View
+                    // With the composer closed, the card pads the home indicator itself.
+                    style={
+                      threadHandoffClosesComposer(props.selectedThread)
+                        ? { paddingBottom: composerBottomInset }
+                        : undefined
+                    }
+                  >
+                    <ThreadHandoffCard thread={props.selectedThread} />
+                  </View>
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
@@ -1336,7 +1349,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 {/* Hidden (not unmounted) while a user-input request owns the
                 composer slot, so composer drafts and editor state survive.
                 A rejected creation has no thread to send to; the failure card
-                owns the slot instead. */}
+                owns the slot instead. A thread that moved away continues on
+                the other environment, so its card owns the slot too. */}
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (
                     <View
