@@ -20,7 +20,15 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -49,6 +57,7 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
+  type ThreadListV2Group,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -459,6 +468,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
   readonly pinned?: boolean;
+  /** The row's place in a thread group; null or absent outside one. */
+  readonly group?: ThreadListV2Group | null;
+  /** Takes the given threads out of their group. */
+  readonly onUngroupThreads?: (threads: readonly EnvironmentThreadShell[]) => void;
   /** Preformatted against the parent minute tick so this memoized row's
       countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
@@ -558,7 +571,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnpinThread,
     onSetThreadAutoSettle,
     onMoveThread,
+    onUngroupThreads,
   } = props;
+  const group = props.group ?? null;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
@@ -636,6 +651,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const groupMenuItems = useMemo<MenuAction[]>(
+    () =>
+      onUngroupThreads === undefined || (group === null && thread.groupedUnderThreadId == null)
+        ? []
+        : [
+            group?.role === "parent"
+              ? { id: "ungroup", title: "Ungroup", image: "rectangle.stack.badge.minus" }
+              : {
+                  id: "remove-from-group",
+                  title: "Remove from group",
+                  image: "rectangle.stack.badge.minus",
+                },
+          ],
+    [group, onUngroupThreads, thread.groupedUnderThreadId],
+  );
 
   // Swipe: the v2 primary action is the lifecycle transition. Un-settling a
   // settled row keeps it active until new activity clears the user override.
@@ -820,6 +850,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "remove-from-group") onUngroupThreads?.([thread]);
+      if (nativeEvent.event === "ungroup" && group?.role === "parent") {
+        onUngroupThreads?.(group.members);
+      }
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "copy-thread-id") {
@@ -843,6 +877,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      onUngroupThreads,
+      group,
       thread,
       handleArchive,
       handleDelete,
@@ -925,6 +961,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
+  // A group's top row counts the threads under it; those rows hang off a rail.
+  const groupCount =
+    group?.role === "parent" ? (
+      <Text
+        className={cn(
+          "text-xs tabular-nums",
+          selected
+            ? selectedThreadRowColors.mutedForegroundClassName
+            : rowAppearance.tertiaryForegroundClassName,
+        )}
+      >
+        {group.members.length === 1 ? "1 thread" : `${group.members.length} threads`}
+      </Text>
+    ) : null;
+  const onGroupRail = (content: ReactNode) =>
+    group?.role === "child" ? (
+      <View className="ml-2 border-l border-border pl-3">{content}</View>
+    ) : (
+      content
+    );
+
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
   const cardContent = (
     <>
@@ -951,6 +1008,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+        {groupCount}
         {pinnedRow ? (
           <SymbolView
             name="pin"
@@ -1135,14 +1193,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
-          cardContent
+          onGroupRail(cardContent)
         ) : (
           /* Flat native list rows: no tonal containers — colored status
              labels and text hierarchy carry state, an inset hairline
              separates rows. The opaque screen background stays so swipe
              actions reveal behind the row. */
           <View>
-            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{cardContent}</View>
+            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>
+              {onGroupRail(cardContent)}
+            </View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}
@@ -1168,61 +1228,61 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={rowAppearance.style}
       >
         {/* Settled history recedes: dimmed favicon + muted title. */}
-        <View
-          className={cn(
-            "min-h-[44px] flex-row items-center gap-2.5 py-2",
-            sidebarPane ? "px-3" : "px-5",
+        <View className={sidebarPane ? "px-3" : "px-5"}>
+          {onGroupRail(
+            <View className="min-h-[44px] flex-row items-center gap-2.5 py-2">
+              {props.project ? (
+                <View className="opacity-40">
+                  <ProjectFavicon
+                    environmentId={thread.environmentId}
+                    faviconPath={props.project.faviconPath}
+                    projectIcon={props.project.projectIcon}
+                    size={15}
+                    projectTitle={props.project.title}
+                    workspaceRoot={props.project.workspaceRoot}
+                  />
+                </View>
+              ) : null}
+              <View className="min-w-0 flex-1">
+                <Text
+                  className={cn(
+                    "text-base",
+                    selected
+                      ? selectedThreadRowColors.foregroundClassName
+                      : rowAppearance.mutedForegroundClassName,
+                  )}
+                  numberOfLines={1}
+                >
+                  {thread.title}
+                </Text>
+                {props.searchMatch ? (
+                  <ThreadSearchMatchExcerpt
+                    sidebar={sidebarPane}
+                    match={props.searchMatch}
+                    query={props.searchQuery ?? ""}
+                    selected={selected}
+                  />
+                ) : null}
+              </View>
+              {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+              {groupCount}
+              <Text
+                className={cn(
+                  "text-sm tabular-nums",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : snoozedRow
+                      ? rowAppearance.mutedForegroundClassName
+                      : rowAppearance.tertiaryForegroundClassName,
+                )}
+                style={{ fontFamily: MONO_FONT }}
+              >
+                {snoozedRow && props.snoozeWakeLabelText !== undefined
+                  ? props.snoozeWakeLabelText
+                  : timeLabel}
+              </Text>
+            </View>,
           )}
-        >
-          {props.project ? (
-            <View className="opacity-40">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                faviconPath={props.project.faviconPath}
-                projectIcon={props.project.projectIcon}
-                size={15}
-                projectTitle={props.project.title}
-                workspaceRoot={props.project.workspaceRoot}
-              />
-            </View>
-          ) : null}
-          <View className="min-w-0 flex-1">
-            <Text
-              className={cn(
-                "text-base",
-                selected
-                  ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {thread.title}
-            </Text>
-            {props.searchMatch ? (
-              <ThreadSearchMatchExcerpt
-                sidebar={sidebarPane}
-                match={props.searchMatch}
-                query={props.searchQuery ?? ""}
-                selected={selected}
-              />
-            ) : null}
-          </View>
-          {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
-          <Text
-            className={cn(
-              "text-sm tabular-nums",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : snoozedRow
-                  ? rowAppearance.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-            )}
-            style={{ fontFamily: MONO_FONT }}
-          >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
-              ? props.snoozeWakeLabelText
-              : timeLabel}
-          </Text>
         </View>
       </RowPressable>
     );
@@ -1267,6 +1327,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ]
                 : []),
               { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              ...groupMenuItems,
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

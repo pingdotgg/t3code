@@ -2191,6 +2191,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
+    if (command.groupedUnderThreadId === command.threadId) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} cannot be grouped under itself.`,
+      });
+    }
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2212,6 +2219,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootThreadId: command.threadId,
       },
       forkedFrom: null,
+      ...(command.groupedUnderThreadId === undefined
+        ? {}
+        : { groupedUnderThreadId: command.groupedUnderThreadId }),
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -2478,6 +2488,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
+      });
+    }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.groupedUnderThreadId === command.threadId
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} cannot be grouped under itself.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
@@ -2898,6 +2918,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
+          // Moving a thread in or out of a launch group is arrangement, not
+          // activity, like reordering: it keeps updatedAt.
+          const {
+            type: _type,
+            commandId: _commandId,
+            threadId: _threadId,
+            groupedUnderThreadId,
+            ...otherChanges
+          } = command;
+          const arrangementOnly =
+            groupedUnderThreadId !== undefined &&
+            Object.values(otherChanges).every((value) => value === undefined);
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
             thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
@@ -2971,7 +3003,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
-            updatedAt: now,
+            ...(groupedUnderThreadId === undefined ? {} : { groupedUnderThreadId }),
+            updatedAt: arrangementOnly ? thread.updatedAt : now,
           };
         }
         case "thread.pull-request.link":

@@ -119,6 +119,7 @@ interface HomeScreenProps {
   ) => Promise<boolean>;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onUngroupThreads: (threads: readonly EnvironmentThreadShell[]) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
@@ -464,6 +465,12 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onRegenerateThreadTitle],
   );
+  const handleUngroupThreads = useCallback(
+    (threads: readonly EnvironmentThreadShell[]) => {
+      void props.onUngroupThreads(threads);
+    },
+    [props.onUngroupThreads],
+  );
   const handleRenameThread = useCallback(
     (thread: EnvironmentThreadShell) => props.onRenameThread(thread),
     [props.onRenameThread],
@@ -746,6 +753,8 @@ export function HomeScreen(props: HomeScreenProps) {
           hasQueuedMessages={item.hasQueuedMessages}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
+          group={item.item.group}
+          onUngroupThreads={handleUngroupThreads}
           snoozePresetMinute={item.snoozePresetMinute ?? ""}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           timeLabel={item.timeLabel}
@@ -808,6 +817,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleMoveThread,
       handlePinThread,
       handleRegenerateThreadTitle,
+      handleUngroupThreads,
       handleRenameThread,
       handleSettleThread,
       handleSnoozeThread,

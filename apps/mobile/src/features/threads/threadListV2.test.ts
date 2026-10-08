@@ -30,6 +30,7 @@ import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  getThreadListV2LiveGroupThreads,
   getThreadListV2OrderedSection,
   isThreadListV2ListItem,
   resolveThreadListV2SnoozeMenuSelection,
@@ -413,6 +414,87 @@ describe("getThreadListV2OrderedSection", () => {
         (thread) => thread.id,
       ),
     ).toEqual(["pinned-first", "pinned-later"]);
+  });
+});
+
+describe("thread groups", () => {
+  const parent = makeThread({
+    id: ThreadId.make("parent"),
+    title: "Parent",
+    createdAt: "2026-06-01T00:00:00.000Z",
+  });
+  const child = makeThread({
+    id: ThreadId.make("child"),
+    title: "Child",
+    groupedUnderThreadId: ThreadId.make("parent"),
+    createdAt: "2026-06-01T03:00:00.000Z",
+  });
+  const settledChild = makeThread({
+    id: ThreadId.make("settled-child"),
+    title: "Settled child",
+    groupedUnderThreadId: ThreadId.make("parent"),
+    settledOverride: "settled",
+    settledAt: NOW,
+  });
+  const solo = makeThread({
+    id: ThreadId.make("solo"),
+    title: "Solo",
+    createdAt: "2026-06-01T02:00:00.000Z",
+  });
+  const threads = [parent, child, settledChild, solo];
+
+  it("renders grouped threads under the top thread, each with its own look", () => {
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(
+      layout.items.map((item) => [item.thread.title, item.variant, item.group?.role ?? null]),
+    ).toEqual([
+      ["Solo", "card", null],
+      ["Parent", "card", "parent"],
+      ["Child", "card", "child"],
+      ["Settled child", "slim", "child"],
+    ]);
+    expect(layout.items[1]?.group).toEqual({ role: "parent", members: [child, settledChild] });
+    // The settled child renders in its group, so the shelf does not count it.
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("keeps a settled top thread with its live group past the settled page", () => {
+    const settledParent = { ...parent, settledOverride: "settled" as const, settledAt: NOW };
+    const layout = buildThreadListV2Items({
+      threads: [settledParent, child],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledLimit: 0,
+    });
+    expect(layout.items.map((item) => [item.thread.title, item.group?.role ?? null])).toEqual([
+      ["Parent", "parent"],
+      ["Child", "child"],
+    ]);
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("keeps a settled top thread with its live group out of the parked lists", () => {
+    const settledParent = { ...parent, settledOverride: "settled" as const, settledAt: NOW };
+    const lone = { ...solo, settledOverride: "settled" as const, settledAt: NOW };
+    expect(
+      [...getThreadListV2LiveGroupThreads({ threads: [settledParent, child, lone], now: NOW })]
+        .map((thread) => thread.title)
+        .toSorted(),
+    ).toEqual(["Child", "Parent"]);
+  });
+
+  it("moves a group as one row", () => {
+    expect(
+      getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
+        (thread) => thread.title,
+      ),
+    ).toEqual(["Solo", "Parent"]);
   });
 });
 

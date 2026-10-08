@@ -187,6 +187,16 @@ describe("buildThreadActionMenuItems", () => {
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
   });
 
+  it("offers group actions on a launcher, hiding Settle group when nothing can settle", () => {
+    expect(ids({ ...baseState, leadsLaunchGroup: { settleCount: 3 } })).toEqual(
+      expect.arrayContaining(["settle-group", "ungroup"]),
+    );
+    const settled = ids({ ...baseState, leadsLaunchGroup: { settleCount: 0 } });
+    expect(settled).toContain("ungroup");
+    expect(settled).not.toContain("settle-group");
+    expect(ids(baseState)).not.toContain("ungroup");
+  });
+
   it("marks delete as destructive and keeps it last", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });

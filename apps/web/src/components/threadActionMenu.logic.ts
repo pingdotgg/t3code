@@ -20,6 +20,9 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "remove-from-group"
+  | "settle-group"
+  | "ungroup"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -88,6 +91,11 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  /** The thread renders inside the launch group of the thread that launched it. */
+  readonly inLaunchGroup?: boolean;
+  /** The thread launched a group. `settleCount` is how many of its threads
+      can settle now; zero hides Settle group. */
+  readonly leadsLaunchGroup?: { readonly settleCount: number };
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
@@ -167,6 +175,21 @@ export function buildThreadActionMenuItems(
                 ],
               },
         ]
+      : []),
+    ...(state.inLaunchGroup
+      ? [{ id: "remove-from-group" as const, label: "Remove from group", icon: "list-x" }]
+      : []),
+    ...(state.leadsLaunchGroup && state.leadsLaunchGroup.settleCount > 0
+      ? [
+          {
+            id: "settle-group" as const,
+            label: `Settle group (${state.leadsLaunchGroup.settleCount})`,
+            icon: "circle-check",
+          },
+        ]
+      : []),
+    ...(state.leadsLaunchGroup
+      ? [{ id: "ungroup" as const, label: "Ungroup", icon: "list-x" }]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration

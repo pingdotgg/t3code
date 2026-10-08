@@ -167,8 +167,22 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      /** Key of the launch group's top thread when the row renders in one. */
+      readonly group?: string;
+      /** Moves with its group's lead row and stays out of drop orders. A
+          nested row other than the group's top can be dragged out of it. */
+      readonly nested?: boolean;
+    }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+
+/** Rows that move with their group's lead row instead of taking a drop slot. */
+export function isNestedSidebarListItem(item: SidebarListItem): boolean {
+  return item.kind === "thread" && item.nested === true;
+}
 
 export function sidebarListItemId(item: SidebarListItem): string {
   return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
@@ -191,30 +205,34 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
   return section;
 }
 
+/** How a drop changes the lifted row's launch group. */
+export type SidebarDropMembership =
+  /** Dropped back inside its own group: nothing changes. */
+  | { readonly kind: "stay" }
+  /** A launched row dropped outside its group leaves it. */
+  | { readonly kind: "leave" }
+  /** Dropped between two rows of another group: it joins that group. */
+  | { readonly kind: "join"; readonly group: string };
+
 /** Resolve the destination section and manual order from an arrayMove across
  * the separators. The working and snoozed shelves are never destinations. */
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
   readonly pinnedOrder: readonly string[];
   readonly activeOrder: readonly string[];
+  readonly membership: SidebarDropMembership | null;
 };
 
-export function resolveSidebarDropTarget(
+/** The pinned and active keys in list order, without nested rows (except
+    `includeKey`, the lifted row once it leaves its group). */
+export function sidebarDropOrders(
   items: readonly SidebarListItem[],
-  activeKey: string,
-  overId: string,
-): SidebarDropTarget | null {
-  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
-  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
-  if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
-  const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  includeKey?: string,
+): { readonly pinnedOrder: string[]; readonly activeOrder: string[] } {
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
-  for (const item of moved) {
+  for (const item of items) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
       else if (
@@ -223,10 +241,78 @@ export function resolveSidebarDropTarget(
         item.marker === "settled-header"
       )
         break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
+    } else if (isNestedSidebarListItem(item) && item.key !== includeKey) continue;
+    else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
-  return { section, pinnedOrder, activeOrder };
+  return { pinnedOrder, activeOrder };
+}
+
+export function resolveSidebarDropTarget(
+  items: readonly SidebarListItem[],
+  activeKey: string,
+  overId: string,
+): SidebarDropTarget | null {
+  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
+  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
+  const active = items[activeIndex];
+  if (activeIndex === -1 || overIndex === -1 || active?.kind !== "thread") return null;
+  if (active.group !== undefined && !isNestedSidebarListItem(active)) {
+    return resolveSidebarGroupDropTarget(items, active, items[overIndex]!, overIndex > activeIndex);
+  }
+  const moved = items.filter((_, index) => index !== activeIndex);
+  moved.splice(overIndex, 0, active);
+  const groupAt = (index: number) => {
+    const item = moved[index];
+    return item?.kind === "thread" ? item.group : undefined;
+  };
+  const above = groupAt(overIndex - 1);
+  const below = groupAt(overIndex + 1);
+  const section = sectionAtSidebarSlot(moved, overIndex);
+  // Group drops change membership only, so they keep the current orders.
+  if (above !== undefined && (above === active.group || above === below)) {
+    return {
+      section: section === "pinned" || section === "settled" ? section : "active",
+      ...sidebarDropOrders(items),
+      // A row stays in its group while the row above its slot is in it, and
+      // joins another group only between two of that group's rows.
+      membership: above === active.group ? { kind: "stay" } : { kind: "join", group: above },
+    };
+  }
+  if (section === "working" || section === "snoozed") return null;
+  return {
+    section,
+    ...sidebarDropOrders(moved, active.key),
+    membership:
+      isNestedSidebarListItem(active) && active.group !== undefined ? { kind: "leave" } : null,
+  };
+}
+
+// A group's lead row moves the whole group. Its own rows are not targets, and
+// another group's rows stand for that group: the lifted group lands before
+// it when moving up and after it when moving down. Groups never join groups.
+function resolveSidebarGroupDropTarget(
+  items: readonly SidebarListItem[],
+  active: Extract<SidebarListItem, { kind: "thread" }>,
+  over: SidebarListItem,
+  movingDown: boolean,
+): SidebarDropTarget | null {
+  if (over.kind === "thread" && over.group === active.group) return null;
+  const overLead =
+    over.kind === "thread" && over.group !== undefined
+      ? items.find(
+          (item) =>
+            item.kind === "thread" && item.group === over.group && !isNestedSidebarListItem(item),
+        )
+      : over;
+  const leads = items.filter((item) => item !== active && !isNestedSidebarListItem(item));
+  const overAt = overLead === undefined ? -1 : leads.indexOf(overLead);
+  if (overAt === -1) return null;
+  const at = overAt + (movingDown ? 1 : 0);
+  const moved = [...leads.slice(0, at), active, ...leads.slice(at)];
+  const section = sectionAtSidebarSlot(moved, at);
+  if (section === "working" || section === "snoozed") return null;
+  return { section, ...sidebarDropOrders(moved), membership: null };
 }
 
 export type SidebarThreadDropPlan =
@@ -260,13 +346,24 @@ export type SidebarThreadDropPlan =
 /** What dropping in `to` does to a thread lifted from `from`, for the badge
     on the lifted row. Null while reordering inside one section and for the
     working and snoozed shelves, which cannot be drop targets. */
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb =
+  | "pin"
+  | "unpin"
+  | "settle"
+  | "unsettle"
+  | "wake"
+  | "group"
+  | "ungroup";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
+  membership: SidebarDropMembership["kind"] | null = null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (membership === "stay") return null;
+  if (membership === "join") return "group";
+  if (to === null || to === "working" || to === "snoozed") return null;
+  if (to === from) return membership === "leave" ? "ungroup" : null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";

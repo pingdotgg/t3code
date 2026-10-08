@@ -1,6 +1,7 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
+  isNestedSidebarListItem,
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
@@ -13,6 +14,8 @@ const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
+const isCardSection = (section: SidebarSection) =>
+  section === "pinned" || section === "active" || section === "working";
 const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
   (item.marker === "working-header" ||
@@ -48,6 +51,22 @@ export function createSidebarCollisionDetection(
     const pointer = args.pointerCoordinates;
     const items = options.items;
     const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
+    // A lifted group moves past whole groups, so only rows that lead a block
+    // are targets. Its own rows ride along with it. A launched row inside
+    // another group would also shift as the preview moves that group, and
+    // keep the target running ahead of the pointer.
+    if (
+      source?.kind === "thread" &&
+      source.group !== undefined &&
+      !isNestedSidebarListItem(source)
+    ) {
+      const nested = new Set(
+        items!.flatMap((item) =>
+          isNestedSidebarListItem(item) && item.kind === "thread" ? [item.key] : [],
+        ),
+      );
+      collisions = collisions.filter((collision) => !nested.has(String(collision.id)));
+    }
     const boundary = args.droppableContainers
       .find((container) => container.id === sidebarMarkerId("pinned-divider"))
       ?.node.current?.querySelector(".sidebar-drag-boundary-label")
@@ -125,7 +144,30 @@ export function createSidebarSortingStrategy(input: {
     const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
-    if (!target) return [];
+    // Staying in its own group changes nothing, so nothing moves.
+    if (!target || target.membership?.kind === "stay") return [];
+    const membership = target.membership;
+    // Nested rows ride along with their group's lead row: rows above the
+    // lead (a group that moved to a live thread) go before it, the rest after.
+    // A launched row lifted out of its group travels on its own.
+    const leading = new Map<string, SidebarListItem[]>();
+    const trailing = new Map<string, SidebarListItem[]>();
+    const nestedKeys = new Set<string>();
+    let lead: string | null = null;
+    let pending: SidebarListItem[] | null = null;
+    for (const item of items) {
+      if (item === active && isNestedSidebarListItem(item)) continue;
+      if (!isNestedSidebarListItem(item)) {
+        lead = sidebarListItemId(item);
+        if (pending !== null) leading.set(lead, pending);
+        pending = null;
+        continue;
+      }
+      if (item.kind === "thread") nestedKeys.add(item.key);
+      if (item.kind === "thread" && item.key === item.group) pending = [item];
+      else if (pending !== null) pending.push(item);
+      else if (lead !== null) trailing.set(lead, [...(trailing.get(lead) ?? []), item]);
+    }
     const groups: Record<SidebarSection, ThreadItem[]> = {
       pinned: [],
       active: [],
@@ -144,9 +186,13 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
-        cardHeight ??= rects[index]?.height;
-      else slimHeight ??= rects[index]?.height;
+      if (isNestedSidebarListItem(item)) continue;
+      // A group's top row also holds the group header, so it is taller.
+      if (item.group === undefined) {
+        if (item.section === "pinned" || item.section === "active" || item.section === "working")
+          cardHeight ??= rects[index]?.height;
+        else slimHeight ??= rects[index]?.height;
+      }
       if (item.key !== active.key) groups[item.section].push(item);
     }
     // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
@@ -155,54 +201,74 @@ export function createSidebarSortingStrategy(input: {
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
-    const group = groups[target.section];
-    const order =
-      target.section === "pinned"
-        ? target.pinnedOrder
-        : target.section === "settled"
-          ? input.settledOrder
-          : (input.activeOrder ?? target.activeOrder);
-    const ranks = new Map(order.map((key, index) => [key, index]));
-    const rank = ranks.get(active.key) ?? Number.POSITIVE_INFINITY;
-    const index = group.findIndex(
-      (item) => (ranks.get(item.key) ?? Number.POSITIVE_INFINITY) > rank,
-    );
-    group.splice(index < 0 ? group.length : index, 0, { ...active, section: target.section });
-    const settledOrder = (
-      input.settledOrder.length > 0 ? input.settledOrder : groups.settled.map((item) => item.key)
-    ).filter((key) => key !== active.key || target.section === "settled");
-    const visible = input.settledExpanded
-      ? settledOrder.slice(0, input.settledVisibleCount ?? settledOrder.length)
-      : [];
-    const routeKey = input.routeThreadKey;
-    if (routeKey && settledOrder.includes(routeKey) && !visible.includes(routeKey)) {
-      visible.push(routeKey);
-    }
-    groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
     const projected: SidebarListItem[] = [];
-    const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
-    const section = (name: "active" | "settled") => {
-      if (groups[name].length > 0) projected.push(...groups[name]);
-      else marker(`${name}-placeholder`);
-    };
-    marker("pinned-header");
-    projected.push(...groups.pinned);
-    marker("pinned-divider");
-    section("active");
-    if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
-      marker("working-header");
-      projected.push(...groups.working);
+    if (membership?.kind === "join") {
+      // Joining a group changes no order: the lifted row, with any group it
+      // leads, moves to the slot between the group's rows.
+      const id = sidebarListItemId(active);
+      const run = [...(leading.get(id) ?? []), active, ...(trailing.get(id) ?? [])];
+      const rest = items.filter((item) => !run.includes(item));
+      const overAt = rest.indexOf(over);
+      if (overAt === -1) return [];
+      const at = overAt + (overIndex > activeIndex ? 1 : 0);
+      projected.push(...rest.slice(0, at), ...run, ...rest.slice(at));
+    } else {
+      const group = groups[target.section];
+      const order =
+        target.section === "pinned"
+          ? target.pinnedOrder
+          : target.section === "settled"
+            ? input.settledOrder
+            : (input.activeOrder ?? target.activeOrder);
+      const ranks = new Map(order.map((key, index) => [key, index]));
+      const rank = ranks.get(active.key) ?? Number.POSITIVE_INFINITY;
+      const index = group.findIndex(
+        (item) => (ranks.get(item.key) ?? Number.POSITIVE_INFINITY) > rank,
+      );
+      group.splice(index < 0 ? group.length : index, 0, { ...active, section: target.section });
+      const settledOrder = (
+        input.settledOrder.length > 0 ? input.settledOrder : groups.settled.map((item) => item.key)
+      ).filter(
+        (key) => (key !== active.key || target.section === "settled") && !nestedKeys.has(key),
+      );
+      const visible = input.settledExpanded
+        ? settledOrder.slice(0, input.settledVisibleCount ?? settledOrder.length)
+        : [];
+      const routeKey = input.routeThreadKey;
+      if (routeKey && settledOrder.includes(routeKey) && !visible.includes(routeKey)) {
+        visible.push(routeKey);
+      }
+      groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
+      const emit = (item: SidebarListItem) => {
+        const id = sidebarListItemId(item);
+        projected.push(...(leading.get(id) ?? []), item, ...(trailing.get(id) ?? []));
+      };
+      const marker = (name: SidebarListMarker) => emit({ kind: "marker", marker: name });
+      const section = (name: "active" | "settled") => {
+        if (groups[name].length === 0) return marker(`${name}-placeholder`);
+        // A group can sit right below the placeholder; it stays at the top.
+        projected.push(...(trailing.get(sidebarMarkerId(`${name}-placeholder`)) ?? []));
+        groups[name].forEach(emit);
+      };
+      marker("pinned-header");
+      groups.pinned.forEach(emit);
+      marker("pinned-divider");
+      section("active");
+      if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
+        marker("working-header");
+        groups.working.forEach(emit);
+      }
+      if (
+        groups.snoozed.length > 0 ||
+        ((active.section !== "snoozed" || (input.snoozedThreadCount ?? 0) > 1) &&
+          items.some((item) => item.kind === "marker" && item.marker === "snoozed-header"))
+      ) {
+        marker("snoozed-header");
+        groups.snoozed.forEach(emit);
+      }
+      marker("settled-header");
+      section("settled");
     }
-    if (
-      groups.snoozed.length > 0 ||
-      ((active.section !== "snoozed" || (input.snoozedThreadCount ?? 0) > 1) &&
-        items.some((item) => item.kind === "marker" && item.marker === "snoozed-header"))
-    ) {
-      marker("snoozed-header");
-      projected.push(...groups.snoozed);
-    }
-    marker("settled-header");
-    section("settled");
     const heights = projected.map((item) => {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
@@ -211,7 +277,13 @@ export function createSidebarSortingStrategy(input: {
         (item.section === "pinned" || item.section === "active" || item.section === "working")
           ? cardHeight
           : slimHeight;
-      const moved = item.kind === "thread" && item.key === active.key;
+      // The lifted row keeps its measured height while it stays a card or
+      // stays a slim row.
+      const moved =
+        item.kind === "thread" &&
+        item.key === active.key &&
+        membership?.kind !== "join" &&
+        isCardSection(active.section) !== isCardSection(target.section);
       return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
         ? labelHeight

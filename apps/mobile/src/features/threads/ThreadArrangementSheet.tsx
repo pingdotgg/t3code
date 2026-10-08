@@ -27,7 +27,11 @@ import {
   threadDragAction,
   type ThreadMoveDestination,
 } from "./threadOrder";
-import { getThreadListV2OrderedSection, threadListInboxReturns } from "./threadListV2";
+import {
+  getThreadListV2LiveGroupThreads,
+  getThreadListV2OrderedSection,
+  threadListInboxReturns,
+} from "./threadListV2";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 
 const ROW_HEIGHT = 56;
@@ -193,8 +197,15 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     const pinned = getThreadListV2OrderedSection({ ...shared, section: "pinned" });
     const active = getThreadListV2OrderedSection({ ...shared, section: "active" });
     const visible = new Set([...pinned, ...active].map(keyOf));
+    // Threads in a live group move with it, so only snoozed and settled
+    // threads outside such groups fill the parked lists.
+    const liveGrouped = getThreadListV2LiveGroupThreads(shared);
     const parked = threads.filter(
-      (thread) => thread.archivedAt === null && !visible.has(keyOf(thread)),
+      (thread) =>
+        thread.archivedAt === null &&
+        !visible.has(keyOf(thread)) &&
+        !liveGrouped.has(thread) &&
+        (thread.settledOverride === "settled" || effectiveSnoozed(thread, { now })),
     );
     return {
       pinned,

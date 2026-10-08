@@ -10,6 +10,14 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M10 12h4" } },
   ],
   check: [{ tag: "path", attrs: { d: "M20 6 9 17l-5-5" } }],
+  // Lucide list-x.
+  "list-x": [
+    { tag: "path", attrs: { d: "M11 12H3" } },
+    { tag: "path", attrs: { d: "M16 6H3" } },
+    { tag: "path", attrs: { d: "M16 18H3" } },
+    { tag: "path", attrs: { d: "m19 10-4 4" } },
+    { tag: "path", attrs: { d: "m15 10 4 4" } },
+  ],
   timer: [
     { tag: "line", attrs: { x1: "10", x2: "14", y1: "2", y2: "2" } },
     { tag: "line", attrs: { x1: "12", x2: "15", y1: "14", y2: "11" } },

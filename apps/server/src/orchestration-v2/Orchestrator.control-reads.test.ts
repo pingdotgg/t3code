@@ -280,6 +280,72 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("moves a launched thread out of its launch group and back without activity", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const launcherId = ThreadId.make("thread:launch-group-launcher");
+    const threadId = ThreadId.make("thread:launch-group-member");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-launch-group-member"),
+      threadId,
+      projectId: ProjectId.make("project:launch-group"),
+      title: "Member",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      groupedUnderThreadId: launcherId,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const created = yield* projections.getThreadShell(threadId);
+    assert.equal(created?.groupedUnderThreadId, launcherId);
+
+    for (const groupedUnderThreadId of [null, launcherId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`launch-group-${groupedUnderThreadId ?? "out"}`),
+        threadId,
+        groupedUnderThreadId,
+      });
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.equal(shell?.groupedUnderThreadId ?? null, groupedUnderThreadId);
+      assert.deepEqual(shell?.updatedAt, created?.updatedAt);
+    }
+
+    const selfLaunch = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("launch-group-self"),
+        threadId,
+        groupedUnderThreadId: threadId,
+      }),
+    );
+    assert.equal(selfLaunch._tag, "Failure");
+    const selfCreate = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-launch-group-self"),
+        threadId: ThreadId.make("thread:launch-group-self"),
+        projectId: ProjectId.make("project:launch-group"),
+        title: "Self",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "agent",
+        creationSource: "mcp",
+        groupedUnderThreadId: ThreadId.make("thread:launch-group-self"),
+      }),
+    );
+    assert.equal(selfCreate._tag, "Failure");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("implements a proposed plan that the command projection leaves out", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

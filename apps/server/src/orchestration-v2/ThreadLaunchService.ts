@@ -94,6 +94,8 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The calling thread when an agent launches this one through T3 MCP tools. */
+  readonly groupedUnderThreadId?: ThreadId;
 }
 
 /** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
@@ -786,6 +788,9 @@ const make = Effect.gen(function* () {
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
+                ...(input.groupedUnderThreadId === undefined
+                  ? {}
+                  : { groupedUnderThreadId: input.groupedUnderThreadId }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });

@@ -124,6 +124,23 @@ device keeps its own choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+## Group related threads
+
+When an agent starts new threads with T3 tools, they appear under the thread that
+started them, so related work stays together. The group sits where its top thread
+sits. If the top thread is settled or snoozed while another thread in the group is
+still active, the group moves to that thread's place.
+
+On web and desktop, click the thread count on the top thread to fold the group.
+A folded group still shows the open thread and any thread that needs you. To group
+threads yourself, select them and choose **Group**, or drag a thread between two
+threads of a group. To take a thread out, choose **Remove from group** from its
+menu or drag it out of the group. **Ungroup** on the top thread ends the whole
+group. On mobile, the same menu items take threads out of a group.
+
+Groups belong to one environment. A thread cannot join a group on another
+environment.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

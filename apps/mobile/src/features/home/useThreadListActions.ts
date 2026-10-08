@@ -264,6 +264,8 @@ export function useThreadListActions(): {
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  /** Takes each thread out of its group. */
+  readonly ungroupThreads: (threads: readonly EnvironmentThreadShell[]) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
@@ -533,6 +535,30 @@ export function useThreadListActions(): {
     },
     [updateThreadMetadata],
   );
+  const ungroupThreads = useCallback(
+    async (threads: readonly EnvironmentThreadShell[]) => {
+      selectionHaptic();
+      const results = await Promise.all(
+        threads.map((thread) =>
+          updateThreadMetadata({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id, groupedUnderThreadId: null },
+          }),
+        ),
+      );
+      const failure = results.find((result) => result._tag === "Failure");
+      if (failure === undefined) return true;
+      const error = Cause.squash(failure.cause);
+      Alert.alert(
+        "Could not ungroup",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The threads could not be taken out of their group.",
+      );
+      return false;
+    },
+    [updateThreadMetadata],
+  );
   const renameThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       const commit = (title: string) => {
@@ -766,6 +792,7 @@ export function useThreadListActions(): {
     moveThread,
     renameThread,
     regenerateThreadTitle,
+    ungroupThreads,
   };
 }
 

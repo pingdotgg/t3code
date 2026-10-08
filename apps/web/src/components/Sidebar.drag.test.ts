@@ -20,6 +20,12 @@ const thread = (key: string, section: SidebarSection): SidebarListItem => ({
   key,
   section,
 });
+const groupThread = (
+  key: string,
+  section: SidebarSection,
+  group: string,
+  nested = true,
+): SidebarListItem => ({ kind: "thread", key, section, group, ...(nested ? { nested } : {}) });
 const marker = (marker: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker });
 const pinnedHeader = marker("pinned-header");
 const divider = marker("pinned-divider");
@@ -345,6 +351,111 @@ describe("sidebar drag projection", () => {
       if (index === args.activeIndex) continue;
       expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
     }
+  });
+
+  const launchGroup = [
+    pinnedHeader,
+    divider,
+    thread("a1", "active"),
+    groupThread("lead", "active", "lead", false),
+    groupThread("child", "active", "lead"),
+    groupThread("parked", "settled", "lead"),
+    thread("a2", "active"),
+    settledHeader,
+    marker("settled-placeholder"),
+  ];
+
+  it("moves a launch group's rows with its launcher", () => {
+    const result = preview(
+      { items: launchGroup, settledOrder: ["parked"], settledExpanded: true },
+      "a2",
+      "a1",
+    );
+    // The lifted card opens an 83px gap at the top; the whole group shifts
+    // down together, including its settled row.
+    for (const id of ["a1", "lead", "child", "parked"]) {
+      expect(result.get(id)).toEqual({ ...stationary, y: 83 });
+    }
+  });
+
+  it("keeps a launched row in its group until it leaves the group's rows", () => {
+    // Inside its own group the drop is a valid no-op, so nothing moves.
+    expect(resolveSidebarDropTarget(launchGroup, "child", "parked")?.membership).toEqual({
+      kind: "stay",
+    });
+    expect(
+      preview(
+        { items: launchGroup, settledOrder: ["parked"], settledExpanded: true },
+        "child",
+        "parked",
+      ),
+    ).toEqual(new Map(launchGroup.map((item) => [sidebarListItemId(item), stationary])));
+    expect(resolveSidebarDropTarget(launchGroup, "child", "a2")).toEqual({
+      section: "active",
+      pinnedOrder: [],
+      activeOrder: ["a1", "lead", "a2", "child"],
+      membership: { kind: "leave" },
+    });
+    // Out of the group, the other launched rows close the gap it leaves.
+    const result = preview(
+      { items: launchGroup, settledOrder: ["parked"], settledExpanded: true },
+      "child",
+      "a2",
+    );
+    expect(result.get("parked")).toEqual({ ...stationary, y: -83 });
+    expect(result.get("a2")).toEqual({ ...stationary, y: -83 });
+  });
+
+  it("joins a group only between two of its rows", () => {
+    // a2 dropped between the group's child and parked rows joins the group.
+    expect(resolveSidebarDropTarget(launchGroup, "a2", "parked")?.membership).toEqual({
+      kind: "join",
+      group: "lead",
+    });
+    const result = preview(
+      { items: launchGroup, settledOrder: ["parked"], settledExpanded: true },
+      "a2",
+      "parked",
+    );
+    // a2 takes the slot above parked, which moves down by a2's height.
+    expect(result.get("child")).toEqual(stationary);
+    expect(result.get("parked")).toEqual({ ...stationary, y: 83 });
+    // Right below the group's last row, a2 stays outside it.
+    expect(resolveSidebarDropTarget(launchGroup, "a1", "parked")?.membership).toBeNull();
+  });
+
+  it("moves a group as one unit, past its own rows and around other groups", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      groupThread("lead", "active", "lead", false),
+      groupThread("child", "active", "lead"),
+      thread("a1", "active"),
+      groupThread("other", "active", "other", false),
+      groupThread("otherChild", "active", "other"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    // Its own rows are not a destination.
+    expect(resolveSidebarDropTarget(items, "lead", "child")).toBeNull();
+    expect(resolveSidebarDropTarget(items, "lead", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: [],
+      activeOrder: ["a1", "lead", "other"],
+      membership: null,
+    });
+    // Another group's rows stand for that whole group: no join.
+    expect(resolveSidebarDropTarget(items, "lead", "otherChild")).toEqual({
+      section: "active",
+      pinnedOrder: [],
+      activeOrder: ["a1", "other", "lead"],
+      membership: null,
+    });
+    expect(resolveSidebarDropTarget(items, "other", "child")?.activeOrder).toEqual([
+      "other",
+      "lead",
+      "a1",
+    ]);
   });
 
   it("keeps the pinned header above the gap when a lower pin moves to the top", () => {
