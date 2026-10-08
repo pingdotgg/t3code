@@ -1047,21 +1047,42 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
 }): Map<ChatMessage["id"], number> {
   const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const readyTurnCounts = new Set<number>();
+  const turnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
+    turnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     if (checkpoint.status === "ready") {
       readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+      readyTurnCounts.add(checkpoint.checkpointTurnCount);
     }
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
+  let previousPromptTurnCount: number | undefined;
   for (const entry of input.timelineEntries) {
     if (entry.kind !== "message" || entry.message.role !== "user") continue;
     if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
       continue;
     }
+    const knownFromTurnCount = previousPromptTurnCount;
+    previousPromptTurnCount =
+      entry.message.runId === null ? undefined : turnCountByRunId.get(entry.message.runId);
     if (entry.message.runId === null) continue;
     const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
     if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    // Rewinding restores the previous run's checkpoint. Runs after the previous
+    // prompt that left no prompt of their own, such as cancelled runs, have no
+    // checkpoint to restore. Without the previous prompt's checkpoint, the
+    // target is unknown, so it stays rewindable.
+    const targetTurnCount = Math.max(0, checkpoint.checkpointTurnCount - 1);
+    if (
+      targetTurnCount > 0 &&
+      knownFromTurnCount !== undefined &&
+      knownFromTurnCount <= targetTurnCount &&
+      !readyTurnCounts.has(targetTurnCount)
+    ) {
+      continue;
+    }
+    byUserMessageId.set(entry.message.id, targetTurnCount);
   }
   return byUserMessageId;
 }
