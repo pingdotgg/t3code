@@ -135,14 +135,15 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       run: (input) =>
         Effect.sync(() => {
           calls.push(input.args);
-          const rootLookup = input.args.includes("rev-parse");
-          const failed = rootLookup && rootAttempts++ === 0;
+          const bareProbe = input.args.includes("--is-bare-repository");
+          const rootLookup = input.args.includes("--show-toplevel");
+          const failed = bareProbe || (rootLookup && rootAttempts++ === 0);
           return {
-            stdout: rootLookup
-              ? failed
-                ? ""
-                : "/repo\n"
-              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stdout: failed
+              ? ""
+              : rootLookup
+                ? "/repo\n"
+                : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
             stderr: failed ? "temporary Git failure" : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -168,11 +169,53 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(recovered?.rootPath).toBe("/repo");
       expect(calls).toEqual([
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo/packages/web", "rev-parse", "--is-bare-repository", "--absolute-git-dir"],
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo", "remote", "-v"],
       ]);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
+
+  it.effect.each(["times out", "cannot start"] as const)(
+    "skips the bare repository probe when Git root discovery %s",
+    (failure) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+        run: (input) =>
+          Effect.suspend(() => {
+            calls.push(input.args);
+            return failure === "times out"
+              ? Effect.succeed({
+                  stdout: "",
+                  stderr: "",
+                  code: null,
+                  timedOut: true,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                })
+              : Effect.fail(
+                  new ProcessRunner.ProcessSpawnError({
+                    command: input.command,
+                    argumentCount: input.args.length,
+                    cause: new Error("git is not installed"),
+                  }),
+                );
+          }),
+      });
+      const layerResolver = Layer.effect(
+        RepositoryIdentityResolver.RepositoryIdentityResolver,
+        RepositoryIdentityResolver.make(),
+      ).pipe(Layer.provide(layerProcessRunner));
+
+      return Effect.gen(function* () {
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        expect(yield* resolver.resolve("/repo")).toBeNull();
+        expect(calls).toEqual([["-C", "/repo", "rev-parse", "--show-toplevel"]]);
+      }).pipe(Effect.provide(layerResolver));
+    },
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
@@ -229,6 +272,70 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect.each(["bare clone", "dot-bare"] as const)(
+    "groups a %s repository with checkouts of the same remote",
+    (layout) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const checkout = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-checkout-",
+        });
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-bare-",
+        });
+        const bareGitDir = layout === "dot-bare" ? path.join(root, ".bare") : root;
+
+        yield* git(checkout, ["init"]);
+        yield* git(checkout, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+        yield* git(root, ["init", "--bare", bareGitDir]);
+        if (layout === "dot-bare") {
+          yield* fileSystem.writeFileString(path.join(root, ".git"), "gitdir: ./.bare\n");
+        }
+        yield* git(bareGitDir, [
+          "remote",
+          "add",
+          "origin",
+          "https://github.com/T3Tools/t3code.git",
+        ]);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const checkoutIdentity = yield* resolver.resolve(checkout);
+        const resolvedBareGitDir = NodeFS.realpathSync.native(bareGitDir);
+        // Users open a dot-bare layout from its container or from .bare itself.
+        const projectRoots = layout === "dot-bare" ? [root, bareGitDir] : [root];
+
+        for (const projectRoot of projectRoots) {
+          const identity = yield* resolver.resolve(projectRoot);
+          const resolvedIdentityRoot =
+            identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+
+          expect(identity).not.toBeNull();
+          expect(identity?.canonicalKey).toBe(checkoutIdentity?.canonicalKey);
+          expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(
+            normalizeResolvedPath(resolvedBareGitDir),
+          );
+        }
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("returns null for the .git folder of a checkout", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-dot-git-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve(cwd)).not.toBeNull();
+      expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("returns null for non-git folders and repos without remotes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -238,15 +345,21 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const gitDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-repository-identity-no-remote-",
       });
+      const bareGitDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-bare-no-remote-",
+      });
 
       yield* git(gitDir, ["init"]);
+      yield* git(bareGitDir, ["init", "--bare"]);
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const nonGitIdentity = yield* resolver.resolve(nonGitDir);
       const noRemoteIdentity = yield* resolver.resolve(gitDir);
+      const bareNoRemoteIdentity = yield* resolver.resolve(bareGitDir);
 
       expect(nonGitIdentity).toBeNull();
       expect(noRemoteIdentity).toBeNull();
+      expect(bareNoRemoteIdentity).toBeNull();
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
