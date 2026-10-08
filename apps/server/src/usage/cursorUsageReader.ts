@@ -4,6 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
 import type { UsageRecord } from "./usageTranscripts.ts";
 import {
   CursorKeychainTimeoutError,
@@ -289,3 +293,24 @@ export async function readCursorAccountUsage(
     cancel.abort();
   }
 }
+
+/** Reads one range of Cursor account usage. A service so tests can stand in for Cursor's API. */
+export class CursorAccountReader extends Context.Service<
+  CursorAccountReader,
+  {
+    readonly read: (
+      credentialSource: string | { readonly kind: "keychain" },
+      sinceMs: number,
+      untilMs: number,
+    ) => Effect.Effect<CursorAccountUsageReadResult>;
+  }
+>()("t3/usage/cursorUsageReader/CursorAccountReader") {}
+
+/** Reads Cursor's dashboard API with the saved CLI or Keychain login. */
+export const layer = Layer.succeed(
+  CursorAccountReader,
+  CursorAccountReader.of({
+    read: (credentialSource, sinceMs, untilMs) =>
+      Effect.promise(() => readCursorAccountUsage(credentialSource, sinceMs, untilMs)),
+  }),
+);

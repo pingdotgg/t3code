@@ -33,6 +33,7 @@ function environment(
     label: id,
     isPending: cost === null,
     canReadDiagnostics: true,
+    isConnected: true,
     error: null,
     needsCursorKeychainAccess: false,
     summary:
@@ -90,11 +91,13 @@ let latest: UsageView;
 function Probe({
   selected,
   hidden,
+  window = input,
 }: {
   selected: ReadonlySet<EnvironmentId> | null;
   hidden?: ReadonlySet<UsageProviderKind>;
+  window?: typeof input;
 }) {
-  const usage = useUsage(input, selected, hidden);
+  const usage = useUsage(window, selected, hidden);
   useLayoutEffect(() => {
     latest = usage;
   }, [usage]);
@@ -180,6 +183,45 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+
+  it("shows the last answered usage until the next window answers, for the same selection", async () => {
+    const selected = new Set([EnvironmentId.make("a")]);
+    await act(() => renderer?.update(<Probe selected={selected} />));
+    expect(latest.shown?.merged.costUsd).toBe(10);
+
+    // A new window that nothing has answered yet.
+    const nextWindow = { ...input, sinceDay: UsageDay.make("2026-08-28") };
+    testState.environments = [environment("a", null)];
+    await act(() => renderer?.update(<Probe selected={selected} window={nextWindow} />));
+    expect(latest.isPending).toBe(true);
+    expect(latest.shown?.window).toBe(input);
+    expect(latest.shown?.merged.costUsd).toBe(10);
+
+    // A window that fails everywhere keeps it too.
+    testState.environments = [{ ...environment("a", null), isPending: false, error: "Offline" }];
+    await act(() => renderer?.update(<Probe selected={selected} window={nextWindow} />));
+    expect(latest.isPending).toBe(false);
+    expect(latest.shown?.window).toBe(input);
+    expect(latest.shown?.merged.costUsd).toBe(10);
+
+    // Once the new window answers, it replaces the kept one.
+    testState.environments = [environment("a", 30)];
+    await act(() => renderer?.update(<Probe selected={selected} window={nextWindow} />));
+    expect(latest.shown?.window).toBe(nextWindow);
+    expect(latest.shown?.merged.costUsd).toBe(30);
+
+    // A different provider filter does not reuse usage merged with the old one.
+    testState.environments = [environment("a", null)];
+    await act(() =>
+      renderer?.update(<Probe selected={selected} hidden={new Set(["claude"])} window={input} />),
+    );
+    expect(latest.shown).toBeNull();
+
+    // Another selection has nothing of its own to show.
+    testState.environments = [environment("a", null)];
+    await select("a");
+    expect(latest.shown).toBeNull();
   });
 });
 
