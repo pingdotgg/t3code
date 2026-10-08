@@ -18,6 +18,10 @@
     "./testing": {
       "types": "./src/testing.ts",
       "import": "./src/testing.ts"
+    },
+    "./server/CursorAgentSdk": {
+      "types": "./src/server/CursorAgentSdk.ts",
+      "import": "./src/server/CursorAgentSdk.ts"
     }
   },
   "scripts": {
