@@ -265,12 +265,14 @@ export function V5StackView(props: V5StackViewProps) {
     groups.map((group) => {
       const first = group[0]!;
       const descriptor = props.descriptors[first.key]!;
+      const visibleRoute = group.at(-1)!;
       return [
         first.key,
         {
           ...descriptor,
+          navigation: props.descriptors[visibleRoute.key]!.navigation,
           // Focus belongs to the pushed page inside this presentation group.
-          route: group.at(-1)!,
+          route: visibleRoute,
           options: modalEnvelopeOptions(descriptor.options),
           render: () => (
             <V5CardStackView

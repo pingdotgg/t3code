@@ -281,11 +281,13 @@ function WorkspaceStackView(props: ViewProps) {
   if (!primaryRoute) return <V5StackView {...props} />;
   const primaryDescriptor = props.descriptors[primaryRoute.key]!;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
+  const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
+    navigation: props.descriptors[visibleRoute.key]!.navigation,
     // The native envelope keeps a stable key, but its NavigationProvider must
     // identify the real visible route or useIsFocused closes media viewers.
-    route: projection.detail.at(-1) ?? primaryRoute,
+    route: visibleRoute,
     options: { headerShown: false },
     render: () => <WorkspaceColumns {...props} primary={primaryRoute} detail={projection.detail} />,
   };
@@ -304,11 +306,13 @@ function WorkspaceStackView(props: ViewProps) {
           overlays.map((group) => {
             const route = group[0]!;
             const descriptor = props.descriptors[route.key]!;
+            const visibleRoute = group.at(-1)!;
             return [
               route.key,
               {
                 ...descriptor,
-                route: group.at(-1)!,
+                navigation: props.descriptors[visibleRoute.key]!.navigation,
+                route: visibleRoute,
                 options: modalEnvelopeOptions(descriptor.options),
                 render: () => (
                   <V5CardStackView
