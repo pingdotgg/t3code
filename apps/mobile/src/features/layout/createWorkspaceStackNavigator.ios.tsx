@@ -247,6 +247,7 @@ function WorkspaceStackView(props: ViewProps) {
   const routes = [baseRoute, ...overlays.map((group) => group[0]!)];
   return (
     <NativeStackView
+      presentationEnvelope
       {...props}
       state={{ ...props.state, routes, index: routes.length - 1, preloadedRoutes: [] }}
       descriptors={{
