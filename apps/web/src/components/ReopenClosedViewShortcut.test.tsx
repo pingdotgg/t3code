@@ -309,17 +309,27 @@ describe("root reopen shortcut", () => {
   );
 
   it("forwards the chord to a focused desktop browser only while history exists", async () => {
+    const forwardedCommands = () =>
+      (state.setShortcuts.mock.lastCall as unknown as [Array<{ command: string }>])[0].map(
+        ({ command }) => command,
+      );
     useClosedViewStore
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
     await render();
-    expect(state.setShortcuts).toHaveBeenLastCalledWith([
-      expect.objectContaining({ command: "view.reopenClosed" }),
-    ]);
+    expect(forwardedCommands()).toContain("view.reopenClosed");
     await act(() => {
       menuAction?.("view.reopenClosed");
     });
     expect(useClosedViewStore.getState().entries).toEqual([]);
-    expect(state.setShortcuts).toHaveBeenLastCalledWith([]);
+    expect(forwardedCommands()).not.toContain("view.reopenClosed");
+  });
+
+  it("always forwards the layout toggles out of a focused desktop browser", async () => {
+    await render();
+    expect(state.setShortcuts).toHaveBeenLastCalledWith([
+      expect.objectContaining({ command: "sidebar.toggle" }),
+      expect.objectContaining({ command: "rightPanel.toggle" }),
+    ]);
   });
 });
