@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -11,34 +10,20 @@ import { vi } from "vite-plus/test";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerConfig from "../../config.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
-import { CursorDriver } from "./CursorDriver.ts";
-import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import { CursorDriver } from "./driver.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
-import { Cursor } from "../cursorSdk.ts";
-import * as ProviderHostLive from "../ProviderHostLive.ts";
+import { Cursor } from "./sdk.ts";
 
-const layerDeps = ServerSecretStore.layer.pipe(
-  Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-cursor-driver-copy-command-",
-    }),
-  ),
+const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),
-    }),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(
-    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-      shouldRunScopeWork: () => Effect.succeed(false),
     }),
   ),
   Layer.provideMerge(
@@ -54,7 +39,6 @@ const layerDeps = ServerSecretStore.layer.pipe(
     ),
   ),
 );
-const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(

@@ -17,6 +17,7 @@ import { GrokDriver } from "./GrokDriver.ts";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-grok-driver-update-",
@@ -42,7 +43,10 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
-const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
+const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(layerDeps),
+);
 
 const noSpawner = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Grok must not spawn a process"),

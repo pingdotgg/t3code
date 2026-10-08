@@ -12,7 +12,7 @@ import {
   hasCursorSkillMention,
   probeCursorSkills,
   rewriteCursorSkillMentions,
-} from "./CursorSkills.ts";
+} from "./skills.ts";
 
 const runNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,

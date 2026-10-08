@@ -34,6 +34,7 @@ import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const hostPlatform = HostProcessPlatform.defaultValue();
 const windowsHost = hostPlatform === "win32";
@@ -264,7 +265,10 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(IdAllocator.layer),
 );
-const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
+const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(layerDeps),
+);
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(

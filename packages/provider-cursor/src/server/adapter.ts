@@ -11,7 +11,6 @@ import type {
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
-  CursorSettings,
   isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
   type ChatAttachment,
@@ -30,6 +29,7 @@ import {
   type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -42,17 +42,16 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import * as ServerConfig from "../../config.ts";
+import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
-import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
+import { CursorTransportFailure } from "./transportFailure.ts";
+import { cursorSdkModelSelection } from "./sdkModel.ts";
 import {
   discoverCursorSkills,
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
-} from "../../provider/Drivers/CursorSkills.ts";
+} from "./skills.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -75,7 +74,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
+export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
@@ -849,13 +848,13 @@ export interface CursorAdapterV2Options {
   readonly path: Path.Path;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly runner: CursorAgentSdk.CursorAgentSdkRunnerShape;
-  readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly host: ProviderHostShape;
 }
 
 export function makeCursorAdapterV2(
   adapterOptions: CursorAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
-  const { fileSystem, path, idAllocator, runner, serverConfig } = adapterOptions;
+  const { fileSystem, path, idAllocator, runner, host } = adapterOptions;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -2133,8 +2132,7 @@ export function makeCursorAdapterV2(
                   ? rawText
                   : rewriteCursorSkillMentions(rawText, cursorSkillNames),
               attachments: turnInput.message.attachments,
-              resolveAttachmentPath: (attachment) =>
-                resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+              resolveAttachmentPath: host.resolveAttachmentPath,
             }),
             runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: cursorMcpServers(turnInput.threadId) !== undefined,
@@ -2143,10 +2141,7 @@ export function makeCursorAdapterV2(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             (attachment: ChatAttachment) =>
               Effect.gen(function* () {
-                const path = resolveAttachmentPath({
-                  attachmentsDir: serverConfig.attachmentsDir,
-                  attachment,
-                });
+                const path = host.resolveAttachmentPath(attachment);
                 if (path === null) {
                   return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2608,7 +2603,7 @@ export type CursorAdapterV2DriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
-  | ServerConfig.ServerConfig;
+  | ProviderHost;
 
 export const CursorAdapterV2Driver: ProviderAdapterDriver<
   CursorSettings,
@@ -2624,7 +2619,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
       const path = yield* Path.Path;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost;
       return makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
@@ -2636,7 +2631,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
         path,
         idAllocator,
         runner,
-        serverConfig,
+        host,
       });
     },
     (effect, input) =>
@@ -2661,7 +2656,7 @@ const layer: Layer.Layer<
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
-  | ServerConfig.ServerConfig
+  | ProviderHost
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
@@ -2670,7 +2665,7 @@ const layer: Layer.Layer<
     const path = yield* Path.Path;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-    const serverConfig = yield* ServerConfig.ServerConfig;
+    const host = yield* ProviderHost;
     return makeCursorAdapterV2({
       instanceId: CURSOR_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CURSOR_SETTINGS,
@@ -2679,7 +2674,7 @@ const layer: Layer.Layer<
       path,
       idAllocator,
       runner,
-      serverConfig,
+      host,
     });
   }),
 );

@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
-import type { CursorSettings, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { CursorSettings } from "../settings.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
@@ -14,7 +15,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-import { readMacCursorAccessToken } from "./cursorKeychainToken.ts";
+import { readMacCursorAccessToken } from "./keychainToken.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
