@@ -279,7 +279,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        isInspector ? (
+        Platform.OS === "ios" || isInspector ? (
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
         ) : undefined
       }
@@ -437,8 +437,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   if (Platform.OS === "ios") {
     // Compact form sheet: a plain screen presented as formSheet never renders a
     // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet. Refresh belongs in the header so
-    // dragging down at the top of the content can dismiss the sheet.
+    // nested native stack INSIDE the sheet. This reuses the exact structure of the
+    // inspector branch below: branch as the title, status summary as the native
+    // subtitle, and content that owns pull-to-refresh.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
@@ -454,18 +455,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             <ScreenStackHeaderConfig
               backgroundColor="rgba(0,0,0,0)"
               color={foregroundColor}
-              headerRightBarButtonItems={[
-                {
-                  accessibilityLabel: "Refresh repository status",
-                  disabled: busy || isRefreshing,
-                  icon: { name: "arrow.clockwise", type: "sfSymbol" },
-                  identifier: "thread-git-sheet-refresh",
-                  onPress: () => void handleRefresh(),
-                  sharesBackground: false,
-                  tintColor: foregroundColor,
-                  type: "button",
-                },
-              ]}
               hideBackButton
               hideShadow={false}
               navigationItemStyle="editor"

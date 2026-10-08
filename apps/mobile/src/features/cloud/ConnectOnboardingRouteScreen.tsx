@@ -3,7 +3,7 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -100,12 +100,6 @@ function ConfiguredConnectOnboardingRouteScreen() {
         />
       ) : (
         <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel="Refresh environments"
-            disabled={isRefreshing}
-            icon="arrow.clockwise"
-            onPress={handleRefresh}
-          />
           <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
         </NativeHeaderToolbar>
       )}
@@ -121,6 +115,11 @@ function ConfiguredConnectOnboardingRouteScreen() {
           paddingHorizontal: 20,
           paddingTop: 16,
         }}
+        refreshControl={
+          Platform.OS === "ios" ? (
+            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+          ) : undefined
+        }
       >
         {isSignedIn ? (
           <CloudEnvironmentRows
