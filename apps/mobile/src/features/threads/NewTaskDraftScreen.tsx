@@ -1434,6 +1434,7 @@ export function NewTaskDraftScreen(props: {
     <ResizableComposerInput
       resizeActive={composerResizeActive}
       active
+      keyboardOpenedOffset={keyboardOpenedOffset}
       key={flow.draftKey}
       boundaryRef={composerResizeBoundaryRef}
       container={composerResizeContainer}

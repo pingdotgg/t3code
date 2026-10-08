@@ -5,6 +5,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
   measure,
+  interpolate,
   cancelAnimation,
   withSpring,
   ReduceMotion,
@@ -46,11 +47,12 @@ export function ResizableComposerInput(props: {
   readonly active: boolean;
   readonly resizeActive: SharedValue<boolean>;
   readonly resizeInset?: ComposerResizeInset;
+  readonly keyboardOpenedOffset?: number;
   readonly boundaryRef: AnimatedRef<View>;
   readonly container: ReturnType<typeof useComposerResizeContainer>;
 }) {
   const enabled = Platform.OS === "ios" && props.active;
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const { height: keyboardHeight, progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const { height: windowHeight } = useWindowDimensions();
   const headerHeight = useContext(HeaderHeightContext) ?? 0;
   const insets = useSafeAreaInsets();
@@ -60,6 +62,11 @@ export function ResizableComposerInput(props: {
   const insetBaseHeight = useSharedValue(0);
   const resizeInset = props.resizeInset;
   const resizeActive = props.resizeActive;
+  const keyboardOpenedOffset = props.keyboardOpenedOffset ?? 0;
+  const keyboardTranslation = useDerivedValue(
+    () =>
+      keyboardHeight.value + interpolate(keyboardProgress.value, [0, 1], [0, keyboardOpenedOffset]),
+  );
   const maximumWithoutKeyboard = useSharedValue(0);
   const measuredWindowHeight = useSharedValue(windowHeight);
   const boundaryRef = props.boundaryRef;
@@ -90,7 +97,7 @@ export function ResizableComposerInput(props: {
     return Math.max(
       0,
       maximumWithoutKeyboard.value +
-        keyboardHeight.value +
+        keyboardTranslation.value +
         windowHeight -
         measuredWindowHeight.value,
     );
@@ -129,12 +136,15 @@ export function ResizableComposerInput(props: {
         windowHeight,
       });
       // pageY includes the keyboard-sticky translation and native sheet position.
-      // Remove keyboard height from the budget so later keyboard transitions can
+      // Remove the full sticky translation so later keyboard transitions can
       // clamp the editor on the UI thread, alongside its dock's movement.
       maximumWithoutKeyboard.set(
         Math.max(
           0,
-          current + container.pageY - Math.max(boundary.pageY + 8, topInset) - keyboardHeight.value,
+          current +
+            container.pageY -
+            Math.max(boundary.pageY + 8, topInset) -
+            keyboardTranslation.value,
         ),
       );
       measuredWindowHeight.set(windowHeight);
@@ -148,7 +158,7 @@ export function ResizableComposerInput(props: {
       insetBaseHeight,
       maximumWithoutKeyboard,
       topInset,
-      keyboardHeight,
+      keyboardTranslation,
       measuredWindowHeight,
       windowHeight,
     ],
