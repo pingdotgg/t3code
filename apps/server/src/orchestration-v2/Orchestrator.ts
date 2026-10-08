@@ -9862,7 +9862,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "messages", "subagents", "providerTurns"],
         { messageRoles: ["user"] },
       );
-      if (hasLiveRun(projection)) return;
       const tasks = projection.subagents.filter(
         (task) =>
           task.origin === "app_owned" &&
@@ -9881,6 +9880,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedTask: task,
           now,
         });
+        if (
+          !plan.offer &&
+          plan.parentRun === undefined &&
+          plan.message === undefined &&
+          plan.task.completionDelivery?.state === task.completionDelivery?.state &&
+          plan.task.completionDelivery?.observedByRunId === task.completionDelivery?.observedByRunId
+        )
+          continue;
         events.push(
           {
             type: "subagent.updated",
@@ -9931,7 +9938,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (events.length === 0) return;
       yield* writeSystemEvents(events);
       for (const runId of offers) yield* offerDelegatedCompletionDelivery(threadId, runId);
-    });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to drain deferred child completions", { threadId, cause }),
+      ),
+    );
 
   const finalizeDelegatedCompletionDelivery = (threadId: ThreadId, runId: RunId) =>
     Effect.gen(function* () {

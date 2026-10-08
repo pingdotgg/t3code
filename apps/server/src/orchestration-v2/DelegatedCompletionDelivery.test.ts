@@ -617,7 +617,7 @@ describe("delegated completion delivery repairs", () => {
       }).pipe(Effect.provide(TestLayer)),
   );
 
-  it.effect.each(["pending", "historical", "archived", "closed", "busy"] as const)(
+  it.effect.each(["pending", "historical", "archived", "closed", "busy", "new-turn"] as const)(
     "recovers explicitly pending completions at orchestrator startup (%s)",
     (state) =>
       Effect.gen(function* () {
@@ -675,12 +675,33 @@ describe("delegated completion delivery repairs", () => {
               : []),
           ],
         });
+        if (state === "new-turn") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-new-turn`),
+                type: "run.updated",
+                threadId,
+                runId: RunId.make(`${threadId}-new-run`),
+                occurredAt: now,
+                payload: {
+                  ...seeded.runs[0]!,
+                  id: RunId.make(`${threadId}-new-run`),
+                  ordinal: 2,
+                  status: "running",
+                  completedAt: null,
+                  delegatedCompletion: undefined,
+                },
+              },
+            ],
+          });
+        }
         const restarted = yield* Layer.build(Layer.fresh(makeTestLayer(sql)));
         const fresh = Context.get(restarted, Orchestrator.OrchestratorV2);
         yield* fresh.recoverDelegatedTasks;
         const after = yield* fresh.getThreadProjection(threadId);
         const task = after.subagents.find((row) => row.id === taskId)!;
-        if (state === "pending") {
+        if (state === "pending" || state === "new-turn") {
           assert.equal(task.completionDelivery?.state, "claimed");
           const wake = yield* Context.get(
             restarted,
