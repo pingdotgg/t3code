@@ -502,4 +502,49 @@ describe("reuseUnchangedThreadShells", () => {
       incoming,
     );
   });
+
+  it("retains deferred links when the only row changes status", () => {
+    const { pullRequests: _links, ...withoutLinks } = linked;
+    const next = reuseUnchangedThreadShells(
+      { ...v2ShellSnapshot, threads: [linked] },
+      {
+        ...v2ShellSnapshot,
+        snapshotSequence: 5,
+        threads: [{ ...withoutLinks, status: "running" }],
+      },
+    );
+    expect(next.snapshotSequence).toBe(5);
+    expect(next.threads[0]?.status).toBe("running");
+    expect(next.threads[0]?.pullRequests).toBe(linked.pullRequests);
+  });
+
+  it("retains deferred links on a renamed row alongside an unchanged sibling", () => {
+    const { pullRequests: _links, ...withoutLinks } = linked;
+    const next = reuseUnchangedThreadShells(
+      { ...v2ShellSnapshot, threads: [linked, other] },
+      { ...v2ShellSnapshot, threads: [{ ...withoutLinks, title: "Renamed" }, { ...other }] },
+    );
+    expect(next.threads[0]?.title).toBe("Renamed");
+    expect(next.threads[0]?.pullRequests).toBe(linked.pullRequests);
+    expect(next.threads[1]).toBe(other);
+  });
+
+  it("keeps an explicit link removal when metadata also changes", () => {
+    const updated = { ...linked, title: "Renamed", pullRequests: [] };
+    const incoming = { ...v2ShellSnapshot, threads: [updated] };
+    const next = reuseUnchangedThreadShells({ ...v2ShellSnapshot, threads: [linked] }, incoming);
+    expect(next).toBe(incoming);
+    expect(next.threads[0]?.pullRequests).toEqual([]);
+  });
+
+  it("keeps explicitly refreshed links instead of the previous links", () => {
+    const updated = {
+      ...linked,
+      pullRequests: [{ ...link, number: 4, url: "https://github.com/pingdotgg/t3code/pull/4" }],
+    };
+    const incoming = { ...v2ShellSnapshot, threads: [updated] };
+    const next = reuseUnchangedThreadShells({ ...v2ShellSnapshot, threads: [linked] }, incoming);
+    expect(next).toBe(incoming);
+    expect(next.threads[0]?.pullRequests).toBe(updated.pullRequests);
+  });
 });
