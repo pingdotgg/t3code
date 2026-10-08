@@ -1550,6 +1550,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("adds Settings → Tools servers and skill switches as their own config keys", () =>
+    Effect.gen(function* () {
+      const scenario = "user-mcp-servers";
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-codex-user-tools"),
+        threadId: ThreadId.make(`thread-${scenario}`),
+        providerSessionId: `provider-session-${scenario}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        browserToolsAvailable: true,
+        tools: {
+          servers: [
+            {
+              name: "linear",
+              transport: {
+                type: "http",
+                url: "https://mcp.linear.app/mcp",
+                headers: [{ name: "Authorization", value: "Bearer lin", sensitive: true }],
+              },
+            },
+          ],
+          disabledSkills: ["grill-me"],
+          fingerprint: "a",
+        },
+      });
+      const requests: Array<{ readonly config: Record<string, unknown> }> = [];
+      yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: codexReplayPreamble({
+            nativeThreadId: "user-mcp-thread",
+            nativeTurnId: "unused",
+            prompt: "unused",
+          }).slice(0, 5),
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/start") {
+              requests.push(params as { readonly config: Record<string, unknown> });
+            }
+          }),
+      );
+      const config = requests[0]?.config ?? {};
+      // One key per server, so launch-argument servers survive like with t3-code.
+      assert.deepEqual(config["mcp_servers.linear"], {
+        url: "https://mcp.linear.app/mcp",
+        http_headers: { Authorization: "Bearer lin" },
+      });
+      assert.isUndefined(config.mcp_servers);
+      assert.deepEqual(config.skills, { config: [{ name: "grill-me", enabled: false }] });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   // regression: #15839 launch-arg MCP servers survive the thread's t3-code server
   it.effect("replays historical and dotted MCP config while enforcing other thread config", () =>
     Effect.gen(function* () {

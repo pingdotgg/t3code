@@ -28,6 +28,8 @@ import {
   type ProviderThreadId,
   type ProviderUserInputAnswers,
   type RuntimeMode,
+  mcpServerVariableRecord,
+  type ResolvedMcpServer,
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
@@ -690,6 +692,36 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+/**
+ * The user's servers from Settings → Tools, passed through as plain ACP
+ * entries. A bare command name is left to the agent's PATH lookup. Http
+ * entries are dropped later for agents that do not advertise http support.
+ */
+function acpUserMcpServers(
+  servers: ReadonlyArray<ResolvedMcpServer>,
+): ReadonlyArray<EffectAcpSchema.McpServer> {
+  return servers.map((server) =>
+    server.transport.type === "stdio"
+      ? {
+          // Untyped like T3's own entry: the shape every ACP version accepts.
+          name: server.name,
+          command: server.transport.command,
+          args: [...server.transport.args],
+          env: Object.entries(mcpServerVariableRecord(server.transport.env)).map(
+            ([name, value]) => ({ name, value }),
+          ),
+        }
+      : {
+          type: "http" as const,
+          name: server.name,
+          url: server.transport.url,
+          headers: Object.entries(mcpServerVariableRecord(server.transport.headers)).map(
+            ([name, value]) => ({ name, value }),
+          ),
+        },
+  );
+}
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
@@ -698,6 +730,9 @@ function acpMcpContext(
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
   }
+  // Both lists carry them: an agent that takes T3's server over ACP or HTTP
+  // gets only that list, so the user's servers would otherwise be lost.
+  const userServers = acpUserMcpServers(session.tools?.servers ?? []);
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
@@ -711,8 +746,9 @@ function acpMcpContext(
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
       },
+      ...userServers,
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }, ...userServers],
     httpServers:
       mcpOverHttp === true
         ? [
@@ -722,6 +758,7 @@ function acpMcpContext(
               url: session.endpoint,
               headers: [{ name: "Authorization", value: session.authorizationHeader }],
             },
+            ...userServers,
           ]
         : [],
     endpoint: session.endpoint,

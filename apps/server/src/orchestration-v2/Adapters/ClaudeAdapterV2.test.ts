@@ -567,6 +567,68 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("adds the user's servers and skill switches next to t3-code, and reopens when they change", () => {
+    const threadId = ThreadId.make("thread-claude-user-tools");
+    const mcpSession: McpProviderSession.McpProviderSessionConfig = {
+      ...mcpSessionFor(threadId),
+      tools: {
+        servers: [
+          {
+            name: "supabase",
+            transport: {
+              type: "stdio",
+              command: "npx",
+              args: ["-y", "@supabase/mcp-server-supabase"],
+              env: [{ name: "SUPABASE_ACCESS_TOKEN", value: "token", sensitive: true }],
+            },
+          },
+        ],
+        disabledSkills: ["grill-me"],
+        fingerprint: "a",
+      },
+    };
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    );
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(overrides, {
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD, "mcp__supabase__*"],
+      mcpServers: {
+        supabase: {
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "@supabase/mcp-server-supabase"],
+          env: { SUPABASE_ACCESS_TOKEN: "token" },
+        },
+        ...T3_MCP_SERVERS,
+      },
+      sdkSettings: { skillOverrides: { "grill-me": "off" } },
+      mcpEnvironment: T3_MCP_ENVIRONMENT,
+    });
+    // Read-only sandboxes keep the user's servers behind the permission prompt.
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: true }).allowedTools,
+      ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
+    );
+
+    const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, overrides);
+    const clearedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+      queryPolicy,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession: { ...mcpSession, tools: { servers: [], disabledSkills: [], fingerprint: "" } },
+        readOnlySandbox: false,
+      }),
+    );
+    assert.notEqual(clearedKey, initialKey);
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),

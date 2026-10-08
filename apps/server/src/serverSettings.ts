@@ -59,6 +59,12 @@ import {
   readSecretFieldValues,
   sourceControlHostSecretName,
 } from "./sourceControl/sourceControlHostSecrets.ts";
+import {
+  materializeMcpServerSecrets,
+  mcpServerSecretNames,
+  planMcpServerSecrets,
+  redactMcpServerSecrets,
+} from "./mcpServerSecrets.ts";
 
 import { mapSettingsSecrets, SECRET_REDACTED, type SettingsSecret } from "./settingsSecrets.ts";
 
@@ -137,7 +143,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       ? { value: "", redacted: secret.redacted || secret.value.length > 0 }
       : { value: secret.value, redacted: false },
   );
-  return { ...redacted, secretProviders: withoutUnknownSecretProviderConfigs(redacted) };
+  return redactMcpServerSecrets({
+    ...redacted,
+    secretProviders: withoutUnknownSecretProviderConfigs(redacted),
+  });
 }
 
 // A newer kind's config may hold credentials this build cannot recognize, so it never leaves the server.
@@ -934,13 +943,27 @@ const make = Effect.gen(function* () {
           Option.isSome(value) ? textDecoder.decode(value.value) : "",
         );
       }
-      return mapSettingsSecrets(settings, (secret) => ({
-        value:
-          secret.sensitive && secret.redacted
-            ? (storedSecrets.get(secret.secretName) ?? "")
-            : secret.value,
-        redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
-      }));
+      const mcpSecrets = new Map<string, string>();
+      for (const secretName of mcpServerSecretNames(settings)) {
+        const value = yield* secretStore
+          .get(secretName)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        if (Option.isSome(value)) mcpSecrets.set(secretName, textDecoder.decode(value.value));
+      }
+      return materializeMcpServerSecrets(
+        mapSettingsSecrets(settings, (secret) => ({
+          value:
+            secret.sensitive && secret.redacted
+              ? (storedSecrets.get(secret.secretName) ?? "")
+              : secret.value,
+          redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
+        })),
+        mcpSecrets,
+      );
     },
   );
 
@@ -1049,7 +1072,16 @@ const make = Effect.gen(function* () {
             : {}),
         });
       }
-      return { settings, changes };
+      // MCP server variables keep their own secret names, which follow a rename.
+      const mcp = planMcpServerSecrets(current, settings);
+      for (const change of mcp.changes) {
+        changes.push(
+          change.kind === "write"
+            ? { kind: "write", secretName: change.secretName, value: textEncoder.encode(change.value) }
+            : { kind: "remove", secretName: change.secretName, operation: "remove-secret" },
+        );
+      }
+      return { settings: mcp.settings, changes };
     });
 
   const rollbackSettingsSecretWrites = (

@@ -82,6 +82,7 @@ import {
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
+  mcpServerVariableRecord,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -112,6 +113,7 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type RunId,
+  type ResolvedMcpServer,
   type ThreadId,
   resolveIdleCompaction,
 } from "@t3tools/contracts";
@@ -1600,7 +1602,7 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
+          (input.mcpServers?.["t3-code"] === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
@@ -1731,17 +1733,29 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly sdkSettings?: ClaudeSdkSettings;
+  readonly mcpEnvironment?: Readonly<Record<string, string>>;
 } {
   const session = input.mcpSession;
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const tools = session.tools ?? McpProviderSession.EMPTY_MCP_PROVIDER_SESSION_TOOLS;
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  // Servers the user added in T3 are trusted like T3's own: their tools are
+  // pre-approved outside read-only sandboxes, where the permission prompt
+  // still decides.
+  const userAllowedTools = input.readOnlySandbox
+    ? []
+    : tools.servers.map((server) => `mcp__${server.name}__*`);
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    allowedTools: Array.from(
+      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...userAllowedTools]),
+    ),
     mcpServers: {
+      ...claudeUserMcpServers(tools.servers),
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -1751,7 +1765,42 @@ export function claudeMcpQueryOverrides(input: {
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
     },
+    ...(tools.disabledSkills.length === 0
+      ? {}
+      : {
+          // The flag-settings layer outranks the user's and project's
+          // settings files, so an "off" here hides the skill from both the
+          // model and the slash menu whatever those files say.
+          sdkSettings: {
+            skillOverrides: Object.fromEntries(
+              tools.disabledSkills.map((name) => [name, "off" as const]),
+            ),
+          },
+        }),
+    mcpEnvironment: { [CLAUDE_T3_MCP_AUTHORIZATION_ENV]: session.authorizationHeader },
   };
+}
+
+function claudeUserMcpServers(
+  servers: ReadonlyArray<ResolvedMcpServer>,
+): NonNullable<ClaudeQueryOptions["mcpServers"]> {
+  return Object.fromEntries(
+    servers.map((server) => [
+      server.name,
+      server.transport.type === "stdio"
+        ? {
+            type: "stdio" as const,
+            command: server.transport.command,
+            args: [...server.transport.args],
+            env: mcpServerVariableRecord(server.transport.env),
+          }
+        : {
+            type: "http" as const,
+            url: server.transport.url,
+            headers: mcpServerVariableRecord(server.transport.headers),
+          },
+    ]),
+  );
 }
 
 function providerSession(input: {
@@ -2730,6 +2779,8 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly sdkSettings?: ClaudeSdkSettings;
+    readonly mcpEnvironment?: Readonly<Record<string, string>>;
   },
 ): string {
   return JSON.stringify({
@@ -2740,6 +2791,9 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    // Skill switches load at process start, so a change reopens the query.
+    sdkSettings: mcpOverrides.sdkSettings,
+    mcpEnvironment: mcpOverrides.mcpEnvironment,
   });
 }
 

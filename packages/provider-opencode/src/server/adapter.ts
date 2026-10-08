@@ -33,6 +33,7 @@ import {
   type ProviderInstanceId,
   type ProviderRequestKind,
   type ProviderSessionId,
+  mcpServerVariableRecord,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -595,6 +596,20 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
 /** OpenCode has no OS sandbox; permission rules must enforce non-interactive policies too. */
 export function openCodePermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  disabledSkills: ReadonlyArray<string> = [],
+): PermissionRuleset {
+  // Skills switched off in Settings → Tools; the last matching rule wins, so
+  // these follow every allow below.
+  const skillRules = disabledSkills.map((name) => ({
+    permission: "skill",
+    pattern: name,
+    action: "deny" as const,
+  }));
+  return [...openCodeRuntimePermissionRules(runtimePolicy), ...skillRules];
+}
+
+function openCodeRuntimePermissionRules(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): PermissionRuleset {
   const sandboxPolicy = recordValue(runtimePolicy, "sandboxPolicy");
   const sandboxType = recordString(sandboxPolicy, "type");
@@ -975,6 +990,34 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               },
             }),
           );
+          // The user's servers are additions: one that fails to register must
+          // not stop the session, so each logs and moves on.
+          for (const server of mcpSession.tools?.servers ?? []) {
+            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+              client.mcp.add({
+                name: server.name,
+                config:
+                  server.transport.type === "stdio"
+                    ? {
+                        type: "local",
+                        command: [server.transport.command, ...server.transport.args],
+                        environment: mcpServerVariableRecord(server.transport.env),
+                      }
+                    : {
+                        type: "remote",
+                        url: server.transport.url,
+                        headers: mcpServerVariableRecord(server.transport.headers),
+                      },
+              }),
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not add an MCP server to OpenCode.", {
+                  server: server.name,
+                  cause,
+                }),
+              ),
+            );
+          }
         }
 
         const now = yield* DateTime.now;
@@ -3066,7 +3109,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   providerThread: threadInput.existingProviderThread,
                 });
               }
-              const permission = openCodePermissionRules(threadInput.runtimePolicy);
+              const disabledSkills =
+                (yield* mcpSessions.read(threadInput.threadId))?.tools?.disabledSkills ?? [];
+              const permission = openCodePermissionRules(threadInput.runtimePolicy, disabledSkills);
               // OpenCode generates a title only when session.create leaves it unset.
               const response = yield* sdkCall("session.create", { permission }, () =>
                 client.session.create({ permission }),

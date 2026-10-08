@@ -1578,6 +1578,74 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect(
+    "keeps MCP server secrets in the secret store for the environment and each project",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const projectId = ProjectId.make("project-mcp");
+        const stdio = (token: string) => ({
+          enabled: true,
+          transport: {
+            type: "stdio" as const,
+            command: "npx",
+            args: ["-y", "@supabase/mcp-server-supabase"],
+            env: [
+              { name: "SUPABASE_ACCESS_TOKEN", value: token, sensitive: true },
+              { name: "READ_ONLY", value: "true", sensitive: false },
+            ],
+          },
+        });
+
+        const saved = yield* serverSettings.updateSettings({
+          mcpServers: { supabase: stdio("env-token") },
+          projectSettingsOverrides: {
+            [projectId]: { mcpServers: { supabase: stdio("project-token") } },
+          },
+        });
+        // The server reads real values.
+        const envVars = (settings: typeof saved, scope: "env" | "project") => {
+          const server =
+            scope === "env"
+              ? settings.mcpServers.supabase
+              : settings.projectSettingsOverrides[projectId]?.mcpServers?.supabase;
+          return server?.transport?.type === "stdio" ? server.transport.env : [];
+        };
+        assert.equal(envVars(saved, "env")[0]?.value, "env-token");
+        assert.equal(envVars(saved, "project")[0]?.value, "project-token");
+
+        // Neither the file nor a client sees them; plain values stay readable.
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "env-token");
+        assert.notInclude(raw, "project-token");
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved);
+        assert.deepEqual(envVars(forClient, "env"), [
+          { name: "SUPABASE_ACCESS_TOKEN", value: "", sensitive: true, valueRedacted: true },
+          { name: "READ_ONLY", value: "true", sensitive: false },
+        ]);
+        assert.equal(envVars(forClient, "project")[0]?.value, "");
+
+        // Echoing the redacted server back (an edit that changed only args) keeps its secret.
+        const echoed = forClient.mcpServers.supabase!;
+        yield* serverSettings.updateSettings({
+          mcpServers: {
+            supabase: {
+              ...echoed,
+              transport: { ...echoed.transport, args: ["--read-only"] } as never,
+            },
+          },
+        });
+        assert.equal(envVars(yield* serverSettings.getSettings, "env")[0]?.value, "env-token");
+
+        // Removing the environment server drops its secret, not the project's.
+        const removed = yield* serverSettings.updateSettings({ mcpServers: { supabase: null } });
+        assert.isUndefined(removed.mcpServers.supabase);
+        assert.equal(envVars(removed, "project")[0]?.value, "project-token");
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
     const cause = new ServerSecretStore.SecretStoreReadError({
       resource: "bitbucket-access-token",
