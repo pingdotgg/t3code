@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as UsageLimitsService from "../../../usage/UsageLimitsService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -29,6 +30,7 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
+
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -41,6 +43,19 @@ const access = Effect.gen(function* () {
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
+  t3_provider_usage_limits: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const environment = yield* Environment.ServerEnvironment;
+      const descriptor = yield* environment.getDescriptor;
+      if (descriptor.environmentId !== context.scope.environmentId)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "This credential belongs to another environment.",
+        });
+      return yield* (yield* UsageLimitsService.UsageLimitsService).read;
+    }),
+  ),
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;

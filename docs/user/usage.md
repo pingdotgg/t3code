@@ -115,6 +115,21 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Read limits through MCP
+
+Agents and read-only MCP clients can call `t3_provider_usage_limits` with no arguments to
+read this environment's cached provider and hub-account quota windows. Each window includes
+used and remaining percentages and any reported reset timestamp. `checkedAt`, `ageSeconds`,
+and the result's `readAt` show when the data was observed; the call does not refresh it.
+An elapsed reset timestamp does not prove that the provider has restored quota.
+
+`available` means the provider reported a snapshot, even if it contains no windows.
+`notReported` means no quota snapshot exists, `unavailable` means the account cannot report
+quota, and `error` means the latest published probe or hub read failed. Missing quota never
+means zero or unlimited. A failed check may leave an older successful reading
+available, so check its age. Account IDs are scoped to their provider instance or hub;
+the same account may appear in both. Credentials and raw diagnostic messages are omitted.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

@@ -1,4 +1,5 @@
 import {
+  ProviderUsageLimitsMcpResult,
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
@@ -13,6 +14,8 @@ import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandE
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+
+import * as UsageLimitsService from "../../../usage/UsageLimitsService.ts";
 
 const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
@@ -64,4 +67,24 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const ProviderUsageLimitsTool = Tool.make("t3_provider_usage_limits", {
+  description:
+    "Read cached usage windows and remaining percentages for every provider instance and usage-source account in this environment. Does not probe or refresh. checkedAt and ageSeconds describe freshness; expired reset timestamps do not imply quota has been restored. Missing quota is not zero or unlimited. No credentials or raw errors are returned.",
+  success: ProviderUsageLimitsMcpResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ServerEnvironment.ServerEnvironment,
+    UsageLimitsService.UsageLimitsService,
+  ],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  ProviderUsageLimitsTool,
+);

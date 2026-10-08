@@ -23,6 +23,8 @@ import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as EnvironmentHandlers from "./handlers.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
+import * as UsageLimitsService from "../../../usage/UsageLimitsService.ts";
+
 const environmentId = EnvironmentId.make("environment:preferences");
 const threadId = ThreadId.make("thread:preferences");
 
@@ -33,6 +35,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     // Completes once the declaration's own check has read the caller.
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
+      Layer.mock(UsageLimitsService.UsageLimitsService)({}),
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,
@@ -97,4 +100,58 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       ),
     );
   }),
+);
+
+it.effect.each(["read-only", "wrong-environment", "missing-capability"] as const)(
+  "quota read handles %s callers",
+  (scenario) =>
+    Effect.gen(function* () {
+      const report = { readAt: "1970-01-01T00:00:00.000Z", providers: [], sources: [] };
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId:
+            scenario === "wrong-environment" ? EnvironmentId.make("other") : environmentId,
+          requestNamespace: "client:quota",
+          thread: undefined,
+          client: { sessionId: "quota", label: "Quota client", access: "read-only" },
+          capabilities: new Set(
+            scenario === "missing-capability" ? [] : ["orchestration" as const],
+          ),
+          issuedAt: 0,
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
+        Layer.mock(Environment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({
+            environmentId,
+            label: "Test",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0",
+            capabilities: { repositoryIdentity: false },
+          }),
+        }),
+        Layer.mock(Settings.ServerSettingsService)({}),
+        ThreadCommandExecutor.layer,
+        Layer.mock(UsageLimitsService.UsageLimitsService)({
+          read:
+            scenario === "read-only"
+              ? Effect.succeed(report)
+              : Effect.die("unauthorized quota read"),
+        }),
+      );
+      const result = yield* Effect.gen(function* () {
+        const toolkit = yield* EnvironmentToolkit;
+        return yield* toolkit
+          .handle("t3_provider_usage_limits", {})
+          .pipe(Stream.unwrap, Stream.runCollect);
+      }).pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+            Layer.provideMerge(dependencies),
+          ),
+        ),
+      );
+      expect(result.at(-1)?.result).toMatchObject(
+        scenario === "read-only" ? report : { code: "capability_denied" },
+      );
+    }),
 );
