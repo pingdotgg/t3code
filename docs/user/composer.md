@@ -300,9 +300,7 @@ styles, or images from neighboring files.
 
 ## HTML and PDF files in the file viewer
 
-On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
-file to source view to read its markup; a link to a specific line opens source
-automatically. HTML previews cannot access your T3 Code session.
+On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML file to source view to read its markup. This choice applies to the current document; opening another HTML file starts in rendered view. A link to a specific line opens source automatically. HTML previews cannot access your T3 Code session.
 
 The file viewer recognizes images, HTML, and PDF files by their filename extension,
 including filenames or folders containing `#` or `?`.

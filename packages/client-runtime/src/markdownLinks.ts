@@ -2,10 +2,11 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
+// Query and fragment delimiters are removed before these decoded paths are matched.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[\p{L}\p{M}\p{N}._#?%-]+(?: +[\p{L}\p{M}\p{N}._#?%-]+)*\/)+[\p{L}\p{M}\p{N}._#?%-]+(?: +[\p{L}\p{M}\p{N}._#?%-]+)*(?::\d+){0,2}$/u;
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{M}\p{N}._#?%-]+(?: +[\p{L}\p{M}\p{N}._#?%-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/u;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;

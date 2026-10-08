@@ -107,6 +107,7 @@ import {
   shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { useFilePreviewRenderState } from "./useFilePreviewRenderState";
 import {
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
@@ -134,7 +135,6 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
-const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 // Shared by the read-only and annotated surfaces, so it is generic over annotation metadata.
 type FilePostRender = <LAnnotation>(
@@ -1078,32 +1078,23 @@ export default function FilePreviewPanel({
     false,
     Schema.Boolean,
   );
-  const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(
-    RENDER_BROWSER_FILE_STORAGE_KEY,
-    true,
-    Schema.Boolean,
-  );
   const [renderTablePreferred, setRenderTablePreferred] = useLocalStorage(
     RENDER_TABLE_STORAGE_KEY,
     true,
     Schema.Boolean,
   );
-  // Paired with the path on purpose: each file surface counts its reveals from
-  // one, so a bare id would let a dismissed reveal on one file swallow the first
-  // reveal on the next.
-  const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
-    null,
+  const { htmlRendered, revealHandled, setRendered } = useFilePreviewRenderState(
+    relativePath,
+    revealLine,
+    revealRequestId,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
   // A reveal still wins over the preference: the line only exists in the source.
-  const revealHandled =
-    revealLine === null ||
-    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
-  const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
+  const renderBrowserFile = isPdf || (isHtml && htmlRendered && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
   const renderedMode = isMarkdown
     ? ("markdown" as const)
@@ -1124,11 +1115,6 @@ export default function FilePreviewPanel({
     !(tableDelimiter && renderTable) &&
     !renderBrowserFile;
   const rendered = isMarkdown ? renderMarkdown : tableDelimiter ? renderTable : renderBrowserFile;
-  const setRenderedPreferred = isMarkdown
-    ? setRenderMarkdownPreferred
-    : tableDelimiter
-      ? setRenderTablePreferred
-      : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
     canOperatePreview &&
     previewPath !== null &&
@@ -1261,12 +1247,9 @@ export default function FilePreviewPanel({
               pressed={rendered}
               onPress={() => {
                 const pressed = !rendered;
-                setRenderedPreferred(pressed);
-                setHandledReveal(
-                  pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
-                    : null,
-                );
+                if (isMarkdown) setRenderMarkdownPreferred(pressed);
+                else if (tableDelimiter) setRenderTablePreferred(pressed);
+                setRendered(pressed);
               }}
             >
               <MorphIcon

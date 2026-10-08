@@ -130,6 +130,61 @@ describe("parseMarkdownFileLink", () => {
   });
 
   it.each([
+    ["report%23final.html", { path: "report#final.html" }],
+    ["report%3Ffinal.html", { path: "report?final.html" }],
+    ["report%25final.html", { path: "report%final.html" }],
+    ["report%2523final.html", { path: "report%23final.html" }],
+    [
+      "reports/report%23final.html#L12C3",
+      { path: "reports/report#final.html", line: 12, column: 3 },
+    ],
+    ["reports/report%3Ffinal.html:12", { path: "reports/report?final.html", line: 12 }],
+    ["reports%23final/report.html#L12", { path: "reports#final/report.html", line: 12 }],
+    ["reports%3Ffinal/report.html", { path: "reports?final/report.html" }],
+    ["reports%25final/report.html", { path: "reports%final/report.html" }],
+  ])("preserves encoded filename characters in %s", (href, expected) => {
+    expect(parseMarkdownFileLink(href)).toEqual(expected);
+  });
+
+  it.each([
+    "線性代數.pdf",
+    "Summer 2026/pastexam/線性代數/2025_midterm_exam1_易志偉_1222.pdf",
+    "résumé.html",
+    "re\u0301sume\u0301.html",
+    "नमस्ते/रिपोर्ट.html",
+    "تقرير/٢٠٢٦.html",
+    "𠮷野/報告.html",
+  ])("recognizes literal and encoded Unicode paths without normalizing %s", (path) => {
+    expect(parseMarkdownFileLink(path)).toEqual({ path });
+    expect(parseMarkdownFileLink(encodeURI(path))).toEqual({ path });
+  });
+
+  it("preserves Unicode filenames with spaces, literal delimiters, and line targets", () => {
+    expect(parseMarkdownFileLink("<線性代數/期中 報告%23final.html?download=1#L12C3>")).toEqual({
+      path: "線性代數/期中 報告#final.html",
+      line: 12,
+      column: 3,
+    });
+    expect(parseMarkdownFileLink("線性代數.pdf:12:3")).toEqual({
+      path: "線性代數.pdf",
+      line: 12,
+      column: 3,
+    });
+  });
+
+  it("separates URL query and fragment delimiters before decoding the filename", () => {
+    expect(parseMarkdownFileLink("report%23final.html?download=1#L12C3")).toEqual({
+      path: "report#final.html",
+      line: 12,
+      column: 3,
+    });
+    expect(parseMarkdownFileLink("report.html?final.html#section")).toEqual({
+      path: "report.html",
+    });
+    expect(parseMarkdownFileLink("report.html#final.html")).toEqual({ path: "report.html" });
+  });
+
+  it.each([
     "",
     "#anchor",
     "//cdn.example.com/clip.mp4",
@@ -141,6 +196,20 @@ describe("parseMarkdownFileLink", () => {
     "/app#L1",
     "readme",
     "TODO:12",
+    "https://example.com/report%23final.html",
+    "//cdn.example.com/report%3Ffinal.html",
+    "/chat/settings%23final#L3",
+    "/chat/settings%3Ffinal?view=report.html",
+    "readme%23final",
+    "readme%3Ffinal",
+    "read%20the%23report",
+    "https://example.com/線性代數.pdf",
+    "//example.com/線性代數.pdf",
+    "mailto:用戶@example.com",
+    "/chat/設定#L3",
+    "線性代數",
+    "期中 報告",
+    "報告%0A.pdf",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });

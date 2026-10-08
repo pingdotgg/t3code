@@ -18,8 +18,8 @@ import { cn } from "~/lib/utils";
  */
 const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 
-export const isPdfPreviewFile = (path: string): boolean =>
-  /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+// Callers pass decoded filesystem paths. A literal # or ? is part of the filename.
+export const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path);
 
 /**
  * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame

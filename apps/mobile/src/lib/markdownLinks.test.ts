@@ -99,6 +99,17 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
+  it("presents a bare Unicode file link as an actionable file", () => {
+    const path = "線性代數/期中 報告.pdf";
+    const href = encodeURI(path);
+    expect(resolveMarkdownLinkPresentation(href)).toMatchObject({
+      kind: "file",
+      href,
+      path,
+      label: "期中 報告.pdf",
+    });
+  });
+
   it("extracts line fragments from relative file links", () => {
     expect(resolveMarkdownLinkPresentation("src/main.ts#L18C2")).toMatchObject({
       kind: "file",

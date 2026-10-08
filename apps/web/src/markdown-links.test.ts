@@ -84,7 +84,9 @@ describe("shouldOpenMarkdownFileLinkInEditor", () => {
 describe("shouldOpenMarkdownFileLinkInBrowserByDefault", () => {
   it("keeps PDFs browser-first while source files open in the file viewer", () => {
     expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.pdf")).toBe(true);
-    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.PDF?download=1")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report#final.PDF")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report?final.PDF")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.pdf#notes.txt")).toBe(false);
     expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.html")).toBe(false);
     expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.xml")).toBe(false);
   });
