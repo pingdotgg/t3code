@@ -470,6 +470,7 @@ export const make = Effect.gen(function* () {
             nowMs: DateTime.toEpochMillis(decisionNow),
             autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
             autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+            autoSettleScope: settings.sidebarAutoSettleScope,
           }) !== null
         );
       });

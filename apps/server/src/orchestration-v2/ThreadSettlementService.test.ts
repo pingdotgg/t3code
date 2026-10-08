@@ -1039,6 +1039,48 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
+  it.effect(
+    "skips the branch recheck for an inactive linked thread under the without-pr scope",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread("resumed-inactive", {
+                branch: "main",
+                linkedPullRequest: {
+                  projectId: PROJECT_ID,
+                  repository: "owner/repository",
+                  number: 1,
+                  url: "https://example.test/owner/repository/pull/1",
+                },
+              }),
+            ]),
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              sidebarAutoSettleAfterDays: 2,
+              sidebarAutoSettleScope: "without-pr",
+            },
+            branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
+            // Merged before the user's last message, so the merge settles nothing.
+            pullRequestSummary: (input) =>
+              Effect.succeed({
+                ...makePullRequestSummary({ ...input, state: "merged" }),
+                mergedAt: "2026-08-10T00:00:00.000Z",
+              }),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+            assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("reevaluates immediately after a pull request merge", () =>
     Effect.scoped(
       Effect.gen(function* () {
