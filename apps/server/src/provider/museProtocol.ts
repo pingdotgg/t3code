@@ -91,6 +91,8 @@ export const MuseApproval = Schema.Struct({
   itemId: Schema.optional(Schema.String),
   toolName: Schema.optional(Schema.String),
   rawArgs: Schema.optional(Schema.String),
+  /** Set when a workflow child asks; `turnId` is then the child's run, not a session turn. */
+  subagentOrigin: Schema.optional(Schema.Struct({ subagentId: NonEmptyString })),
   currentRequirementId: Schema.Struct({ approvalId: NonEmptyString, sourceIndex: Schema.Int }),
   availableChoices: Schema.Array(
     Schema.Struct({
