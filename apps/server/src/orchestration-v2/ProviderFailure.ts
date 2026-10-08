@@ -18,13 +18,47 @@ import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
+/** Keeps a long adapter reason from pushing a category's guidance past the message bound. */
+const MAX_PROVIDER_FAILURE_REASON_LENGTH = 512;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
-/** Translate known categories without exposing arbitrary provider defect text. */
+const PROVIDER_FAILURE_CATEGORIES: Partial<
+  Record<string, { readonly summary: string; readonly guidance: string }>
+> = {
+  ProviderAdapterTurnStartError: {
+    summary: "The provider could not start this turn",
+    guidance: "Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  },
+  ProviderAdapterEventStreamError: {
+    summary: "The provider event stream closed unexpectedly",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+  ProviderAdapterOpenSessionError: {
+    summary: "The provider session could not be opened",
+    guidance: "Check that the provider is installed and signed in, then retry the turn.",
+  },
+  ProviderAdapterResumeThreadError: {
+    summary: "The provider conversation could not be resumed",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+};
+
+/**
+ * Translate known categories without exposing arbitrary provider defect text.
+ * A category names its reason only when the adapter wrote it directly beneath
+ * the category: a protocol error's `detail` or a plain string cause. Anything
+ * deeper, including nested `Error` messages, stays in the logs.
+ */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
-  let message: string | undefined;
+  let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
+  let reason: string | undefined;
+  // True only for the node directly beneath the most recent category.
+  let adapterAuthored = false;
+  // Cleared for good once the walk crosses an error T3 does not own: a known
+  // tag below that point is provider data, not an adapter-written category.
+  let ownedChain = true;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -32,40 +66,47 @@ function causeMessage(cause: unknown): string | undefined {
         cause = Cause.squash(cause);
         continue;
       }
+      if (typeof cause === "string") {
+        if (adapterAuthored) reason = cause;
+        break;
+      }
       if (typeof cause !== "object") break;
-      switch ((cause as Record<string, unknown>)._tag) {
+      const tag = (cause as Record<string, unknown>)._tag;
+      const nextCategory =
+        typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)
+          ? PROVIDER_FAILURE_CATEGORIES[tag]
+          : undefined;
+      switch (tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
           return stringField(cause, "message");
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
-        case "ProviderAdapterTurnStartError":
-          message =
-            "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
-          break;
-        case "ProviderAdapterEventStreamError":
-          message =
-            "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
-          break;
-        case "ProviderAdapterOpenSessionError":
-          message =
-            "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";
-          break;
-        case "ProviderAdapterResumeThreadError":
-          message =
-            "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.";
+        case "ProviderAdapterProtocolError":
+          if (adapterAuthored) reason = stringField(cause, "detail");
           break;
       }
+      if (nextCategory !== undefined) {
+        category = nextCategory;
+        reason = undefined;
+      }
+      adapterAuthored = ownedChain && nextCategory !== undefined;
+      if (nextCategory === undefined) ownedChain = false;
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;
     }
   }
-  return message;
+  if (category === undefined) return undefined;
+  const trimmedReason =
+    reason && boundedText(reason, MAX_PROVIDER_FAILURE_REASON_LENGTH).replace(/[.!?]+$/u, "");
+  return trimmedReason
+    ? `${category.summary}: ${trimmedReason}. ${category.guidance}`
+    : `${category.summary}. ${category.guidance}`;
 }
 
-function stringField(value: unknown, key: "message" | "code"): string | undefined {
+function stringField(value: unknown, key: "message" | "code" | "detail"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];

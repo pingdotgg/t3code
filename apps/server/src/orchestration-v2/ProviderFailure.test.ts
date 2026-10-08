@@ -19,7 +19,7 @@ import {
 } from "./ProviderFailure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderAdapterProtocolError, ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
@@ -98,6 +98,95 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   assert.equal(
     makeProviderFailure({ cause: Cause.fail(cause) }).message,
     new ContextHandoffBudgetError().message,
+  );
+});
+
+it("names the adapter's reason for each wrapper category", () => {
+  const categories = [
+    ["ProviderAdapterTurnStartError", "The provider could not start this turn"],
+    ["ProviderAdapterEventStreamError", "The provider event stream closed unexpectedly"],
+    ["ProviderAdapterOpenSessionError", "The provider session could not be opened"],
+    ["ProviderAdapterResumeThreadError", "The provider conversation could not be resumed"],
+  ] as const;
+  for (const [tag, summary] of categories) {
+    const message = makeProviderFailure({
+      // An Effect Cause between the category and its reason is transparent.
+      cause: Cause.fail({ _tag: tag, cause: Cause.fail("adapter said no.") }),
+    }).message;
+    assert.isTrue(message.startsWith(`${summary}: adapter said no. `), message);
+  }
+  // A newer category replaces the reason that sat beneath an outer one.
+  assert.isTrue(
+    makeProviderFailure({
+      cause: {
+        _tag: "ProviderAdapterTurnStartError",
+        cause: { _tag: "ProviderAdapterOpenSessionError", cause: "inner reason" },
+      },
+    }).message.startsWith("The provider session could not be opened: inner reason. "),
+  );
+});
+
+it("bounds a long adapter reason so the category guidance stays visible", () => {
+  const message = makeProviderFailure({
+    cause: { _tag: "ProviderAdapterTurnStartError", cause: "x".repeat(10_000) },
+  }).message;
+  assert.isBelow(message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+  assert.isTrue(message.endsWith("check the provider setup and server logs."), message);
+});
+
+it("names the adapter's reason when a turn cannot start", () => {
+  const turnStart = (cause: unknown) =>
+    new ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      threadId: ThreadId.make("thread:busy"),
+      providerThreadId: ProviderThreadId.make("provider-thread:busy"),
+      runId: RunId.make("run:busy"),
+      cause,
+    });
+
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail(
+        turnStart(
+          new ProviderAdapterProtocolError({
+            driver: ProviderDriverKind.make("claudeAgent"),
+            detail: "Claude provider turn provider-turn:previous is still active.",
+          }),
+        ),
+      ),
+    }).message,
+    "The provider could not start this turn: Claude provider turn provider-turn:previous is still active. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+  assert.equal(
+    makeProviderFailure({
+      cause: turnStart("This provider does not support context compaction."),
+    }).message,
+    "The provider could not start this turn: This provider does not support context compaction. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+  for (const hidden of [
+    new Error("socket hang up at 10.0.0.5"),
+    // Pi copies the provider's raw RPC error onto its own error's cause.
+    { _tag: "PiRpcError", detail: "set_model failed", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+    // A provider-controlled tag naming an Object.prototype key is not a category.
+    { _tag: "constructor", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+  ]) {
+    assert.equal(
+      makeProviderFailure({ cause: turnStart(hidden) }).message,
+      "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+    );
+  }
+  // A known tag inside provider data below a foreign error still classifies
+  // the failure, but its string is provider text, not an adapter reason.
+  const disguised = makeProviderFailure({
+    cause: turnStart({
+      _tag: "PiRpcError",
+      detail: "set_model failed",
+      cause: { _tag: "ProviderAdapterOpenSessionError", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+    }),
+  }).message;
+  assert.equal(
+    disguised,
+    "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
   );
 });
 
