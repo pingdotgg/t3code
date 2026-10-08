@@ -1,4 +1,4 @@
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
@@ -34,21 +34,11 @@ export function SourceControlIcon(props: {
         </Svg>
       );
     case "gitcafe":
+      // GitCafe's own mark, from https://git.cafe/favicon.svg.
       return (
-        <ThemedSvg
-          width={size}
-          height={size}
-          viewBox="0 0 24 24"
-          color={props.color}
-          colorClassName={props.colorClassName}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <Path d="M10 2v2M14 2v2M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1M6 2v2" />
-        </ThemedSvg>
+        <Svg width={size} height={size} viewBox="0 0 64 64">
+          <Rect width={64} height={64} fill="#a78bfa" />
+        </Svg>
       );
     case "github":
       return (

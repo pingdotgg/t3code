@@ -1,7 +1,5 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
-export { CoffeeIcon as GitCafeIcon } from "lucide-react";
-
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const UltrafastIcon: Icon = (props) => (
@@ -730,6 +728,13 @@ export const ForgejoIcon: Icon = (props) => (
       <circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth="15" />
       <circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth="15" />
     </g>
+  </svg>
+);
+
+// GitCafe's own mark, from https://git.cafe/favicon.svg.
+export const GitCafeIcon: Icon = (props) => (
+  <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
+    <rect width="64" height="64" fill="#a78bfa" />
   </svg>
 );
 
