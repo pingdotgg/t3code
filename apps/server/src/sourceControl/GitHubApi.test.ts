@@ -555,7 +555,7 @@ describe("GitHubApi accounts", () => {
     );
     const layer = GitHubApi.layer.pipe(
       Layer.provide(Layer.mergeAll(credentials, http)),
-      Layer.provideMerge(GitHubGraphQlBudget.layer),
+      Layer.provideMerge(GitHubQuota.layer),
       Layer.provideMerge(SourceControlRateLimit.layer),
     );
     return Effect.gen(function* () {
