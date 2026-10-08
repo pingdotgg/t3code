@@ -148,11 +148,15 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 }));
 
 import type { DraftComposerAttachment } from "../lib/composerImages";
+import { serializeSharedLocation } from "../lib/sharedLocation";
+import { beginQueuedRunEdit, endQueuedRunEdit, queuedEditDraftKey } from "./queued-run-edit";
+import { RunId } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
+  removeComposerDraftAttachment,
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftAfterSelection,
@@ -240,6 +244,57 @@ function contextDraft(start: number, count: number): ComposerDraft {
 }
 
 describe("mobile composer drafts", () => {
+  it("restores a sent location as a removable card when editing a queued run", () => {
+    const key = "environment-1:location-thread";
+    const runId = RunId.make("location-run");
+    const location = {
+      id: "location-1",
+      type: "location" as const,
+      name: "Library",
+      address: "100 Larkin St",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracy: 12,
+    };
+    beginQueuedRunEdit(key, {
+      runId,
+      messageId: MessageId.make("location-message"),
+      originalText: `Coffee nearby?\n\n${serializeSharedLocation(location)}`,
+      existingAttachments: [],
+    });
+    const draft = getComposerDraftSnapshot(queuedEditDraftKey(key, runId));
+    expect(draft.text).toBe("Coffee nearby?");
+    expect(draft.attachments).toMatchObject([
+      { type: "location", latitude: 37.7793, longitude: -122.4192 },
+    ]);
+    removeComposerDraftAttachment(queuedEditDraftKey(key, runId), draft.attachments[0]!.id);
+    expect(getComposerDraftSnapshot(queuedEditDraftKey(key, runId)).attachments).toEqual([]);
+    endQueuedRunEdit(key);
+  });
+  it("keeps a location as a removable draft attachment without changing prompt text or creating a file chip", () => {
+    const key = "environment-1:location-thread";
+    const location = {
+      id: "location-1",
+      type: "location" as const,
+      name: "Library",
+      address: "100 Larkin St",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracy: 12,
+    };
+    appAtomRegistry.set(composerDraftsAtom, { [key]: { text: "Coffee nearby?", attachments: [] } });
+    expect(appendComposerDraftAttachments(key, [location], { appendReference: true })).toBe(0);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "Coffee nearby?",
+      attachments: [location],
+    });
+    expect(getComposerDraftSnapshot(key).context).toBeUndefined();
+    removeComposerDraftAttachment(key, location.id);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "Coffee nearby?",
+      attachments: [],
+    });
+  });
   it.each([false, true])(
     "restores visible file chips from legacy drafts (archived: %s)",
     async (archived) => {

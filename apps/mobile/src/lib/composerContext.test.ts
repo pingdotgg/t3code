@@ -204,6 +204,36 @@ describe("mobile composer context", () => {
     expect(prompt).toContain("4 | build failed\n5 | retry");
     expect(prompt).not.toContain('unavailable="true"');
   });
+
+  it("maps context attachment ids across location entries without shifting file uploads", () => {
+    const first = {
+      ...image,
+      contextId: ComposerContextId.make("image-first"),
+      attachmentId: "local-first",
+    };
+    const second = {
+      ...image,
+      contextId: ComposerContextId.make("image-second"),
+      attachmentId: "local-second",
+    };
+    const context: OrchestrationMessageContext = { version: 1, records: [first, second] };
+
+    const uploaded = uploadedComposerContext(
+      context,
+      [
+        { id: "location-before", type: "location" },
+        { id: "local-first", type: "image" },
+        { id: "location-between", type: "location" },
+        { id: "local-second", type: "image" },
+      ],
+      [{ id: "uploaded-first" }, { id: "uploaded-second" }],
+    );
+
+    expect(uploaded?.records).toEqual([
+      { ...first, attachmentId: "uploaded-first" },
+      { ...second, attachmentId: "uploaded-second" },
+    ]);
+  });
 });
 
 describe("host context compatibility", () => {

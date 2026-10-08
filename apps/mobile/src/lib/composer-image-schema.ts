@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { EnvironmentId, PastedTextAttachmentSource } from "@t3tools/contracts";
+import { EnvironmentId, PastedTextAttachmentSource, SharedLocation } from "@t3tools/contracts";
 
 export const DraftComposerImageAttachmentSchema = Schema.Struct({
   id: Schema.String,
@@ -37,4 +37,9 @@ export const DraftComposerFileAttachmentSchema = Schema.Struct({
 export const DraftComposerAttachmentSchema = Schema.Union([
   DraftComposerImageAttachmentSchema,
   DraftComposerFileAttachmentSchema,
+  Schema.Struct({
+    ...SharedLocation.fields,
+    id: Schema.String,
+    type: Schema.Literal("location"),
+  }),
 ]);

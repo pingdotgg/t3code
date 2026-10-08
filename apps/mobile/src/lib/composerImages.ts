@@ -23,6 +23,7 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 import { writeFileAtomically } from "./atomic-file";
+import type { DraftComposerLocationAttachment } from "./sharedLocation";
 
 export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttachment, "dataUrl"> {
   readonly id: string;
@@ -76,10 +77,15 @@ export async function createPastedTextComposerAttachment(input: {
   };
 }
 
-export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
+export type DraftComposerMediaAttachment =
+  | DraftComposerImageAttachment
+  | DraftComposerFileAttachment;
+export type DraftComposerAttachment =
+  | DraftComposerMediaAttachment
+  | DraftComposerLocationAttachment;
 
 /**
- * What the strip above the composer shows: media, and nothing else. A thumbnail is the only
+ * What the strip above the composer shows: media and shared locations. A thumbnail is the only
  * way to see a picture or a video, so those always preview there. Everything else reads as
  * its inline chip, which carries the name, the type and the size in the line of prose the
  * file belongs to — a square tile showing a generic document glyph says strictly less.
@@ -94,7 +100,10 @@ export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
 ): ReadonlyArray<DraftComposerAttachment> {
   return attachments.filter(
-    (attachment) => isComposerImageAttachment(attachment) || videoMimeType(attachment) !== null,
+    (attachment) =>
+      attachment.type === "location" ||
+      isComposerImageAttachment(attachment) ||
+      videoMimeType(attachment) !== null,
   );
 }
 
@@ -105,17 +114,22 @@ export function composerStripAttachments(
 export function isComposerImageAttachment(
   attachment: DraftComposerAttachment,
 ): attachment is DraftComposerImageAttachment {
-  return attachment.type === "image" || imageMimeType(attachment) !== null;
+  return (
+    attachment.type !== "location" &&
+    (attachment.type === "image" || imageMimeType(attachment) !== null)
+  );
 }
 
 /** Any composer attachment whose bytes live in the app-owned attachment directory. */
-export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
+export type FileBackedComposerAttachment = DraftComposerMediaAttachment & {
+  readonly fileUri: string;
+};
 
 /** Files have a local copy. Images can have one after a file-backed draft is restored. */
 export function isFileBackedComposerAttachment(
   attachment: DraftComposerAttachment,
 ): attachment is FileBackedComposerAttachment {
-  return attachment.fileUri !== undefined;
+  return attachment.type !== "location" && attachment.fileUri !== undefined;
 }
 
 /**

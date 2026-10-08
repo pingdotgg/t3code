@@ -17,6 +17,7 @@ import {
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
+import { parseSharedLocations } from "../lib/sharedLocation";
 
 const creation: QueuedThreadMessage = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -228,6 +229,26 @@ describe("isPendingThreadCreationVisible", () => {
 });
 
 describe("pendingThreadCreationMessage", () => {
+  it("shows a shared location while waiting for the first server message", () => {
+    const location = {
+      id: "location-1",
+      type: "location" as const,
+      name: "Library",
+      address: "100 Larkin St",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracy: 12,
+    };
+    const message = pendingThreadCreationMessage({
+      ...creation,
+      text: "Coffee nearby?",
+      attachments: [location],
+    });
+    expect(parseSharedLocations(message.text)).toMatchObject({
+      text: "Coffee nearby?",
+      locations: [{ name: "Library", latitude: 37.7793, longitude: -122.4192 }],
+    });
+  });
   it("keeps inline context available while the thread is being created", () => {
     const record = {
       version: 1 as const,

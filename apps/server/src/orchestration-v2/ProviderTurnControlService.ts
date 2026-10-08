@@ -1,4 +1,3 @@
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   ProviderSessionId,
@@ -15,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { projectUserMessageForProvider } from "./MessagePrompt.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
@@ -322,9 +322,9 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
+                text: projectUserMessageForProvider({
                   text: message.text,
-                  records: message.context?.records ?? [],
+                  context: message.context,
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

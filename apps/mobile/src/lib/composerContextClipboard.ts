@@ -21,6 +21,7 @@ import { assetEnvironment } from "../state/assets";
 import { environmentSession } from "../state/session";
 import { downloadAttachmentForPreview } from "./attachmentDownload";
 import {
+  isFileBackedComposerAttachment,
   persistComposerAttachmentFile,
   removePersistedComposerAttachmentFile,
   type DraftComposerAttachment,
@@ -104,7 +105,7 @@ export async function importComposerContextClipboard(
   } catch (error) {
     await Promise.all(
       attachments.map((attachment) =>
-        attachment.fileUri
+        isFileBackedComposerAttachment(attachment)
           ? removePersistedComposerAttachmentFile(attachment.fileUri)
           : Promise.resolve(),
       ),
@@ -122,14 +123,14 @@ async function importAttachment(
   checkAborted(signal);
   const local = findLocalComposerClipboardAttachment(environmentId, record.attachmentId);
   if (local) {
-    if (!local.fileUri && local.type === "image" && local.dataUrl)
+    if (local.type === "image" && !isFileBackedComposerAttachment(local) && local.dataUrl)
       return {
         ...local,
         id: uuidv4(),
         uploadedAttachmentId: undefined,
         uploadEnvironmentId: undefined,
       };
-    if (local.fileUri) {
+    if (isFileBackedComposerAttachment(local)) {
       const preview = await loadLocalAttachmentPreview(
         { ...local, fileUri: local.fileUri },
         signal,

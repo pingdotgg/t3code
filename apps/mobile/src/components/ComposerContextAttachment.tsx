@@ -26,9 +26,7 @@ export function ComposerContextAttachment(props: {
     }),
     [record.attachmentId, record.name],
   );
-  const local = attachment?.fileUri
-    ? (attachment as DraftComposerAttachment & { fileUri: string })
-    : undefined;
+  const local = attachment && isFileBackedComposerAttachment(attachment) ? attachment : undefined;
   const inlineUri = composerAttachmentInlineUri(attachment);
   const remoteEnvironmentId = local || inlineUri ? null : (props.environmentId ?? null);
   const asset = useAssetUrlState(remoteEnvironmentId, resource);

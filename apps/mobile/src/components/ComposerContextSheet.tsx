@@ -106,7 +106,9 @@ export function ComposerContextSheet(props: {
   const record = props.record;
   const localAttachment =
     record && "attachmentId" in record
-      ? props.attachments?.find((entry) => entry.id === record.attachmentId)
+      ? props.attachments?.find(
+          (entry) => entry.id === record.attachmentId && entry.type !== "location",
+        )
       : undefined;
   const localFile =
     localAttachment && isFileBackedComposerAttachment(localAttachment)
@@ -397,8 +399,7 @@ export function ComposerContextSheet(props: {
                 key={JSON.stringify([
                   props.environmentId,
                   attachmentRecord.attachmentId,
-                  props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)
-                    ?.fileUri,
+                  localFile?.fileUri,
                 ])}
                 record={attachmentRecord}
                 environmentId={props.environmentId}

@@ -8,6 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { SharedLocation } from "./sharedLocation.ts";
 
 /**
  * Inline context records: the typed payload behind every composer chip.
@@ -28,6 +29,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "location",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -234,6 +236,13 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+export const LocationContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("location"),
+  payload: SharedLocation,
+});
+export type LocationContextRecord = typeof LocationContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /**
@@ -271,6 +280,7 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  LocationContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

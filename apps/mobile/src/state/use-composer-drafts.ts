@@ -43,7 +43,11 @@ import {
   registerComposerAttachmentUnusedHandler,
   retainComposerAttachmentFileForPreview,
 } from "../lib/composerAttachmentPreviewRetention";
-import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
+import type {
+  DraftComposerAttachment,
+  DraftComposerMediaAttachment,
+  FileBackedComposerAttachment,
+} from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 import {
@@ -475,7 +479,7 @@ export function resetComposerDraftsLoadState(): void {
 }
 
 function attachmentContextRecord(
-  attachment: DraftComposerAttachment,
+  attachment: Exclude<DraftComposerAttachment, { type: "location" }>,
   contextId = ComposerContextId.make(attachment.id),
 ) {
   const common = {
@@ -507,6 +511,7 @@ function restoreMissingComposerFileReferences(draft: ComposerDraft): ComposerDra
   let changed = false;
   for (const attachment of draft.attachments) {
     if (
+      attachment.type === "location" ||
       attachment.type === "image" ||
       imageMimeType(attachment) !== null ||
       videoMimeType(attachment) !== null
@@ -844,10 +849,17 @@ function isComposerAttachmentFileReferenced(fileUri: string): boolean {
   return [...drafts, ...queuedMessages, ...signedOutAttachmentOwners()].some((owner) =>
     owner.attachments.some(
       (attachment) =>
+        attachment.type !== "location" &&
         attachment.fileUri !== undefined &&
         composerAttachmentFileReferenceKey(attachment.fileUri) === referenceKey,
     ),
   );
+}
+
+function isDraftComposerMediaAttachment(
+  attachment: DraftComposerAttachment,
+): attachment is DraftComposerMediaAttachment {
+  return attachment.type !== "location";
 }
 
 function isComposerAttachmentUploadReferenced(
@@ -861,6 +873,7 @@ function isComposerAttachmentUploadReferenced(
   return [...drafts, ...queuedMessages, ...signedOutAttachmentOwners()].some((owner) =>
     owner.attachments.some(
       (attachment) =>
+        isDraftComposerMediaAttachment(attachment) &&
         attachment.uploadEnvironmentId === environmentId &&
         attachment.uploadedAttachmentId === attachmentId,
     ),
@@ -872,12 +885,15 @@ export async function releaseUnusedComposerAttachmentFiles(
 ): Promise<void> {
   const candidates = new Set(
     attachments.flatMap((attachment) =>
-      attachment.fileUri !== undefined ? [attachment.fileUri] : [],
+      attachment.type !== "location" && attachment.fileUri !== undefined
+        ? [attachment.fileUri]
+        : [],
     ),
   );
   const uploadCandidates = new Map<EnvironmentId, Set<string>>();
   for (const attachment of attachments) {
     if (
+      !isDraftComposerMediaAttachment(attachment) ||
       attachment.uploadEnvironmentId === undefined ||
       attachment.uploadedAttachmentId === undefined
     ) {
@@ -922,7 +938,7 @@ export async function releaseUnusedComposerAttachmentFiles(
     incomingShareFileUris = new Set(
       incomingShares.flatMap((share) =>
         share.attachments.flatMap((attachment) =>
-          attachment.fileUri !== undefined
+          attachment.type !== "location" && attachment.fileUri !== undefined
             ? [composerAttachmentFileReferenceKey(attachment.fileUri)]
             : [],
         ),
@@ -978,7 +994,9 @@ export function scheduleUnusedComposerAttachmentCleanup(
   if (
     !attachments.some(
       (attachment) =>
-        attachment.fileUri !== undefined || attachment.uploadedAttachmentId !== undefined,
+        (attachment.type !== "location" && attachment.fileUri !== undefined) ||
+        (isDraftComposerMediaAttachment(attachment) &&
+          attachment.uploadedAttachmentId !== undefined),
     )
   ) {
     return;
@@ -1367,34 +1385,53 @@ export function appendComposerDraftAttachments(
             options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           ) - retained.attachments.length,
         );
-    const contextCapacity = options?.appendReference
+    let contextCapacity = options?.appendReference
       ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
       : attachments.length;
-    const accepted = attachments.slice(0, Math.min(remaining, contextCapacity));
-    rejected = attachments.slice(accepted.length);
+    const accepted: DraftComposerAttachment[] = [];
+    const rejectedAttachments: DraftComposerAttachment[] = [];
+    for (const attachment of attachments) {
+      if (accepted.length >= remaining) {
+        rejectedAttachments.push(attachment);
+      } else if (
+        options?.appendReference &&
+        attachment.type !== "location" &&
+        contextCapacity <= 0
+      ) {
+        rejectedAttachments.push(attachment);
+      } else {
+        accepted.push(attachment);
+        if (options?.appendReference && attachment.type !== "location") contextCapacity -= 1;
+      }
+    }
+    rejected = rejectedAttachments;
     if (accepted.length === 0) {
       return current;
     }
     let draft = { ...existing, attachments: [...existing.attachments, ...accepted] };
     if (options?.appendReference) {
-      const records = accepted.map((attachment) => attachmentContextRecord(attachment));
-      const inserted = draftWithInsertedContext(
-        draftKey,
-        draft,
-        {
-          text: records.map(formatComposerContextReference).join(" "),
-          context: { version: 1, records },
-        },
-        options?.insertion,
-      );
-      if (!inserted) {
-        rejected = attachments;
-        return current;
+      const records = accepted
+        .filter((attachment) => attachment.type !== "location")
+        .map((attachment) => attachmentContextRecord(attachment));
+      if (records.length > 0) {
+        const inserted = draftWithInsertedContext(
+          draftKey,
+          draft,
+          {
+            text: records.map(formatComposerContextReference).join(" "),
+            context: { version: 1, records },
+          },
+          options?.insertion,
+        );
+        if (!inserted) {
+          rejected = attachments;
+          return current;
+        }
+        draft = { ...inserted, attachments: [...inserted.attachments] };
+        removed = existing.attachments.filter(
+          (attachment) => !draft.attachments.includes(attachment),
+        );
       }
-      draft = { ...inserted, attachments: [...inserted.attachments] };
-      removed = existing.attachments.filter(
-        (attachment) => !draft.attachments.includes(attachment),
-      );
     }
     return {
       ...current,
@@ -1466,10 +1503,14 @@ export function setComposerDraftAttachmentUpload(
   draftKey: string,
   attachment: DraftComposerAttachment,
 ): boolean {
-  let previous: DraftComposerAttachment | undefined;
+  if (!isDraftComposerMediaAttachment(attachment)) return false;
+  let previous: DraftComposerMediaAttachment | undefined;
   updateComposerDrafts((current) => {
     const draft = current[draftKey];
-    previous = draft?.attachments.find((candidate) => candidate.id === attachment.id);
+    previous = draft?.attachments.find(
+      (candidate): candidate is DraftComposerMediaAttachment =>
+        candidate.id === attachment.id && isDraftComposerMediaAttachment(candidate),
+    );
     if (!draft || !previous) return current;
     if (
       previous.uploadedAttachmentId === attachment.uploadedAttachmentId &&
@@ -1481,7 +1522,7 @@ export function setComposerDraftAttachmentUpload(
       [draftKey]: {
         ...draft,
         attachments: draft.attachments.map((candidate) =>
-          candidate.id === attachment.id
+          candidate.id === attachment.id && isDraftComposerMediaAttachment(candidate)
             ? {
                 ...candidate,
                 uploadedAttachmentId: attachment.uploadedAttachmentId,
@@ -1569,6 +1610,7 @@ export function restoreComposerDraftSnapshotState(
 function stripAttachmentUploadReference(
   attachment: DraftComposerAttachment,
 ): DraftComposerAttachment {
+  if (!isDraftComposerMediaAttachment(attachment)) return attachment;
   const { uploadedAttachmentId: _id, uploadEnvironmentId: _environmentId, ...rest } = attachment;
   return rest;
 }
@@ -1901,6 +1943,7 @@ export function retargetNewTaskDraft(
     // but drops the old stamp, so it cannot pin the source environment's
     // pending upload alive from the moved draft.
     const attachments = retained.attachments.map((attachment) =>
+      isDraftComposerMediaAttachment(attachment) &&
       attachment.uploadEnvironmentId !== undefined &&
       attachment.uploadEnvironmentId !== project.environmentId
         ? stripAttachmentUploadReference(attachment)

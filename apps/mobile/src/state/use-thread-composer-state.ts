@@ -35,7 +35,11 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
+import {
+  composerContextSendBlockReason,
+  reidentifyComposerContext,
+  serializeComposerMessageForServer,
+} from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -489,7 +493,10 @@ export function useThreadComposerState() {
     if (edit === null) return;
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
     const text = draft.text.trim();
-    if (text.length === 0) {
+    if (
+      text.length === 0 &&
+      !draft.attachments.some((attachment) => attachment.type === "location")
+    ) {
       // The server rejects an empty queued message, attachments or not.
       Alert.alert("Add a message", "A queued message cannot be left empty.");
       return;
@@ -520,16 +527,25 @@ export function useThreadComposerState() {
         draftAttachments: draft.attachments,
         uploaded: prepared.attachments,
       });
+      const message = serializeComposerMessageForServer(
+        text,
+        payload.context,
+        capabilities?.inlineMessageContext === true,
+        {
+          locations: draft.attachments.filter((attachment) => attachment.type === "location"),
+          supportsSharedLocationContext: capabilities?.sharedLocationContext === true,
+        },
+      );
       const result = await editQueuedRun({
         environmentId: thread.environmentId,
         input: {
           threadId: thread.id,
           runId: edit.runId,
-          text,
+          text: message.text,
           edit: {
             messageId: edit.messageId,
             attachments: payload.attachments,
-            ...(payload.context ? { context: payload.context } : {}),
+            ...(message.context ? { context: message.context } : {}),
           },
         },
       });

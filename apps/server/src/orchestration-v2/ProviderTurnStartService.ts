@@ -1,5 +1,4 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -26,6 +25,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as EventSink from "./EventSink.ts";
+import { projectUserMessageForProvider } from "./MessagePrompt.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -408,9 +408,9 @@ export const layer: Layer.Layer<
           : yield* Effect.result(
               providerAuth.tryHandlePromptCommand({
                 instanceId: authInstanceId,
-                text: projectComposerContextForProvider({
+                text: projectUserMessageForProvider({
                   text: message.text,
-                  records: message.context?.records ?? [],
+                  context: message.context,
                 }),
                 hasAttachments: false,
               }),
@@ -950,9 +950,9 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
+      const userText = projectUserMessageForProvider({
         text: message.text,
-        records: message.context?.records ?? [],
+        context: message.context,
       });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.

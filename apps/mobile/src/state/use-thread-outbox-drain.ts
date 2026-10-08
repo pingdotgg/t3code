@@ -636,7 +636,10 @@ async function preserveUploadedAttachmentsForEditor(
   const nextAttachments = draft.attachments.map((attachment) => {
     const uploaded = uploadedById.get(attachment.id);
     if (
-      !uploaded?.uploadedAttachmentId ||
+      attachment.type === "location" ||
+      !uploaded ||
+      uploaded.type === "location" ||
+      !uploaded.uploadedAttachmentId ||
       uploaded.uploadEnvironmentId !== originalMessage.environmentId ||
       (attachment.uploadedAttachmentId === uploaded.uploadedAttachmentId &&
         attachment.uploadEnvironmentId === uploaded.uploadEnvironmentId)
@@ -922,13 +925,27 @@ export function useThreadOutboxDrain(): void {
                 prepared.attachments,
               ),
               currentConfig.environment.capabilities.inlineMessageContext === true,
+              {
+                locations: queuedMessage.attachments.filter(
+                  (attachment) => attachment.type === "location",
+                ),
+                supportsSharedLocationContext:
+                  currentConfig.environment.capabilities.sharedLocationContext === true,
+              },
             ),
             attachments: prepared.attachments,
           },
           modelSelection: sendSettings.modelSelection,
           titleSeed: deriveThreadTitleSeed({
             text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
+            attachments: queuedMessage.attachments.filter(
+              (attachment) => attachment.type !== "location",
+            ),
+            fallbackLabels: [
+              queuedMessage.attachments.some((attachment) => attachment.type === "location")
+                ? "Shared location"
+                : null,
+            ],
           }),
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
@@ -1064,6 +1081,13 @@ export function useThreadOutboxDrain(): void {
               prepared.attachments,
             ),
             currentConfig.environment.capabilities.inlineMessageContext === true,
+            {
+              locations: queuedMessage.attachments.filter(
+                (attachment) => attachment.type === "location",
+              ),
+              supportsSharedLocationContext:
+                currentConfig.environment.capabilities.sharedLocationContext === true,
+            },
           ),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,

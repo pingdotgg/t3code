@@ -1,5 +1,6 @@
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
+import { appendSharedLocations } from "../../lib/sharedLocation";
 
 export type PendingThreadFeedEntry = ThreadFeedEntry & {
   readonly pendingMessage?: QueuedThreadMessage;
@@ -28,7 +29,10 @@ export function appendPendingThreadMessages(
         message: {
           id: pendingMessage.messageId,
           role: "user",
-          text: pendingMessage.text,
+          text: appendSharedLocations(
+            pendingMessage.text,
+            pendingMessage.attachments.filter((attachment) => attachment.type === "location"),
+          ),
           attachments: [],
           context: pendingMessage.context,
           createdAt: pendingMessage.createdAt,

@@ -14,6 +14,7 @@ import {
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
+import { LocationAttachmentCard } from "./LocationAttachmentCard";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
@@ -223,6 +224,9 @@ function ComposerImageAttachment(
 
 function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   const { attachment } = props;
+  if (attachment.type === "location") {
+    return <LocationAttachmentCard location={attachment} compact />;
+  }
   // The document picker types every pick as a plain file, so a picture arrives here as one.
   // What it *is* decides how it presents, the same way videos are already recognised below.
   if (attachment.type === "image" || imageMimeType(attachment) !== null) {
@@ -349,43 +353,53 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
       className="grow-0"
     >
       <View className="flex-row gap-2.5">
-        {props.attachments.map((attachment) => (
-          <View
-            key={attachment.id}
-            className="relative"
-            style={{
-              paddingTop: removeButtonGutter,
-              paddingRight: removeButtonGutter,
-            }}
-          >
-            <ComposerAttachmentThumbnail
-              environmentId={props.environmentId}
-              attachment={attachment}
-              size={size}
-              borderRadius={radius}
-              onPressPreview={props.onPressPreview}
-              onPressVideo={props.onPressVideo}
-              onPressDocument={props.onPressDocument}
+        {props.attachments.map((attachment) =>
+          attachment.type === "location" ? (
+            <LocationAttachmentCard
+              key={attachment.id}
+              location={attachment}
+              onRemove={() => props.onRemove(attachment.id)}
             />
-            <Pressable
-              className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
+          ) : (
+            <View
+              key={attachment.id}
+              className="relative"
               style={{
-                top: removeButtonPlacement === "gutter" ? 0 : 4,
-                right: removeButtonPlacement === "gutter" ? 0 : 4,
+                paddingTop: removeButtonGutter,
+                paddingRight: removeButtonGutter,
               }}
-              hitSlop={6}
-              onPress={() => props.onRemove(attachment.id)}
             >
-              <SymbolView
-                name="xmark"
-                size={9}
-                tintColor="#ffffff"
-                type="monochrome"
-                weight="bold"
+              <ComposerAttachmentThumbnail
+                environmentId={props.environmentId}
+                attachment={attachment}
+                size={size}
+                borderRadius={radius}
+                onPressPreview={props.onPressPreview}
+                onPressVideo={props.onPressVideo}
+                onPressDocument={props.onPressDocument}
               />
-            </Pressable>
-          </View>
-        ))}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${attachment.name}`}
+                className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
+                style={{
+                  top: removeButtonPlacement === "gutter" ? 0 : 4,
+                  right: removeButtonPlacement === "gutter" ? 0 : 4,
+                }}
+                hitSlop={6}
+                onPress={() => props.onRemove(attachment.id)}
+              >
+                <SymbolView
+                  name="xmark"
+                  size={9}
+                  tintColor="#ffffff"
+                  type="monochrome"
+                  weight="bold"
+                />
+              </Pressable>
+            </View>
+          ),
+        )}
       </View>
     </ScrollView>
   );

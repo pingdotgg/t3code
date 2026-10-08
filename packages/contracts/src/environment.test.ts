@@ -69,6 +69,16 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("treats missing shared-location context support as unsupported and preserves it when advertised", () => {
+    expect(decodeDescriptor(descriptor).capabilities.sharedLocationContext).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, sharedLocationContext: true },
+      }).capabilities.sharedLocationContext,
+    ).toBe(true);
+  });
+
   it("preserves the server's generic attachment upload limit", () => {
     expect(
       decodeDescriptor({

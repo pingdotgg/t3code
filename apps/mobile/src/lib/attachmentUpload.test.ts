@@ -133,6 +133,16 @@ const file = {
   fileUri: "file:///documents/report.pdf",
 } as const satisfies DraftComposerAttachment;
 
+const location = {
+  id: "location-1",
+  type: "location",
+  name: "T3 HQ",
+  address: "123 Main St, New York, NY",
+  latitude: 40.7128,
+  longitude: -74.006,
+  accuracy: 5,
+} as const satisfies DraftComposerAttachment;
+
 /** A picture chosen through the document picker: typed `file`, with no usable mime. */
 const documentPickedImage = {
   id: "file-2",
@@ -236,6 +246,82 @@ describe("prepareTurnAttachments", () => {
     ).rejects.toThrow("cannot upload attachments");
     expect(mocks.runAtomCommand).not.toHaveBeenCalled();
     expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("prepares a location-only send without connection access or uploads", async () => {
+    mocks.canOperate = false;
+    mocks.readAtom.mockReturnValue(Option.none());
+
+    await expect(
+      prepareTurnAttachments({ environmentId, attachments: [location] }),
+    ).resolves.toEqual({
+      status: "ready",
+      attachments: [],
+      draftAttachments: [location],
+      pendingAttachmentIds: [],
+    });
+
+    expect(mocks.readAtom).not.toHaveBeenCalled();
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps locations in place while assigning uploaded ids to media in order", async () => {
+    const secondFile = {
+      ...file,
+      id: "file-2",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 5,
+      fileUri: "file:///documents/notes.txt",
+    } as const satisfies DraftComposerAttachment;
+    const secondLocation = { ...location, id: "location-2", name: "Office" } as const;
+    const secondUploadedId = `${MINTED_ID}-second`;
+    let minted = 0;
+    mocks.runAtomCommand.mockImplementation(async (_registry: unknown, command: unknown) => {
+      if (command !== mocks.createUploadUrl) return { _tag: "Success", value: undefined };
+      minted += 1;
+      return {
+        _tag: "Success",
+        value: {
+          attachmentId: minted === 1 ? MINTED_ID : secondUploadedId,
+          relativeUrl: "/api/attachments/upload/signed",
+          expiresAt: 1,
+        },
+      };
+    });
+
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [location, file, secondLocation, secondFile],
+    });
+
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments).toEqual([
+      {
+        type: "file",
+        id: MINTED_ID,
+        name: file.name,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+      },
+      {
+        type: "file",
+        id: secondUploadedId,
+        name: secondFile.name,
+        mimeType: secondFile.mimeType,
+        sizeBytes: secondFile.sizeBytes,
+      },
+    ]);
+    expect(prepared.draftAttachments).toEqual([
+      location,
+      { ...file, uploadedAttachmentId: MINTED_ID, uploadEnvironmentId: environmentId },
+      secondLocation,
+      { ...secondFile, uploadedAttachmentId: secondUploadedId, uploadEnvironmentId: environmentId },
+    ]);
+    expect(prepared.pendingAttachmentIds).toEqual([MINTED_ID, secondUploadedId]);
   });
 
   it("rechecks access after a signed URL is minted before sending any bytes", async () => {
@@ -718,7 +804,8 @@ describe("prepareTurnAttachments", () => {
     });
     expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
     expect(mocks.upload).toHaveBeenCalledOnce();
-    expect(prepared.status === "ready" && prepared.draftAttachments[0]?.uploadEnvironmentId).toBe(
+    const draftAttachment = prepared.status === "ready" ? prepared.draftAttachments[0] : undefined;
+    expect(draftAttachment?.type !== "location" && draftAttachment?.uploadEnvironmentId).toBe(
       environmentId,
     );
   });

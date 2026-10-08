@@ -67,6 +67,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
+import { useComposerLocation } from "../../state/use-composer-location";
 import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
@@ -523,6 +524,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const location = useComposerLocation(
+    composerDraftKey,
+    props.canOperateThread && !voiceInput.isBusy && queuedEdit?.saving !== true,
+  );
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
@@ -536,6 +541,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
+    (location.busy ? "Attaching location…" : null) ??
     (queuedEdit?.saving === true ? "Saving…" : null) ??
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
@@ -597,7 +603,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
-      if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+      if (
+        location.busy ||
+        voiceInput.blocksSubmission ||
+        pendingPastedTextAttachmentCountRef.current > 0
+      )
+        return;
       // Typed out in full rather than picked from the menu. Attachments mean the
       // user is sending a prompt, so those go through as usual.
       if (
@@ -641,6 +652,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.selectedThread.id,
       props.selectedThread.title,
       voiceInput.blocksSubmission,
+      location.busy,
     ],
   );
 
@@ -831,6 +843,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }
           }
         >
+          {location.busy || location.error ? (
+            <Text
+              accessibilityRole="text"
+              accessibilityLiveRegion="polite"
+              className="px-3 py-2 text-xs text-muted-foreground"
+            >
+              {location.error ?? "Finding your location…"}
+            </Text>
+          ) : null}
           <ComposerDictationDraftContent
             className={isExpanded ? undefined : "flex-row items-center"}
             compact={!isExpanded}
@@ -838,11 +859,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           >
             {!isExpanded ? (
               <ComposerAttachmentButton
+                disabled={!props.canOperateThread || location.busy}
                 supportsFiles={Boolean(
                   props.serverConfig?.environment.capabilities.fileAttachments,
                 )}
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
+                onPickLocation={location.pickLocation}
               />
             ) : null}
             {isExpanded && queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
@@ -1116,11 +1139,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
                     <ComposerAttachmentButton
+                      disabled={!props.canOperateThread || location.busy}
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
                       )}
                       onPickMedia={props.onPickDraftMedia}
                       onPickFiles={props.onPickDraftFiles}
+                      onPickLocation={location.pickLocation}
                     />
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl

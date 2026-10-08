@@ -314,7 +314,9 @@ describe("incoming native shares", () => {
     });
 
     expect(result.attachments).toHaveLength(1);
-    expect(result.attachments[0]?.sizeBytes).toBe(4200);
+    const attachment = result.attachments[0];
+    if (attachment?.type !== "file") throw new Error("Expected a shared file attachment");
+    expect(attachment.sizeBytes).toBe(4200);
   });
 
   it("treats a zero-length Android content URI as unknown until its copy is measured", async () => {
@@ -337,7 +339,9 @@ describe("incoming native shares", () => {
       },
     });
 
-    expect(result.attachments[0]?.sizeBytes).toBe(42);
+    const attachment = result.attachments[0];
+    if (attachment?.type !== "file") throw new Error("Expected a shared file attachment");
+    expect(attachment.sizeBytes).toBe(42);
     expect(result.warnings).toEqual([]);
   });
 

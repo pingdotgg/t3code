@@ -15,6 +15,11 @@ describe("contextPresentationRegistry", () => {
       expanded: "none",
       defaultDraftView: "compact",
     });
+    expect(contextPresentationDefinition("location").capabilities).toEqual({
+      details: "none",
+      expanded: "none",
+      defaultDraftView: "compact",
+    });
   });
 
   it("rejects duplicate handlers for one surface", () => {
