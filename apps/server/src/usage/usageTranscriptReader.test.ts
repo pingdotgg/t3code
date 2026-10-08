@@ -244,6 +244,21 @@ describe("readTranscriptRecords resume", () => {
     );
   });
 
+  it("keeps underscores in a Pi session id from the file name", async () => {
+    const file = NodePath.join(dir, "2026-10-04T22-05-09-574Z_team_alpha.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({
+        type: "message",
+        id: "a1",
+        timestamp: "2026-10-04T22:05:13.176Z",
+        message: { role: "assistant", provider: "deepseek", model: "flash", usage: { output: 3 } },
+      }) + "\n",
+    );
+    const parsed = await readTranscriptRecords(file, "pi");
+    assert.strictEqual(parsed?.records[0]?.sessionId, "team_alpha");
+  });
+
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
   });

@@ -6,6 +6,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parsePiLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -594,5 +595,100 @@ describe("parseGrokLine", () => {
 
     const records = parseGrokLine(line);
     expect(records[0]?.timestampMs).toBe(1_786_372_566_000);
+  });
+});
+
+function piLine(provider: string, model: string, api = "openai-completions", cost = 0.25): string {
+  return JSON.stringify({
+    type: "message",
+    id: "798a75a1",
+    parentId: "b80fedf0",
+    timestamp: "2026-10-04T22:05:13.176Z",
+    message: {
+      role: "assistant",
+      api,
+      provider,
+      model,
+      content: [{ type: "text", text: "done" }],
+      usage: {
+        input: 4,
+        output: 216,
+        cacheRead: 1000,
+        cacheWrite: 92026,
+        totalTokens: 93246,
+        reasoning: 18,
+        cost: { total: cost },
+      },
+    },
+  });
+}
+
+describe("parsePiLine", () => {
+  it.each([
+    ["anthropic", "anthropic-messages", "claude"],
+    ["openai-codex", "openai-codex-responses", "codex"],
+    ["openai-codex-2", "openai-codex-responses", "codex"],
+    ["chatgpt-1", "openai-responses", "codex"],
+  ] as const)("counts %s turns toward their subscription", (piProvider, api, provider) => {
+    const record = parsePiLine(piLine(piProvider, "model-x", api), "session-a");
+    expect(record?.provider).toBe(provider);
+    expect(record?.model).toBe("model-x");
+  });
+
+  it("keeps other providers on the Pi row with a provider-qualified model", () => {
+    const record = parsePiLine(piLine("deepseek", "deepseek-flash"), "session-a");
+    expect(record).toEqual({
+      provider: "pi",
+      timestampMs: Date.parse("2026-10-04T22:05:13.176Z"),
+      model: "deepseek/deepseek-flash",
+      sessionId: "session-a",
+      totals: {
+        uncachedInputTokens: 4,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 92026,
+        outputTokens: 216,
+        reasoningTokens: 18,
+      },
+      reportedCostUsd: 0.25,
+      speed: "standard",
+      dedupeKey: "pi:798a75a1:" + Date.parse("2026-10-04T22:05:13.176Z"),
+    });
+  });
+
+  it("counts standalone usage entries such as cache warming", () => {
+    const record = parsePiLine(
+      JSON.stringify({
+        type: "usage",
+        id: "360b2e29",
+        timestamp: "2026-10-02T16:02:33.550Z",
+        kind: "cache_warm",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        usage: { input: 2, output: 1, cacheRead: 66971, cacheWrite: 0, cost: { total: 0.0134 } },
+      }),
+      "session-a",
+    );
+    expect(record?.provider).toBe("claude");
+    expect(record?.model).toBe("claude-opus-5-5");
+    expect(record?.totals.cachedInputTokens).toBe(66971);
+    expect(record?.reportedCostUsd).toBe(0.0134);
+  });
+
+  it("prices a zero reported cost from the rate table", () => {
+    expect(parsePiLine(piLine("anthropic", "claude-opus-5-5", "x", 0), "s")?.reportedCostUsd).toBe(
+      null,
+    );
+  });
+
+  it("ignores user messages and non-message entries", () => {
+    const user = JSON.parse(piLine("anthropic", "claude-opus-5-5"));
+    user.message.role = "user";
+    expect(parsePiLine(JSON.stringify(user), "s")).toBeNull();
+    expect(
+      parsePiLine(
+        JSON.stringify({ type: "model_change", provider: "anthropic", modelId: "claude-opus-5-5" }),
+        "s",
+      ),
+    ).toBeNull();
   });
 });

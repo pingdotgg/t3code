@@ -72,7 +72,7 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
+  if (provider === "claude" || provider === "pi") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
   return line.includes('"token_count"');
 }
@@ -155,6 +155,99 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pi                                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Pi is a harness, not a model vendor. Turns on a Claude or ChatGPT
+ * subscription count toward Claude Code or Codex, so those totals cover the
+ * whole subscription. Numbered providers such as `openai-codex-2` are extra
+ * accounts on the same plan. Everything else stays on its own Pi row.
+ */
+function piUsageProvider(provider: string, api: unknown): UsageProviderKind {
+  if (/^anthropic(-\d+)?$/.test(provider)) return "claude";
+  if (/^(openai-codex|chatgpt)(-\d+)?$/.test(provider) || api === "openai-codex-responses") {
+    return "codex";
+  }
+  return "pi";
+}
+
+/**
+ * Parses one line of a Pi session. Usage lives on assistant messages and on
+ * standalone `usage` entries, such as cache warming. Pi names its session file
+ * `<timestamp>_<sessionId>.jsonl`, so the caller supplies the session id.
+ */
+export function parsePiLine(line: string, sessionId: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return parsePiRecord(parsed, sessionId);
+}
+
+export function parsePiRecord(parsed: unknown, sessionId: string): UsageRecord | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  let source: Record<string, unknown>;
+  if (record["type"] === "usage") {
+    source = record;
+  } else {
+    const message = record["message"];
+    if (record["type"] !== "message" || typeof message !== "object" || message === null) {
+      return null;
+    }
+    source = message as Record<string, unknown>;
+    if (source["role"] !== "assistant") return null;
+  }
+
+  const usage = source["usage"];
+  if (typeof usage !== "object" || usage === null) return null;
+  const usageRecord = usage as Record<string, unknown>;
+
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+
+  const model = typeof source["model"] === "string" ? source["model"] : "";
+  const piProvider = typeof source["provider"] === "string" ? source["provider"] : "";
+  if (model.length === 0 || piProvider.length === 0) return null;
+
+  const outputTokens = int(usageRecord["output"]);
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(usageRecord["input"]),
+    cachedInputTokens: int(usageRecord["cacheRead"]),
+    cacheCreationTokens: int(usageRecord["cacheWrite"]),
+    outputTokens,
+    reasoningTokens: Math.min(outputTokens, int(usageRecord["reasoning"])),
+  };
+  if (totalTokens(totals) === 0) return null;
+
+  const cost = usageRecord["cost"];
+  const costTotal =
+    typeof cost === "object" && cost !== null ? (cost as Record<string, unknown>)["total"] : null;
+  const provider = piUsageProvider(piProvider, source["api"]);
+  const entryId = typeof record["id"] === "string" ? record["id"] : null;
+
+  return {
+    provider,
+    timestampMs,
+    model: provider === "pi" ? `${piProvider}/${model}` : model,
+    sessionId,
+    totals,
+    // Pi reports zero for models missing from its price table.
+    reportedCostUsd:
+      typeof costTotal === "number" && Number.isFinite(costTotal) && costTotal > 0
+        ? costTotal
+        : null,
+    speed: "standard",
+    // A forked session copies its parent's entries with their ids and timestamps.
+    dedupeKey: entryId === null ? null : `pi:${entryId}:${timestampMs}`,
   };
 }
 

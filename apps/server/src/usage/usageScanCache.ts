@@ -14,7 +14,8 @@
  *
  * @module usageScanCache
  */
-import type { UsageProviderKind } from "@t3tools/contracts";
+import { UsageProviderKind } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
@@ -79,7 +80,11 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   speed: number,
+  /** Present when a record counts toward another provider than its file, as Pi files do. */
+  provider?: UsageProviderKind,
 ];
+
+const isUsageProviderKind = Schema.is(UsageProviderKind);
 
 interface SerializedFile {
   readonly s: number;
@@ -137,6 +142,7 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.dedupeKey,
     record.reportedCostUsd,
     SPEEDS.indexOf(record.speed),
+    ...(record.provider === entry.provider ? ([] as const) : ([record.provider] as const)),
   ];
   return {
     s: entry.size,
@@ -258,6 +264,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         speedIndex,
+        recordProvider = provider,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -271,13 +278,14 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning) ||
-        speed === undefined
+        speed === undefined ||
+        !isUsageProviderKind(recordProvider)
       ) {
         return null;
       }
 
       records.push({
-        provider,
+        provider: recordProvider,
         timestampMs,
         model,
         sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
@@ -300,7 +308,9 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
-    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
+    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok" && entry.p !== "pi") {
+      continue;
+    }
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
     // so anything outside their real ranges must reject the entry: a bogus

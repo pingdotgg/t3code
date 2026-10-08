@@ -97,9 +97,23 @@ describe("scan cache round trip", () => {
       }),
     });
 
+    original.set("/pi.jsonl", {
+      size: 90,
+      mtimeMs: 500,
+      provider: "pi",
+      records: [
+        record({ dedupeKey: "pi:a:1" }),
+        record({ provider: "codex", model: "gpt-6-sol", dedupeKey: "pi:b:2" }),
+        record({ provider: "pi", model: "deepseek/deepseek-flash", dedupeKey: "pi:c:3" }),
+      ],
+      tailRecords: [],
+      position: position(),
+    });
+
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(4);
+    expect(restored.size).toBe(5);
+    expect(restored.get("/pi.jsonl")).toEqual(original.get("/pi.jsonl"));
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
