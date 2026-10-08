@@ -258,6 +258,20 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect("keeps the status of a shell snapshot error that is not a declared error", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+      });
+    }),
+  );
+
   it.effect.each(LOADERS)("uses current relay authorization and endpoint for $name", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(loader.response));

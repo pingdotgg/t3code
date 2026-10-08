@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -59,22 +59,35 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
           headers: withOrchestrationProtocolHeader(headers),
           responseMode: "response-only",
         })
-        .pipe(
-          Effect.flatMap((response) =>
-            response.status === 200
-              ? response.json.pipe(Effect.flatMap(decodeShellSnapshotDeferringPullRequests))
-              : response.json.pipe(
-                  Effect.flatMap(decodeEnvironmentHttpCommonError),
-                  Effect.flatMap(Effect.fail),
-                ),
-          ),
-        ),
+        .pipe(Effect.flatMap(decodeShellSnapshotResponse)),
   });
 });
 
 const decodeEnvironmentHttpCommonError = Schema.decodeUnknownEffect(
   Schema.toCodecJson(EnvironmentHttpCommonError),
 );
+
+const decodeShellSnapshotResponse = (
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<
+  DeferredShellSnapshot,
+  HttpClientError.HttpClientError | Schema.SchemaError | EnvironmentHttpCommonError
+> => {
+  if (response.status === 200) {
+    return response.json.pipe(Effect.flatMap(decodeShellSnapshotDeferringPullRequests));
+  }
+  // A body that is not a declared error keeps its status, as the generated decoder reported.
+  const statusError = new HttpClientError.HttpClientError({
+    reason: new HttpClientError.StatusCodeError({ request: response.request, response }),
+  });
+  return response.json.pipe(
+    Effect.flatMap(decodeEnvironmentHttpCommonError),
+    Effect.matchEffect({
+      onFailure: () => Effect.fail(statusError),
+      onSuccess: Effect.fail,
+    }),
+  );
+};
 
 /**
  * Loads the environment shell snapshot over HTTP, returning `Option.none()` when
