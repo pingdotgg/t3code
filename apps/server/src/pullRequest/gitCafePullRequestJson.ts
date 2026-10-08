@@ -34,10 +34,7 @@ const ActorSchema = Schema.Union([
   }),
   Schema.Struct({ kind: Schema.Literal("unavailable"), actorId: Schema.String }),
 ]);
-export function toActor(
-  author: typeof ActorSchema.Type,
-  host = "git.cafe",
-): PullRequestActor | null {
+function toActor(author: typeof ActorSchema.Type, host = "git.cafe"): PullRequestActor | null {
   if (author.kind === "unavailable") return null;
   return {
     login: author.kind === "local" ? author.handle : author.login,
@@ -85,7 +82,7 @@ export const PullDetailSchema = Schema.Struct({
     moderate: Schema.Boolean,
   }),
 });
-export function pullUrl(repository: string, number: number, host = "git.cafe"): string {
+function pullUrl(repository: string, number: number, host = "git.cafe"): string {
   return `https://${host}/${repository}/pulls/${number}`;
 }
 export function toChangeRequest(
@@ -236,7 +233,7 @@ export interface GitCafeReactions {
 }
 
 /** Custom and unsupported Unicode emoji cannot be represented by the shared eight-emoji contract. */
-export function toReactions(data: typeof ReactionsSchema.Type): GitCafeReactions {
+function toReactions(data: typeof ReactionsSchema.Type): GitCafeReactions {
   const reactions: PullRequestReaction[] = [];
   const reactionsByCommentId = new Map<string, PullRequestReaction[]>();
   for (const item of data.items) {
@@ -283,7 +280,7 @@ export const CommitListSchema = Schema.Struct({
   next: Schema.NullOr(Schema.String),
   headOid: Schema.String,
 });
-export function toCommits(data: typeof CommitListSchema.Type) {
+function toCommits(data: typeof CommitListSchema.Type) {
   return data.items.map((commit) => ({
     oid: commit.oid,
     messageHeadline: commit.summary,

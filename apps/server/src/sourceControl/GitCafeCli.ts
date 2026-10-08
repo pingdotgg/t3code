@@ -9,8 +9,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { PositiveInt, TrimmedNonEmptyString, type ChangeRequest } from "@t3tools/contracts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
@@ -166,6 +166,7 @@ function normalizePull(
   };
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const git = yield* GitVcsDriver.GitVcsDriver;

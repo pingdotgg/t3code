@@ -196,7 +196,7 @@ const withDetails = (
   return files.map((file) => byPath.get(file.path) ?? file);
 };
 
-export function gitCafeProviderFailure(error: GitCafeCli.GitCafeCliError) {
+function gitCafeProviderFailure(error: GitCafeCli.GitCafeCliError) {
   if (error.code === "CLI_UNAVAILABLE") return "missing-tool" as const;
   if (error.status === 401 || error.code === "AUTHENTICATION_REQUIRED")
     return "unauthenticated" as const;
