@@ -1,6 +1,9 @@
 import { ArrowUpRightIcon, MapPinIcon } from "lucide-react";
 import type { LocationContextRecord } from "@t3tools/contracts";
-import { sharedLocationMapsUrl } from "@t3tools/shared/sharedLocation";
+import {
+  sharedLocationLocalCaptureTime,
+  sharedLocationMapsUrl,
+} from "@t3tools/shared/sharedLocation";
 
 export function SharedLocationCard(props: { record: LocationContextRecord; copyMarkdown: string }) {
   const location = props.record.payload;
@@ -8,7 +11,8 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
   const address = location.address.trim();
   const coordinates = `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
   const mapsUrl = sharedLocationMapsUrl(location, "web");
-  const capturedAt = formatCapturedAt(location.capturedAt);
+  const capturedAt =
+    sharedLocationLocalCaptureTime(location) ?? formatCapturedAt(location.capturedAt);
   const accuracy =
     location.accuracy === null
       ? "Accuracy unknown"

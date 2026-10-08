@@ -7,6 +7,7 @@ import {
   parseSharedLocations,
   serializeSharedLocation,
   sharedLocationMapsUrl,
+  sharedLocationLocalCaptureTime,
 } from "./sharedLocation.ts";
 
 const location = {
@@ -35,6 +36,42 @@ describe("shared location codec", () => {
     expect(block.split("\n")).toHaveLength(8);
     expect(block).toContain("Captured at: 2026-10-07T12:34:56.000Z");
     expect(parseSharedLocations(block).locations[0]).toMatchObject(timestamped);
+  });
+
+  it("preserves the device local date across midnight UTC and typed/legacy delivery", () => {
+    const snapshot = {
+      ...location,
+      capturedAt: "2026-10-08T01:26:56.100Z",
+      timeZone: "America/New_York",
+    };
+    const block = serializeSharedLocation(snapshot);
+    expect(block).toContain("Device time zone: America/New_York");
+    expect(block).toContain("Captured locally: 2026-10-07 21:26:56 (America/New_York)");
+    expect(parseSharedLocations(block).locations[0]).toMatchObject(snapshot);
+    expect(locationContextRecord(snapshot, ComposerContextId.make("clock")).payload).toEqual(
+      snapshot,
+    );
+    const alteredDate = block.replace(
+      "Captured locally: 2026-10-07",
+      "Captured locally: 2026-10-08",
+    );
+    expect(parseSharedLocations(alteredDate)).toEqual({ text: alteredDate, locations: [] });
+  });
+
+  it("uses the capture instant's daylight-saving offset and tolerates unknown zone data", () => {
+    const before = {
+      ...location,
+      capturedAt: "2026-11-01T05:30:00Z",
+      timeZone: "America/New_York",
+    };
+    const after = { ...before, capturedAt: "2026-11-01T06:30:00Z" };
+    expect(sharedLocationLocalCaptureTime(before)).toBe("2026-11-01 01:30:00 (America/New_York)");
+    expect(sharedLocationLocalCaptureTime(after)).toBe("2026-11-01 01:30:00 (America/New_York)");
+    const unknown = { ...before, timeZone: "Future/Unknown" };
+    expect(sharedLocationLocalCaptureTime(unknown)).toBeUndefined();
+    expect(parseSharedLocations(serializeSharedLocation(unknown)).locations[0]).toMatchObject(
+      unknown,
+    );
   });
 
   it("rejects an invalid capture time and leaves malformed blocks untouched", () => {

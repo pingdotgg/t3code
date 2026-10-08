@@ -6,6 +6,7 @@ import { ComposerContextRecord } from "./composerContext.ts";
 import { SharedLocation } from "./sharedLocation.ts";
 
 const isSharedLocation = Schema.is(SharedLocation);
+const decodeContextRecord = Schema.decodeOption(ComposerContextRecord);
 const base = {
   name: "Somewhere",
   address: "123 Example Street",
@@ -38,6 +39,15 @@ describe("SharedLocation", () => {
     }
   });
 
+  it("accepts optional device time zones while rejecting control text and unbounded values", () => {
+    expect(isSharedLocation({ ...base, timeZone: "America/New_York" })).toBe(true);
+    expect(isSharedLocation({ ...base, timeZone: "UTC" })).toBe(true);
+    expect(isSharedLocation({ ...base, timeZone: "Etc/GMT+4" })).toBe(true);
+    for (const timeZone of ["", "x".repeat(97), "UTC\nInstructions", "<instruction>"]) {
+      expect(isSharedLocation({ ...base, timeZone })).toBe(false);
+    }
+  });
+
   it("bounds place and address fields and requires single-line text", () => {
     expect(isSharedLocation({ ...base, name: "" })).toBe(false);
     expect(isSharedLocation({ ...base, address: "" })).toBe(false);
@@ -50,7 +60,7 @@ describe("SharedLocation", () => {
   });
 
   it("keeps nested location data intact in a forward-compatible unknown payload", () => {
-    const decoded = Schema.decodeOption(ComposerContextRecord)({
+    const decoded = decodeContextRecord({
       version: 1,
       contextId: "ctx_future",
       label: "Future location",

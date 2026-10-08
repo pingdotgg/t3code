@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
+import { sharedLocationLocalCaptureTime } from "@t3tools/shared/sharedLocation";
 
 import { sharedLocationMapsUrl, type DraftComposerLocationAttachment } from "../lib/sharedLocation";
 import { SymbolView } from "./AppSymbol";
@@ -95,7 +96,9 @@ export function LocationAttachmentCard(props: {
         </AppText>
         {location.capturedAt ? (
           <AppText className="text-xs text-foreground-muted">
-            Captured {new Date(location.capturedAt).toLocaleString()}
+            Captured{" "}
+            {sharedLocationLocalCaptureTime(location) ??
+              new Date(location.capturedAt).toLocaleString()}
           </AppText>
         ) : null}
         <View className="flex-row items-center gap-1.5">

@@ -30,6 +30,31 @@ function isValidCaptureTime(value: string): boolean {
   );
 }
 
+/** Preserve the phone's calendar date without depending on the environment's time zone. */
+export function sharedLocationLocalCaptureTime(location: SharedLocation): string | undefined {
+  if (!location.capturedAt || !location.timeZone) return undefined;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: location.timeZone,
+      calendar: "gregory",
+      numberingSystem: "latn",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(Date.parse(location.capturedAt));
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((item) => item.type === type)?.value;
+    return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")} (${location.timeZone})`;
+  } catch {
+    // Older runtimes may not recognize a newer IANA zone name.
+    return undefined;
+  }
+}
+
 /** A map link from the numeric coordinates; the place name remains a label. */
 export function sharedLocationMapsUrl(
   location: SharedLocation,
@@ -55,6 +80,7 @@ export function serializeSharedLocation(location: SharedLocation): string {
     typeof location.capturedAt === "string" && isValidCaptureTime(location.capturedAt)
       ? `Captured at: ${location.capturedAt}`
       : undefined;
+  const localCaptureTime = sharedLocationLocalCaptureTime(location);
   return [
     "<shared-location>",
     `Place: ${location.name}`,
@@ -62,6 +88,8 @@ export function serializeSharedLocation(location: SharedLocation): string {
     `Coordinates: ${formatNumber(location.latitude)}, ${formatNumber(location.longitude)}`,
     `Accuracy: ${accuracy}`,
     ...(capturedAt === undefined ? [] : [capturedAt]),
+    ...(location.timeZone === undefined ? [] : [`Device time zone: ${location.timeZone}`]),
+    ...(localCaptureTime === undefined ? [] : [`Captured locally: ${localCaptureTime}`]),
     `Map: ${sharedLocationMapsUrl(location, "ios")}`,
     "</shared-location>",
   ].join("\n");
@@ -87,16 +115,24 @@ function parseCanonicalNumber(value: string): number | undefined {
 function parseCanonicalLocationBlock(block: string): SharedLocation | undefined {
   const lines = block.split("\n");
   if (
-    (lines.length !== 7 && lines.length !== 8) ||
+    lines.length < 7 ||
+    lines.length > 10 ||
     lines[0] !== "<shared-location>" ||
     lines.at(-1) !== "</shared-location>"
   ) {
     return undefined;
   }
 
-  const timestamped = lines.length === 8;
-  const mapIndex = timestamped ? 6 : 5;
-  const capturedAtLine = timestamped ? lines[5] : undefined;
+  const mapIndex = lines.length - 2;
+  let optionalIndex = 5;
+  const capturedAtLine = lines[optionalIndex]?.startsWith("Captured at: ")
+    ? lines[optionalIndex++]
+    : undefined;
+  const timeZoneLine = lines[optionalIndex]?.startsWith("Device time zone: ")
+    ? lines[optionalIndex++]
+    : undefined;
+  if (lines[optionalIndex]?.startsWith("Captured locally: ")) optionalIndex++;
+  if (optionalIndex !== mapIndex) return undefined;
   if (
     !lines[1]!.startsWith("Place: ") ||
     !lines[2]!.startsWith("Address: ") ||
@@ -130,10 +166,9 @@ function parseCanonicalLocationBlock(block: string): SharedLocation | undefined 
     accuracy = parsedAccuracy;
   }
 
-  const capturedAt = timestamped
-    ? /^Captured at: (.+)$/u.exec(capturedAtLine ?? "")?.[1]
-    : undefined;
-  if (timestamped && (!capturedAt || !isValidCaptureTime(capturedAt))) return undefined;
+  const capturedAt = capturedAtLine?.slice("Captured at: ".length);
+  if (capturedAt !== undefined && !isValidCaptureTime(capturedAt)) return undefined;
+  const timeZone = timeZoneLine?.slice("Device time zone: ".length);
 
   const location: SharedLocation = {
     name,
@@ -142,9 +177,10 @@ function parseCanonicalLocationBlock(block: string): SharedLocation | undefined 
     longitude,
     accuracy,
     ...(capturedAt === undefined ? {} : { capturedAt }),
+    ...(timeZone === undefined ? {} : { timeZone }),
   };
   if (!isSharedLocation(location)) return undefined;
-  if (lines[mapIndex] !== `Map: ${sharedLocationMapsUrl(location, "ios")}`) return undefined;
+  if (serializeSharedLocation(location) !== block) return undefined;
   return location;
 }
 
@@ -205,6 +241,7 @@ export function locationContextRecord(
       longitude: location.longitude,
       accuracy: location.accuracy,
       ...(location.capturedAt === undefined ? {} : { capturedAt: location.capturedAt }),
+      ...(location.timeZone === undefined ? {} : { timeZone: location.timeZone }),
     },
   };
 }
@@ -250,6 +287,7 @@ export function normalizeSharedLocationMessage(input: {
       longitude: location.longitude,
       accuracy: location.accuracy,
       ...(location.capturedAt === undefined ? {} : { capturedAt: location.capturedAt }),
+      ...(location.timeZone === undefined ? {} : { timeZone: location.timeZone }),
     };
     const baseId = `legacy_location_${offset}`;
     let contextId = baseId as ComposerContextId;

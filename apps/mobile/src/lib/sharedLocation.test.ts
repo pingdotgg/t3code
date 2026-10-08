@@ -67,6 +67,7 @@ describe("shared location picking", () => {
       address: "100 Larkin St, San Francisco, CA",
       accuracy: 12.5,
       capturedAt: "2026-10-07T18:00:00.000Z",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
   });
 

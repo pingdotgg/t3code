@@ -40,5 +40,6 @@ export const SharedLocation = Schema.Struct({
       ),
     ),
   ),
+  timeZone: Schema.optionalKey(SinglelineString(96).check(Schema.isPattern(/^[A-Za-z0-9_+/-]+$/u))),
 });
 export type SharedLocation = typeof SharedLocation.Type;

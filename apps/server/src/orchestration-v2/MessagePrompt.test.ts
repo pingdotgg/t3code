@@ -55,3 +55,28 @@ it("keeps plain user text unchanged and malformed location blocks intact", () =>
   const malformed = "<shared-location>\nnot canonical\n</shared-location>";
   expect(projectUserMessageForProvider({ text: malformed })).toBe(malformed);
 });
+
+it("delivers the phone's local calendar date for typed and legacy shares", () => {
+  const snapshot = {
+    ...location,
+    capturedAt: "2026-10-08T01:26:56Z",
+    timeZone: "America/New_York",
+  };
+  const record = locationContextRecord(snapshot, ComposerContextId.make("local-clock"));
+  const typed = {
+    text: formatComposerContextReference({
+      kind: "location",
+      contextId: record.contextId,
+      label: record.label,
+    }),
+    context: { version: 1 as const, records: [record] },
+  };
+  for (const input of [typed, { text: serializeSharedLocation(snapshot) }]) {
+    const projected = projectUserMessageForProvider(input);
+    expect(projected).toContain("Captured locally: 2026-10-07 21:26:56 (America/New_York)");
+    expect(projected).toContain(
+      "resolve tonight/tomorrow from the device local capture date below",
+    );
+    expect(projected).toContain("not a geocoded place time zone");
+  }
+});

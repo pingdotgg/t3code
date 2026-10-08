@@ -171,6 +171,12 @@ export async function pickCurrentLocation(): Promise<DraftComposerLocationAttach
     throw new Error("Could not resolve complete location details. Try again.");
   }
   const { uuidv4 } = await import("./uuid");
+  let timeZone: string | undefined;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    // Older native runtimes can still share a fix without local time metadata.
+  }
 
   const attachment: DraftComposerLocationAttachment = {
     id: uuidv4(),
@@ -181,6 +187,7 @@ export async function pickCurrentLocation(): Promise<DraftComposerLocationAttach
     address,
     accuracy: accuracy !== null && isValidAccuracy(accuracy) ? accuracy : null,
     capturedAt: capturedAt.toISOString(),
+    ...(timeZone ? { timeZone } : {}),
   };
   if (!isSharedLocation(attachment)) {
     throw new Error("Could not resolve complete location details. Try again.");
