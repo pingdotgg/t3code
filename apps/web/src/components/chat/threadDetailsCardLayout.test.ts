@@ -22,6 +22,16 @@ describe("workspace card", () => {
     });
     expect(resolve(1344, 900)).toMatchObject({ x: 1052, width: 280 });
   });
+  it("starts below the open find bar, keeping the bottom inset", () => {
+    expect(
+      resolveThreadDetailsCardLayout({
+        container: { width: 1600, height: 900 },
+        lane,
+        frame: null,
+        topInset: 48,
+      }),
+    ).toEqual({ x: 1308, y: 60, width: 280, height: 828 });
+  });
   it("hides when a readable chat lane cannot fit beside it", () => {
     expect(resolve(984, 900)).toMatchObject({ x: 692 });
     expect(resolve(983, 900)).toBeNull();

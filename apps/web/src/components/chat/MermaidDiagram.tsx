@@ -192,7 +192,11 @@ export function MermaidDiagram({
             </Button>
           ) : null}
         </div>
-        <pre className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap">
+        {/* Find matches the source through the hidden copy beside the diagram. */}
+        <pre
+          data-thread-find-ignore
+          className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap"
+        >
           {source}
         </pre>
       </div>

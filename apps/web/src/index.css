@@ -373,6 +373,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Paint find results without changing rendered markdown or copied text. */
+::highlight(t3-thread-find) {
+  color: var(--app-theme-search-match-foreground, var(--color-foreground));
+  background-color: var(--app-theme-search-match-background, oklch(0.826487 0.157967 78.604 / 0.3));
+}
+
+::highlight(t3-thread-find-active) {
+  color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(
+    --app-theme-search-match-active-background,
+    oklch(0.774202 0.151946 74.331)
+  );
+}
+
 @utility dialog-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));

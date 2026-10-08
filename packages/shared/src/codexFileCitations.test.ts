@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.js";
+import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.ts";
 
 describe("resolveCodexFileCitationLink", () => {
   it("resolves the attributes emitted by Codex", () => {

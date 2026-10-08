@@ -1,6 +1,5 @@
-import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
 import type { ProjectReadFileError } from "@t3tools/contracts";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 
 /** Resolve workspace links before choosing between the explorer and a file preview. */
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {

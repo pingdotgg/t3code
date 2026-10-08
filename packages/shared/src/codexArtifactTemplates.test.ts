@@ -6,7 +6,7 @@ import {
   codexArtifactTemplateUsePrompt,
   resolveCodexArtifactTemplate,
   type CodexArtifactTemplate,
-} from "./codexArtifactTemplates.js";
+} from "./codexArtifactTemplates.ts";
 
 const HELLO_WORLD_TEMPLATE: CodexArtifactTemplate = {
   artifactKind: "document",

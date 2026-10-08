@@ -30,6 +30,7 @@ import {
   environmentRpcKey,
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
   executeAtomCommand,
@@ -289,6 +290,75 @@ describe("environmentRpcKey", () => {
       }),
     ).not.toBe(environmentRpcKey(originalTarget));
   });
+});
+
+describe("finite environment subscription lifecycle", () => {
+  it.effect(
+    "exposes early values and settles on the terminal value without waiting for a reconnect",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const releaseFinal = yield* Deferred.make<void>();
+          const sawEarly = yield* Deferred.make<void>();
+          const sawFinal = yield* Deferred.make<void>();
+          const closed = yield* Deferred.make<void>();
+          const stream = Stream.concat(
+            Stream.succeed({ complete: false, count: 1 }),
+            Stream.fromEffect(
+              Deferred.await(releaseFinal).pipe(Effect.as({ complete: true, count: 123 })),
+            ),
+          ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined)));
+          // Following a registered environment normally remains open for replacements.
+          const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+            followStream: (_environmentId: EnvironmentId, source: typeof stream) =>
+              Stream.concat(source, Stream.never),
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+          const runtime = Atom.runtime(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          );
+          const family = createEnvironmentSubscriptionAtomFamily(runtime, {
+            label: "test.finite-subscription",
+            subscribe: () => stream,
+            completeWhen: (value) => value.complete,
+            idleTtlMs: 0,
+          });
+          const atom = family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined });
+          const registry = AtomRegistry.make();
+          const observed: Array<
+            AsyncResult.AsyncResult<{ complete: boolean; count: number }, unknown>
+          > = [];
+          const unsubscribe = registry.subscribe(
+            atom,
+            (result) => {
+              observed.push(result);
+              if (AsyncResult.isSuccess(result)) {
+                if (!result.value.complete) Deferred.doneUnsafe(sawEarly, Exit.void);
+                if (result.value.complete && !result.waiting)
+                  Deferred.doneUnsafe(sawFinal, Exit.void);
+              }
+            },
+            { immediate: true },
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              unsubscribe();
+              registry.dispose();
+            }),
+          );
+          yield* Deferred.await(sawEarly);
+          const early = registry.get(atom);
+          expect(AsyncResult.isSuccess(early) && early.value.count).toBe(1);
+          expect(early.waiting).toBe(true);
+          yield* Deferred.succeed(releaseFinal, undefined);
+          yield* Deferred.await(sawFinal);
+          yield* Deferred.await(closed);
+          const final = registry.get(atom);
+          expect(AsyncResult.isSuccess(final) && final.value.count).toBe(123);
+          expect(final.waiting).toBe(false);
+          expect(observed.some((result) => AsyncResult.isFailure(result))).toBe(false);
+        }),
+      ),
+  );
 });
 
 describe("environment query lifecycle", () => {
