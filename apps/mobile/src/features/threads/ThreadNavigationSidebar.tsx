@@ -207,7 +207,13 @@ function ThreadNavigationSidebarPane(
     [threadSearch.matches],
   );
   const [projectScopeKey, setSelectedProjectKey] = useState<string | null>(null);
-  const selectedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects);
+  const selectedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
+    sidebarProjectGroupingMode: options.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  });
+  if (selectedProjectKey !== projectScopeKey) {
+    setSelectedProjectKey(selectedProjectKey);
+  }
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({

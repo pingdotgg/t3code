@@ -50,16 +50,18 @@ export interface SidebarProjectPickerEntry {
 export function resolveSidebarProjectScopeKey(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly key: string | null;
+  readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
 }): string | null {
   if (input.key === null) return null;
-  const group = input.groups.find(
-    (candidate) =>
-      candidate.projectKey === input.key ||
-      (candidate.isScratch &&
-        resolveScratchProjectScopeKey(input.key, candidate.memberProjects) ===
-          candidate.projectKey),
-  );
+  const group =
+    input.groups.find((candidate) => candidate.projectKey === input.key) ??
+    input.groups.find(
+      (candidate) =>
+        candidate.isScratch &&
+        resolveScratchProjectScopeKey(input.key, candidate.memberProjects, input.settings) ===
+          candidate.projectKey,
+    );
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 

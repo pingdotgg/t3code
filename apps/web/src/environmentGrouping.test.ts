@@ -53,6 +53,44 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it.each(["repository", "repository_path"] as const)(
+    "migrates a scratch scope selected before config in %s mode",
+    (mode) => {
+      const project = makeProject({
+        workspaceRoot: "/repo/scratch",
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/repo" },
+      });
+      const settings = { ...defaultGroupingSettings, sidebarProjectGroupingMode: mode };
+      const key = deriveLogicalProjectKeyFromSettings(project, settings);
+      const groups = buildSidebarProjectSnapshots({
+        projects: [{ ...project, isScratch: true }],
+        settings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+      });
+      expect(
+        resolveSidebarProjectScopeKey({ groups, key, settings, canClearMissingScope: true }),
+      ).toBe(groups[0]?.projectKey);
+    },
+  );
+
+  it("prefers an existing ordinary repository scope over a scratch alias", () => {
+    const scratch = makeProject({ isScratch: true, repositoryIdentity });
+    const ordinary = makeProject({
+      id: ProjectId.make("ordinary"),
+      workspaceRoot: "/ordinary",
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [scratch, ordinary],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const key = deriveLogicalProjectKeyFromSettings(ordinary, defaultGroupingSettings);
+    expect(resolveSidebarProjectScopeKey({ groups, key, canClearMissingScope: true })).toBe(key);
+  });
+
   it("keeps both scratch hosts in one filter and migrates a physical scope after config loads", () => {
     const projects = [
       makeProject({ title: "No project", workspaceRoot: "/local/scratch" }),

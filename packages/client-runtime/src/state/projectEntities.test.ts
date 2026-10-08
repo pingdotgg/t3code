@@ -51,10 +51,38 @@ function makeHarness(withConfig = true) {
     snapshotAtom,
     ...(withConfig ? { serverConfigValueAtom: configAtom } : {}),
   });
-  return { registry: AtomRegistry.make(), projects, configAtom, snapshotAtom };
+  return { registry: AtomRegistry.make(), projects, configAtom, snapshotAtom, catalogValueAtom };
 }
 
 describe("project scratch identity", () => {
+  it("waits for enabled project configs and ignores a disabled environment with no config", () => {
+    const { registry, projects, configAtom, catalogValueAtom } = makeHarness();
+    try {
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(false);
+      registry.set(configAtom(environmentId), { scratchWorkspaceRoot: v2Project.workspaceRoot });
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(false);
+      const catalog = registry.get(catalogValueAtom);
+      registry.set(catalogValueAtom, {
+        ...catalog,
+        entries: new Map(
+          [...catalog.entries].map(([id, entry]) => [
+            id,
+            { ...entry, enabled: id === environmentId },
+          ]),
+        ),
+      });
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(true);
+      registry.set(catalogValueAtom, catalog);
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(false);
+      registry.set(configAtom(remoteEnvironmentId), {});
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(true);
+      registry.set(catalogValueAtom, { ...catalog, isReady: false });
+      expect(registry.get(projects.projectConfigsReadyAtom)).toBe(false);
+    } finally {
+      registry.dispose();
+    }
+  });
+
   it("updates a loaded project when config arrives, preserving unrelated projects and snapshots", () => {
     const { registry, projects, configAtom, snapshotAtom } = makeHarness();
     try {

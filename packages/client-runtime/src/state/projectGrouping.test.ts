@@ -5,6 +5,7 @@ import type { EnvironmentProject } from "./models.ts";
 import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
+  deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
@@ -118,6 +119,43 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it.each(["repository", "repository_path", "separate"] as const)(
+    "migrates a pre-config %s scratch selection and retains it after the original host is removed",
+    (mode) => {
+      const local = makeProject("scratch-local", "/local/repo/scratch", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/local/repo" },
+      });
+      const remote = makeProject("scratch-remote", "/remote/scratch", {
+        environmentId: EnvironmentId.make("remote"),
+        repositoryIdentity: null,
+        isScratch: true,
+      });
+      const groupingSettings = settings(mode);
+      const selectedBeforeConfig = deriveLogicalProjectKeyFromSettings(local, groupingSettings);
+      const loaded = [{ ...local, isScratch: true as const }, remote];
+      const migrated = resolveScratchProjectScopeKey(
+        selectedBeforeConfig,
+        loaded,
+        groupingSettings,
+      );
+      const scratchKey = buildProjectGroups({ projects: loaded, settings: groupingSettings })[0]!
+        .key;
+      expect(migrated).toBe(scratchKey);
+      expect(resolveScratchProjectScopeKey(migrated, [remote], groupingSettings)).toBe(scratchKey);
+      expect(
+        buildProjectGroups({ projects: [remote], settings: groupingSettings })[0]
+          ?.memberProjectRefs,
+      ).toEqual([{ environmentId: remote.environmentId, projectId: remote.id }]);
+    },
+  );
+
+  it("retains a repository filter that still belongs to an ordinary project", () => {
+    const scratch = makeProject("scratch", "/scratch", { isScratch: true });
+    const ordinary = makeProject("ordinary", "/ordinary");
+    const key = deriveLogicalProjectKeyFromSettings(ordinary, settings("repository"));
+    expect(resolveScratchProjectScopeKey(key, [scratch, ordinary])).toBe(key);
+  });
+
   it.each(["repository", "repository_path", "separate"] as const)(
     "coalesces scratch homes in %s mode without merging ordinary same-title projects",
     (mode) => {

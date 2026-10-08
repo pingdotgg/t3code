@@ -159,6 +159,7 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { environmentProjects } from "../state/projects";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
@@ -2598,8 +2599,13 @@ export default function Sidebar() {
   const persistedProjectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   const projectScopeKey = useMemo(
-    () => resolveSidebarProjectScopeKey({ groups: projectGroups, key: persistedProjectScopeKey }),
-    [persistedProjectScopeKey, projectGroups],
+    () =>
+      resolveSidebarProjectScopeKey({
+        groups: projectGroups,
+        key: persistedProjectScopeKey,
+        settings: projectGroupingSettings,
+      }),
+    [persistedProjectScopeKey, projectGroups, projectGroupingSettings],
   );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
@@ -2686,13 +2692,12 @@ export default function Sidebar() {
   // Configs identify scratch projects, so both they and live project snapshots
   // must arrive before a persisted scope can be considered missing.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
-  const allProjectConfigsReady = environments.every((environment) =>
-    serverConfigs.has(environment.environmentId),
-  );
+  const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
   useEffect(() => {
     const nextKey = resolveSidebarProjectScopeKey({
       groups: projectGroups,
       key: persistedProjectScopeKey,
+      settings: projectGroupingSettings,
       canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
     });
     if (nextKey !== persistedProjectScopeKey) {
@@ -2703,6 +2708,7 @@ export default function Sidebar() {
     allProjectSnapshotsReady,
     persistedProjectScopeKey,
     projectGroups,
+    projectGroupingSettings,
     setProjectScopeKey,
   ]);
   // Count-only subscription: the parent needs "are there draft rows" for the

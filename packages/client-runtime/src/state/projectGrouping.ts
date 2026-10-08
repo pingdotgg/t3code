@@ -164,11 +164,28 @@ export function deriveLogicalProjectKeyFromSettings(
 export function resolveScratchProjectScopeKey(
   key: string | null,
   projects: ReadonlyArray<
-    Pick<EnvironmentProject, "environmentId" | "workspaceRoot" | "isScratch">
+    Pick<
+      EnvironmentProject,
+      "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+    >
   >,
+  settings: ProjectGroupingSettings = {
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
+  },
 ): string | null {
   if (key === null || key === SCRATCH_PROJECT_SCOPE_KEY) return key;
-  return projects.some((project) => project.isScratch && derivePhysicalProjectKey(project) === key)
+  if (projects.some((project) => deriveLogicalProjectKeyFromSettings(project, settings) === key)) {
+    return key;
+  }
+  return projects.some((project) => {
+    if (!project.isScratch) return false;
+    const mode = resolveProjectGroupingMode(project, settings);
+    return (
+      derivePhysicalProjectKey(project) === key ||
+      (mode !== "separate" && deriveRepositoryScopedKey(project, mode) === key)
+    );
+  })
     ? SCRATCH_PROJECT_SCOPE_KEY
     : key;
 }

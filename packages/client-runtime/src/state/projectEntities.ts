@@ -115,12 +115,24 @@ export function createEnvironmentProjectAtoms(input: {
     return previousProjects;
   }).pipe(Atom.withLabel("environment-project-list"));
 
+  const projectConfigsReadyAtom = Atom.make((get) => {
+    const catalog = get(input.catalogValueAtom);
+    if (!catalog.isReady) return false;
+    for (const environmentId of enabledEnvironmentIds(catalog)) {
+      if (input.serverConfigValueAtom && get(input.serverConfigValueAtom(environmentId)) === null) {
+        return false;
+      }
+    }
+    return true;
+  }).pipe(Atom.withLabel("environment-project-configs-ready"));
+
   return {
     environmentProjectsAtom,
     environmentProjectIndexAtom,
     environmentProjectRefsAtom,
     projectRefsAtom,
     projectsAtom,
+    projectConfigsReadyAtom,
     projectAtom: (ref: ScopedProjectRef) => projectAtomFamily(projectKey(ref)),
   };
 }

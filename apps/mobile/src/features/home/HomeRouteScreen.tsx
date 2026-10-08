@@ -112,7 +112,13 @@ export function HomeRouteScreen() {
     useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [projectScopeKey, setSelectedProjectKey] = useState<string | null>(null);
-  const selectedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects);
+  const selectedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
+    sidebarProjectGroupingMode: listOptions.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  });
+  if (selectedProjectKey !== projectScopeKey) {
+    setSelectedProjectKey(selectedProjectKey);
+  }
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
