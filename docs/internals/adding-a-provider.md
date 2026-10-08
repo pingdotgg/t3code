@@ -67,6 +67,40 @@ orchestrator, adapter, and projections. See the [testing strategy](../orchestrat
 - A gated live test against the real binary is welcome, but it does not replace replays, because
   CI skips it.
 
+## Traps several providers hit
+
+Each of these broke more than one adapter. A replay fixture for each case your provider can
+produce catches them.
+
+- **Settings applied before the provider advertises them.** Agents often list config options after
+  the session opens, in a later update, or only once a model runs (an effort option that exists
+  only for models with effort). An agent can accept a write before then and change nothing. Wait
+  for the option to be advertised before writing it, and treat a stored option the live session
+  does not offer as skipped, not as a failure.
+- **"Default" is a sentinel, not a model.** A default-model selection must switch the session back
+  after a named model ran, including in a resumed session. Never send the sentinel to the
+  provider.
+- **Stop sent before the turn started.** A cancel that reaches the provider before it registered
+  the prompt can be ignored while the turn runs to completion, or can leave a session the provider
+  never saved. Find the provider's own turn-started signal, and test a Stop pressed right after
+  sending.
+- **Work the provider starts on its own.** Background commands, subagents, workflows, and goals can
+  finish or start a turn after T3's turn settled. Offer a continuation through
+  [`ProviderContinuationRequests`](../../apps/server/src/orchestration-v2/ProviderContinuationRequests.ts)
+  so the parent wakes, and report `hasPendingBackgroundWork` so the session is not released as
+  idle. Dropping it, or killing the session, loses the result.
+- **Subagents outlive the run that launched them.** A child can report after its parent's turn
+  settled, or resume during a later run. Route its updates by the subagent, not by whichever run
+  is currently active.
+- **A failed or stopped turn leaves nothing open.** Settle the turn's tool calls, subagents, and
+  pending approvals and questions. Each terminal path needs its own replay: completion, Stop,
+  provider failure, and process exit.
+- **Usage limits are not generic failures.** Classify quota and rate-limit errors as `usage_limit`
+  with a reset time when the provider gives one, so the thread shows Limited and can resume.
+- **Paths and environment.** Test a symlinked workspace, such as macOS `/tmp`; an agent that
+  compares canonical paths fails every turn there. Drop inherited credentials the instance did not
+  configure. Report unknown sign-in as unknown rather than as signed in.
+
 ## Where a driver plugs in
 
 - **Contracts:** settings schema and patch, default model, and display name in
