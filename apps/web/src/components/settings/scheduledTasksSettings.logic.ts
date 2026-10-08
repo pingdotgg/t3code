@@ -8,8 +8,10 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import {
   resolveProjectSettings,
@@ -32,6 +34,36 @@ export function matchesScheduledTaskScope(
     );
   }
   return true;
+}
+
+/** Keep the environment's scratch folder behind the "No project" choice, even before first use. */
+export function scheduledTaskProjectChoices<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly workspaceRoot: string;
+  },
+>(
+  scope: ResolvedSettingsScope,
+  environmentId: EnvironmentId,
+  allProjects: readonly T[],
+  scratchWorkspaceRoot: string | null,
+) {
+  const scopedProjects = allProjects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      matchesScheduledTaskScope(scope, environmentId, project.id),
+  );
+  const scratchProject =
+    scopedProjects.find((project) => isScratchProject(project, scratchWorkspaceRoot)) ?? null;
+  return {
+    projects: scopedProjects.filter((project) => project !== scratchProject),
+    scratchProject,
+    canSelectNoProject:
+      scratchWorkspaceRoot !== null &&
+      scope.environmentIds.includes(environmentId) &&
+      (scope.kind === "all" || scope.kind === "environment" || scratchProject !== null),
+  };
 }
 
 export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
@@ -57,7 +89,8 @@ export interface DraftState {
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
-  readonly projectId: string;
+  /** Null selects "No project"; empty uses the first available choice. */
+  readonly projectId: string | null;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
@@ -167,6 +200,22 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
         ? String(schedule.maxDeliveryAgeMinutes)
         : "",
+  };
+}
+
+/** Scratch tasks launch in their own folders, without git checkout settings. */
+export function workspaceStrategyFromDraft(
+  draft: DraftState,
+  noProject: boolean,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  if (noProject || draft.workspaceMode === "root") return { type: "root" };
+  if (draft.workspaceMode === "existing_worktree") {
+    return { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() };
+  }
+  return {
+    type: "worktree",
+    baseRef: draft.baseRef.trim() || "main",
+    startFromOrigin: draft.startFromOrigin,
   };
 }
 

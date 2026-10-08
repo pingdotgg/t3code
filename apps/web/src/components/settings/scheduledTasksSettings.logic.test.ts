@@ -18,9 +18,11 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
+  scheduledTaskProjectChoices,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
+  workspaceStrategyFromDraft,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -82,6 +84,61 @@ const tasks = [first, second, third, other, sameIdElsewhere].map((project, index
   environmentId: project.environmentId,
   projectId: project.id,
 }));
+
+describe("scheduled task project choices", () => {
+  const scratchWorkspaceRoot = "/home/t3/scratch";
+  const scratch = { ...member("scratch", laptopId), workspaceRoot: scratchWorkspaceRoot };
+  const remoteScratch = { ...scratch, environmentId: serverId };
+  const allProjects = [scratch, first, second, third, remoteScratch];
+
+  it("offers No project before the environment's scratch folder has been created", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    expect(scheduledTaskProjectChoices(scope, laptopId, [], scratchWorkspaceRoot)).toEqual({
+      projects: [],
+      scratchProject: null,
+      canSelectNoProject: true,
+    });
+  });
+
+  it("keeps scratch behind No project and resolves it only on the selected environment", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    expect(scheduledTaskProjectChoices(scope, laptopId, allProjects, scratchWorkspaceRoot)).toEqual(
+      {
+        projects: [first, second],
+        scratchProject: scratch,
+        canSelectNoProject: true,
+      },
+    );
+    expect(scheduledTaskProjectChoices(scope, serverId, allProjects, scratchWorkspaceRoot)).toEqual(
+      {
+        projects: [third],
+        scratchProject: remoteScratch,
+        canSelectNoProject: true,
+      },
+    );
+  });
+
+  it.each<SettingsScopeSearch>([
+    { project: "t3code" },
+    { project: "t3code", checkout: second.physicalProjectKey },
+    { project: "missing" },
+    { machine: serverId },
+  ])("does not offer No project outside the selected settings scope: %o", (search) => {
+    const scope = resolveSettingsScope(search, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, laptopId, allProjects, scratchWorkspaceRoot);
+    expect(choices.scratchProject).toBeNull();
+    expect(choices.canSelectNoProject).toBe(false);
+  });
+
+  it("does not offer No project when the environment has no available scratch folder", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    expect(scheduledTaskProjectChoices(scope, laptopId, [first], null)).toEqual({
+      projects: [first],
+      scratchProject: null,
+      canSelectNoProject: false,
+    });
+  });
+});
 
 describe("scheduled task settings scope", () => {
   it.each<{ search: SettingsScopeSearch; expected: string[] }>([
@@ -166,6 +223,18 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("scheduled task workspace selection", () => {
+  it.each<ScheduledTask["workspaceStrategy"]>([
+    { type: "root" },
+    { type: "worktree", baseRef: "release", startFromOrigin: true },
+    { type: "existing_worktree", worktreePath: "/repos/checkout" },
+  ])("uses a scratch folder after switching from %o to No project", (workspaceStrategy) => {
+    const draft = taskToDraft({ ...legacyTask, workspaceStrategy });
+    expect(workspaceStrategyFromDraft(draft, true)).toEqual({ type: "root" });
+    expect(workspaceStrategyFromDraft(draft, false)).toEqual(workspaceStrategy);
   });
 });
 
