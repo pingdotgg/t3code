@@ -196,17 +196,28 @@ layer("GitCafeCli", (it) => {
   it.effect("tells a missing CLI apart from a missing login", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
-      for (const [cause, code] of [
-        [new GitCafeCredentials.GitCafeCliMissingError({ host: "git.cafe" }), "CLI_UNAVAILABLE"],
+      for (const [cause, code, detail] of [
+        [
+          new GitCafeCredentials.GitCafeCliMissingError({ host: "git.cafe" }),
+          "CLI_UNAVAILABLE",
+          "No GitCafe credential for git.cafe: set CAFE_TOKEN, or install the GitCafe CLI and run `cafe auth login`.",
+        ],
         [
           new GitCafeCredentials.GitCafeNotSignedInError({ host: "git.cafe" }),
           "AUTHENTICATION_REQUIRED",
+          "No GitCafe credential for git.cafe: run `cafe auth login --host https://git.cafe/api`.",
+        ],
+        [
+          new GitCafeCredentials.GitCafeCliFailedError({ host: "git.cafe", cause: "keyring" }),
+          "COMMAND_FAILED",
+          "The GitCafe CLI could not hand over a credential for git.cafe. Check `cafe auth status` on the server.",
         ],
       ] as const) {
         getCredential.mockReturnValueOnce(Effect.fail(cause));
+        // The detail is built from the code and host; the source error travels only as the cause.
         expect(
           yield* cafe.api({ cwd: "/repo", endpoint: "/auth/principal" }).pipe(Effect.flip),
-        ).toMatchObject({ code, status: null, detail: cause.message });
+        ).toMatchObject({ code, status: null, detail, cause });
       }
       expect(http).not.toHaveBeenCalled();
     }),

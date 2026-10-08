@@ -263,16 +263,26 @@ const make = Effect.gen(function* () {
         .get(host)
         .pipe(
           Effect.mapError((cause) =>
-            failed(
-              cause._tag === "GitCafeCliMissingError"
-                ? "CLI_UNAVAILABLE"
-                : cause._tag === "GitCafeNotSignedInError"
-                  ? "AUTHENTICATION_REQUIRED"
-                  : "COMMAND_FAILED",
-              null,
-              cause.message,
-              cause,
-            ),
+            cause._tag === "GitCafeCliMissingError"
+              ? failed(
+                  "CLI_UNAVAILABLE",
+                  null,
+                  `No GitCafe credential for ${host}: set CAFE_TOKEN, or install the GitCafe CLI and run \`cafe auth login\`.`,
+                  cause,
+                )
+              : cause._tag === "GitCafeNotSignedInError"
+                ? failed(
+                    "AUTHENTICATION_REQUIRED",
+                    null,
+                    `No GitCafe credential for ${host}: run \`cafe auth login --host https://${host}/api\`.`,
+                    cause,
+                  )
+                : failed(
+                    "COMMAND_FAILED",
+                    null,
+                    `The GitCafe CLI could not hand over a credential for ${host}. Check \`cafe auth status\` on the server.`,
+                    cause,
+                  ),
           ),
         );
     const send = (token: Redacted.Redacted<string>) => {
