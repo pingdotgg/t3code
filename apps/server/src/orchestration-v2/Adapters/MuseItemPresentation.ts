@@ -54,7 +54,12 @@ export function museToolPresentation(
     return undefined;
   };
   const toolName = item.tool ?? item.kind;
-  const title = item.kind === "subagent" ? item.objective || item.role || "Muse agent" : toolName;
+  const title =
+    item.kind === "subagent"
+      ? item.objective || item.role || "Muse agent"
+      : item.kind === "workflow"
+        ? item.entryId || "Workflow"
+        : toolName;
   const detail =
     status === "failed" ? item.failureReason || `Muse reported ${item.status}.` : undefined;
   const shared = { status, title: detail ? `${title}: ${detail}` : title };

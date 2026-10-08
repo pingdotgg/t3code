@@ -11,6 +11,9 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItemStatus,
+  type NodeId,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type PlanId,
@@ -258,8 +261,9 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/todoListChanged",
   "turn/retryScheduled",
 ]);
-// Tools whose results already show as T3's own todo list and question rows.
-const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input"]);
+// Tools whose results already show as their own rows: T3's todo list and question
+// rows, and the workflow item a `workflow` call launches.
+const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
 /** One scoped Muse host owns one native session; the orchestrator owns app runs and queuing. */
@@ -543,6 +547,102 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           },
         });
         yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem });
+        if (item.kind === "workflow") yield* publishWorkflowAgents(turn, item, base, status);
+      });
+      /**
+       * Shows each workflow child as a native subagent under the workflow row. Muse
+       * reports only their status, label and outcome, not their conversations, so
+       * they get no child thread.
+       */
+      const publishWorkflowAgents = Effect.fnUntraced(function* (
+        turn: ActiveTurn,
+        item: MuseItem,
+        workflow: { readonly id: OrchestrationV2TurnItem["id"]; readonly nodeId: NodeId },
+        workflowStatus: OrchestrationV2TurnItemStatus,
+      ) {
+        const latest = new Map((item.children ?? []).map((child) => [child.childId, child]));
+        for (const [index, child] of [...latest.values()].entries()) {
+          const time = yield* DateTime.now;
+          const base = baseItem(turn, `${item.itemId}:agent:${child.childId}`, time);
+          const status: OrchestrationV2TurnItemStatus =
+            child.terminal === "completed"
+              ? "completed"
+              : child.terminal === "cancelled"
+                ? "cancelled"
+                : child.terminal !== undefined
+                  ? "failed"
+                  : workflowStatus !== "running"
+                    ? workflowStatus
+                    : child.status === "scheduled"
+                      ? "pending"
+                      : "running";
+          const settled = status !== "running" && status !== "pending";
+          const title = child.label?.trim() || `Agent ${index + 1}`;
+          const result = child.failureReason ?? null;
+          const subagent: OrchestrationV2Subagent = {
+            id: base.nodeId,
+            threadId: base.threadId,
+            runId: base.runId,
+            parentNodeId: workflow.nodeId,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: MUSE_PROVIDER,
+            providerInstanceId: options.instanceId,
+            providerThreadId: base.providerThreadId,
+            childThreadId: null,
+            nativeTaskRef: nativeRef(child.childId),
+            prompt: title,
+            title,
+            model: null,
+            status,
+            result,
+            startedAt: base.startedAt,
+            completedAt: settled ? time : null,
+            updatedAt: time,
+          };
+          yield* emit({ type: "subagent.updated", driver: MUSE_PROVIDER, subagent });
+          yield* emit({
+            type: "node.updated",
+            driver: MUSE_PROVIDER,
+            node: {
+              id: base.nodeId,
+              threadId: base.threadId,
+              runId: base.runId,
+              parentNodeId: workflow.nodeId,
+              rootNodeId: turn.input.rootNodeId,
+              kind: "subagent",
+              status,
+              countsForRun: false,
+              providerThreadId: base.providerThreadId,
+              providerTurnId: base.providerTurnId,
+              nativeItemRef: subagent.nativeTaskRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: base.startedAt,
+              completedAt: subagent.completedAt,
+            },
+          });
+          yield* emit({
+            type: "turn_item.updated",
+            driver: MUSE_PROVIDER,
+            turnItem: {
+              ...base,
+              nativeItemRef: subagent.nativeTaskRef,
+              parentItemId: workflow.id,
+              type: "subagent",
+              status,
+              title,
+              completedAt: subagent.completedAt,
+              subagentId: subagent.id,
+              origin: "provider_native",
+              driver: MUSE_PROVIDER,
+              providerInstanceId: options.instanceId,
+              childThreadId: null,
+              prompt: title,
+              result,
+            },
+          });
+        }
       });
       const settleObservedChildren = Effect.fnUntraced(function* (
         status: "failed" | "cancelled" | "interrupted",

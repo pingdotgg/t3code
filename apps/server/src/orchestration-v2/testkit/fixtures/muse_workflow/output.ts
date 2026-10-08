@@ -44,5 +44,16 @@ export function assertMuseWorkflowOutput(
     (message) => message.role === "assistant" && message.runId === projection.runs[1]?.id,
   );
   assert.isAbove(report.length, 0, "Muse's report reaches the second run");
+
+  // Each workflow agent is a native subagent nested under the workflow row.
+  assert.lengthOf(projection.subagents, 2);
+  for (const agent of projection.subagents) {
+    assert.equal(agent.origin, "provider_native");
+    assert.equal(agent.status, "completed");
+    assert.isNull(agent.childThreadId);
+  }
+  const agentRows = projection.turnItems.filter((item) => item.type === "subagent");
+  assert.lengthOf(agentRows, 2);
+  assert.isTrue(agentRows.every((row) => row.parentItemId === workflow.id));
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
 }

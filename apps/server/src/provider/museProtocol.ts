@@ -15,6 +15,20 @@ const MuseUsage = Schema.Struct({
 export const MuseItem = Schema.Struct({
   /** `workflow`: the launched entry's name. */
   entryId: Schema.optional(Schema.String),
+  /** `workflow`: each child agent's latest attempt, re-sent whole on every change. */
+  children: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        childId: NonEmptyString,
+        attempt: Schema.Int,
+        status: Schema.String,
+        label: Schema.optional(Schema.String),
+        terminal: Schema.optional(Schema.String),
+        durationMs: Schema.optional(Schema.Finite),
+        failureReason: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   itemId: NonEmptyString,
   kind: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
