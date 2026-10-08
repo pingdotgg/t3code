@@ -326,6 +326,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       let active: ActiveTurn | undefined;
       // The last finished turn, so context usage reported after it still lands on it.
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      const agentEndedAt = new Map<string, DateTime.Utc>();
       // "default" is the catalog's default model, from the provider snapshot. Without
       // one, Muse keeps whatever model the session already runs.
       const resolveModel = Effect.fnUntraced(function* (selection: ModelSelection) {
@@ -459,7 +460,14 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       ) {
         // Muse's skill-reminder child runs on every model step; it is housekeeping, not work.
         if (item.kind === "userMessage" || item.kind === "reminderChild") return;
-        if (item.kind === "toolCall" && item.tool && TOOLS_WITH_NATIVE_ROWS.has(item.tool)) return;
+        // A failed call keeps its row: it may have no native row to show its error.
+        if (
+          item.kind === "toolCall" &&
+          item.tool &&
+          TOOLS_WITH_NATIVE_ROWS.has(item.tool) &&
+          item.status !== "failed"
+        )
+          return;
         const time = yield* DateTime.now;
         const status = terminal ?? museItemStatus(item);
         if (item.kind === "subagent" || item.kind === "workflow") {
@@ -577,6 +585,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                       ? "pending"
                       : "running";
           const settled = status !== "running" && status !== "pending";
+          // Children are re-sent on every workflow change; keep each one's first end time.
+          const endKey = `${item.itemId}:${child.childId}:${child.attempt}`;
+          if (settled && !agentEndedAt.has(endKey)) agentEndedAt.set(endKey, time);
           const title = child.label?.trim() || `Agent ${index + 1}`;
           const result = child.failureReason ?? null;
           const subagent: OrchestrationV2Subagent = {
@@ -597,7 +608,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             status,
             result,
             startedAt: base.startedAt,
-            completedAt: settled ? time : null,
+            completedAt: settled ? (agentEndedAt.get(endKey) ?? time) : null,
             updatedAt: time,
           };
           yield* emit({ type: "subagent.updated", driver: MUSE_PROVIDER, subagent });
