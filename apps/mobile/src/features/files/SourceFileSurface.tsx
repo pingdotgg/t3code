@@ -41,6 +41,8 @@ interface SourceFileSurfaceProps {
   readonly contents: string;
   readonly path: string;
   readonly initialLine?: number | null;
+  /** Override when a fixed notice already reserves the native header. */
+  readonly headerInsetTop?: number;
   /** Keep the entire document in one native text-selection scope. */
   readonly selectable?: boolean;
   /** Enables native pull-to-refresh on the source surface. */
@@ -218,7 +220,7 @@ function NativeSourceFileSurface(
         appearanceScheme={themeAppearance}
         contentResetKey={props.path}
         contentWidth={contentWidth}
-        contentInsetTop={safeArea.top}
+        contentInsetTop={props.headerInsetTop ?? safeArea.top}
         contentInsetBottom={safeArea.bottom + 8}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
