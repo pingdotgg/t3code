@@ -1906,7 +1906,7 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const countRows = (pages: ReadonlyArray<GitHubPullRequestListPage>) =>
             pages.reduce((total, read) => total + read.rawCount, 0);
-          const { pages } = yield* readGraphQlPages(
+          const { pages, truncated } = yield* readGraphQlPages(
             (after, pages: ReadonlyArray<GitHubPullRequestListPage>) =>
               page(after, rows - countRows(pages)),
             {
@@ -1914,7 +1914,12 @@ export const make = Effect.gen(function* () {
               until: (pages) => countRows(pages) >= rows,
             },
           );
-          return { items: pages.flatMap((read) => read.items), rawCount: countRows(pages) };
+          // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
+          return {
+            items: pages.flatMap((read) => read.items),
+            rawCount: countRows(pages),
+            truncated,
+          };
         });
       const read = (
         continues: boolean,
@@ -1940,7 +1945,7 @@ export const make = Effect.gen(function* () {
                 decode: decodePullRequestListJson,
               }),
         ).pipe(
-          Effect.flatMap(({ items: rawItems, rawCount }) => {
+          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
             const items = continues
               ? rawItems
               : rawItems.filter((item) => matchesUnsortedListing(item, input));
@@ -1957,9 +1962,11 @@ export const make = Effect.gen(function* () {
               items: items.slice(0, input.limit),
               // One row over the page size is the probe for a next page, and it is
               // counted before decoding: a skipped malformed row must not end paging.
-              truncated: continues
-                ? rawCount > input.limit
-                : items.length > input.limit || rawCount >= requestedRows,
+              truncated:
+                cutShort ||
+                (continues
+                  ? rawCount > input.limit
+                  : items.length > input.limit || rawCount >= requestedRows),
               continues,
             });
           }),

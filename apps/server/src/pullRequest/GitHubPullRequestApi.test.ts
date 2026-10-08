@@ -1112,6 +1112,37 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reports truncation when GitHub repeats a cursor before the page is full", () =>
+    Effect.gen(function* () {
+      // Two pages of 100 that hand back the same cursor, for a page of 250.
+      const repeating = output(
+        encodeJson({
+          data: {
+            search: {
+              pageInfo: { hasNextPage: true, endCursor: "same" },
+              nodes: rows(100, 1),
+            },
+          },
+        }),
+      );
+      mockedExecute.mockReturnValue(Effect.succeed(repeating));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 250,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      assert.isTrue(batch.truncated);
+    }),
+  );
+
   it.effect("excludes merged pull requests from the Closed tab", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
