@@ -24,7 +24,6 @@ import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
-import { appendSharedLocations } from "../lib/sharedLocation";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -919,16 +918,20 @@ export function useThreadOutboxDrain(): void {
             messageId: queuedMessage.messageId,
             role: "user",
             ...serializeComposerMessageForServer(
-              appendSharedLocations(
-                queuedMessage.text,
-                queuedMessage.attachments.filter((attachment) => attachment.type === "location"),
-              ),
+              queuedMessage.text,
               uploadedComposerContext(
                 queuedMessage.context,
                 queuedMessage.attachments,
                 prepared.attachments,
               ),
               currentConfig.environment.capabilities.inlineMessageContext === true,
+              {
+                locations: queuedMessage.attachments.filter(
+                  (attachment) => attachment.type === "location",
+                ),
+                supportsSharedLocationContext:
+                  currentConfig.environment.capabilities.sharedLocationContext === true,
+              },
             ),
             attachments: prepared.attachments,
           },
@@ -1071,16 +1074,20 @@ export function useThreadOutboxDrain(): void {
           messageId: queuedMessage.messageId,
           createdAt: queuedMessage.createdAt,
           ...serializeComposerMessageForServer(
-            appendSharedLocations(
-              queuedMessage.text.trim(),
-              queuedMessage.attachments.filter((attachment) => attachment.type === "location"),
-            ),
+            queuedMessage.text.trim(),
             uploadedComposerContext(
               queuedMessage.context,
               queuedMessage.attachments,
               prepared.attachments,
             ),
             currentConfig.environment.capabilities.inlineMessageContext === true,
+            {
+              locations: queuedMessage.attachments.filter(
+                (attachment) => attachment.type === "location",
+              ),
+              supportsSharedLocationContext:
+                currentConfig.environment.capabilities.sharedLocationContext === true,
+            },
           ),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,

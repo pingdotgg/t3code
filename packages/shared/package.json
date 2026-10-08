@@ -251,6 +251,10 @@
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
     },
+    "./sharedLocation": {
+      "types": "./src/sharedLocation.ts",
+      "import": "./src/sharedLocation.ts"
+    },
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"

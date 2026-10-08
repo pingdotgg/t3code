@@ -2,6 +2,8 @@ import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  ComposerContextId,
+  MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -26,6 +28,8 @@ import {
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { locationContextRecord, serializeSharedLocation } from "@t3tools/shared/sharedLocation";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
@@ -93,6 +97,89 @@ const handoff: OrchestrationV2ContextHandoff = {
 };
 
 describe("handoff budget", () => {
+  it("carries typed and legacy location semantics into portable user history within its byte budget", () => {
+    const location = {
+      name: "North entrance",
+      address: "12 Example Street, Boston, MA",
+      latitude: 42.3521,
+      longitude: -71.0552,
+      accuracy: 18,
+    } as const;
+    const record = locationContextRecord(location, ComposerContextId.make("handoff-location"));
+    const context = { version: 1, records: [record] } as const;
+    const text = formatComposerContextReference({
+      kind: "location",
+      contextId: record.contextId,
+      label: record.label,
+    });
+    const base = {
+      id: TurnItemId.make("item:location"),
+      threadId,
+      runId: RunId.make("run:source"),
+      nodeId: null,
+      providerThreadId: providerThread.id,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      messageId: MessageId.make("message:location"),
+      text,
+      context,
+      attachments: [],
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      inputIntent: "turn_start" as const,
+      type: "user_message" as const,
+    };
+    const projected = historicalMessage(base);
+    assert.isNotNull(projected);
+    assert.include(projected!.text, "42.3521, -71.0552");
+    assert.include(projected!.text, "Do not infer present location in later turns.");
+    assert.include(
+      historyResponseItems([projected!], "Activity")[1]!.content[0]!.text,
+      "42.3521, -71.0552",
+    );
+    assert.equal((projected!.text.match(/<context kind="location"/gu) ?? []).length, 1);
+
+    const legacy = historicalMessage({
+      ...base,
+      text: `Find the place.\n\n${serializeSharedLocation(location)}`,
+      context: undefined,
+    });
+    assert.isNotNull(legacy);
+    assert.include(legacy!.text, "Do not infer present location in later turns.");
+    assert.equal((legacy!.text.match(/<context kind="location"/gu) ?? []).length, 1);
+    const assistant = historicalMessage({
+      ...base,
+      type: "assistant_message",
+      text: "Assistant response.",
+    } as never);
+    assert.equal(assistant?.text, "Assistant response.");
+
+    const oversizedLocation = {
+      ...location,
+      address: "a".repeat(2_000),
+    };
+    const oversized = historicalMessage({
+      ...base,
+      text: serializeSharedLocation(oversizedLocation),
+      context: undefined,
+    });
+    assert.isNotNull(oversized);
+    const bounded = selectHistory({
+      messages: [oversized!],
+      coverage: "History",
+      budget: 2_048,
+    });
+    assert.deepEqual(bounded.messages, []);
+    assert.isAtMost(historyCost(bounded.messages, bounded.context), 2_048);
+  });
+
   it("keeps old preview handoffs readable and delivery history off the wire", () => {
     const projected = projectContextHandoffForWire({
       ...handoff,

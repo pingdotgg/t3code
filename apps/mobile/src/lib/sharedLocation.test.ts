@@ -37,6 +37,7 @@ const location: DraftComposerLocationAttachment = {
 
 const position = {
   coords: { latitude: 37.7793, longitude: -122.4192, accuracy: 12.5 },
+  timestamp: Date.parse("2026-10-07T18:00:00.000Z"),
 };
 
 beforeEach(() => {
@@ -65,6 +66,7 @@ describe("shared location picking", () => {
       longitude: -122.4192,
       address: "100 Larkin St, San Francisco, CA",
       accuracy: 12.5,
+      capturedAt: "2026-10-07T18:00:00.000Z",
     });
   });
 

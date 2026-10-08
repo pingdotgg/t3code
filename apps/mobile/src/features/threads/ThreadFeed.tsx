@@ -33,7 +33,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { LocationAttachmentCard } from "../../components/LocationAttachmentCard";
-import { parseSharedLocations } from "../../lib/sharedLocation";
+import { separateComposerLocationContext } from "../../lib/composerLocationContext";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
 import {
   codexArtifactTemplatePresentationLabel,
@@ -2006,15 +2006,20 @@ function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const sharedLocations = parseSharedLocations(props.text);
+  const sharedLocations = separateComposerLocationContext({
+    text: props.text,
+    ...(props.context ? { context: props.context } : {}),
+  });
   const text = replaceComposerContextReferences(sharedLocations.text, (ref) => {
-    const available = props.context?.records.some((record) => record.contextId === ref.contextId);
+    const available = sharedLocations.messageContext?.records.some(
+      (record) => record.contextId === ref.contextId,
+    );
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
-    const record = props.context?.records.find(
+    const record = sharedLocations.messageContext?.records.find(
       (record) => record.contextId === reference.contextId,
     );
     if (record?.kind === "mention" && "path" in record) {
@@ -2059,8 +2064,10 @@ function UserMessageContent(props: UserMessageContentProps) {
         <ComposerContextSheet
           label={selected.label}
           environmentId={props.environmentId}
-          records={props.context?.records}
-          record={props.context?.records.find((record) => record.contextId === selected.contextId)}
+          records={sharedLocations.messageContext?.records}
+          record={sharedLocations.messageContext?.records.find(
+            (record) => record.contextId === selected.contextId,
+          )}
           onClose={() => setSelected(null)}
         />
       ) : null}

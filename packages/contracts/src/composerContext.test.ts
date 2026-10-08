@@ -120,6 +120,19 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     threadId: "thread-1",
     title: "Fix login flow",
   },
+  location: {
+    ...base,
+    kind: "location",
+    label: "Central Library",
+    payload: {
+      name: "Central Library",
+      address: "100 Main Street",
+      latitude: 40.7128,
+      longitude: -74.006,
+      accuracy: 12,
+      capturedAt: "2026-10-07T12:00:00.000Z",
+    },
+  },
 };
 
 describe("ComposerContextRecord", () => {

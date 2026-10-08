@@ -1,5 +1,6 @@
 import {
   type ComposerContextId,
+  type LocationContextRecord,
   EnvironmentId,
   MessageId,
   OrchestrationMessageContext,
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { serializeSharedLocation } from "@t3tools/shared/sharedLocation";
 
 import {
   formatInlineContextReference,
@@ -27,6 +29,7 @@ import {
   previewAnnotationContextLabel,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
+  referencedSharedLocationRecords,
   resolveUserMessageContext,
   selectedMessageContextFragment,
   reviewCommentContextLabel,
@@ -39,6 +42,21 @@ import {
 } from "./composerContextRecords";
 
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+
+const officeLocation: LocationContextRecord = {
+  version: 1,
+  contextId: "location_office" as ComposerContextId,
+  label: "Main office",
+  kind: "location",
+  payload: {
+    name: "Main office",
+    address: "1 Market St, San Francisco, CA",
+    latitude: 37.7936,
+    longitude: -122.3958,
+    accuracy: 12,
+    capturedAt: "2026-10-07T15:30:00.000Z",
+  },
+};
 
 const annotation: PreviewAnnotationPayload = {
   id: "ann_1",
@@ -617,6 +635,70 @@ describe("composerContextRecords", () => {
     });
     expect(legacy.text).toBe("hi\n\n[T line 1](t3-context://v1/terminal/legacy_terminal_1)");
     expect(legacy.recordsById.get("legacy_terminal_1")?.kind).toBe("terminal");
+  });
+
+  it("normalizes a legacy shared location block into a referenced location record", () => {
+    const text = `I am here.\n\n${serializeSharedLocation(officeLocation.payload)}`;
+    const resolved = resolveUserMessageContext({ text });
+    const locations = referencedSharedLocationRecords(resolved);
+
+    expect(resolved.text).not.toContain("<shared-location>");
+    expect(locations).toHaveLength(1);
+    expect(locations[0]?.payload).toEqual(officeLocation.payload);
+    expect(resolved.recordsById.get(locations[0]!.contextId)).toBe(locations[0]);
+  });
+
+  it("keeps typed location records and canonical references", () => {
+    const reference = formatInlineContextReference({
+      kind: "location",
+      contextId: officeLocation.contextId,
+      label: officeLocation.label,
+    });
+    const resolved = resolveUserMessageContext({
+      text: `At ${reference}`,
+      context: { version: 1, records: [officeLocation] },
+    });
+
+    expect(resolved.text).toBe(`At ${reference}`);
+    expect(referencedSharedLocationRecords(resolved)).toEqual([officeLocation]);
+  });
+
+  it("preserves existing records while upgrading a legacy location block", () => {
+    const existing = reviewCommentContextRecord({
+      id: "existing-review",
+      sectionId: "section",
+      sectionTitle: "Files changed",
+      filePath: "src/app.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "L1",
+      text: "Review this",
+      diff: "",
+    });
+    const text = ["Please look at these.", serializeSharedLocation(officeLocation.payload)].join(
+      "\n\n",
+    );
+    const resolved = resolveUserMessageContext({
+      text,
+      context: { version: 1, records: [existing] },
+    });
+
+    expect(resolved.recordsById.get(existing.contextId)).toEqual(existing);
+    expect(referencedSharedLocationRecords(resolved)).toHaveLength(1);
+  });
+
+  it("returns one location card record for repeated references to the same location", () => {
+    const reference = formatInlineContextReference({
+      kind: "location",
+      contextId: officeLocation.contextId,
+      label: officeLocation.label,
+    });
+    const resolved = resolveUserMessageContext({
+      text: `${reference} and ${reference}`,
+      context: { version: 1, records: [officeLocation] },
+    });
+
+    expect(referencedSharedLocationRecords(resolved)).toEqual([officeLocation]);
   });
 });
 

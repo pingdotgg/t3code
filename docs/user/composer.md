@@ -49,6 +49,18 @@ also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Share your phone's location
+
+On mobile, choose **Location** from the attachment menu to share a one-time location
+with your message. The agent receives the coordinates, nearest address, accuracy,
+and capture time, so you can ask questions about the surrounding area. Allow
+foreground location access when prompted; you can remove the attachment before
+sending. Tap a location card to open it in Maps.
+
+The shared location stays with that message and can be viewed on your other
+clients. It is a snapshot taken when you attached it; send a new location if you
+have moved.
+
 ## Send while the agent is working
 
 On web and desktop, choose **Settings → General → Follow-up behavior** to queue

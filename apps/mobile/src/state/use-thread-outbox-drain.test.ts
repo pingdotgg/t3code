@@ -4,6 +4,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  type OrchestrationMessageContext,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -111,7 +112,9 @@ vi.mock("./entities", () => ({
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
-    serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(harness.serverConfig)) },
+    serverEnvironment: {
+      configValueAtom: Atom.family(() => Atom.make(() => harness.serverConfig)),
+    },
   };
 });
 
@@ -200,6 +203,7 @@ import {
 } from "./use-thread-outbox-drain";
 import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
 import { environmentThreadShells } from "./threads";
+import { serverEnvironment } from "./server";
 
 function queuedMessage(input: {
   readonly messageId: string;
@@ -429,9 +433,14 @@ describe("thread outbox attachment preparation", () => {
 });
 
 describe("thread outbox location delivery", () => {
-  it.each([false, true])(
-    "sends a canonical location block in the actual startTurn payload (new task: %s)",
-    async (isCreation) => {
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    "delivers location in startTurn (new task: %s, structured context: %s)",
+    async (isCreation, supportsSharedLocationContext) => {
       const location = {
         id: "location-1",
         type: "location" as const,
@@ -486,10 +495,15 @@ describe("thread outbox location delivery", () => {
       harness.serverConfig = {
         providers: [{ instanceId: modelSelection.instanceId, driver: "codex" }],
         environment: {
-          capabilities: { attachmentUploads: true, inlineMessageContext: true },
+          capabilities: {
+            attachmentUploads: true,
+            inlineMessageContext: true,
+            sharedLocationContext: supportsSharedLocationContext,
+          },
         },
       };
       harness.shellStatuses = new Map([[environmentId, "live"]]);
+      appAtomRegistry.refresh(serverEnvironment.configValueAtom(environmentId));
       harness.threads = isCreation ? [] : [thread];
       appAtomRegistry.refresh(environmentThreadShells.threadShellsAtom);
       harness.prepareTurnAttachments.mockImplementationOnce(async ({ attachments }) => ({
@@ -507,21 +521,43 @@ describe("thread outbox location delivery", () => {
       );
       expect(harness.startTurn).toHaveBeenCalledOnce();
       const call = harness.startTurn.mock.calls[0]?.[0] as {
-        readonly input: { readonly message: { readonly text: string } };
+        readonly input: {
+          readonly message: {
+            readonly text: string;
+            readonly context?: OrchestrationMessageContext;
+          };
+        };
       };
-      expect(call.input.message.text).toBe(
-        [
-          "Meet me here",
-          "",
-          "<shared-location>",
-          "Place: T3 HQ",
-          "Address: 123 Main St, New York, NY",
-          "Coordinates: 40.7128, -74.006",
-          "Accuracy: ±5m",
-          "Map: https://maps.apple.com/?ll=40.7128,-74.006&q=T3%20HQ",
-          "</shared-location>",
-        ].join("\n"),
-      );
+      if (supportsSharedLocationContext) {
+        expect(call.input.message.text).toContain("t3-context://v1/location/");
+        expect(call.input.message.text).not.toContain("<shared-location>");
+        expect(call.input.message.context?.records).toEqual([
+          expect.objectContaining({
+            kind: "location",
+            payload: {
+              name: location.name,
+              address: location.address,
+              latitude: location.latitude,
+              longitude: location.longitude,
+              accuracy: location.accuracy,
+            },
+          }),
+        ]);
+      } else {
+        expect(call.input.message.text).toBe(
+          [
+            "Meet me here",
+            "",
+            "<shared-location>",
+            "Place: T3 HQ",
+            "Address: 123 Main St, New York, NY",
+            "Coordinates: 40.7128, -74.006",
+            "Accuracy: ±5m",
+            "Map: https://maps.apple.com/?ll=40.7128,-74.006&q=T3%20HQ",
+            "</shared-location>",
+          ].join("\n"),
+        );
+      }
       expect(call.input.message).toHaveProperty("attachments", []);
       expect(remainingMessages()).toEqual([]);
     },

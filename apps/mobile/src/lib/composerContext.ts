@@ -1,4 +1,8 @@
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import {
+  appendSharedLocations,
+  normalizeSharedLocationMessage,
+} from "@t3tools/shared/sharedLocation";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -10,6 +14,7 @@ import {
   type ReviewCommentContextRecord,
   type ScopedThreadRef,
   type ThreadContextRecord,
+  type SharedLocation,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
@@ -238,7 +243,24 @@ export function serializeComposerMessageForServer(
   text: string,
   context: OrchestrationMessageContext | undefined,
   supportsInlineMessageContext: boolean,
+  options?: {
+    readonly locations: ReadonlyArray<SharedLocation>;
+    readonly supportsSharedLocationContext: boolean;
+  },
 ): { text: string; context?: OrchestrationMessageContext } {
+  text = appendSharedLocations(text, options?.locations ?? []);
+  if (supportsInlineMessageContext && options?.supportsSharedLocationContext) {
+    return normalizeSharedLocationMessage({ text, ...(context ? { context } : {}) });
+  }
+  if (
+    supportsInlineMessageContext &&
+    context?.records.some((record) => record.kind === "location")
+  ) {
+    const locations = context.records.filter((record) => record.kind === "location");
+    text = serializeLegacyContextMessage({ text, records: locations });
+    const records = context.records.filter((record) => record.kind !== "location");
+    context = records.length > 0 ? { version: 1, records } : undefined;
+  }
   return supportsInlineMessageContext
     ? { text, ...(context ? { context } : {}) }
     : { text: serializeLegacyContextMessage({ text, records: context?.records ?? [] }) };

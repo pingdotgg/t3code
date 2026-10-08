@@ -35,7 +35,11 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
+import {
+  composerContextSendBlockReason,
+  reidentifyComposerContext,
+  serializeComposerMessageForServer,
+} from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -86,7 +90,6 @@ import {
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
-import { appendSharedLocations } from "../lib/sharedLocation";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
@@ -489,11 +492,11 @@ export function useThreadComposerState() {
     const edit = getQueuedRunEdit(threadKey);
     if (edit === null) return;
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
-    const text = appendSharedLocations(
-      draft.text.trim(),
-      draft.attachments.filter((attachment) => attachment.type === "location"),
-    );
-    if (text.length === 0) {
+    const text = draft.text.trim();
+    if (
+      text.length === 0 &&
+      !draft.attachments.some((attachment) => attachment.type === "location")
+    ) {
       // The server rejects an empty queued message, attachments or not.
       Alert.alert("Add a message", "A queued message cannot be left empty.");
       return;
@@ -524,16 +527,25 @@ export function useThreadComposerState() {
         draftAttachments: draft.attachments,
         uploaded: prepared.attachments,
       });
+      const message = serializeComposerMessageForServer(
+        text,
+        payload.context,
+        capabilities?.inlineMessageContext === true,
+        {
+          locations: draft.attachments.filter((attachment) => attachment.type === "location"),
+          supportsSharedLocationContext: capabilities?.sharedLocationContext === true,
+        },
+      );
       const result = await editQueuedRun({
         environmentId: thread.environmentId,
         input: {
           threadId: thread.id,
           runId: edit.runId,
-          text,
+          text: message.text,
           edit: {
             messageId: edit.messageId,
             attachments: payload.attachments,
-            ...(payload.context ? { context: payload.context } : {}),
+            ...(message.context ? { context: message.context } : {}),
           },
         },
       });

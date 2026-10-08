@@ -17,8 +17,6 @@ import {
 describe("project thread title", () => {
   it("keeps location markup and coordinates out of a location-only thread title", () => {
     const text = serializeSharedLocation({
-      id: "location-1",
-      type: "location",
       name: "Library",
       address: "100 Larkin St",
       latitude: 37.7793,

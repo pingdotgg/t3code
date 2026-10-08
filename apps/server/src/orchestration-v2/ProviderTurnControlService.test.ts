@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  ComposerContextId,
+  MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -27,6 +29,8 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { locationContextRecord } from "@t3tools/shared/sharedLocation";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -34,6 +38,79 @@ const modelSelection = {
   instanceId: providerInstanceId,
   model: "gpt-5.4",
 } satisfies ModelSelection;
+
+it.effect("delivers typed location context on steer through the control service", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:location-steer");
+    const providerSessionId = ProviderSessionId.make("session:location-steer");
+    const providerThreadId = ProviderThreadId.make("provider-thread:location-steer");
+    const providerTurnId = ProviderTurnId.make("provider-turn:location-steer");
+    const messageId = MessageId.make("message:location-steer");
+    const location = {
+      name: "North entrance",
+      address: "12 Example Street, Boston, MA",
+      latitude: 42.3521,
+      longitude: -71.0552,
+      accuracy: 18,
+    } as const;
+    const record = locationContextRecord(location, ComposerContextId.make("steer-location"));
+    const context = { version: 1, records: [record] } as const;
+    const message = {
+      id: messageId,
+      text: formatComposerContextReference({
+        kind: "location",
+        contextId: record.contextId,
+        label: record.label,
+      }),
+      context,
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    };
+    const providerThread = {
+      id: providerThreadId,
+      providerSessionId,
+      driver,
+    };
+    const providerTurn = { id: providerTurnId, providerThreadId, status: "running" };
+    const run = { id: RunId.make("run:location-steer") };
+    let deliveredText: string | undefined;
+    const runtime = {
+      steerTurn: ({ message: input }: { message: { readonly text: string } }) =>
+        Effect.sync(() => {
+          deliveredText = input.text;
+        }),
+    };
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getProviderControlContext: () =>
+              Effect.succeed({ providerThread, providerTurn, message, run } as never),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: () => Effect.succeed(Option.some(runtime as never)),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer({
+        threadId,
+        providerSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      });
+    }).pipe(Effect.provide(layerControl));
+
+    assert.include(deliveredText ?? "", "42.3521, -71.0552");
+    assert.include(deliveredText ?? "", "Do not infer present location in later turns.");
+    assert.equal((deliveredText?.match(/<context kind="location"/gu) ?? []).length, 1);
+  }),
+);
 
 function makeProjection(input: {
   readonly now: DateTime.Utc;

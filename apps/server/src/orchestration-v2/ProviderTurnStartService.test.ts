@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  ComposerContextId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -37,6 +38,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { locationContextRecord } from "@t3tools/shared/sharedLocation";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -171,6 +174,8 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  readonly startProvider?: boolean;
+  readonly context?: OrchestrationV2ThreadProjection["messages"][number]["context"];
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -225,6 +230,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
+    ...(input.context === undefined ? {} : { context: input.context }),
     attachments: [],
     streaming: false,
     createdBy: "user",
@@ -232,6 +238,7 @@ function makeLocalCommandHarness(input: {
     createdAt: now,
     updatedAt: now,
   };
+  let providerMessage: string | undefined;
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
       id: threadId,
@@ -414,7 +421,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.startProvider === true || input.failReadsAfterRunning === true
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -430,15 +437,43 @@ function makeLocalCommandHarness(input: {
                     lastError: null,
                   },
                   ensureThread: () => Effect.succeed(providerThread),
+                  ...(input.startProvider === true
+                    ? {
+                        startTurn: ({
+                          message: providerInput,
+                        }: {
+                          message: { readonly text: string };
+                        }) =>
+                          Effect.sync(() => {
+                            providerMessage = providerInput.text;
+                          }),
+                      }
+                    : {}),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
-  >(() =>
-    input.failReadsAfterRunning === true
-      ? Effect.void
-      : Effect.die("A local command must not start a native turn."),
+  >((startInput) =>
+    input.startProvider === true
+      ? startInput.session
+          .startTurn({
+            appThread: startInput.appThread,
+            threadId: startInput.run.threadId,
+            runId: startInput.run.id,
+            runOrdinal: startInput.run.ordinal,
+            providerTurnOrdinal: startInput.providerTurnOrdinal,
+            attemptId: startInput.attemptId,
+            rootNodeId: startInput.rootNode.id,
+            providerThread: startInput.providerThread,
+            message: startInput.message,
+            modelSelection: startInput.modelSelection,
+            runtimePolicy: startInput.runtimePolicy,
+          })
+          .pipe(Effect.ignore)
+      : input.failReadsAfterRunning === true
+        ? Effect.void
+        : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
@@ -536,6 +571,7 @@ function makeLocalCommandHarness(input: {
     startRootRun,
     tryHandlePromptCommand,
     events,
+    providerMessage: () => providerMessage,
     oldInstanceId,
     newInstanceId,
     attemptId,
@@ -713,6 +749,36 @@ effectIt.effect("keeps a thread-load failure retryable when terminal persistence
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
     expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("delivers typed location context to the provider on run start", () =>
+  Effect.gen(function* () {
+    const location = {
+      name: "North entrance",
+      address: "12 Example Street, Boston, MA",
+      latitude: 42.3521,
+      longitude: -71.0552,
+      accuracy: 18,
+    } as const;
+    const record = locationContextRecord(location, ComposerContextId.make("start-location"));
+    const context = { version: 1, records: [record] } as const;
+    const harness = makeLocalCommandHarness({
+      text: formatComposerContextReference({
+        kind: "location",
+        contextId: record.contextId,
+        label: record.label,
+      }),
+      context,
+      startProvider: true,
+    });
+
+    yield* harness.start;
+
+    const delivered = harness.providerMessage();
+    expect(delivered).toContain("42.3521, -71.0552");
+    expect(delivered).toContain("Do not infer present location in later turns.");
+    expect(delivered?.match(/<context kind="location"/gu)).toHaveLength(1);
   }),
 );
 

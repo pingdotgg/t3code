@@ -93,6 +93,11 @@ export function LocationAttachmentCard(props: {
             ? " · Accuracy unknown"
             : ` · ±${Math.round(location.accuracy)} m`}
         </AppText>
+        {location.capturedAt ? (
+          <AppText className="text-xs text-foreground-muted">
+            Captured {new Date(location.capturedAt).toLocaleString()}
+          </AppText>
+        ) : null}
         <View className="flex-row items-center gap-1.5">
           <SymbolView name="arrow.up.right" size={14} tintColorClassName="accent-icon" />
           <AppText className="font-t3-medium text-xs text-foreground">Open in Maps</AppText>

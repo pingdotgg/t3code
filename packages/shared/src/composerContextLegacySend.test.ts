@@ -63,6 +63,21 @@ const annotation = {
   ],
 } satisfies ComposerContextRecord;
 
+const location = {
+  version: 1,
+  contextId: ComposerContextId.make("location_1"),
+  kind: "location",
+  label: "Central Library",
+  payload: {
+    name: "Central Library",
+    address: "100 Main Street",
+    latitude: 40.7128,
+    longitude: -74.006,
+    accuracy: 12,
+    capturedAt: "2026-10-07T12:00:00.000Z",
+  },
+} satisfies ComposerContextRecord;
+
 describe("serializeLegacyContextMessage", () => {
   it("carries terminal payloads an older server would otherwise discard", () => {
     const text = `Look at ${formatComposerContextReference(terminal)} please`;
@@ -149,6 +164,20 @@ describe("serializeLegacyContextMessage", () => {
 
   it("keeps prose without context untouched", () => {
     expect(serializeLegacyContextMessage({ text: "just prose", records: [] })).toBe("just prose");
+  });
+
+  it("serializes a location reference as a complete legacy block with coordinates", () => {
+    const text = `Go to ${formatComposerContextReference(location)}`;
+    const legacy = serializeLegacyContextMessage({ text, records: [location] });
+
+    expect(legacy).not.toContain("t3-context://");
+    expect(legacy).toContain("<shared-location>");
+    expect(legacy).toContain("Place: Central Library");
+    expect(legacy).toContain("Address: 100 Main Street");
+    expect(legacy).toContain("Coordinates: 40.7128, -74.006");
+    expect(legacy).toContain("Accuracy: ±12m");
+    expect(legacy).toContain("Captured at: 2026-10-07T12:00:00.000Z");
+    expect(legacy).toContain("Map: https://maps.apple.com/?ll=40.7128,-74.006&q=Central%20Library");
   });
 
   it("appends review comments the text never referenced", () => {

@@ -228,6 +228,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { SharedLocationCard } from "./SharedLocationCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
   ContextChipShell,
@@ -242,10 +243,12 @@ import {
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
+  referencedSharedLocationRecords,
   resolveUserMessageContext,
   reviewCommentContextLabel,
   selectedMessageContextFragment,
 } from "~/lib/composerContextRecords";
+import { removeInlineContextReference } from "~/lib/composerContextReferences";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -2050,6 +2053,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userMessage = resolveUserMessagePresentation(row.message);
   const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
+  const sharedLocations = useMemo(
+    () => referencedSharedLocationRecords(resolvedContext),
+    [resolvedContext],
+  );
+  const messageBodyText = useMemo(() => {
+    let text = resolvedContext.text;
+    for (const record of sharedLocations) {
+      text = removeInlineContextReference(text, record.contextId).prompt;
+    }
+    return text;
+  }, [resolvedContext.text, sharedLocations]);
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
@@ -2318,11 +2332,26 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         <div onCopyCapture={onBodyCopyCapture}>
           <CollapsibleUserMessageBody
-            text={resolvedContext.text}
+            text={messageBodyText}
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
           />
+          {sharedLocations.length > 0 ? (
+            <div className="mt-2 flex flex-col gap-2">
+              {sharedLocations.map((record) => (
+                <SharedLocationCard
+                  key={record.contextId}
+                  record={record}
+                  copyMarkdown={formatComposerContextReference({
+                    kind: "location",
+                    contextId: record.contextId as ComposerContextId,
+                    label: record.label,
+                  })}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
       {row.projectedItem &&
@@ -4489,6 +4518,12 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
+    },
+    {
+      kind: "location",
+      canRender: (record) => record.kind === "location",
+      // Location references are removed from Markdown and shown once as standalone cards.
+      render: () => null,
     },
   ],
   fallback: (_kind, _record, context) => <UnavailableUserMessageContextChip {...context} />,

@@ -13,7 +13,7 @@ import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
-import { parseSharedLocations } from "./sharedLocation";
+import { separateComposerLocationContext } from "./composerLocationContext";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -43,7 +43,10 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const shared = parseSharedLocations(spec.text);
+  const shared = separateComposerLocationContext({
+    text: spec.text,
+    ...(spec.context ? { context: spec.context } : {}),
+  });
   const title = deriveThreadTitleSeed({
     text: shared.text,
     attachments: spec.uploadedAttachments,

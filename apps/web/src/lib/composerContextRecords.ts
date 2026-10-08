@@ -9,6 +9,7 @@ import type {
   FileContextRecord,
   ImageContextRecord,
   KnownComposerContextRecord,
+  LocationContextRecord,
   MessageId,
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
@@ -21,6 +22,7 @@ import type {
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
+import { normalizeSharedLocationMessage } from "@t3tools/shared/sharedLocation";
 import {
   collectComposerContextReferences,
   sanitizeComposerContextLabel,
@@ -349,7 +351,7 @@ export function buildMessageContext(input: {
 export function asKnownContextRecord(
   record: ComposerContextRecord | undefined,
 ): KnownComposerContextRecord | undefined {
-  if (!record || "payload" in record) return undefined;
+  if (!record || ("payload" in record && record.kind !== "location")) return undefined;
   return record as KnownComposerContextRecord;
 }
 
@@ -370,6 +372,22 @@ export interface ResolvedUserMessageContext {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
   recordsById: ReadonlyMap<string, ComposerContextRecord>;
+}
+
+/** Locations render as standalone cards, once per referenced record. */
+export function referencedSharedLocationRecords(
+  context: ResolvedUserMessageContext,
+): ReadonlyArray<LocationContextRecord> {
+  const seen = new Set<string>();
+  const locations: LocationContextRecord[] = [];
+  for (const reference of collectComposerContextReferences(context.text)) {
+    if (seen.has(reference.contextId)) continue;
+    const record = context.recordsById.get(reference.contextId);
+    if (record?.kind !== "location") continue;
+    seen.add(reference.contextId);
+    locations.push(record as LocationContextRecord);
+  }
+  return locations;
 }
 
 /**
@@ -406,13 +424,19 @@ export function resolveUserMessageContext(message: {
   text: string;
   context?: OrchestrationMessageContext | undefined;
 }): ResolvedUserMessageContext {
-  const resolved = message.context
-    ? { text: message.text, records: message.context.records }
-    : upgradeLegacyContextMessage(message.text);
+  const normalized = normalizeSharedLocationMessage({
+    text: message.text,
+    ...(message.context ? { context: message.context } : {}),
+  });
+  const upgraded = upgradeLegacyContextMessage(normalized.text);
+  const recordsById = new Map<string, ComposerContextRecord>();
+  for (const record of [...(normalized.context?.records ?? []), ...upgraded.records]) {
+    if (!recordsById.has(record.contextId)) recordsById.set(record.contextId, record);
+  }
   return {
-    text: resolved.text,
-    records: resolved.records,
-    recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
+    text: upgraded.text,
+    records: Array.from(recordsById.values()),
+    recordsById,
   };
 }
 

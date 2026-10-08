@@ -6,7 +6,11 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
-import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import {
+  expandLocationContextReferences,
+  importPastedComposerText,
+  readPastedComposerContext,
+} from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -4584,10 +4588,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
-      const rewrittenContextIds = entry.records
-        ? importContextRecords(entry.records, null)
-        : new Map<string, string>();
-      const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
+      const restorableRecords = entry.records?.filter((record) => record.kind !== "location") ?? [];
+      const rewrittenContextIds =
+        restorableRecords.length > 0
+          ? importContextRecords(restorableRecords, null)
+          : new Map<string, string>();
+      const restoredPromptText = expandLocationContextReferences(entry.prompt, entry.records ?? []);
+      const restoredPrompt = replaceComposerContextReferences(restoredPromptText, (reference) => {
         const contextId = rewrittenContextIds.get(reference.contextId);
         return contextId
           ? formatInlineContextReference({
