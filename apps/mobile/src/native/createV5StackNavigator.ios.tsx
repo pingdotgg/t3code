@@ -279,6 +279,7 @@ export function V5StackView(props: V5StackViewProps) {
   );
   return (
     <NativeStackView
+      presentationEnvelope
       {...props}
       descriptors={descriptors}
       state={{ ...props.state, routes, index: routes.length - 1, preloadedRoutes: [] }}
