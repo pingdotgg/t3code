@@ -1,4 +1,4 @@
-import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { memo, type MouseEventHandler } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -79,7 +79,7 @@ const formatPendingPrimaryActionLabel = (input: {
 const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
 
-const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
+const preventPointerFocus: MouseEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
 
@@ -112,6 +112,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
+    : undefined;
+  // Menu triggers open on mousedown, which a canceled pointerdown suppresses,
+  // so they keep editor focus by canceling mousedown instead.
+  const menuTriggerFocusProps = preserveComposerFocusOnPointerDown
+    ? { onMouseDown: preventPointerFocus }
     : undefined;
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const shortcutModifiers = useShortcutModifierState();
@@ -239,7 +244,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
                 )}
                 aria-label="Implementation actions"
-                {...pointerFocusProps}
+                {...menuTriggerFocusProps}
                 disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               />
             }
@@ -302,7 +307,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
                 )}
                 aria-label="Send options"
-                {...pointerFocusProps}
+                {...menuTriggerFocusProps}
                 disabled={sendBlocked || !hasSendableContent}
               />
             }
