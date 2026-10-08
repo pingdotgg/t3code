@@ -1344,4 +1344,62 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
     }),
   );
+
+  it.effect("starts the connector when the pin landed but its first probe failed", () =>
+    Effect.gen(function* () {
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      const missing = { status: "missing" as const, version: RelayClient.CLOUDFLARED_VERSION };
+      let installed = false;
+      // The resolve right after the install misses the new binary.
+      let missedProbes = 0;
+      const spawned = yield* Deferred.make<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 11, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => {
+              if (!installed) return missing;
+              if (missedProbes === 0) {
+                missedProbes += 1;
+                return missing;
+              }
+              return pinnedClient;
+            }),
+            install: Effect.sync(() => {
+              installed = true;
+              return pinnedClient;
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      expect(
+        yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" }),
+      ).toMatchObject({ status: "failed", failure: "not-installed" });
+      yield* Effect.yieldNow;
+      expect(Option.isNone(yield* Deferred.poll(spawned))).toBe(true);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Deferred.await(spawned)).toBe(pinnedClient.executablePath);
+    }),
+  );
 });
