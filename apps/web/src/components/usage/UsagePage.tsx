@@ -786,67 +786,77 @@ export function UsagePage() {
                       </tbody>
                     </table>
                   ) : (
-                    <table className="w-full table-fixed text-sm">
-                      <colgroup>
-                        <col className="w-2/5" />
-                        {activeProviders.map((provider) => (
-                          <col key={provider} style={{ width: timeValueColumnWidth }} />
-                        ))}
-                        <col style={{ width: timeValueColumnWidth }} />
-                        <col style={{ width: timeValueColumnWidth }} />
-                      </colgroup>
-                      <thead>
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
+                    <div
+                      className="overflow-x-auto"
+                      role="region"
+                      aria-label="Usage breakdown by time"
+                      tabIndex={0}
+                    >
+                      <table
+                        className="w-full table-fixed text-sm"
+                        style={{ minWidth: `${(activeProviders.length + 2) * 8}rem` }}
+                      >
+                        <colgroup>
+                          <col className="w-24 sm:w-2/5" />
                           {activeProviders.map((provider) => (
-                            <th key={provider} className="py-2 text-right font-normal">
-                              {PROVIDER_PRESENTATION[provider].label}
-                            </th>
+                            <col key={provider} style={{ width: timeValueColumnWidth }} />
                           ))}
-                          <th className="py-2 text-right font-normal">Total</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {breakdownPeriods.length === 0 ? (
-                          <tr>
-                            <td
-                              colSpan={activeProviders.length + 3}
-                              className="py-6 text-center text-muted-foreground"
-                            >
-                              No activity in this window.
-                            </td>
+                          <col style={{ width: timeValueColumnWidth }} />
+                          <col style={{ width: timeValueColumnWidth }} />
+                        </colgroup>
+                        <thead>
+                          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                            <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
+                            {activeProviders.map((provider) => (
+                              <th key={provider} className="py-2 text-right font-normal">
+                                {PROVIDER_PRESENTATION[provider].label}
+                              </th>
+                            ))}
+                            <th className="py-2 text-right font-normal">Total</th>
+                            <th className="py-2 text-right font-normal">Tokens</th>
                           </tr>
-                        ) : (
-                          breakdownPeriods.map((period) => (
-                            <tr
-                              key={"hourStart" in period ? period.hourStart : period.day}
-                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
-                            >
-                              <td className="py-2 text-foreground">
-                                {"hourStart" in period
-                                  ? formatHourShort(period.hourStart, window.timeZone)
-                                  : formatDayShort(period.day)}
-                              </td>
-                              {activeProviders.map((provider) => (
-                                <td
-                                  key={provider}
-                                  className="py-2 text-right text-muted-foreground tabular-nums"
-                                >
-                                  {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
-                                </td>
-                              ))}
-                              <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(period.costUsd)}
-                              </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatTokens(period.totalTokens)}
+                        </thead>
+                        <tbody>
+                          {breakdownPeriods.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={activeProviders.length + 3}
+                                className="py-6 text-center text-muted-foreground"
+                              >
+                                No activity in this window.
                               </td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            breakdownPeriods.map((period) => (
+                              <tr
+                                key={"hourStart" in period ? period.hourStart : period.day}
+                                className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                              >
+                                <td className="py-2 text-foreground">
+                                  {"hourStart" in period
+                                    ? formatHourShort(period.hourStart, window.timeZone)
+                                    : formatDayShort(period.day)}
+                                </td>
+                                {activeProviders.map((provider) => (
+                                  <td
+                                    key={provider}
+                                    className="py-2 text-right text-muted-foreground tabular-nums"
+                                  >
+                                    {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                                  </td>
+                                ))}
+                                <td className="py-2 text-right text-foreground tabular-nums">
+                                  {formatUsd(period.costUsd)}
+                                </td>
+                                <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                  {formatTokens(period.totalTokens)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </section>
               </>
