@@ -20,8 +20,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as UrlParams from "effect/http/UrlParams";
 
-import { OpenCode2Client } from "@t3tools/provider-opencode/testing";
-import { OpenCode2Server } from "@t3tools/provider-opencode/testing";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
+import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
@@ -32,7 +32,7 @@ import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
 } from "./OpenCodeAdapterV2.testkit.ts";
-import { OpenCode2Adapter as OpenCode2AdapterV2 } from "@t3tools/provider-opencode/testing";
+import * as OpenCode2Adapter from "@t3tools/provider-opencode/server/v2/adapter";
 
 export const OPENCODE2_HTTP_PROTOCOL = "opencode2-http.sse" as const;
 const BASE_URL = "http://opencode2.replay";
@@ -262,7 +262,7 @@ const makeReplayAdapter = (
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
-    return yield* OpenCode2AdapterV2.make(ProviderInstanceId.make("opencode")).pipe(
+    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode")).pipe(
       Effect.provideService(OpenCode2Server.OpenCode2Server, server),
     );
   });

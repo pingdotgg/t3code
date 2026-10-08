@@ -6,7 +6,8 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { OpenCodeAdapterV2Driver, OpenCodeRuntime } from "@t3tools/provider-opencode/server";
+import { OpenCodeAdapterV2Driver } from "@t3tools/provider-opencode/server";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";

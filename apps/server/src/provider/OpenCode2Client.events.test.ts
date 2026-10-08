@@ -10,7 +10,7 @@ import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
-import { OpenCode2Client } from "@t3tools/provider-opencode/testing";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 
 const RECORDING = new URL(
   "../orchestration-v2/testkit/fixtures/opencode2_simple/opencode_transcript.ndjson",

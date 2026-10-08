@@ -18,6 +18,30 @@
     "./testing": {
       "types": "./src/testing.ts",
       "import": "./src/testing.ts"
+    },
+    "./server/OpenCodeRuntime": {
+      "types": "./src/server/OpenCodeRuntime.ts",
+      "import": "./src/server/OpenCodeRuntime.ts"
+    },
+    "./server/OpenCodeServerLedger": {
+      "types": "./src/server/OpenCodeServerLedger.ts",
+      "import": "./src/server/OpenCodeServerLedger.ts"
+    },
+    "./server/v2/adapter": {
+      "types": "./src/server/v2/adapter.ts",
+      "import": "./src/server/v2/adapter.ts"
+    },
+    "./server/v2/OpenCode2Client": {
+      "types": "./src/server/v2/OpenCode2Client.ts",
+      "import": "./src/server/v2/OpenCode2Client.ts"
+    },
+    "./server/v2/OpenCode2Server": {
+      "types": "./src/server/v2/OpenCode2Server.ts",
+      "import": "./src/server/v2/OpenCode2Server.ts"
+    },
+    "./server/v2/textGeneration": {
+      "types": "./src/server/v2/textGeneration.ts",
+      "import": "./src/server/v2/textGeneration.ts"
     }
   },
   "scripts": {

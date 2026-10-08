@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
-import { OpenCode2Server } from "@t3tools/provider-opencode/testing";
-import { OpenCode2TextGeneration } from "@t3tools/provider-opencode/testing";
+import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
+import * as OpenCode2TextGeneration from "@t3tools/provider-opencode/server/v2/textGeneration";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
 
 const layer = layerTestProviderHost().pipe(Layer.provideMerge(NodeServices.layer));
