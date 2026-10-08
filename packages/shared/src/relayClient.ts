@@ -30,6 +30,11 @@ export const CLOUDFLARED_VERSION = "2026.10.0";
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
+// Generous bound for a ~40MB binary download; without it a stalled
+// connection parks the install forever (same unbounded-wait family as the
+// other relay/cloud network calls).
+const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
+
 export type RelayClientExecutableSource = "override" | "managed" | "path";
 
 export type RelayClientStatus =
@@ -441,6 +446,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   ) {
     yield* report("downloading");
     const response = yield* httpClient.execute(HttpClientRequest.get(asset.url)).pipe(
+      Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.mapError(
         (cause) =>
@@ -453,6 +459,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     );
     const bytes = new Uint8Array(
       yield* response.arrayBuffer.pipe(
+        Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
         Effect.mapError(
           (cause) =>
             new RelayClientInstallError({
