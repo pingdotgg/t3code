@@ -53,13 +53,13 @@
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "diff": "8.0.3",
-    "effect": "catalog:",
-    "effect-acp": "workspace:*"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "effect-acp": "workspace:*",
     "vite-plus": "catalog:"
   }
 }
