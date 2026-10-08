@@ -767,11 +767,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
-      const document = queryAt(0);
-      expect(document).toContain(
-        's0: repository(owner: "acme", name: "web") { pullRequest(number: 7)',
+      expect(queryAt(0)).toContain(
+        "s0: repository(owner: $s0_owner, name: $s0_name) { pullRequest(number: $s0_number)",
       );
-      expect(document).toContain("pullRequest(number: 8)");
+      expect(varsAt(0)).toMatchObject({
+        s0_owner: "acme",
+        s0_name: "web",
+        s0_number: 7,
+        s1_number: 8,
+      });
     }),
   );
 
@@ -815,10 +819,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
       // GitHub had no answer for #8, so its watch reads it in full.
       expect(eight).toBeNull();
       expect(mockedExecute).toHaveBeenCalledOnce();
-      const call = callAt(0);
-      expect(call.kind === "graphql" ? call.query : "").toContain(
-        'w1: repository(owner: "acme", name: "web") { pullRequest(number: 8)',
+      expect(queryAt(0)).toContain(
+        "w1: repository(owner: $w1_owner, name: $w1_name) { pullRequest(number: $w1_number)",
       );
+      expect(varsAt(0)).toMatchObject({ w1_owner: "acme", w1_name: "web", w1_number: 8 });
     }),
   );
 
@@ -1104,6 +1108,37 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       assert.strictEqual(batch.items.length, 10);
+      assert.isTrue(batch.truncated);
+    }),
+  );
+
+  it.effect("reports truncation when GitHub repeats a cursor before the page is full", () =>
+    Effect.gen(function* () {
+      // Two pages of 100 that hand back the same cursor, for a page of 250.
+      const repeating = output(
+        encodeJson({
+          data: {
+            search: {
+              pageInfo: { hasNextPage: true, endCursor: "same" },
+              nodes: rows(100, 1),
+            },
+          },
+        }),
+      );
+      mockedExecute.mockReturnValue(Effect.succeed(repeating));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 250,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.isTrue(batch.truncated);
     }),
   );
@@ -1408,11 +1443,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.continues).toBe(false);
       expect(mockedStackMemberships).toHaveBeenCalledTimes(1);
       const membership = mockedStackMemberships.mock.calls[0]?.[0];
-      const query = membership?.kind === "graphql" ? membership.query : "";
-      expect(query).toContain("pullRequest(number: 4)");
-      expect(query).toContain("pullRequest(number: 5)");
-      expect(query).not.toContain("pullRequest(number: 1)");
-      expect(query).not.toContain("pullRequest(number: 6)");
+      const numbers = Object.entries(
+        membership?.kind === "graphql" ? (membership.variables ?? {}) : {},
+      )
+        .filter(([name]) => name.endsWith("_number"))
+        .map(([, number]) => number);
+      expect(numbers).toEqual([4, 5]);
     }),
   );
 
@@ -1420,7 +1456,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(27, 1))));
       mockedStackMemberships.mockImplementation((input) =>
-        input.kind === "graphql" && input.query.includes("pullRequest(number: 26)")
+        input.kind === "graphql" && Object.values(input.variables ?? {}).includes(26)
           ? Effect.fail(
               new GitHubApi.GitHubApiResponseError({
                 host: "github.com",
@@ -1513,9 +1549,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { repository: "acme/web", number: 1, additions: 4, deletions: 1 },
         { repository: "acme/web", number: 26, additions: 4, deletions: 1 },
       ]);
-      const document = queryAt(0);
-      expect(document).toContain('s0: repository(owner: "acme", name: "web")');
-      expect(document).toContain("pullRequest(number: 25)");
+      expect(queryAt(0)).toContain("s0: repository(owner: $s0_owner, name: $s0_name)");
+      expect(varsAt(0)).toMatchObject({ s0_owner: "acme", s0_name: "web", s24_number: 25 });
     }),
   );
 
@@ -2611,6 +2646,38 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 1_000,
       });
       expect(error.message).toContain("instead of uniquely matching #7");
+    }),
+  );
+
+  it.effect("refuses workflow approval when the head list stops before its end", () =>
+    Effect.gen(function* () {
+      // GitHub hands the same cursor back, so the second page is never read past. #7 looks
+      // unique on what was read, and an unread page could still hold another head like it.
+      const repeating = heads([7]);
+      repeating.data.repository.pullRequests.pageInfo = {
+        hasNextPage: true,
+        endCursor: "same",
+      } as never;
+      workflowApprovalRoutes(() => crossRepositoryDetail(), repeating, workflowRuns([]));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.listWorkflowRunsRequiringApproval({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          headSha: "abc123",
+          headBranch: "feat/page",
+          headRepositoryOwner: "octocat",
+          isCrossRepository: true,
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "GitHubWorkflowApprovalRefusedError",
+        reason: "head-list-truncated",
+      });
     }),
   );
 
@@ -4386,9 +4453,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 5);
+      // The same cursor twice is a page GitHub already gave, so reading stops there.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.isTrue(viewed.truncated);
-      assert.strictEqual(viewed.files.length, 5);
     }),
   );
 
@@ -4420,8 +4487,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(queryAt(1)).toContain("f1: unmarkFileAsViewed");
       expect(varsAt(1)).toEqual({
         pullRequestId: "PR_1",
-        path0: "src/a.ts",
-        path1: "src/b.ts",
+        f0_path: "src/a.ts",
+        f1_path: "src/b.ts",
       });
     }),
   );
