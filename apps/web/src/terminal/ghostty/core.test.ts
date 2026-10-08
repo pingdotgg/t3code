@@ -154,7 +154,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     });
   });
 
-  it("reuses a grown grapheme buffer and releases it on disposal", async () => {
+  it("preserves variable-length graphemes when a packed row grows", async () => {
     const core = await createCore();
     const runtime = await loadGhosttyRuntime();
     core.write("ASCII");
@@ -162,26 +162,42 @@ describe("GhosttyTerminalCore snapshots", () => {
 
     const grapheme = `z${"\u0301".repeat(256)}`;
     core.resetAndWrite(`${grapheme}X`);
-    const alloc = vi.spyOn(runtime, "alloc");
-    const free = vi.spyOn(runtime, "free");
     expect(
       core
         .snapshot()
         .rowData[0]!.cells.slice(0, 2)
         .map((cell) => cell.text),
     ).toEqual([grapheme, "X"]);
-    expect(alloc).toHaveBeenCalledTimes(1);
-    const allocation = alloc.mock.results[0]!;
-    if (allocation.type !== "return") throw new Error("Grapheme allocation did not return");
-    const buffer = allocation.value;
-    const capacity = alloc.mock.calls[0]![0];
-
+    runtime.memory.grow(1);
     core.write("\rQ\u0301");
-    alloc.mockClear();
     expect(core.snapshot().rowData[0]!.cells[0]!.text).toBe("Q\u0301");
-    expect(alloc).not.toHaveBeenCalled();
-    core.dispose();
-    expect(free).toHaveBeenCalledWith(buffer, capacity);
+    core.resize(24, 3, 8, 16);
+    const larger = `a${"\u0301".repeat(512)}`;
+    core.resetAndWrite(`${larger}界🙂${grapheme}`);
+    expect(
+      core
+        .snapshot()
+        .rowData[0]!.cells.slice(0, 6)
+        .map((cell) => cell.text),
+    ).toEqual([larger, "界", "", "🙂", "", grapheme]);
+  });
+
+  it("keeps wrapped and unchanged rows when only one row becomes dirty", async () => {
+    const core = await createCore();
+    core.write(`${"a".repeat(12)}b\x1b[3;1H`);
+    const first = core.snapshot();
+    const wrapped = first.rowData[0]!;
+    const continuation = first.rowData[1]!;
+    expect(wrapped.wrapsToNext).toBe(true);
+    expect(continuation.isWrapContinuation).toBe(true);
+
+    core.write("Z");
+    const next = core.snapshot();
+    expect([...next.dirtyRows]).toEqual([2]);
+    expect(next.rowData[0]).toBe(wrapped);
+    expect(next.rowData[1]).toBe(continuation);
+    expect(next.rowData[2]!.text).toBe("Z");
+    expect(core.snapshot().dirtyRows.size).toBe(0);
   });
 
   it.each(["varied", "identical"] as const)(

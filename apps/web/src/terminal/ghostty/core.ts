@@ -33,23 +33,11 @@ const RENDER_DATA = {
 
 const ROW_DATA = {
   dirty: 1,
-  raw: 2,
-  cells: 3,
 } as const;
 
-const CELL_DATA = {
-  raw: 1,
-  style: 2,
-  graphemesLength: 3,
-  graphemes: 4,
-  background: 5,
-  foreground: 6,
-  selected: 7,
-} as const;
-
-const RAW_CELL_DATA = {
-  wide: 3,
-} as const;
+// Layout owned by scripts/ghostty-pack-row.c. Cells carry relative text offsets.
+const PACKED_ROW_HEADER_SIZE = 8;
+const PACKED_CELL_SIZE = 24;
 
 export const GHOSTTY_CELL_WIDE = {
   narrow: 0,
@@ -207,9 +195,8 @@ export class GhosttyTerminalCore {
   private ptyWriterId = 0;
   private ptyWriter: ((data: string) => void) | null = null;
   private scratch = 0;
-  private graphemes = 0;
-  private graphemeCapacity = 0;
-  private style = 0;
+  private packedRowAllocation = 0;
+  private packedRowCapacity = 0;
   private scrollbar = 0;
   private rows: GhosttyRow[] = [];
   private disposed = false;
@@ -307,9 +294,6 @@ export class GhosttyTerminalCore {
     this.mouseEvent = this.runtime.readPointer(this.mouseEventSlot);
 
     this.scratch = this.runtime.alloc(16);
-    const styleSize = this.runtime.layout("GhosttyStyle").size;
-    this.style = this.runtime.alloc(styleSize);
-    this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
     this.scrollbar = this.runtime.alloc(this.runtime.layout("GhosttyTerminalScrollbar").size);
     this.setTheme(theme);
     this.resize(cols, rows, cellWidth, cellHeight);
@@ -876,12 +860,13 @@ export class GhosttyTerminalCore {
       if (this.ptyWriterId) this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
       this.runtime.call("ghostty_terminal_free", this.terminal);
     }
-    if (this.style) this.runtime.free(this.style, this.runtime.layout("GhosttyStyle").size);
     if (this.scrollbar) {
       this.runtime.free(this.scrollbar, this.runtime.layout("GhosttyTerminalScrollbar").size);
     }
     if (this.scratch) this.runtime.free(this.scratch, 16);
-    if (this.graphemes) this.runtime.free(this.graphemes, this.graphemeCapacity);
+    if (this.packedRowAllocation) {
+      this.runtime.free(this.packedRowAllocation, this.packedRowCapacity + 3);
+    }
     for (const slot of [
       this.mouseEventSlot,
       this.mouseEncoderSlot,
@@ -920,117 +905,83 @@ export class GhosttyTerminalCore {
     defaultForeground: GhosttyColor,
     defaultBackground: GhosttyColor,
   ): GhosttyRow {
-    this.assertSuccess(
-      "ghostty_render_state_row_get(raw)",
-      this.runtime.call("ghostty_render_state_row_get", iterator, ROW_DATA.raw, this.scratch),
-    );
-    const rawRow = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
-    this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
-    this.assertSuccess(
-      "ghostty_row_get(wrap continuation)",
-      this.runtime.call("ghostty_row_get", rawRow, 2, this.scratch + 8),
-    );
-    const isWrapContinuation = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
-    this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
-    this.assertSuccess(
-      "ghostty_row_get(wrap)",
-      this.runtime.call("ghostty_row_get", rawRow, 1, this.scratch + 8),
-    );
-    const wrapsToNext = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
-
-    this.assertSuccess(
-      "ghostty_render_state_row_get(cells)",
-      this.runtime.call(
-        "ghostty_render_state_row_get",
-        iterator,
-        ROW_DATA.cells,
-        this.rowCellsSlot,
-      ),
-    );
+    // Allocate before taking views: a different terminal may also have grown
+    // the shared memory since the previous frame. The C ABI writes UTF-32.
+    this.ensurePackedRowCapacity(PACKED_ROW_HEADER_SIZE + cols * (PACKED_CELL_SIZE + 4));
+    let output = Math.ceil(this.packedRowAllocation / 4) * 4;
     const cellsIterator = this.runtime.readPointer(this.rowCellsSlot);
-    const { size: styleSize, fields: styleFields } = this.runtime.layout("GhosttyStyle");
-    const cells: GhosttyCell[] = [];
-    while (
-      cells.length < cols &&
-      this.runtime.call("ghostty_render_state_row_cells_next", cellsIterator) !== 0
-    ) {
-      let foreground = this.getCellColor(cellsIterator, CELL_DATA.foreground, defaultForeground);
-      let background = this.getCellColor(cellsIterator, CELL_DATA.background, defaultBackground);
-      this.runtime.bytes(this.style, styleSize).fill(0);
-      this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
-      this.runtime.call(
-        "ghostty_render_state_row_cells_get",
+    let result = this.runtime.call(
+      "t3_ghostty_pack_row",
+      iterator,
+      cellsIterator,
+      cols,
+      output,
+      this.packedRowCapacity,
+      this.scratch,
+    );
+    if (result === GHOSTTY_OUT_OF_SPACE) {
+      this.ensurePackedRowCapacity(this.runtime.view(this.scratch, 4).getUint32(0, true));
+      output = Math.ceil(this.packedRowAllocation / 4) * 4;
+      result = this.runtime.call(
+        "t3_ghostty_pack_row",
+        iterator,
         cellsIterator,
-        CELL_DATA.style,
-        this.style,
+        cols,
+        output,
+        this.packedRowCapacity,
+        this.scratch,
       );
-      const graphemeLength = this.getCellU32(cellsIterator, CELL_DATA.graphemesLength);
-      let text = "";
-      if (graphemeLength > 0) {
-        const bufferSize = graphemeLength * 4;
-        if (bufferSize > this.graphemeCapacity) {
-          const capacity = Math.max(bufferSize, this.graphemeCapacity * 2);
-          const buffer = this.runtime.alloc(capacity);
-          this.runtime.free(this.graphemes, this.graphemeCapacity);
-          this.graphemes = buffer;
-          this.graphemeCapacity = capacity;
-        }
-        if (
-          this.runtime.call(
-            "ghostty_render_state_row_cells_get",
-            cellsIterator,
-            CELL_DATA.graphemes,
-            this.graphemes,
-          ) === GHOSTTY_SUCCESS
-        ) {
-          // Read through a DataView: the byte-array allocator guarantees no
-          // 4-byte alignment, which a Uint32Array view would require.
-          const codepointView = this.runtime.view(this.graphemes, bufferSize);
-          text = ghosttyCellText(codepointView, graphemeLength);
-        }
-      }
-      let wide = 0;
-      if (text.length === 0 && cells.at(-1)?.text.length) {
-        this.assertSuccess(
-          "ghostty_render_state_row_cells_get(raw)",
-          this.runtime.call(
-            "ghostty_render_state_row_cells_get",
-            cellsIterator,
-            CELL_DATA.raw,
-            this.scratch,
-          ),
-        );
-        const rawCell = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
-        this.runtime.view(this.scratch + 8, 4).setUint32(0, 0, true);
-        this.assertSuccess(
-          "ghostty_cell_get(wide)",
-          this.runtime.call("ghostty_cell_get", rawCell, RAW_CELL_DATA.wide, this.scratch + 8),
-        );
-        wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true);
-      }
-      const selected = this.getCellBool(cellsIterator, CELL_DATA.selected);
-      // Read the style after allocation and ABI calls, which can grow WASM memory.
-      const styleView = this.runtime.view(this.style, styleSize);
-      if (styleView.getUint8(styleFields.inverse!.offset) !== 0) {
-        [foreground, background] = [background, foreground];
-      }
-      if (styleView.getUint8(styleFields.faint!.offset) !== 0) {
-        foreground = blend(foreground, background);
-      }
+    }
+    this.assertSuccess("t3_ghostty_pack_row", result);
+    const view = this.runtime.view(output, this.packedRowCapacity);
+    const rowFlags = view.getUint32(0, true);
+    const cellCount = view.getUint32(4, true);
+    const cells: GhosttyCell[] = [];
+    for (let index = 0; index < cellCount; index += 1) {
+      const offset = PACKED_ROW_HEADER_SIZE + index * PACKED_CELL_SIZE;
+      const flags = view.getUint32(offset, true);
+      const graphemeLength = view.getUint32(offset + 4, true);
+      const textOffset = view.getUint32(offset + 8, true);
+      const text = graphemeLength
+        ? ghosttyCellText(
+            this.runtime.view(output + textOffset, graphemeLength * 4),
+            graphemeLength,
+          )
+        : "";
+      let foreground =
+        flags & 1
+          ? {
+              r: view.getUint8(offset + 16),
+              g: view.getUint8(offset + 17),
+              b: view.getUint8(offset + 18),
+            }
+          : defaultForeground;
+      let background =
+        flags & 2
+          ? {
+              r: view.getUint8(offset + 19),
+              g: view.getUint8(offset + 20),
+              b: view.getUint8(offset + 21),
+            }
+          : defaultBackground;
+      if (flags & (1 << 5)) [foreground, background] = [background, foreground];
+      if (flags & (1 << 4)) foreground = blend(foreground, background);
       cells.push({
         text,
-        wide,
+        wide: view.getUint32(offset + 12, true),
         foreground,
         background,
-        bold: styleView.getUint8(styleFields.bold!.offset) !== 0,
-        italic: styleView.getUint8(styleFields.italic!.offset) !== 0,
-        invisible: styleView.getUint8(styleFields.invisible!.offset) !== 0,
-        strikethrough: styleView.getUint8(styleFields.strikethrough!.offset) !== 0,
-        overline: styleView.getUint8(styleFields.overline!.offset) !== 0,
-        underline: styleView.getInt32(styleFields.underline!.offset, true) !== 0,
-        selected,
+        bold: (flags & (1 << 2)) !== 0,
+        italic: (flags & (1 << 3)) !== 0,
+        invisible: (flags & (1 << 6)) !== 0,
+        strikethrough: (flags & (1 << 7)) !== 0,
+        overline: (flags & (1 << 8)) !== 0,
+        underline: (flags & (1 << 9)) !== 0,
+        selected: (flags & (1 << 10)) !== 0,
       });
     }
+    const isWrapContinuation = (rowFlags & 2) !== 0;
+    const wrapsToNext = (rowFlags & 1) !== 0;
     while (cells.length < cols) cells.push(this.emptyCell(defaultForeground, defaultBackground));
     return {
       cells,
@@ -1177,34 +1128,15 @@ export class GhosttyTerminalCore {
     );
   }
 
-  private getCellU32(iterator: number, data: number): number {
-    this.runtime.bytes(this.scratch, 4).fill(0);
-    const result = this.runtime.call(
-      "ghostty_render_state_row_cells_get",
-      iterator,
-      data,
-      this.scratch,
-    );
-    return result === GHOSTTY_SUCCESS ? this.runtime.view(this.scratch, 4).getUint32(0, true) : 0;
-  }
-
-  private getCellBool(iterator: number, data: number): boolean {
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
-    return (
-      this.runtime.call("ghostty_render_state_row_cells_get", iterator, data, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
-    );
-  }
-
-  private getCellColor(iterator: number, data: number, fallback: GhosttyColor): GhosttyColor {
-    this.runtime.bytes(this.scratch, 3).fill(0);
-    const result = this.runtime.call(
-      "ghostty_render_state_row_cells_get",
-      iterator,
-      data,
-      this.scratch,
-    );
-    return result === GHOSTTY_SUCCESS ? this.readColor(this.scratch) : fallback;
+  private ensurePackedRowCapacity(required: number): void {
+    if (required <= this.packedRowCapacity) return;
+    const capacity = Math.max(required, this.packedRowCapacity * 2);
+    // Byte-array allocation is not guaranteed to be aligned. Leave room to
+    // align the output while retaining the original allocation for disposal.
+    const allocation = this.runtime.alloc(capacity + 3);
+    this.runtime.free(this.packedRowAllocation, this.packedRowCapacity + 3);
+    this.packedRowAllocation = allocation;
+    this.packedRowCapacity = capacity;
   }
 
   private readColor(pointer: number): GhosttyColor {

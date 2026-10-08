@@ -91,13 +91,35 @@ ensure_ghostty_source() {
 
 ensure_zig
 ensure_ghostty_source
+require_cmd python3
 
 build_root="$(mktemp -d)"
 trap 'rm -rf "${build_root}"' EXIT
 
+# Apply browser-only ABI additions in a scratch checkout. The cached upstream
+# source and mobile's native build remain untouched.
+git -C "${GHOSTTY_SOURCE_DIR}" archive "${GHOSTTY_REVISION}" | tar -x -C "${build_root}"
+cp "${SCRIPT_DIR}/ghostty-pack-row.c" "${build_root}/src/t3_ghostty_pack_row.c"
+python3 - "${build_root}/src/build/GhosttyLibVt.zig" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+anchor = "    // Allow exported symbols to actually be exported."
+if source.count(anchor) != 1:
+    raise SystemExit("Ghostty WASM build changed; update the browser ABI integration")
+source = source.replace(anchor, '''    zig.vt_c.addIncludePath(b.path("include"));
+    zig.vt_c.addCSourceFile(.{ .file = b.path("src/t3_ghostty_pack_row.c"), .flags = &.{"-std=c11"} });
+    exe.root_module.export_symbol_names = &.{"t3_ghostty_pack_row"};
+
+''' + anchor)
+path.write_text(source)
+PY
+
 log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
 (
-  cd "${GHOSTTY_SOURCE_DIR}"
+  cd "${build_root}"
   # The pinned revision rides along as semver build metadata so the artifact
   # identifies its own provenance through ghostty_build_info(); mobile's
   # VERSION file stays the single source of truth for the pin.
@@ -107,11 +129,11 @@ log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
     -Doptimize=ReleaseSmall \
     -Dstrip=true \
     -Dlib-version-string="0.1.0-dev+${GHOSTTY_REVISION}" \
-    -p "${build_root}"
+    -p "${build_root}/out"
 )
 
 mkdir -p "${VENDOR_DIR}"
-cp "${build_root}/bin/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-vt.wasm"
+cp "${build_root}/out/bin/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-vt.wasm"
 "${GHOSTTY_ZIG}" build-exe \
   "${SCRIPT_DIR}/ghostty-write-pty.zig" \
   -target wasm32-freestanding \
