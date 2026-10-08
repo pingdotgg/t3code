@@ -56,7 +56,7 @@ export function withCreationProvenance(
   switch (command.type) {
     case "thread.create": {
       // Only the server stamps a link's origin, so a client cannot set one.
-      const { linkOrigin: _linkOrigin, ...rest } = command;
+      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
       return { ...rest, ...provenance };
     }
     case "message.dispatch":
@@ -92,6 +92,8 @@ export function existingThreadIdsForCommand(
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
     case "delegated_task.completion-delivery.dispose":
+    case "delegated_task.remote.request":
+    case "delegated_task.remote.complete":
       return [command.parentThreadId];
     case "thread.created.record":
       return command.parentThreadId === command.targetThreadId
@@ -851,7 +853,31 @@ const make = Effect.gen(function* () {
       const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
       const failures: Array<Orchestrator.OrchestratorV2Error> = [];
       for (const task of subagents) {
-        if (task.origin !== "app_owned" || task.childThreadId === null) continue;
+        if (task.origin !== "app_owned") continue;
+        if (task.childThreadId === null) {
+          // A task in a linked environment ends here; its follower then stops it there.
+          if (task.remoteChild === undefined || task.result !== null) continue;
+          yield* dispatch({
+            type: "delegated_task.remote.complete",
+            commandId: CommandId.make(`${input.commandId}:stop:${task.id}`),
+            parentThreadId: input.threadId,
+            taskId: task.id,
+            status: "interrupted",
+            result:
+              input.reason === undefined
+                ? "Stopped with its parent."
+                : `Stopped with its parent: ${input.reason}`,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Unable to stop a delegated task", {
+                parentThreadId: input.threadId,
+                taskId: task.id,
+                error,
+              }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+            ),
+          );
+          continue;
+        }
         const threadId = task.childThreadId;
         yield* dispatch({
           type: "thread.stop",

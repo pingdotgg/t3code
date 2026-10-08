@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -180,6 +181,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
+          // Kept only alongside linkOrigin: thread.create drops it otherwise.
+          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
         }).pipe(
           Effect.mapError((error) =>
             error._tag === "AttachmentClaimError"
@@ -208,11 +211,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         return yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_list, target, input);
       }
       const projects = yield* access;
+      const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
       const rows = snapshot.projects.filter((project) => project.deletedAt === null);
       const start = input.cursor ?? 0,
         end = start + (input.limit ?? 20);
-      return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+      // The snapshot leaves an identity blank while its cache is cold, and
+      // linked environments find this side's project by repository.
+      const page = yield* Effect.forEach(
+        rows.slice(start, end),
+        (project) =>
+          project.repositoryIdentity != null
+            ? Effect.succeed(project)
+            : identities
+                .resolve(project.workspaceRoot)
+                .pipe(Effect.map((repositoryIdentity) => ({ ...project, repositoryIdentity }))),
+        { concurrency: 8 },
+      );
+      return { projects: page, nextCursor: end < rows.length ? end : null };
     }),
   ),
   t3_project_read: McpToolAccess.reads((input) =>

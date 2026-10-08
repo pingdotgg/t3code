@@ -84,6 +84,7 @@ const layerLaunches = Layer.effect(
             branch: null,
             worktreePath: null,
             ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
+            ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
             createdBy: input.createdBy,
             creationSource: input.creationSource,
           })
@@ -183,11 +184,16 @@ const failureCode = (result: McpSchema.CallToolResult) => {
     : undefined;
 };
 
-const launch = (scope: McpInvocationContext.McpInvocationScope, title: string) =>
+const launch = (
+  scope: McpInvocationContext.McpInvocationScope,
+  title: string,
+  extra: Record<string, unknown> = {},
+) =>
   call(scope, "t3_thread_launch", {
     projectId,
     title,
     modelSelection: { instanceId, model: "gpt-5" },
+    ...extra,
   }).pipe(
     Effect.map((result) => {
       assert.equal(result.isError, false, JSON.stringify(result.content));
@@ -261,6 +267,17 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       // An ordinary outside agent's launch is not a link's.
       const plain = yield* launch(claudeCode, "Started by Claude Code");
       assert.equal((yield* projections.getThreadShell(plain))?.linkOrigin, undefined);
+
+      // A link's delegated task names its parent there; only a link's launch may.
+      const delegatedFrom = {
+        environmentId: "environment-laptop",
+        threadId: "thread:laptop-parent",
+        title: "Laptop parent",
+      };
+      const task = yield* launch(laptop, "Delegated from the laptop", { delegatedFrom });
+      assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
+      const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
+      assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
     }),
   );
 

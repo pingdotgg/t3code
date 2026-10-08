@@ -5,6 +5,7 @@ import {
   TrimmedNonEmptyString,
   ThreadId,
   RunId,
+  OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
@@ -26,6 +27,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -57,7 +59,11 @@ const ProjectListTool = Tool.make("t3_project_list", {
     projects: Schema.Array(Project),
     nextCursor: Schema.NullOr(NonNegativeInt),
   }),
-  dependencies: [...shared.dependencies, PeerForwarding.PeerForwarding],
+  dependencies: [
+    ...shared.dependencies,
+    PeerForwarding.PeerForwarding,
+    RepositoryIdentityResolver.RepositoryIdentityResolver,
+  ],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -136,6 +142,8 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
     clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+    /** Set by a linked environment launching its agent's delegated task here; ignored otherwise. */
+    delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   }),
   success: Schema.Struct({
     threadId: ThreadId,

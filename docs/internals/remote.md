@@ -99,6 +99,15 @@ shared access declarations, not tool by tool:
 Reads are not fenced, and a client's own `thread.create` can never carry
 `linkOrigin`.
 
+**A delegated task can run in a linked environment.** Its child is then an
+ordinary thread there, so the parent here records the task without a child
+thread of its own (`remoteChild` instead of `childThreadId`). A follower in
+[`RemoteDelegation`](../../apps/server/src/peer/RemoteDelegation.ts) waits on
+that thread and completes the task with `delegated_task.remote.complete`. That
+internal command reuses the parent half of a local finalize, so the parent
+wakes the same way. Open remote tasks are followed again at startup, which is
+also what keeps restart recovery from treating them as abandoned provider work.
+
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user, inside the limits above.
 

@@ -19,7 +19,10 @@ import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
 import { subagentCardElapsed } from "./subagent-card-presentation";
+import { useEnvironments } from "../../state/environments";
+import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
+import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { WorkLogBlock } from "./work-log-layout";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
@@ -78,6 +81,7 @@ export function ThreadSubagentGroup(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, members[0]!.threadId)),
     (thread) => thread?.projection.subagents,
   );
+  const { presentationById } = useEnvironments();
   const agents = members.map((item) => {
     const live = liveAgents?.find((agent) => agent.id === item.subagentId);
     return {
@@ -95,8 +99,13 @@ export function ThreadSubagentGroup(props: {
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
+  const serverConfigs = useServerConfigs();
+  // A task in a linked environment runs a provider instance of that environment.
   const iconUrl = (item: SubagentItem) =>
-    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+    (item.remoteChild === undefined
+      ? config
+      : serverConfigs.get(item.remoteChild.environmentId)
+    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -147,24 +156,31 @@ export function ThreadSubagentGroup(props: {
       {!grouped || expanded ? (
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
-            const threadId = agent.childThreadId;
+            // A task in a linked environment opens there, if this app is connected to it.
+            const target = subagentThreadTarget(agent, props.environmentId, (id) =>
+              presentationById.has(id),
+            );
             return (
               <Pressable
                 key={agent.item.id}
                 accessible
-                accessibilityRole={threadId === null ? undefined : "link"}
+                accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
-                  threadId === null ? "Provider-managed agent" : "Opens this agent's thread"
+                  target !== null
+                    ? "Opens this agent's thread"
+                    : agent.remoteChild !== undefined
+                      ? `Runs on ${agent.remoteChild.label}`
+                      : "Provider-managed agent"
                 }
-                disabled={threadId === null}
+                disabled={target === null}
                 onPress={() => {
                   // Push, not navigate: navigate reuses this Thread route, so back
                   // would skip the parent thread.
-                  if (threadId !== null)
+                  if (target !== null)
                     navigation.dispatch(
                       StackActions.push("Thread", {
-                        environmentId: String(props.environmentId),
-                        threadId: String(threadId),
+                        environmentId: String(target.environmentId),
+                        threadId: String(target.threadId),
                       }),
                     );
                 }}
@@ -173,6 +189,7 @@ export function ThreadSubagentGroup(props: {
                 <SubagentRow
                   environmentId={props.environmentId}
                   subagent={agent}
+                  canOpenRemote={target !== null}
                   elapsed={<SubagentElapsed agents={[agent]} />}
                 />
               </Pressable>
