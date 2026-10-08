@@ -204,7 +204,11 @@ const LOADERS: ReadonlyArray<{
     path: "/api/orchestration/shell",
     response: SHELL,
     expected: SHELL,
-    load: fetchEnvironmentShellSnapshot,
+    // Pull request links decode separately; the rows match the response on their own.
+    load: (input: HttpInput) =>
+      fetchEnvironmentShellSnapshot(input).pipe(
+        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+      ),
   },
   {
     name: "thread snapshot",
@@ -251,6 +255,20 @@ describe("authenticated environment HTTP requests", () => {
         .pipe(Effect.provide(harness.httpLayer), Effect.asVoid, Effect.flip);
       expect(result._tag).toBe("RemoteEnvironmentAuthInvalidJsonError");
       expect(harness.calls).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps the status of a shell snapshot error that is not a declared error", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+      });
     }),
   );
 
