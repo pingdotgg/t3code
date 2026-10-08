@@ -30,6 +30,9 @@ it("projects typed locations with coordinates and one-shot guidance", () => {
   expect(text).toContain("42.3521, -71.0552");
   expect(text).toContain("Snapshot: user/device-reported one-shot location");
   expect(text).toContain("Do not infer present location in later turns.");
+  expect(text).toContain(
+    "Interpret today, tomorrow, and opening hours in this place's local time zone.",
+  );
   expect(text.match(/<context kind="location"/gu)).toHaveLength(1);
 });
 
@@ -39,6 +42,7 @@ it("normalizes canonical legacy blocks once before provider projection", () => {
 
   expect(text).toContain("Find a cafe.");
   expect(text).toContain("Snapshot: user/device-reported one-shot location");
+  expect(text).toContain("A UTC capture timestamp may have a different calendar date");
   expect(text).toContain("42.3521, -71.0552");
   expect(text).not.toContain("\n\n<shared-location>");
   expect(text.match(/<context kind="location"/gu)).toHaveLength(1);
