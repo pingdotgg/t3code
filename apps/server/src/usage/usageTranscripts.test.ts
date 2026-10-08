@@ -16,6 +16,7 @@ function claudeLine(overrides: {
   model?: string;
   outputTokens?: number;
   speed?: string;
+  cacheCreation1hTokens?: number;
 }): string {
   return JSON.stringify({
     type: "assistant",
@@ -33,6 +34,14 @@ function claudeLine(overrides: {
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
+        ...(overrides.cacheCreation1hTokens === undefined
+          ? {}
+          : {
+              cache_creation: {
+                ephemeral_1h_input_tokens: overrides.cacheCreation1hTokens,
+                ephemeral_5m_input_tokens: 66818 - overrides.cacheCreation1hTokens,
+              },
+            }),
       },
     },
   });
@@ -54,6 +63,17 @@ describe("parseClaudeLine", () => {
     });
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
+  });
+
+  it("splits out cache writes with a 1-hour TTL", () => {
+    const line = (cacheCreation1hTokens?: number) =>
+      parseClaudeLine(
+        claudeLine({ messageId: "msg_1", contentType: "text", cacheCreation1hTokens }),
+      );
+
+    expect(line(60000)?.cacheCreation1hTokens).toBe(60000);
+    expect(line(60000)?.totals.cacheCreationTokens).toBe(66818);
+    expect(line()?.cacheCreation1hTokens).toBeUndefined();
   });
 
   it("marks fast-mode requests", () => {

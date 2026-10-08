@@ -26,6 +26,11 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /**
+   * The part of `totals.cacheCreationTokens` written with a 1-hour TTL, which
+   * bills above the 5-minute rate. Only Claude Code records the split.
+   */
+  readonly cacheCreation1hTokens?: number;
   readonly reportedCostUsd: number | null;
   /** Only Claude Code and Codex record a speed; other providers are `standard`. */
   readonly speed: UsageSpeed;
@@ -138,6 +143,11 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const cacheCreation = usageRecord["cache_creation"];
+  const cacheCreation1hTokens =
+    typeof cacheCreation === "object" && cacheCreation !== null
+      ? int((cacheCreation as Record<string, unknown>)["ephemeral_1h_input_tokens"])
+      : 0;
 
   return {
     provider: "claude",
@@ -152,6 +162,7 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
+    ...(cacheCreation1hTokens > 0 ? { cacheCreation1hTokens } : {}),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey,
