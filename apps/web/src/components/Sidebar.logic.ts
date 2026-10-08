@@ -1163,6 +1163,7 @@ export function resolveWaitingStartedAt(
   let startedMs = completedAt == null ? Number.NaN : DateTime.toEpochMillis(completedAt);
   // A PR watch can start after the turn, including on a thread that never ran.
   if (
+    thread.pendingBackgroundTasks.length > 0 &&
     thread.pendingBackgroundTasks.every((task) => task.taskId.startsWith("pull-request-watch:"))
   ) {
     const watchStarts = thread.pullRequests
