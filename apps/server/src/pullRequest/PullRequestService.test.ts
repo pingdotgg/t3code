@@ -2568,7 +2568,6 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
 
 it.effect.each([
   ["github.com", "github"],
-  ["gitlab.com", "gitlab"],
   ["bitbucket.org", "bitbucket"],
   ["codeberg.org", "forgejo"],
 ] as const)("reads linked PR summaries and stacks on %s without a checkout", ([host, kind]) =>
@@ -2577,7 +2576,7 @@ it.effect.each([
     const service = yield* makeService({
       projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/home/alex" })],
       providers: [
-        fakeProvider(kind, {
+        fakeProvider(SourceControlProviderKind.make(kind), {
           getChangeRequestSummary: (input) =>
             Effect.sync(() => {
               seen.push({ cwd: input.cwd, repository: input.repository, host: input.host });
@@ -2619,7 +2618,7 @@ it.effect("prefers a matching checkout over a non-repository project's directory
         project({ id: "repo", title: "API", workspaceRoot: "/api", repository: "acme/api" }),
       ],
       providers: [
-        fakeProvider("github", {
+        fakeProvider(SourceControlProviderKind.make("github"), {
           getChangeRequestSummary: (input) =>
             Effect.sync(() => {
               seen.push(input.cwd);
@@ -2645,7 +2644,7 @@ it.effect("requires an explicit host for a non-repository project's linked PR", 
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/home/alex" })],
-      providers: [fakeProvider("github")],
+      providers: [fakeProvider(SourceControlProviderKind.make("github"))],
     });
     const error = yield* service
       .summary(
@@ -2663,7 +2662,10 @@ it.effect("requires an explicit host for a non-repository project's linked PR", 
 
 it.effect("refuses a public host reference without a selected project directory", () =>
   Effect.gen(function* () {
-    const service = yield* makeService({ projects: [], providers: [fakeProvider("github")] });
+    const service = yield* makeService({
+      projects: [],
+      providers: [fakeProvider(SourceControlProviderKind.make("github"))],
+    });
     const error = yield* service
       .summary(
         {
@@ -2677,6 +2679,29 @@ it.effect("refuses a public host reference without a selected project directory"
       .pipe(Effect.flip);
     assert.strictEqual(error._tag, "PullRequestUnavailableError");
   }),
+);
+
+it.effect(
+  "requires a checkout for GitLab because its adapter does not explicitly target the host",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/home/alex" })],
+        providers: [fakeProvider(SourceControlProviderKind.make("gitlab"))],
+      });
+      const error = yield* service
+        .summary(
+          {
+            projectId: "inbox" as ProjectId,
+            host: "gitlab.com",
+            repository: "acme/api",
+            number: 7,
+          },
+          { recoverTransientFailure: false },
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    }),
 );
 
 it.effect("refuses a hosted reference when its provider is unavailable", () =>

@@ -902,9 +902,9 @@ export const make = Effect.gen(function* () {
    * The project whose checkout and credentials serve a reference. The project's own
    * repository is the default; a reference that names a `host` may instead point at any
    * repository on that host. Prefer its own checkout; providers with explicit repository
-   * targeting can fall back to another checkout on the host. Public hosts can also use the
-   * selected project's directory without a checkout. Azure derives its organization from
-   * the checkout, so it requires a matching repository.
+   * targeting can fall back to another checkout on the host. Providers with explicit host
+   * targeting can also use the selected project's directory for supported public hosts.
+   * Azure derives its organization from the checkout, so it requires a matching repository.
    */
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
@@ -953,12 +953,8 @@ export const make = Effect.gen(function* () {
               return Effect.gen(function* () {
                 // These providers target the repository explicitly and authenticate by host;
                 // a linked PR in a non-repository project still needs its snapshot refreshed.
-                const provider = [
-                  "github.com",
-                  "gitlab.com",
-                  "bitbucket.org",
-                  "codeberg.org",
-                ].includes(host)
+                // GitLab still selects its host from the checkout or CLI configuration.
+                const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
                   ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
                   : null;
                 const api = provider === null ? null : registry.get(provider.kind);
@@ -981,6 +977,7 @@ export const make = Effect.gen(function* () {
                       repository,
                       host,
                       remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+                      repositoryKey: null,
                     };
                   }
                 }
