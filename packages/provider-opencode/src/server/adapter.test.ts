@@ -4,7 +4,6 @@ import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
   NodeId,
-  OpenCodeSettings,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -17,6 +16,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
+import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -31,9 +31,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ServerConfig from "../../config.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
-import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
+import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import type { OpenCodeRuntimeShape } from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import {
@@ -48,7 +49,7 @@ import {
   makeOpenCodeAdapterV2,
   OPENCODE_PROVIDER,
   reconcileOpenCodePromptAdmissionStatus,
-} from "./OpenCodeAdapterV2.ts";
+} from "./adapter.ts";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -165,10 +166,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntimeShape,
     idAllocator,
-    serverConfig: {
-      cwd: "/workspace",
-      attachmentsDir: "/tmp/attachments",
-    } as ServerConfig.ServerConfig["Service"],
+    host: {
+      paths: { cwd: "/workspace" },
+      resolveAttachmentPath: () => null,
+    } as unknown as ProviderHostShape,
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -1497,10 +1498,10 @@ describe("OpenCodeAdapterV2", () => {
           createOpenCodeSdkClient: () => client,
         } as unknown as OpenCodeRuntimeShape,
         idAllocator,
-        serverConfig: {
-          cwd: "/workspace",
-          attachmentsDir: "/tmp/attachments",
-        } as ServerConfig.ServerConfig["Service"],
+        host: {
+          paths: { cwd: "/workspace" },
+          resolveAttachmentPath: () => null,
+        } as unknown as ProviderHostShape,
       });
       const threadId = ThreadId.make("thread-opencode-admission-race");
       const providerSessionId = ProviderSessionId.make("session-opencode-admission-race");
@@ -1792,10 +1793,10 @@ describe("OpenCodeAdapterV2", () => {
           createOpenCodeSdkClient: () => client,
         } as unknown as OpenCodeRuntimeShape,
         idAllocator,
-        serverConfig: {
-          cwd: "/workspace",
-          attachmentsDir: "/tmp/attachments",
-        } as ServerConfig.ServerConfig["Service"],
+        host: {
+          paths: { cwd: "/workspace" },
+          resolveAttachmentPath: () => null,
+        } as unknown as ProviderHostShape,
       });
       const threadId = ThreadId.make("thread-opencode-initial-stop");
       const providerSessionId = ProviderSessionId.make("session-opencode-initial-stop");
@@ -2419,7 +2420,7 @@ describe("OpenCodeAdapterV2", () => {
   it.effect("adopts the handed-over provider thread identity on session create", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost;
       let createCount = 0;
       const createInputs: Array<unknown> = [];
       const fakeClient = {
@@ -2472,7 +2473,7 @@ describe("OpenCodeAdapterV2", () => {
         environment: {},
         runtime,
         idAllocator,
-        serverConfig,
+        host,
       });
       const session = yield* adapter.openSession({
         threadId,
@@ -2527,9 +2528,7 @@ describe("OpenCodeAdapterV2", () => {
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
-          ServerConfig.layerTest(process.cwd(), {
-            prefix: "t3-opencode-v2-adapter-",
-          }).pipe(Layer.provide(NodeServices.layer)),
+          layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),

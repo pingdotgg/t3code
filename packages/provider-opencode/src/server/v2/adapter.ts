@@ -70,14 +70,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import * as ServerConfig from "../../config.ts";
-import { paginate, type OpenCode2StreamEvent } from "../../provider/opencode2/OpenCode2Client.ts";
-import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
-import {
-  parseOpenCodeModelSlug,
-  type OpenCodeRuntimeError,
-} from "../../provider/opencodeRuntime.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import { paginate, type OpenCode2StreamEvent } from "./OpenCode2Client.ts";
+import * as OpenCode2Server from "./OpenCode2Server.ts";
+import { parseOpenCodeModelSlug, type OpenCodeRuntimeError } from "../OpenCodeRuntime.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -98,11 +94,11 @@ import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
-} from "../SubagentProjection.ts";
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "./OpenCodeAdapterV2.ts";
-import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
+import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
+import { openCodeToolTurnItem } from "../toolItems.ts";
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -834,7 +830,7 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
 export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const serverConfig = yield* ServerConfig.ServerConfig;
+  const host = yield* ProviderHost;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
@@ -874,7 +870,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // the instance's threads in every directory.
     const contextWindows = new Map<string, Map<string, number>>();
     /** A thread without a worktree runs where T3 does, as its session is created. */
-    const directoryOf = (cwd: string | null | undefined) => cwd ?? serverConfig.cwd;
+    const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
       contextWindows.get(directoryOf(cwd))?.get(model);
     const now = yield* DateTime.now;
@@ -883,7 +879,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       driver,
       providerInstanceId: instanceId,
       status: "ready",
-      cwd: input.runtimePolicy.cwd ?? serverConfig.cwd,
+      cwd: input.runtimePolicy.cwd ?? host.paths.cwd,
       model: input.modelSelection.model,
       capabilities: OpenCode2ProviderCapabilities,
       createdAt: now,
@@ -3216,8 +3212,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       providerMessageTextWithAttachmentPaths({
         text: turnInput.message.text,
         attachments: turnInput.message.attachments,
-        resolveAttachmentPath: (attachment) =>
-          resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+        resolveAttachmentPath: host.resolveAttachmentPath,
       }).trim();
 
     const removeMcp = (mcp: { readonly name: string; readonly directory: string }) =>
@@ -3249,7 +3244,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
       const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
-      const directory = turnInput.runtimePolicy.cwd ?? serverConfig.cwd;
+      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
@@ -3523,7 +3518,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (!sending()) return;
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
       }
-      const location = { directory: turnInput.runtimePolicy.cwd ?? serverConfig.cwd };
+      const location = { directory: turnInput.runtimePolicy.cwd ?? host.paths.cwd };
       const command = bare ? commandOf(text) : undefined;
       if (command !== undefined) {
         const commands = yield* client.command.list({ location }).pipe(
@@ -3603,7 +3598,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: malformedModel(threadInput.modelSelection.model),
             });
           }
-          const directory = threadInput.runtimePolicy.cwd ?? serverConfig.cwd;
+          const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
           // A new session runs OpenCode's default agent.
           const permissions = yield* rulesFor(
@@ -3898,11 +3893,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               text: providerMessageTextWithAttachmentPaths({
                 text: steerInput.message.text,
                 attachments: steerInput.message.attachments,
-                resolveAttachmentPath: (attachment) =>
-                  resolveAttachmentPath({
-                    attachmentsDir: serverConfig.attachmentsDir,
-                    attachment,
-                  }),
+                resolveAttachmentPath: host.resolveAttachmentPath,
               }).trim(),
               delivery: "steer",
             })

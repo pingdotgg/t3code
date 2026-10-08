@@ -20,22 +20,19 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as UrlParams from "effect/http/UrlParams";
 
-import * as ServerConfig from "../../config.ts";
-import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";
-import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
+import { OpenCode2Client } from "@t3tools/provider-opencode/testing";
+import { OpenCode2Server } from "@t3tools/provider-opencode/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
-import {
-  makeReplayServerConfig,
-  type OrchestratorV2ProviderReplayHarness,
-} from "../testkit/ProviderReplayHarness.ts";
-import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
+import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
 } from "./OpenCodeAdapterV2.testkit.ts";
-import * as OpenCode2AdapterV2 from "./OpenCode2AdapterV2.ts";
+import { OpenCode2Adapter as OpenCode2AdapterV2 } from "@t3tools/provider-opencode/testing";
 
 export const OPENCODE2_HTTP_PROTOCOL = "opencode2-http.sse" as const;
 const BASE_URL = "http://opencode2.replay";
@@ -270,10 +267,7 @@ const makeReplayAdapter = (
     );
   });
 
-const layerReplayServerConfig = (scenario: string) =>
-  Layer.effect(ServerConfig.ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
-    Layer.provide(NodeServices.layer),
-  );
+const layerReplayHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
 function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
@@ -283,15 +277,7 @@ function layerRegistry(
     makeReplayAdapter(transcript, { external: true, ...options }).pipe(
       Effect.map((adapter) => ProviderAdapterRegistry.layerFromAdapters([adapter])),
     ),
-  ).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerReplayServerConfig(transcript.scenario),
-        IdAllocator.layer,
-        NodeServices.layer,
-      ),
-    ),
-  );
+  ).pipe(Layer.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
 }
 
 /**
@@ -327,15 +313,7 @@ export const openCode2ReplayRuntime = (
         cwd: "/work/opencode2",
       },
     });
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        layerReplayServerConfig("opencode2_adapter"),
-        IdAllocator.layer,
-        NodeServices.layer,
-      ),
-    ),
-  );
+  }).pipe(Effect.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,

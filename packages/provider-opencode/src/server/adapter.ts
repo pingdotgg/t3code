@@ -15,7 +15,6 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import {
   defaultInstanceIdForDriver,
   type ModelSelection,
-  type OpenCodeSettings,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -29,7 +28,6 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
-  OpenCodeSettings as OpenCodeSettingsSchema,
   type PlanId,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -38,6 +36,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -54,20 +53,19 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import * as ServerConfig from "../../config.ts";
+import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
   summarizeNativeProtocolPayload,
-} from "../../provider/NativeProtocolLogging.ts";
+} from "@t3tools/provider-core/server/nativeProtocolLogging";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
@@ -78,15 +76,18 @@ import {
   type ProviderAdapterDriver,
   type ProviderAdapterDriverCreateInput,
 } from "@t3tools/provider-core/server/adapterDriver";
-import { makeSubagentChildThread, subagentThreadTitle } from "../SubagentProjection.ts";
-import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
+import {
+  makeSubagentChildThread,
+  subagentThreadTitle,
+} from "@t3tools/provider-core/server/subagentProjection";
+import { openCodeToolTurnItem } from "./toolItems.ts";
 
-export { openCodeToolProjectionKind } from "./OpenCodeToolItems.ts";
+export { openCodeToolProjectionKind } from "./toolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
-const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
+const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
 let openCodeMessageIdEpochMillis = -1;
 let openCodeMessageIdCounter = 0;
@@ -440,7 +441,7 @@ export interface OpenCodeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly runtime: OpenCodeRuntime.OpenCodeRuntimeShape;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly host: ProviderHostShape;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
@@ -947,7 +948,7 @@ function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNul
 export function makeOpenCodeAdapterV2(
   options: OpenCodeAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
-  const { idAllocator, runtime, serverConfig } = options;
+  const { idAllocator, runtime, host } = options;
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -957,7 +958,7 @@ export function makeOpenCodeAdapterV2(
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const scope = yield* Effect.scope;
-        const cwd = input.runtimePolicy.cwd ?? serverConfig.cwd;
+        const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({
           binaryPath: options.settings.binaryPath,
           directory: cwd,
@@ -2853,13 +2854,11 @@ export function makeOpenCodeAdapterV2(
           const text = providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: (attachment) =>
-              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+            resolveAttachmentPath: host.resolveAttachmentPath,
           }).trim();
           const files = OpenCodeRuntime.toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: (attachment) =>
-              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+            resolveAttachmentPath: host.resolveAttachmentPath,
           });
           if (text.length === 0 && files.length === 0) {
             throw protocolError("OpenCode turns require text or at least one valid attachment");
@@ -3357,19 +3356,11 @@ export function makeOpenCodeAdapterV2(
               const text = providerMessageTextWithAttachmentPaths({
                 text: steerInput.message.text,
                 attachments: steerInput.message.attachments,
-                resolveAttachmentPath: (attachment) =>
-                  resolveAttachmentPath({
-                    attachmentsDir: serverConfig.attachmentsDir,
-                    attachment,
-                  }),
+                resolveAttachmentPath: host.resolveAttachmentPath,
               }).trim();
               const files = OpenCodeRuntime.toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
-                resolveAttachmentPath: (attachment) =>
-                  resolveAttachmentPath({
-                    attachmentsDir: serverConfig.attachmentsDir,
-                    attachment,
-                  }),
+                resolveAttachmentPath: host.resolveAttachmentPath,
               });
               if (text.length === 0 && files.length === 0) {
                 return yield* protocolError("OpenCode steering requires text or an attachment");
@@ -3740,14 +3731,14 @@ export type OpenCodeAdapterV2DriverEnv =
   | OpenCodeRuntime.OpenCodeRuntime
   | IdAllocator.IdAllocatorV2
   | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig;
+  | ProviderHost;
 
 export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   OpenCodeSettings,
   OpenCodeAdapterV2DriverEnv
 > = {
   driverKind: OPENCODE_PROVIDER,
-  configSchema: OpenCodeSettingsSchema,
+  configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => DEFAULT_OPENCODE_SETTINGS,
   create: Effect.fn("OpenCodeAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<OpenCodeSettings>) {
@@ -3755,14 +3746,14 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost;
       return makeOpenCodeAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         runtime: openCodeRuntime,
         idAllocator,
-        serverConfig,
+        host,
         ...(providerEventLoggers.native === undefined
           ? {}
           : { nativeEventLogger: providerEventLoggers.native }),
@@ -3791,14 +3782,14 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, OpenCodeAdapt
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost;
       return makeOpenCodeAdapterV2({
         instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_OPENCODE_SETTINGS,
         environment: hostEnvironment,
         runtime: openCodeRuntime,
         idAllocator,
-        serverConfig,
+        host,
         ...(providerEventLoggers.native === undefined
           ? {}
           : { nativeEventLogger: providerEventLoggers.native }),

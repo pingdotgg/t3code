@@ -33,7 +33,6 @@ import {
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
-  type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
@@ -56,10 +55,11 @@ import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
+import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as ModelManifest from "./ModelManifest.ts";
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import { OpenCodeRuntime } from "@t3tools/provider-opencode/server";
+import { OpenCodeServerLedger } from "@t3tools/provider-opencode/server";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";

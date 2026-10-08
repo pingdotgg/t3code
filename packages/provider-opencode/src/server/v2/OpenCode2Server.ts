@@ -15,7 +15,7 @@ import * as P from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as HttpClientError from "effect/http/HttpClientError";
 
-import { OpenCodeRuntimeError } from "../opencodeRuntime.ts";
+import { OpenCodeRuntimeError } from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
@@ -35,7 +35,7 @@ export class OpenCode2Server extends Context.Service<
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntimeError, R>;
   }
->()("t3/provider/opencode2/OpenCode2Server") {}
+>()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
 /**
  * A fresh password for a spawned server. OpenCode 2 always requires one and

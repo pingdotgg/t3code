@@ -7,7 +7,7 @@ import {
   parseModelsCliOutput,
   parseSkillsCliOutput,
   toOpenCodeFileParts,
-} from "./opencodeRuntime.ts";
+} from "./OpenCodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {

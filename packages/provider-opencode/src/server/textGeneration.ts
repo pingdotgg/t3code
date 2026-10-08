@@ -1,14 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TextGenerationError, type OpenCodeSettings } from "@t3tools/contracts";
+import { NonNegativeInt, TextGenerationError } from "@t3tools/contracts";
+import type { OpenCodeSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
-import * as ServerConfig from "../config.ts";
-import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
-import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
-import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -152,7 +152,7 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
 ) {
-  const serverConfig = yield* ServerConfig.ServerConfig;
+  const host = yield* ProviderHost;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
 
@@ -169,8 +169,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
     const fileParts = OpenCodeRuntime.toOpenCodeFileParts({
       attachments: input.attachments?.filter((attachment) => attachment.type === "image"),
-      resolveAttachmentPath: (attachment) =>
-        resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+      resolveAttachmentPath: host.resolveAttachmentPath,
     });
 
     const runAgainstServer = Effect.fn("runOpenCodeJson.runAgainstServer")(

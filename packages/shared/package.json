@@ -458,6 +458,10 @@
     "./mcpApp": {
       "types": "./src/mcpApp.ts",
       "import": "./src/mcpApp.ts"
+    },
+    "./atomicWrite": {
+      "types": "./src/atomicWrite.ts",
+      "import": "./src/atomicWrite.ts"
     }
   },
   "scripts": {

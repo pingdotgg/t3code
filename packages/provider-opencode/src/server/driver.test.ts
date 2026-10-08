@@ -5,7 +5,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId, type OpenCodeSettings } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
+import type { OpenCodeSettings } from "../settings.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,20 +15,17 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
   OPENCODE_2_RESPONSES,
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
-} from "../testFixtures/opencodeProbeResponses.ts";
-import { OpenCodeDriver, openCodeUpdateFor } from "./OpenCodeDriver.ts";
-import * as ProviderHostLive from "../ProviderHostLive.ts";
+} from "./probeResponses.fixture.ts";
+import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -48,18 +46,15 @@ const openCode2Runtime = {
   connectToOpenCodeServer: () => reachedServer("connect"),
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
 
-const layerDeps = Layer.mergeAll(
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-driver-" }),
+const layer = Layer.mergeAll(
   IdAllocator.layer,
-  ServerSettings.layerTest(),
-  Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+  layerTestProviderHost(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
-const layer = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
   OpenCodeDriver.create({
@@ -213,18 +208,15 @@ const changingRuntime = {
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
-const layerUpdateDeps = Layer.mergeAll(
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-driver-update-" }),
+const layerUpdate = Layer.mergeAll(
   IdAllocator.layer,
-  ServerSettings.layerTest(),
-  Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+  layerTestProviderHost(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
   ),
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
-const layerUpdate = ProviderHostLive.layer.pipe(Layer.provideMerge(layerUpdateDeps));
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
   it.effect("never runs the binary for a disabled instance's update check", () =>

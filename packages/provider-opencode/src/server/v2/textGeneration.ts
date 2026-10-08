@@ -14,11 +14,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as ServerConfig from "../config.ts";
-import { resolveAttachmentPath } from "../attachmentStore.ts";
-import type { OpenCode2Connection } from "../provider/opencode2/OpenCode2Server.ts";
-import * as OpenCode2Server from "../provider/opencode2/OpenCode2Server.ts";
-import { parseOpenCodeModelSlug } from "../provider/opencodeRuntime.ts";
+import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import type { OpenCode2Connection } from "./OpenCode2Server.ts";
+import * as OpenCode2Server from "./OpenCode2Server.ts";
+import { parseOpenCodeModelSlug } from "../OpenCodeRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -42,7 +41,7 @@ type Outcome =
 const runOnServer = (
   connection: OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
-  attachmentsDir: string,
+  resolveAttachmentPath: ProviderHostShape["resolveAttachmentPath"],
 ) =>
   Effect.gen(function* () {
     const { client } = connection;
@@ -146,7 +145,7 @@ const runOnServer = (
     );
     const images = (input.attachments ?? []).flatMap((attachment) => {
       if (attachment.type !== "image") return [];
-      const path = resolveAttachmentPath({ attachmentsDir, attachment });
+      const path = resolveAttachmentPath(attachment);
       return path === null ? [] : [{ uri: `file://${path}`, name: attachment.name }];
     });
     yield* client.session.prompt({
@@ -186,10 +185,10 @@ const runOnServer = (
 /** Text generation for an instance whose server is OpenCode 2. */
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
-  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const { resolveAttachmentPath } = yield* ProviderHost;
   const run: TextGenerationOperations.Runner = (input) =>
     server
-      .withConnection((connection) => runOnServer(connection, input, attachmentsDir))
+      .withConnection((connection) => runOnServer(connection, input, resolveAttachmentPath))
       .pipe(
         Effect.mapError((cause) =>
           isTextGenerationError(cause)

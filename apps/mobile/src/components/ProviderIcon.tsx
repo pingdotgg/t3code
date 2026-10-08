@@ -138,15 +138,6 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "opencode") {
-    return (
-      <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
-        <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
-        <Path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill={isDarkMode ? "#F1ECEC" : "#211E1E"} />
-      </Svg>
-    );
-  }
-
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="100 100 411 411" fill="none">

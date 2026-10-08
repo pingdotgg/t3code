@@ -15,7 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
 describe("resolveOpenCodeConfigContent", () => {

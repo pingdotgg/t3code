@@ -2,17 +2,17 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
   classifyOpenCodeCliVersion,
   makeOpenCodeRuntimeProbe,
   probeOpenCodeRuntime,
-} from "./opencodeVersionProbe.ts";
+} from "./versionProbe.ts";
 import {
   OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
-} from "./testFixtures/opencodeProbeResponses.ts";
+} from "./probeResponses.fixture.ts";
 
 const noBinary = {
   runOpenCodeCommand: () => Effect.die("A configured server must not run the local binary"),

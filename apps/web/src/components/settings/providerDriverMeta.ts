@@ -5,11 +5,11 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
-  OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import { museClient } from "@t3tools/provider-muse/client";
+import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 /** The provider client definitions this web build ships, in presentation order. */
@@ -43,11 +43,7 @@ export const providerClients = makeProviderClientRegistry([
     label: "Grok",
     settingsSchema: GrokSettings,
   },
-  {
-    driverKind: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    settingsSchema: OpenCodeSettings,
-  },
+  openCodeClient,
   {
     driverKind: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",

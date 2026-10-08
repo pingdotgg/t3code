@@ -1,10 +1,10 @@
 import {
   type ModelCapabilities,
-  type OpenCodeSettings,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
@@ -20,8 +20,8 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import type { ProbedOpenCode } from "./opencodeVersionProbe.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 

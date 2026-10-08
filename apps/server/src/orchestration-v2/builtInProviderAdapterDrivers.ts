@@ -17,7 +17,7 @@ import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./Adapters/Gro
 import {
   OpenCodeAdapterV2Driver,
   type OpenCodeAdapterV2DriverEnv,
-} from "./Adapters/OpenCodeAdapterV2.ts";
+} from "@t3tools/provider-opencode/server";
 import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "@t3tools/provider-pi/server";
 import type { AnyProviderAdapterDriver } from "@t3tools/provider-core/server/adapterDriver";
 

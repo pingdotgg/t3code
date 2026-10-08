@@ -15,7 +15,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
 const layerTest = OpenCodeRuntime.layer.pipe(
