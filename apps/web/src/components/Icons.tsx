@@ -718,21 +718,6 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="165.29 165.29 469.43 469.43"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path
-      fillRule="evenodd"
-      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-    />
-    <path d="M517.36 400H634.72V634.72H517.36Z" />
-  </svg>
-);
-
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (
   <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>

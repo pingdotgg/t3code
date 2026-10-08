@@ -143,6 +143,9 @@ export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Typ
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
 
+/** A file a server tab downloaded, served by the tab's download route by this id. */
+const PreviewFileDownload = Schema.Struct({ id: Schema.String, fileName: Schema.String });
+
 export const PreviewNavStatus = Schema.Union([
   Schema.TaggedStruct("Idle", {}),
   Schema.TaggedStruct("Loading", {
@@ -158,6 +161,12 @@ export const PreviewNavStatus = Schema.Union([
     title: Title,
     code: Schema.Int,
     description: Schema.String,
+    /**
+     * Set when the address was a file the browser downloaded instead of a page
+     * it could show (a PDF in a server tab). The server tab's download route
+     * serves it by this id.
+     */
+    download: Schema.optional(PreviewFileDownload),
   }),
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
@@ -347,6 +356,7 @@ const PreviewFailedEvent = Schema.Struct({
   title: Title,
   code: Schema.Int,
   description: Schema.String,
+  download: Schema.optional(PreviewFileDownload),
 });
 
 const PreviewClosedEvent = Schema.Struct({

@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -30,15 +31,15 @@ import {
   resolveClaudeSdkExecutablePath,
 } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
 /**
@@ -1577,11 +1578,13 @@ async function recordClaudeStreamingQuery(input: {
   };
   try {
     for (const [index, prompt] of input.prompts.entries()) {
-      // Like the adapter, give each prompt a uuid Claude echoes on its turn.
+      // Like the adapter, give each prompt a fresh uuid Claude echoes on its turn.
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
         uuid: await Effect.runPromise(
-          ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`).pipe(
+          Crypto.Crypto.pipe(
+            Effect.flatMap((crypto) => crypto.randomUUIDv4),
+            Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
             Effect.provide(NodeServices.layer),
           ),
         ),

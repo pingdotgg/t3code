@@ -17,8 +17,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import * as TextGenerationOperations from "./TextGenerationOperations.ts";
-import { normalizeCliError, toJsonSchemaObject } from "./TextGenerationUtils.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import {
+  normalizeCliError,
+  toJsonSchemaObject,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,

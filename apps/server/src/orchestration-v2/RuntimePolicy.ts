@@ -15,7 +15,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2RuntimePolicy as ProviderAdapterV2RuntimePolicyType,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectStore from "./ProjectStore.ts";
 
 /**

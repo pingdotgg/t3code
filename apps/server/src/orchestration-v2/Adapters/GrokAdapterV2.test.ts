@@ -25,10 +25,10 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
-import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import {

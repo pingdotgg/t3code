@@ -41,7 +41,7 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { getProviderInstanceEntry } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
-import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
+import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
@@ -522,6 +522,7 @@ function SubagentTimelineLink(props: {
           {...props}
           elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
           model={agent?.model ?? null}
+          modelSelection={agent?.modelSelection}
           status={liveStatus}
           result={agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
@@ -532,7 +533,11 @@ function SubagentTimelineLink(props: {
 }
 
 function SubagentTimelineTooltip(
-  props: Parameters<typeof SubagentTimelineLink>[0] & { model: string | null; elapsed: ReactNode },
+  props: Parameters<typeof SubagentTimelineLink>[0] & {
+    model: string | null;
+    modelSelection: OrchestrationV2Subagent["modelSelection"];
+    elapsed: ReactNode;
+  },
 ) {
   const environmentId = props.parentRef.environmentId;
   const parent = useThreadShell(props.parentRef)?.source;
@@ -549,6 +554,7 @@ function SubagentTimelineTooltip(
       model={props.model}
       providerInstanceId={props.providerInstanceId}
       origin={props.origin}
+      modelSelection={props.modelSelection}
       provider={props.provider}
       providers={props.providers}
       driver={props.driver}
@@ -581,6 +587,9 @@ function HandoffEndpoint(props: {
       : model !== undefined && model.length > 0
         ? model
         : (entry?.displayName ?? props.instanceId);
+  const labelColor = providerTextColor(
+    entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -597,12 +606,8 @@ function HandoffEndpoint(props: {
               iconClassName="size-3"
             />
             <span
-              className={cn(
-                "truncate font-medium",
-                providerTextColorClassName(
-                  entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
-                ),
-              )}
+              className={cn("truncate font-medium", labelColor.className)}
+              style={labelColor.style}
             >
               {label}
             </span>

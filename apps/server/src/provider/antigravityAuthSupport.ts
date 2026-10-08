@@ -16,7 +16,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
 import {
   antigravityUserSkillDirectories,

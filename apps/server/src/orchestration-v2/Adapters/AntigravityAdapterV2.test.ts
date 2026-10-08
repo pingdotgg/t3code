@@ -25,8 +25,8 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as ServerConfig from "../../config.ts";
 import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
