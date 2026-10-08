@@ -1,9 +1,11 @@
 import {
+  htmlRenderError,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
+  readHtmlRenderMessageRequest,
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -32,6 +34,8 @@ export function BrowserDocumentFrame(props: {
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  /** Sends a render's `t3.send` text to its thread; renders refuse it without one. */
+  readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -48,6 +52,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       className="min-h-0 flex-1"
+      onSendMessage={props.onSendMessage}
     />
   ) : (
     <iframe
@@ -72,6 +77,8 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  /** Sends a render's `t3.send` text to its thread; renders refuse it without one. */
+  readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -105,6 +112,46 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
   }, []);
+  // The agent wrote this page in the reader's own thread, so a button in it
+  // works like a quick reply: the text sends as the reader's message with no
+  // confirmation, under the same click-in-this-frame rule as links. User
+  // activation lasts a few seconds, so a page also gets one message per second,
+  // which keeps a looping page from flooding the thread.
+  const { onSendMessage } = props;
+  useEffect(() => {
+    let lastSentAt = 0;
+    const send = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      const request = readHtmlRenderMessageRequest(event.data);
+      if (request === undefined || frame === null || event.source !== frame.contentWindow) return;
+      const reply = (message: unknown) => frame.contentWindow?.postMessage(message, "*");
+      if (onSendMessage === undefined) {
+        reply(htmlRenderError(request.id, "Messages are not available here."));
+        return;
+      }
+      if (document.activeElement !== frame || navigator.userActivation?.isActive === false) {
+        reply(htmlRenderError(request.id, "Messages send only from a click in the page."));
+        return;
+      }
+      if (Date.now() - lastSentAt < 1_000) {
+        reply(htmlRenderError(request.id, "Send one message per click."));
+        return;
+      }
+      lastSentAt = Date.now();
+      onSendMessage(request.text).then(
+        () => reply(htmlRenderResult(request.id)),
+        (error: unknown) =>
+          reply(
+            htmlRenderError(
+              request.id,
+              error instanceof Error ? error.message : "The message was not sent.",
+            ),
+          ),
+      );
+    };
+    window.addEventListener("message", send);
+    return () => window.removeEventListener("message", send);
+  }, [onSendMessage]);
   const { onContentHeight } = props;
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.

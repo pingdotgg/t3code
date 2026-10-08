@@ -258,6 +258,13 @@ export const HTML_RENDER_THEME_GUIDE = [
   "The base stylesheet sets html background/color/font from these, body margin to 0, and hides the page's scrollbar; your own CSS overrides it.",
 ].join(" ");
 
+/** Agent-facing reference for replying from a page, used in the html_render description. */
+export const HTML_RENDER_MESSAGE_GUIDE = [
+  "A page can answer for the reader: call t3.send(text) from a click handler, for example on option buttons or a form's submit, and T3 sends the text to this thread as the reader's own message.",
+  "It returns a Promise that rejects when the message was not sent, such as a call outside a click or key press, or in html_preview.",
+  "Write the text as the reader would, with what they picked or entered, since it reaches you as their next message.",
+].join(" ");
+
 /** Agent-facing layout rules for a page that sits inside a reply. */
 export const HTML_RENDER_LAYOUT_GUIDE = [
   `The frame is borderless on the thread's background, as wide as the reply column (${HTML_RENDER_COLUMN_WIDTH}px on desktop by default, wider if the reader widens chat, about 360px on phones), and its left edge lines up with your reply text.`,
@@ -274,6 +281,7 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";
 const OPEN_LINK_METHOD = "ui/open-link";
 const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
+const MESSAGE_METHOD = "ui/message";
 
 /** The content height in a framed render's `ui/notifications/size-changed` notification. */
 export function readHtmlRenderContentHeight(data: unknown): number | undefined {
@@ -300,9 +308,39 @@ export function readHtmlRenderLinkRequest(
   return typeof url === "string" && /^https?:\/\//i.test(url) ? { id, url } : undefined;
 }
 
+/**
+ * A render's `ui/message` request, if `data` is one with user text. The page's
+ * `t3.send(text)` sends one block; the MCP Apps SDK sends an array.
+ */
+export function readHtmlRenderMessageRequest(
+  data: unknown,
+): { readonly id: string | number; readonly text: string } | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, id, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== MESSAGE_METHOD) return undefined;
+  if (typeof id !== "string" && typeof id !== "number") return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { role, content } = params as { role?: unknown; content?: unknown };
+  if (role !== "user") return undefined;
+  const texts: Array<string> = [];
+  for (const block of Array.isArray(content) ? content : [content]) {
+    if (typeof block !== "object" || block === null) return undefined;
+    const { type, text } = block as { type?: unknown; text?: unknown };
+    if (type !== "text" || typeof text !== "string") return undefined;
+    texts.push(text);
+  }
+  const text = texts.join("\n").trim();
+  return text === "" ? undefined : { id, text };
+}
+
 /** The empty result a client sends back for a render's request. */
 export function htmlRenderResult(id: string | number) {
   return { jsonrpc: "2.0", id, result: {} } as const;
+}
+
+/** The error a client sends back for a render's request it refused or could not complete. */
+export function htmlRenderError(id: string | number, message: string) {
+  return { jsonrpc: "2.0", id, error: { code: -32000, message } } as const;
 }
 
 const THEME_FRAGMENT_KEY = "t3-theme";
@@ -342,8 +380,11 @@ function rootRule(theme: HtmlRenderTheme): string {
 // a framed page asks its client to open it, and a top-level page (mobile)
 // opens it as a new window, which the client sends to the browser. A framed
 // page also reports its content height, measured as the server measures it,
-// so its client can fit the frame to the page.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);}})();`;
+// so its client can fit the frame to the page. `t3.send(text)` posts a
+// `ui/message` to the client (the parent frame, or the WebView bridge on
+// mobile) and settles when the client answers; it refuses outside a click or
+// key press, and where no client listens, such as the headless preview.
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}var q={};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params,c;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});if(d&&d.jsonrpc==="2.0"&&e.source===window.parent&&typeof d.id==="string"&&q[d.id]){c=q[d.id];delete q[d.id];if(d.error)c[1](new Error(String(d.error.message||"The message was not sent.")));else c[0]();}});window.t3={send:function(t){return new Promise(function(r,j){var w=window.ReactNativeWebView,u=navigator.userActivation,i,m;if(typeof t!=="string"||!t.trim())return j(new Error("t3.send needs text."));if(u&&!u.isActive)return j(new Error("t3.send works only from a click or key press."));if(window.parent===window&&!w)return j(new Error("Messages are not available here."));i="t3-message-"+(++n);m={jsonrpc:"2.0",id:i,method:${JSON.stringify(MESSAGE_METHOD)},params:{role:"user",content:[{type:"text",text:t}]}};q[i]=[r,j];if(window.parent!==window)window.parent.postMessage(m,"*");else w.postMessage(JSON.stringify(m));});}};document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);}})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");

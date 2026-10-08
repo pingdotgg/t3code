@@ -10,6 +10,7 @@ import {
   htmlRenderThemeMessage,
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
+  readHtmlRenderMessageRequest,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
@@ -98,6 +99,93 @@ describe("readHtmlRenderLinkRequest", () => {
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
     ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderMessageRequest", () => {
+  it("reads user text from a ui/message request in either content form", () => {
+    const request = (content: unknown, role = "user") => ({
+      jsonrpc: "2.0",
+      id: "t3-message-1",
+      method: "ui/message",
+      params: { role, content },
+    });
+    expect(readHtmlRenderMessageRequest(request({ type: "text", text: " Option B " }))).toEqual({
+      id: "t3-message-1",
+      text: "Option B",
+    });
+    expect(
+      readHtmlRenderMessageRequest(
+        request([
+          { type: "text", text: "a" },
+          { type: "text", text: "b" },
+        ]),
+      ),
+    ).toEqual({ id: "t3-message-1", text: "a\nb" });
+    expect(readHtmlRenderMessageRequest(request({ type: "text", text: "x" }, "assistant"))).toBe(
+      undefined,
+    );
+    expect(readHtmlRenderMessageRequest(request([{ type: "image", data: "" }]))).toBe(undefined);
+    expect(readHtmlRenderMessageRequest(request({ type: "text", text: "  " }))).toBe(undefined);
+  });
+});
+
+/**
+ * Runs the injected bootstrap against a minimal browser, framed in a parent
+ * window, and returns the page's `t3` global with what it posted.
+ */
+function runFramedBootstrap(options: { readonly activated: boolean }) {
+  const html = injectHtmlRenderBootstrap("<p>x</p>");
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
+  const posted: Array<{ readonly id?: unknown }> = [];
+  const listeners: Array<(event: { data: unknown; source: unknown }) => void> = [];
+  const parent = { postMessage: (message: { readonly id?: unknown }) => posted.push(message) };
+  const window: { t3?: { send: (text: string) => Promise<void> } } & Record<string, unknown> = {
+    parent,
+    addEventListener: (type: string, listener: (typeof listeners)[number]) => {
+      if (type === "message") listeners.push(listener);
+    },
+  };
+  const document = {
+    getElementById: () => ({ textContent: "" }),
+    addEventListener: () => {},
+    documentElement: {},
+  };
+  new Function("window", "document", "location", "history", "navigator", script)(
+    window,
+    document,
+    { hash: "", pathname: "/", search: "", href: "https://render/" },
+    { replaceState: () => {} },
+    { userActivation: { isActive: options.activated } },
+  );
+  const deliver = (data: unknown, source: unknown = parent) => {
+    for (const listener of listeners) listener({ data, source });
+  };
+  const { t3 } = window;
+  if (t3 === undefined) throw new Error("The bootstrap did not define t3.");
+  return { t3, posted, deliver };
+}
+
+describe("t3.send", () => {
+  it("posts a ui/message and settles with the client's answer", async () => {
+    const page = runFramedBootstrap({ activated: true });
+    const sent = page.t3.send("Go with B");
+    const [request] = page.posted;
+    expect(readHtmlRenderMessageRequest(request)).toEqual({ id: request?.id, text: "Go with B" });
+    // A reply from anywhere but the parent is ignored.
+    page.deliver({ jsonrpc: "2.0", id: request?.id, error: { message: "spoof" } }, {});
+    page.deliver({ jsonrpc: "2.0", id: request?.id, result: {} });
+    await expect(sent).resolves.toBeUndefined();
+
+    const refused = page.t3.send("Again");
+    page.deliver({ jsonrpc: "2.0", id: page.posted[1]?.id, error: { message: "Not here." } });
+    await expect(refused).rejects.toThrow("Not here.");
+  });
+
+  it("refuses outside a click or key press without posting", async () => {
+    const page = runFramedBootstrap({ activated: false });
+    await expect(page.t3.send("Go")).rejects.toThrow("click or key press");
+    expect(page.posted).toEqual([]);
   });
 });
 

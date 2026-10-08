@@ -61,6 +61,8 @@ export function AttachmentFilePreview(props: {
   asset?: { environmentId: EnvironmentId; attachmentId: string };
   /** An agent's HTML render, shown in the app theme. */
   htmlRender?: boolean;
+  /** Sends text an HTML render's page posts to the thread. */
+  onSendRenderMessage?: ((text: string) => Promise<void>) | undefined;
   /** First crumb: where the file comes from. */
   origin?: string;
   onRemove?: () => void;
@@ -250,6 +252,7 @@ export function AttachmentFilePreview(props: {
       title={props.name}
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
+      onSendMessage={props.onSendRenderMessage}
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />

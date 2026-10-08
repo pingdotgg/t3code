@@ -2,7 +2,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, ScrollView, View } from "react-native";
@@ -24,7 +24,7 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
-import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
+import { HtmlRenderWebView, sendHtmlRenderMessage } from "../threads/HtmlRenderWebView";
 
 /**
  * Both the thread stack and the new-task sheet stack register this screen, so a chip in a
@@ -57,6 +57,8 @@ function AttachmentDocumentBody(props: {
   readonly document: ReturnType<typeof useAttachmentDocument>;
   readonly name: string;
   readonly environmentId: EnvironmentId | null;
+  /** The thread an HTML render's `t3.send` posts to. */
+  readonly threadId: ThreadId | null;
   readonly htmlRender: boolean;
   readonly nativeViewer: "pending" | "open" | "unavailable" | null;
   readonly nativeError: string | null;
@@ -145,8 +147,19 @@ function AttachmentDocumentBody(props: {
     return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
   }
   if (document.kind === "html") {
+    const { environmentId, threadId } = props;
     return props.htmlRender ? (
-      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
+      <HtmlRenderWebView
+        key={document.uri}
+        uri={document.uri}
+        title={props.name}
+        nested={false}
+        onSendMessage={
+          environmentId !== null && threadId !== null
+            ? (text) => sendHtmlRenderMessage(environmentId, threadId, text)
+            : undefined
+        }
+      />
     ) : (
       <WorkspaceFileWebPreview uri={document.uri} />
     );
@@ -415,6 +428,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         document={document}
         name={params.name}
         environmentId={environmentId}
+        threadId={params.threadId?.trim() ? ThreadId.make(params.threadId) : null}
         htmlRender={params.htmlRender === "1"}
         nativeViewer={nativeViewer}
         nativeError={nativeError}

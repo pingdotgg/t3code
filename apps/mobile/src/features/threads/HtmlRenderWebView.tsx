@@ -1,10 +1,13 @@
 import { useNavigation } from "@react-navigation/native";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import {
+  htmlRenderError,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
+  htmlRenderResult,
+  readHtmlRenderMessageRequest,
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
@@ -16,7 +19,9 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { uuidv4 } from "../../lib/uuid";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const ROW_BOTTOM_MARGIN = 8;
@@ -43,11 +48,38 @@ function useHtmlRenderTheme() {
   );
 }
 
-function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
-  view?.injectJavaScript(
-    `window.postMessage(${JSON.stringify(htmlRenderThemeMessage(theme))}, "*"); true;`,
-  );
+function postToPage(view: WebView<object> | null, message: unknown) {
+  view?.injectJavaScript(`window.postMessage(${JSON.stringify(message)}, "*"); true;`);
 }
+
+function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
+  postToPage(view, htmlRenderThemeMessage(theme));
+}
+
+/**
+ * Sends a render's `t3.send` text to its thread through the outbox, like a
+ * typed message, so it survives a dropped connection.
+ */
+export function sendHtmlRenderMessage(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  text: string,
+): Promise<void> {
+  return enqueueThreadOutboxMessage({
+    environmentId,
+    threadId,
+    messageId: MessageId.make(uuidv4()),
+    commandId: CommandId.make(uuidv4()),
+    text,
+    attachments: [],
+    dispatchMode: "queue",
+    createdAt: new Date().toISOString(),
+  });
+}
+
+// The page is the top document here, so the client cannot see focus or user
+// activation. A message counts only this soon after the reader touched it.
+const MESSAGE_TOUCH_WINDOW_MS = 5_000;
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
@@ -83,6 +115,8 @@ export function HtmlRenderWebView(props: {
   /** Inside the feed, the page takes scroll gestures only when it overflows its frame. */
   readonly nested: boolean;
   readonly onLoadError?: () => void;
+  /** Sends a render's `t3.send` text to its thread; the page is refused without one. */
+  readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState(theme);
@@ -91,6 +125,7 @@ export function HtmlRenderWebView(props: {
   const [overflows, setOverflows] = useState(false);
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
+  const lastTouchAt = useRef(0);
   // The theme the loaded document shows; null until it loads.
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = useMemo(
@@ -115,10 +150,53 @@ export function HtmlRenderWebView(props: {
     setGeneration((value) => value + 1);
   };
   const scrollable = !props.nested || overflows;
+  const handleMessage = (event: WebViewMessageEvent) => {
+    const { data } = event.nativeEvent;
+    if (props.nested) {
+      const overflow = readOverflowMessage(data);
+      if (overflow !== null) {
+        setOverflows(overflow);
+        return;
+      }
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const request = readHtmlRenderMessageRequest(parsed);
+    if (request === undefined) return;
+    const reply = (message: unknown) => postToPage(webView.current, message);
+    const send = props.onSendMessage;
+    if (send === undefined) {
+      reply(htmlRenderError(request.id, "Messages are not available here."));
+      return;
+    }
+    if (Date.now() - lastTouchAt.current > MESSAGE_TOUCH_WINDOW_MS) {
+      reply(htmlRenderError(request.id, "Messages send only from a tap in the page."));
+      return;
+    }
+    // One tap sends one message.
+    lastTouchAt.current = 0;
+    send(request.text).then(
+      () => reply(htmlRenderResult(request.id)),
+      (error: unknown) =>
+        reply(
+          htmlRenderError(
+            request.id,
+            error instanceof Error ? error.message : "The message was not sent.",
+          ),
+        ),
+    );
+  };
   // Pages have no horizontal padding of their own, so full screen adds the
   // feed's gutter in the page's background color.
   return (
     <View
+      onTouchStart={() => {
+        lastTouchAt.current = Date.now();
+      }}
       style={
         props.nested
           ? { flex: 1 }
@@ -163,15 +241,8 @@ export function HtmlRenderWebView(props: {
         onHttpError={props.onLoadError}
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
-        {...(props.nested
-          ? {
-              injectedJavaScript: OVERFLOW_SCRIPT,
-              onMessage: (event: WebViewMessageEvent) => {
-                const overflow = readOverflowMessage(event.nativeEvent.data);
-                if (overflow !== null) setOverflows(overflow);
-              },
-            }
-          : {})}
+        onMessage={handleMessage}
+        {...(props.nested ? { injectedJavaScript: OVERFLOW_SCRIPT } : {})}
       />
       {loaded ? null : (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
@@ -238,6 +309,9 @@ export function ThreadHtmlRender(props: {
             title={title}
             nested
             onLoadError={handleLoadError}
+            onSendMessage={(text) =>
+              sendHtmlRenderMessage(props.environmentId, props.threadId, text)
+            }
           />
         ) : failed || asset._tag === "Failure" ? (
           <Pressable

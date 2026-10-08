@@ -121,6 +121,8 @@ interface FilePreviewPanelProps {
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
+  /** Sends text an HTML render's page posts to the thread. */
+  onSendRenderMessage?: ((text: string) => Promise<void>) | undefined;
   threadRef: ScopedThreadRef;
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
@@ -1008,6 +1010,7 @@ export default function FilePreviewPanel({
   projectName,
   relativePath: requestedPath,
   attachment,
+  onSendRenderMessage,
   threadRef,
   composerDraftTarget,
   keybindings,
@@ -1327,6 +1330,7 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
+              onSendRenderMessage={onSendRenderMessage}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
