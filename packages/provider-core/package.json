@@ -11,6 +11,10 @@
       "types": "./src/server/adapterDriver.ts",
       "import": "./src/server/adapterDriver.ts"
     },
+    "./server/attachmentPrompt": {
+      "types": "./src/server/attachmentPrompt.ts",
+      "import": "./src/server/attachmentPrompt.ts"
+    },
     "./server/auth": {
       "types": "./src/server/auth.ts",
       "import": "./src/server/auth.ts"
@@ -47,6 +51,10 @@
       "types": "./src/server/instanceEnvironment.ts",
       "import": "./src/server/instanceEnvironment.ts"
     },
+    "./server/instanceIdentity": {
+      "types": "./src/server/instanceIdentity.ts",
+      "import": "./src/server/instanceIdentity.ts"
+    },
     "./server/maintenance": {
       "types": "./src/server/maintenance.ts",
       "import": "./src/server/maintenance.ts"
@@ -67,6 +75,10 @@
       "types": "./src/server/mcpToolPresentation.ts",
       "import": "./src/server/mcpToolPresentation.ts"
     },
+    "./server/notification": {
+      "types": "./src/server/notification.ts",
+      "import": "./src/server/notification.ts"
+    },
     "./server/orchestrationInstructions": {
       "types": "./src/server/orchestrationInstructions.ts",
       "import": "./src/server/orchestrationInstructions.ts"
@@ -83,6 +95,10 @@
       "types": "./src/server/ProviderAdapter.ts",
       "import": "./src/server/ProviderAdapter.ts"
     },
+    "./server/ProviderEventLoggers": {
+      "types": "./src/server/ProviderEventLoggers.ts",
+      "import": "./src/server/ProviderEventLoggers.ts"
+    },
     "./server/ProviderHost": {
       "types": "./src/server/ProviderHost.ts",
       "import": "./src/server/ProviderHost.ts"
@@ -90,6 +106,10 @@
     "./server/randomUuid": {
       "types": "./src/server/randomUuid.ts",
       "import": "./src/server/randomUuid.ts"
+    },
+    "./server/runtimeInstructions": {
+      "types": "./src/server/runtimeInstructions.ts",
+      "import": "./src/server/runtimeInstructions.ts"
     },
     "./server/selectionTransition": {
       "types": "./src/server/selectionTransition.ts",

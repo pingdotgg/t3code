@@ -38,7 +38,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   museModelCapabilities,
   resolveMuseReasoningEffort,
@@ -71,7 +71,7 @@ import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import {
   providerMessageTextWithAttachmentPaths,
   isProviderNativeImageAttachment,
-} from "../AttachmentPrompt.ts";
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterEnsureThreadError,
@@ -96,7 +96,10 @@ import {
   type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2TurnMessage,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import { backgroundWorkNotification, type BackgroundWorkReport } from "../Notification.ts";
+import {
+  backgroundWorkNotification,
+  type BackgroundWorkReport,
+} from "@t3tools/provider-core/server/notification";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
@@ -1598,7 +1601,11 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         const text = providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
-          attachmentsDir: options.serverConfig.attachmentsDir,
+          resolveAttachmentPath: (attachment) =>
+            resolveAttachmentPath({
+              attachmentsDir: options.serverConfig.attachmentsDir,
+              attachment,
+            }),
         });
         if (text) parts.push({ type: "text", text });
         for (const attachment of message.attachments)
