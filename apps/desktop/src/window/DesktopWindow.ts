@@ -581,6 +581,10 @@ export const make = Effect.gen(function* () {
               onNone: () => DEFAULT_CLIENT_SETTINGS.nativeContextMenus,
               onSome: (settings) => settings.nativeContextMenus,
             }),
+          ).pipe(
+            // If the settings file can't be read, fall back to default
+            // (native menus) rather than denying every context menu.
+            Effect.orElseSucceed(() => DEFAULT_CLIENT_SETTINGS.nativeContextMenus),
           ),
         ).then((nativeContextMenus) => {
           if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
