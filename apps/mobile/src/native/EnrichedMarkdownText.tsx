@@ -5,7 +5,7 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { useCallback, useMemo, useState } from "react";
-import { ActionSheetIOS, Platform, StyleSheet, View } from "react-native";
+import { ActionSheetIOS, Platform, Share, StyleSheet, View } from "react-native";
 import {
   EnrichedMarkdownText,
   type DocumentAssetsEvent,
@@ -171,24 +171,26 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     (url: string, actionId: string) => {
       if (actionId === "enriched-open-link") onLinkPress?.(url);
       else if (actionId === "enriched-copy-link") copyTextWithHaptic(url);
+      else if (actionId === "enriched-share-link") void Share.share({ message: url });
       else onFileContextMenuAction?.(url, actionId);
     },
     [onLinkPress, onFileContextMenuAction],
   );
   const linkContextMenuItems = useMemo(
     () =>
-      Platform.OS === "ios" && fileContextMenu
+      Platform.OS === "ios" && (fileContextMenu || onLinkPress)
         ? Object.fromEntries(
             [
               ...new Set(
                 documentAssets.filter((asset) => asset.kind === "link").map((asset) => asset.url),
               ),
             ].map((url) => {
-              const menu = fileContextMenu(url) ?? {
+              const menu = fileContextMenu?.(url) ?? {
                 title: url,
                 actions: [
                   { id: "enriched-open-link", title: "Open link" },
                   { id: "enriched-copy-link", title: "Copy link" },
+                  { id: "enriched-share-link", title: "Share link" },
                 ],
               };
               return [
@@ -202,7 +204,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             }),
           )
         : undefined,
-    [documentAssets, fileContextMenu, performMenuAction],
+    [documentAssets, fileContextMenu, onLinkPress, performMenuAction],
   );
   const selectionClipboard = useMemo(() => {
     const fragment = decodeComposerContextFragment(props.contextClipboardFragment);
