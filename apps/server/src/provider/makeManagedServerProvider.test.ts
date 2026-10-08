@@ -303,6 +303,9 @@ describe("makeManagedServerProvider", () => {
             updateProviderInstance: () => Effect.die(new Error("unused in this test")),
             withSettingsSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),
             streamChanges: Stream.empty,
+            subscribePersistedChanges: PubSub.subscribe(serverSettingsChanges).pipe(
+              Effect.map(Stream.fromSubscription),
+            ),
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
               Effect.map((subscription) => Stream.fromSubscription(subscription)),
             ),

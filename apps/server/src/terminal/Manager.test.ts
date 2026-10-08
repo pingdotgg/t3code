@@ -2204,6 +2204,7 @@ it.layer(
         withSettingsSnapshot: () => Effect.fail(settingsError),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
+        subscribePersistedChanges: Effect.succeed(Stream.empty),
       });
 
       const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({

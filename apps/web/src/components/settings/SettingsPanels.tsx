@@ -2207,6 +2207,26 @@ export function GeneralSettingsPanel() {
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
     );
 
+  const mixedTelemetryEnabled = useScopedSettingsMixed(["telemetryEnabled"]);
+
+  const telemetryOverridden = connectedEnvironments.some(
+    (target) => target.serverConfig?.telemetryDisabledByEnvironment === true,
+  );
+
+  const telemetryPartiallyOverridden =
+    telemetryOverridden &&
+    connectedEnvironments.some(
+      (target) => target.serverConfig?.telemetryDisabledByEnvironment !== true,
+    );
+
+  const telemetryMixed = telemetryOverridden ? telemetryPartiallyOverridden : mixedTelemetryEnabled;
+
+  const telemetryDescription = telemetryPartiallyOverridden
+    ? "Disabled by some selected servers' environment configuration."
+    : telemetryOverridden
+      ? "Disabled by the server's environment configuration."
+      : "Share anonymous usage data to help improve T3 Code.";
+
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
@@ -3335,6 +3355,26 @@ export function GeneralSettingsPanel() {
                 ) : null}
               </div>
             )
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Privacy">
+        <SettingsRow
+          serverScoped
+          settingKeys={["telemetryEnabled"]}
+          {...searchableSetting("anonymous-analytics")}
+          description={telemetryDescription}
+          control={
+            <Switch
+              checked={!telemetryOverridden && !telemetryMixed && settings.telemetryEnabled}
+              mixed={telemetryMixed}
+              disabled={telemetryOverridden}
+              onCheckedChange={(checked) => {
+                updateSettings({ telemetryEnabled: telemetryMixed ? false : Boolean(checked) });
+              }}
+              aria-label="Anonymous analytics"
+            />
           }
         />
       </SettingsSection>

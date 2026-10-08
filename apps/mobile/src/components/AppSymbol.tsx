@@ -144,6 +144,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "bolt.horizontal.circle": IconBolt,
   brain: IconBrain,
   camera: IconCamera,
+  "chart.bar": IconChartBar,
   "chart.bar.xaxis": IconChartBar,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,

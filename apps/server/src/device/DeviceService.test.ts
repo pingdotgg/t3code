@@ -157,6 +157,7 @@ const fixture = Effect.fn("fixture")(function* (
           })),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
+        subscribePersistedChanges: Effect.succeed(Stream.empty),
       }),
     ),
     Effect.provideService(

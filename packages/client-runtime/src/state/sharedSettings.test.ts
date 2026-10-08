@@ -44,6 +44,25 @@ describe("supportsSharedSettingsSync", () => {
 });
 
 describe("splitSharedServerPatch", () => {
+  it("shares analytics opt-out and detects environments still collecting", () => {
+    const patch = { telemetryEnabled: false };
+    expect(splitSharedServerPatch(patch)).toEqual({ sharedPatch: patch, localPatch: {} });
+    expect(
+      findSharedSettingsMismatches({
+        primaryEnvironmentId: primaryId,
+        primarySettings: { ...DEFAULT_SERVER_SETTINGS, ...patch },
+        environments: [
+          {
+            environmentId: boxId,
+            label: "Remote Box",
+            syncEligible: true,
+            settings: DEFAULT_SERVER_SETTINGS,
+          },
+        ],
+      }),
+    ).toEqual([{ environmentId: boxId, label: "Remote Box" }]);
+  });
+
   it("keeps project overrides local: project ids belong to one environment", () => {
     const patch = {
       projectSettingsOverrides: { [ProjectId.make("project")]: { defaultAutoPull: true } },
@@ -130,6 +149,7 @@ describe("pickSharedServerSettings", () => {
       "sidebarAutoSettleOnMerge",
       "snoozeLimitedThreads",
       "sourceControlWritingStyle",
+      "telemetryEnabled",
       "textGenerationModelSelection",
     ]);
   });

@@ -230,6 +230,27 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+
+  const telemetryOverridden = targets.some(
+    (target) => target.environment.serverConfig.telemetryDisabledByEnvironment === true,
+  );
+
+  const telemetryPartiallyOverridden =
+    telemetryOverridden &&
+    targets.some(
+      (target) => target.environment.serverConfig.telemetryDisabledByEnvironment !== true,
+    );
+
+  const telemetryValue = telemetryPartiallyOverridden
+    ? null
+    : !telemetryOverridden && uniform("telemetryEnabled");
+
+  const telemetryDescription = telemetryPartiallyOverridden
+    ? "Disabled by some selected servers' environment configuration."
+    : telemetryOverridden
+      ? "Disabled by the server's environment configuration."
+      : "Share anonymous usage data to help improve T3 Code.";
+
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -449,6 +470,23 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ))}
                     </SettingsSection>
                   ) : null}
+                  <SettingsSection title="Privacy">
+                    <SettingsSwitchRow
+                      icon="chart.bar"
+                      label="Anonymous analytics"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : telemetryDescription
+                      }
+                      value={telemetryValue}
+                      mixedValue={false}
+                      disabled={telemetryOverridden || disabledFor("telemetryEnabled")}
+                      onValueChange={(value) => {
+                        write({ telemetryEnabled: value });
+                      }}
+                    />
+                  </SettingsSection>
                   <SettingsSection title="Updates">
                     <SettingsSwitchRow
                       icon="arrow.clockwise"
