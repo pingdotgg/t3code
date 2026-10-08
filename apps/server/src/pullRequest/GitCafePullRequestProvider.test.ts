@@ -84,6 +84,20 @@ describe("deployed GitCafe PR API", () => {
     expect(permissions.actions).toEqual([]);
   });
 
+  it("offers no lifecycle actions on a merged pull request and only reopen on a closed one", () => {
+    const actions = (state: "open" | "closed" | "merged") =>
+      gitCafeViewerPermissions({
+        ...detail,
+        state,
+        author: { ...detail.author, kind: "local" },
+        mergeRoute: "native",
+        capabilities: { comment: false, review: false, merge: true, edit: true, moderate: false },
+      }).actions;
+    expect(actions("merged")).toEqual([]);
+    expect(actions("closed")).toEqual(["reopen"]);
+    expect(actions("open")).toEqual(["draft", "close", "merge"]);
+  });
+
   it("keeps a locked conversation's composer for moderators only", () => {
     const locked = (moderate: boolean) =>
       gitCafeViewerPermissions({

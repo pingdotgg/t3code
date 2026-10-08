@@ -3166,7 +3166,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
           alt={altText}
           copyMarkdown={copyMarkdown}
           standalone={standalone}
+          className={className}
           style={authoredSizeStyle}
+          imageProps={imageProps}
+          srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          originalUrl={srcString}
+          // Only pull request bodies resolve these, and they draw their own boxes.
+          framed={false}
           onImageExpand={imageExpand}
         />
       );

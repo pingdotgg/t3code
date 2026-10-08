@@ -213,12 +213,12 @@ export function gitCafeViewerPermissions(
   const merge = capabilities?.merge ?? false;
   return {
     actions: [
-      ...(edit
-        ? ([
-            pull?.draft ? "ready" : "draft",
-            pull?.state === "closed" ? "reopen" : "close",
-          ] as const)
-        : []),
+      // A merged pull request is settled; a closed one can only be reopened.
+      ...(edit && pull?.state === "open"
+        ? ([pull.draft ? "ready" : "draft", "close"] as const)
+        : edit && pull?.state === "closed"
+          ? (["reopen"] as const)
+          : []),
       ...(merge && pull?.state === "open" && !pull.draft ? (["merge"] as const) : []),
     ],
     stackRebase: merge,

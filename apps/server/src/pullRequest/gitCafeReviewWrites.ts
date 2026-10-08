@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
 import { PullRequestProviderError, type PullRequestProviderApi } from "./PullRequestProvider.ts";
-import { gitCafeWriteApi } from "./gitCafeWriteApi.ts";
+import { gitCafeWriteApi, markNotDispatched } from "./gitCafeWriteApi.ts";
 
 const Oid = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u));
 const DraftRef = Schema.Struct({ id: Schema.String, version: NonNegativeInt });
@@ -140,11 +140,17 @@ export function makeGitCafeReviewWrites(
       .api({ cwd: raw.cwd, host: raw.host, endpoint: "/auth/principal" })
       .pipe(
         Effect.mapError((cause) =>
-          fail("GitCafe could not verify the current account before submitting the review.", cause),
+          fail(
+            "GitCafe could not verify the current account before submitting the review.",
+            cause,
+            true,
+          ),
         ),
       );
     const identity = yield* Schema.decodeEffect(Schema.fromJsonString(Principal))(response).pipe(
-      Effect.mapError((cause) => fail("GitCafe returned an unreadable account identity.", cause)),
+      Effect.mapError((cause) =>
+        fail("GitCafe returned an unreadable account identity.", cause, true),
+      ),
     );
     return identity.actorId;
   });
@@ -198,6 +204,12 @@ export function makeGitCafeReviewWrites(
       );
     const state = remembered ?? { fingerprint, actorId };
     remember(key, state);
+    // Whether a refusal can say nothing was sent: only on a first attempt, and only before this
+    // invocation's own first write.
+    let wrote = false;
+    const unsent = () => remembered === undefined && !wrote;
+    const beforeWrite = (error: PullRequestProviderError) =>
+      unsent() ? markNotDispatched(error) : error;
 
     const finalBody = {
       verdict: mappedVerdict,
@@ -216,7 +228,9 @@ export function makeGitCafeReviewWrites(
           state.finalDraft === undefined ? finalBody : { ...finalBody, draft: state.finalDraft },
       }).pipe(Effect.asVoid);
 
-    const fresh = yield* request(raw, path, PullRevision, { operation: "submitReview" });
+    const fresh = yield* request(raw, path, PullRevision, { operation: "submitReview" }).pipe(
+      Effect.mapError(beforeWrite),
+    );
     if (fresh.version !== revision.version || fresh.headOid !== revision.headOid)
       return yield* fail(
         "The GitCafe pull request changed since this review was written. Refresh the diff and review the new revision before submitting.",
@@ -226,6 +240,7 @@ export function makeGitCafeReviewWrites(
 
     if (comments.length === 0) {
       state.submitted = true;
+      wrote = true;
       return yield* request(raw, `${path}/reviews`, Submitted, {
         operation: "submitReview",
         method: "POST",
@@ -236,17 +251,22 @@ export function makeGitCafeReviewWrites(
     if (fresh.observedBaseOid === null)
       return yield* fail(
         "GitCafe has not observed the pull request base revision. Refresh the pull request and retry.",
+        undefined,
+        unsent(),
       );
 
     const read = yield* request(raw, `${path}/review-draft/`, DraftRead, {
       operation: "submitReview",
-    });
+    }).pipe(Effect.mapError(beforeWrite));
     let draft: Draft;
     if (read.draft === null) {
       if (state.uncertainDraft === true)
         return yield* fail(
           `GitCafe still reports no review draft, but T3 cannot prove that the earlier creation is not in flight. Open https://${raw.host}/${raw.repository}/pulls/${raw.number} and inspect the draft before retrying; do not create another review yet.`,
+          undefined,
+          unsent(),
         );
+      wrote = true;
       const created = yield* request(raw, `${path}/review-draft/`, SavedDraft, {
         operation: "submitReview",
         method: "PUT",
@@ -274,6 +294,8 @@ export function makeGitCafeReviewWrites(
       if (!ours)
         return yield* fail(
           `An existing GitCafe review draft cannot be safely claimed by T3. Open https://${raw.host}/${raw.repository}/pulls/${raw.number}, submit or discard that draft, then retry.`,
+          undefined,
+          unsent(),
         );
       if (
         draft.stale ||
@@ -285,6 +307,8 @@ export function makeGitCafeReviewWrites(
       )
         return yield* fail(
           "The GitCafe review draft no longer matches this request. Open GitCafe and inspect the draft before retrying.",
+          undefined,
+          unsent(),
         );
     }
     if (
@@ -293,10 +317,14 @@ export function makeGitCafeReviewWrites(
     )
       return yield* fail(
         "The GitCafe review draft contains unrelated line comments. Open GitCafe and inspect the draft before retrying.",
+        undefined,
+        unsent(),
       );
     if (state.uncertainComment === true)
       return yield* fail(
         `T3 cannot prove whether the last draft comment was saved. Open https://${raw.host}/${raw.repository}/pulls/${raw.number} and inspect the review draft before retrying.`,
+        undefined,
+        unsent(),
       );
 
     let ref = { id: draft.id, version: draft.version };

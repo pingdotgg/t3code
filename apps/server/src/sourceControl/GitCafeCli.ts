@@ -166,8 +166,7 @@ function normalizePull(
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const httpClient = yield* HttpClient.HttpClient;

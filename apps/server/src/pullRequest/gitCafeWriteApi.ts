@@ -4,6 +4,20 @@ import * as Schema from "effect/Schema";
 import type * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
 import { PullRequestProviderError, type ProviderRepositoryRef } from "./PullRequestProvider.ts";
 
+/** Marks a failure that happened before this invocation sent anything that could mutate. */
+export const markNotDispatched = (error: PullRequestProviderError) =>
+  error.notDispatched === true
+    ? error
+    : new PullRequestProviderError({
+        provider: error.provider,
+        operation: error.operation,
+        reason: error.reason,
+        detail: error.detail,
+        notDispatched: true,
+        ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+        cause: error,
+      });
+
 /** Authenticated, repository-relative requests shared by GitCafe mutations. */
 export function gitCafeWriteApi(cli: GitCafeCli.GitCafeCli["Service"]) {
   return <S extends Schema.Top & { readonly DecodingServices: never }>(

@@ -4,7 +4,7 @@ import { NonNegativeInt, PositiveInt, type PullRequestActionOutcome } from "@t3t
 
 import type * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
 import { PullRequestProviderError, type PullRequestProviderApi } from "./PullRequestProvider.ts";
-import { gitCafeWriteApi } from "./gitCafeWriteApi.ts";
+import { gitCafeWriteApi, markNotDispatched } from "./gitCafeWriteApi.ts";
 
 const Oid = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u));
 const Pull = Schema.Struct({
@@ -94,18 +94,6 @@ const fail = (operation: string, detail: string) =>
     detail,
     notDispatched: true,
   });
-const markNotDispatched = (error: PullRequestProviderError) =>
-  error.notDispatched === true
-    ? error
-    : new PullRequestProviderError({
-        provider: error.provider,
-        operation: error.operation,
-        reason: error.reason,
-        detail: error.detail,
-        notDispatched: true,
-        ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-        cause: error,
-      });
 const requestIdError = (requestId: string | undefined) =>
   requestId === undefined
     ? "A request ID is required to submit durable GitCafe work."

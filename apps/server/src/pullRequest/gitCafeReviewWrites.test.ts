@@ -66,6 +66,33 @@ const savedDraft = (version = 0, changes: Record<string, unknown> = {}) => ({
 });
 
 describe("GitCafe review writes", () => {
+  it.effect("says nothing was sent when a first attempt stops before any write", () =>
+    Effect.gen(function* () {
+      const cases = [
+        // The account could not be read.
+        fixture((call) => (call.endpoint === "/auth/principal" ? failure(503) : revision())),
+        // GitCafe has not observed the base, so a commented review cannot be anchored.
+        fixture((call) =>
+          call.endpoint === "/auth/principal" ? identity() : revision({ observedBaseOid: null }),
+        ),
+        // A draft T3 did not create is in the way.
+        fixture((call) =>
+          call.endpoint === "/auth/principal"
+            ? identity()
+            : call.endpoint.endsWith("/review-draft/")
+              ? { draft: { ...savedDraft(), stale: false, comments: [] } }
+              : revision(),
+        ),
+      ];
+      for (const [index, attempt] of cases.entries()) {
+        const error = yield* Effect.flip(
+          attempt.writes.submitReview(input({ requestId: `review-${index}`, comments: [line()] })),
+        );
+        expect(error.notDispatched).toBe(true);
+        expect(attempt.calls.some((call) => call.method !== undefined)).toBe(false);
+      }
+    }),
+  );
   it.effect("rejects anything except the exact reviewed head and pull version", () =>
     Effect.gen(function* () {
       for (const changed of [{ version: 5 }, { headOid: moved }]) {

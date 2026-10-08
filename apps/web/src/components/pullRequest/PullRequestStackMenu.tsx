@@ -283,9 +283,10 @@ export function PullRequestStackMenu({
       });
       return;
     }
-    if (discovering && outcome.state === "pending") {
-      // Latest is useful discovery, but does not identify the lost request's operation. Once it
-      // settles, the stack revision has moved, so a repeated request is fenced off anyway.
+    if (discovering) {
+      // The latest operation may be an older one, so whatever it says proves nothing about the
+      // lost request: report it and keep the record. Dismiss is the way out once GitCafe shows
+      // what happened.
       remember(
         {
           input: storedAction.input,
