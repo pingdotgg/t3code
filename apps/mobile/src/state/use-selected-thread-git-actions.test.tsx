@@ -35,6 +35,10 @@ vi.mock("./threads", () => ({ threadEnvironment: { updateMetadata: "updateMetada
 vi.mock("./queries", () => ({ useBranches: () => ({ data: null, refresh: () => {} }) }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./session", () => ({
+  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => true,
+}));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
 vi.mock("./use-vcs-action-state", () => ({ showGitActionResult: () => {} }));
 // Runs on every render: a refresh loop fails fast here instead of exhausting memory.
