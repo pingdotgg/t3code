@@ -1405,6 +1405,27 @@ describe('who "I" am, per server', () => {
     ).toEqual([1]);
   });
 
+  it("matches a project's rows to the GitHub account that project uses", () => {
+    const byWork = { login: "work-account", name: null, avatarUrl: null };
+    const work = "work-project" as ProjectId;
+    const merged = mergePullRequestLists([
+      [
+        ENV_1,
+        answer({ "github.com": "Bilal", [`project:${work}`]: "work-account" }, [
+          entry({ number: 1, author: byBilal }),
+          entry({ number: 2, author: byWork, projectId: work }),
+          entry({ number: 3, author: byBilal, projectId: work }),
+        ]),
+      ],
+    ])!;
+
+    expect(
+      filterPullRequestsByInvolvement(merged.entries, merged.viewers, "authored").map(
+        (row) => row.number,
+      ),
+    ).toEqual([1, 2]);
+  });
+
   it("names the servers with more rows and no cursor to reach them by", () => {
     const merged = mergePullRequestLists([
       [

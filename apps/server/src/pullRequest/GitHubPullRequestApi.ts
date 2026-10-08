@@ -1753,6 +1753,8 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? null,
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        // A project with its own account is read with its own token, never batched with others.
+        Context.getOrElse(context, GitHubApi.GitHubAccount, () => null),
       ]),
     resolver: (entries) => {
       const [first] = entries;
@@ -1833,6 +1835,8 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? null,
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        // A project with its own account is read with its own token, never batched with others.
+        Context.getOrElse(context, GitHubApi.GitHubAccount, () => null),
       ]),
     resolver: (entries) => {
       const [first] = entries;

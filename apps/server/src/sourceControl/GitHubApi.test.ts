@@ -523,3 +523,57 @@ describe("GitHubCredentials", () => {
     ),
   );
 });
+
+describe("GitHubApi accounts", () => {
+  it.effect("sends every request under GitHubAccount with that account's token", () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const invalidated: Array<string | null | undefined> = [];
+    const credentials = Layer.succeed(
+      GitHubCredentials.GitHubCredentials,
+      GitHubCredentials.GitHubCredentials.of({
+        get: (host, account) =>
+          Effect.succeed({
+            host,
+            token: Redacted.make(account ?? "host"),
+            source: "gh" as const,
+            fingerprint: `${host}:${account ?? "host"}`,
+          }),
+        invalidate: (_host, account) => Effect.sync(() => void invalidated.push(account)),
+      }),
+    );
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.endsWith("/refused") ? json({}, { status: 401 }) : json({}),
+          ),
+        );
+      }),
+    );
+    const layer = GitHubApi.layer.pipe(
+      Layer.provide(Layer.mergeAll(credentials, http)),
+      Layer.provideMerge(GitHubQuota.layer),
+      Layer.provideMerge(SourceControlRateLimit.layer),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubApi.GitHubApi;
+      yield* api.rest({ host: "github.com", operation: "read", path: "repos/acme/web" });
+      const asWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(GitHubApi.GitHubAccount, "work"));
+      yield* asWork(api.rest({ host: "github.com", operation: "read", path: "repos/acme/web" }));
+      yield* asWork(
+        api.rest({ host: "github.com", operation: "read", path: "refused" }).pipe(Effect.flip),
+      );
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer host",
+        "Bearer work",
+        "Bearer work",
+      ]);
+      expect(invalidated).toEqual(["work"]);
+    }).pipe(Effect.provide(layer));
+  });
+});

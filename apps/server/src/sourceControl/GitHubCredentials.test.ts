@@ -167,4 +167,36 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("uses a project's own account ahead of the host's pinned one", () => {
+    const { layer, calls } = harness({ "github.com": { account: "personal" } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(Redacted.value((yield* credentials.get("github.com", "work")).token)).toBe(
+        "token-for-work",
+      );
+      expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe(
+        "token-for-personal",
+      );
+      expect(calls).toEqual([
+        ["auth", "token", "--hostname", "github.com", "--user", "work"],
+        ["auth", "token", "--hostname", "github.com", "--user", "personal"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "refuses a project's own account that gh no longer holds instead of acting as another",
+    () => {
+      const { layer, calls } = harness({ "github.com": { account: "work" } }, ["work"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const error = yield* Effect.flip(credentials.get("github.com", "work"));
+        expect(error._tag).toBe("GitHubNotSignedInError");
+        expect(calls).toEqual([["auth", "token", "--hostname", "github.com", "--user", "work"]]);
+        // The same login pinned for the host keeps its documented fallback to the active login.
+        expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

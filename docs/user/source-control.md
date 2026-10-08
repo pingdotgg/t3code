@@ -24,6 +24,12 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+A project can use a different account than the rest, for example a work project next to your
+personal ones. Choose the project under **Applying settings for** in Settings → Source Control,
+then pick its **GitHub account**. Its pull request reviews, actions and the pull requests T3 Code
+creates for it use that account. Pushes keep using your Git credentials, and agents' own `gh`
+commands still use `gh`'s active account.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

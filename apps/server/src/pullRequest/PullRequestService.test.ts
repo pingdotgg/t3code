@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
+import { GitHubAccount } from "../sourceControl/GitHubApi.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -1276,6 +1277,69 @@ it.effect("tries another workspace on the same host for the viewer", () =>
 
     assert.strictEqual(result.entries.length, 2);
     assert.strictEqual(result.viewers["github.com"], "bilal");
+  }),
+);
+
+it.effect("runs a project with its own GitHub account as that account, apart from the rest", () =>
+  Effect.gen(function* () {
+    const searches: Array<{
+      readonly viewer: string;
+      readonly account: string | null;
+      readonly repositories: ReadonlyArray<string>;
+    }> = [];
+    const statReads: Array<{ readonly account: string | null; readonly count: number }> = [];
+    const service = yield* makeService({
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { ["w1" as ProjectId]: { githubAccount: "work" } },
+      },
+      projects: [
+        project({ id: "p1", title: "personal", workspaceRoot: "/p1", repository: "me/one" }),
+        project({ id: "p2", title: "other", workspaceRoot: "/p2", repository: "me/two" }),
+        project({ id: "w1", title: "work", workspaceRoot: "/w1", repository: "Acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () =>
+            Effect.map(GitHubAccount, (account) => (account === null ? "personal" : account)),
+          listChangeRequestsAcross: (input) =>
+            Effect.map(GitHubAccount, (account) => {
+              searches.push({ viewer: input.viewer, account, repositories: input.repositories });
+              return {
+                items: input.repositories.map((repository, index) =>
+                  batchedChangeRequest(index + 1, repository, "2026-07-02T00:00:00Z"),
+                ),
+                truncated: false,
+              };
+            }),
+          listChangeRequestStats: (input) =>
+            Effect.map(GitHubAccount, (account) => {
+              statReads.push({ account, count: input.changeRequests.length });
+              return input.changeRequests.map((ref) => ({ ...ref, additions: 1, deletions: 1 }));
+            }),
+        }),
+      ],
+    });
+    const result = yield* service.list({ state: "open", involvement: "all" });
+    assert.strictEqual(result.entries.length, 3);
+    assert.sameDeepMembers(searches, [
+      { viewer: "personal", account: null, repositories: ["me/one", "me/two"] },
+      { viewer: "work", account: "work", repositories: ["Acme/web"] },
+    ]);
+    assert.strictEqual(result.viewers["github.com"], "personal");
+    assert.strictEqual(result.viewers["project:w1"], "work");
+
+    yield* service.listStats({
+      refs: result.entries.map(({ projectId, repository, number }) => ({
+        projectId,
+        repository,
+        number,
+      })),
+    });
+    assert.sameDeepMembers(statReads, [
+      { account: null, count: 2 },
+      { account: "work", count: 1 },
+    ]);
   }),
 );
 
