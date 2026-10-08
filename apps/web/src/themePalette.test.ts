@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { converter } from "culori/fn";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import {
@@ -91,7 +92,13 @@ describe("theme files", () => {
     }
   });
 
-  it("keeps built-in and standard search pairs readable and distinct", () => {
+  it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
+    const toOklab = converter("oklab");
+    const distance = (first: string, second: string) => {
+      const a = toOklab(first)!;
+      const b = toOklab(second)!;
+      return Math.hypot(a.l - b.l, a.a - b.a, a.b - b.b);
+    };
     const palettes = [
       getStandardThemeColors("light"),
       getStandardThemeColors("dark"),
@@ -104,9 +111,14 @@ describe("theme files", () => {
       expect(
         contrastRatio(colors.searchMatchActiveForeground, colors.searchMatchActiveBackground),
       ).toBeGreaterThanOrEqual(4.5);
-      expect(asHex(colors.searchMatchBackground)).not.toBe(
-        asHex(colors.searchMatchActiveBackground),
-      );
+      expect(
+        distance(colors.searchMatchBackground, colors.searchMatchActiveBackground),
+      ).toBeGreaterThan(0.14);
+      // Check inline-code tints, code blocks, and user-message bubbles.
+      for (const background of [colors.muted, colors.messageSurface, colors.codeBackground]) {
+        expect(distance(colors.searchMatchBackground, background)).toBeGreaterThan(0.08);
+        expect(distance(colors.searchMatchActiveBackground, background)).toBeGreaterThan(0.08);
+      }
     }
   });
 

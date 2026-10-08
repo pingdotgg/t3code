@@ -375,8 +375,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 /* Paint find results without changing rendered markdown or copied text. */
 ::highlight(t3-thread-find) {
-  color: var(--app-theme-search-match-foreground, var(--color-foreground));
-  background-color: var(--app-theme-search-match-background, oklch(0.826487 0.157967 78.604 / 0.3));
+  color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
+
+  @variant dark {
+    color: var(--app-theme-search-match-foreground, oklch(0.970151 0 0));
+    background-color: var(--app-theme-search-match-background, oklch(0.55 0.1 85));
+  }
 }
 
 ::highlight(t3-thread-find-active) {
