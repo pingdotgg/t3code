@@ -43,6 +43,7 @@ afterEach(async () => {
 });
 
 async function setup() {
+  const touches: unknown[] = [];
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", () => {
@@ -54,7 +55,11 @@ async function setup() {
     class {
       static OPEN = 1;
       readyState = 1;
-      send() {}
+      send(packet: Uint8Array) {
+        if (packet[0] === 0x03) {
+          touches.push(JSON.parse(new TextDecoder().decode(packet.subarray(1))));
+        }
+      }
       close() {}
     },
   );
@@ -90,8 +95,40 @@ async function setup() {
       },
     });
   });
-  return { images, view };
+  return { images, view, touches };
 }
+
+it.each([1, 2])(
+  "ignores button %i gestures and still forwards the next primary drag",
+  async (button) => {
+    const { touches } = await setup();
+    const viewport = renderer!.root.findByType("canvas").parent!;
+    const currentTarget = {
+      setPointerCapture() {},
+      parentElement: { focus() {} },
+      getBoundingClientRect: () => ({ left: 20, top: 40, width: 400, height: 800 }),
+    };
+    const event = { button, pointerId: 1, currentTarget, clientX: 120, clientY: 640 };
+    await act(async () => {
+      viewport.props.onPointerDown(event);
+      viewport.props.onPointerMove({ ...event, clientY: 240 });
+      viewport.props.onPointerUp({ ...event, clientY: 240 });
+    });
+    expect(touches).toEqual([]);
+
+    await act(async () => {
+      viewport.props.onPointerDown({ ...event, button: 0 });
+      viewport.props.onPointerMove({ ...event, button: 0, clientY: 240 });
+      viewport.props.onPointerUp({ ...event, button: 0, clientY: 240 });
+      viewport.props.onPointerMove({ ...event, button: 0, clientY: 440 });
+    });
+    expect(touches).toEqual([
+      { type: "begin", x: 0.25, y: 0.75 },
+      { type: "move", x: 0.25, y: 0.25 },
+      { type: "end", x: 0.25, y: 0.25 },
+    ]);
+  },
+);
 
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
   const { images, view } = await setup();
