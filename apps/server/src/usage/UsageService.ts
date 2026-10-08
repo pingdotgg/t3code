@@ -8,7 +8,9 @@
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
  * scans only reparse files that changed, and a file that merely grew resumes
  * from its cached parse position so only the appended bytes are read.
- * SQLite readers query live databases each scan so WAL writes remain visible.
+ * OpenCode's SQLite reader queries the live database each scan so WAL writes
+ * remain visible. Antigravity databases are memoised in memory while the
+ * database and its WAL keep the same `(size, mtime, ctime)`.
  *
  * @module UsageService
  */
@@ -52,7 +54,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
-import { readAntigravityUsage } from "./antigravityUsageReader.ts";
+import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
@@ -195,6 +197,7 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
 
   const fileCache: ScanCache = new Map();
+  const antigravityCache = makeAntigravityUsageCache();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
   const isWithinDirectory = (filePath: string, dir: string) => {
@@ -661,7 +664,7 @@ export const make = Effect.gen(function* () {
       antigravityDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
     const antigravity = yield* Effect.promise(() =>
-      readAntigravityUsage([...antigravityDirs], windowStartMs),
+      readAntigravityUsage([...antigravityDirs], windowStartMs, antigravityCache),
     );
     for (const dir of antigravityDirs) {
       const exists = yield* fileSystem
