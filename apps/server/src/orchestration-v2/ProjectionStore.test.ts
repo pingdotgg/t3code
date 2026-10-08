@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -1725,6 +1726,62 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       // A handoff moves the conversation; the previous provider's goal stays behind.
       yield* applyProviderThread("second", null, 1);
       assert.isNull(yield* shellGoal);
+    }),
+  );
+
+  it.effect("decodes a read shell snapshot from its rows, not from later writes", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const createThread = (threadId: ThreadId) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:shell-read"),
+            title: "Shell read",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const readThreadId = ThreadId.make("thread:shell-read:before");
+      const laterThreadId = ThreadId.make("thread:shell-read:after");
+      const shellIds = (snapshot: OrchestrationV2ThreadShellSnapshot) =>
+        snapshot.threads
+          .map((thread) => thread.id)
+          .filter((id) => id === readThreadId || id === laterThreadId);
+
+      yield* createThread(readThreadId);
+      const decode = yield* sql.withTransaction(projectionStore.readShellSnapshot());
+      // Commits between the read and the decode, as another request can while
+      // the HTTP and WebSocket loaders decode outside their transaction.
+      yield* createThread(laterThreadId);
+
+      assert.deepEqual(shellIds(yield* decode), [readThreadId]);
+      assert.sameMembers(shellIds(yield* projectionStore.getShellSnapshot()), [
+        readThreadId,
+        laterThreadId,
+      ]);
     }),
   );
 

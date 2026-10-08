@@ -125,11 +125,11 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
-  buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  loadActiveShellSnapshot,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -967,16 +967,12 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projects.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
-        }),
-      );
+      const base = yield* loadActiveShellSnapshot({
+        sql,
+        readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+        listProjects: projects.listShells(),
+        latestSequence: applicationEvents.latestApplicationSequence,
+      });
       const enriched = yield* enrichProjectShells(base.projects);
       return {
         snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
@@ -1741,32 +1737,36 @@ const layerWsRpc = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      const getOrchestrationV2ArchivedShellSnapshot = sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
-            return {
-              schemaVersion: threads.schemaVersion,
-              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-              projects: yield* projectStore.listShells(),
-              threads: threads.archivedThreads,
-            } as const;
+      const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
+        // Same split as loadActiveShellSnapshot: decode after the read commits.
+        const read = yield* sql.withTransaction(
+          Effect.all({
+            decodeThreads: threadManagement.readShellSnapshot({ location: "archive" }),
+            snapshotSequence: applicationEvents.latestApplicationSequence,
+            projects: projectStore.listShells(),
           }),
-        )
-        .pipe(
-          Effect.flatMap((snapshot) =>
-            enrichProjectShells(snapshot.projects).pipe(
-              Effect.map(({ projects }) => ({ ...snapshot, projects })),
-            ),
-          ),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2GetShellSnapshotError({
-                message: "Failed to load archived thread snapshot",
-                cause,
-              }),
-          ),
         );
+        const threads = yield* read.decodeThreads;
+        return {
+          schemaVersion: threads.schemaVersion,
+          snapshotSequence: read.snapshotSequence,
+          projects: read.projects,
+          threads: threads.archivedThreads,
+        } as const;
+      }).pipe(
+        Effect.flatMap((snapshot) =>
+          enrichProjectShells(snapshot.projects).pipe(
+            Effect.map(({ projects }) => ({ ...snapshot, projects })),
+          ),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2GetShellSnapshotError({
+              message: "Failed to load archived thread snapshot",
+              cause,
+            }),
+        ),
+      );
 
       const subscribeOrchestrationV2ArchivedShell = Effect.fn(
         "ws.orchestrationV2.subscribeArchivedShell",
