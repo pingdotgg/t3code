@@ -87,7 +87,6 @@ export function ThreadFileNavigatorPane(props: {
     <FileTreeBrowser
       key={JSON.stringify([props.environmentId, props.cwd])}
       entries={entriesQuery.entries}
-      loadedDirectories={entriesQuery.loadedDirectories}
       loadingDirectories={entriesQuery.loadingDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
       error={

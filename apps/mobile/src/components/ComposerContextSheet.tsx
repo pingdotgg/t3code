@@ -47,6 +47,7 @@ function ContextField(props: { label: string; value: string | null | undefined; 
           style={{ height: Math.min(260, Math.max(100, props.value.split("\n").length * 22 + 36)) }}
         >
           <SourceFileSurface
+            embedded
             contents={props.value}
             path={props.label === "HTML" ? "element.html" : "styles.css"}
           />
