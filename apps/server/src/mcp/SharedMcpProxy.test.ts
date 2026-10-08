@@ -87,7 +87,7 @@ const fakeUpstream = (options: {
               }
               if (!options.authorized(request)) {
                 response.writeHead(
-                  options.oauth ? 401 : 403,
+                  401,
                   options.oauth
                     ? {
                         "www-authenticate": `Bearer resource_metadata="${fake.base}/.well-known/oauth-protected-resource/mcp"`,
@@ -184,19 +184,24 @@ describe("SharedMcpProxy", () => {
     Effect.gen(function* () {
       const fake = yield* fakeUpstream({
         oauth: false,
-        authorized: (request) => request.headers["x-api-key"] === "k-123",
+        authorized: (request) => request.headers.authorization === "Bearer k-123",
       });
       const proxy = yield* SharedMcpProxy.SharedMcpProxy;
 
-      assert.deepEqual(yield* proxy.probe(shared(`${fake.base}/mcp`, { "X-Api-Key": "k-123" })), {
-        serverName: "fake",
-        toolCount: 1,
-      });
+      assert.deepEqual(
+        yield* proxy.probe(shared(`${fake.base}/mcp`, { Authorization: "Bearer k-123" })),
+        {
+          serverName: "fake",
+          toolCount: 1,
+        },
+      );
       // A changed header is a new connection, not the cached one.
       const refused = yield* proxy
-        .probe(shared(`${fake.base}/mcp`, { "X-Api-Key": "wrong" }))
+        .probe(shared(`${fake.base}/mcp`, { Authorization: "Bearer wrong" }))
         .pipe(Effect.flip);
+      // A refused token is fixed by editing the header, not by an OAuth sign-in.
       assert.isFalse(refused.needsSignIn);
+      assert.include(refused.message, "refused the saved Authorization header");
     }).pipe(Effect.provide(layer), Effect.scoped),
   );
 });

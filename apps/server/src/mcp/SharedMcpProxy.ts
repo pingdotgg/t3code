@@ -204,14 +204,22 @@ const make = Effect.gen(function* () {
     };
   };
 
-  const fail = (server: SharedMcpServer, cause: unknown) =>
-    new SharedMcpProxyError({
+  const fail = (server: SharedMcpServer, cause: unknown) => {
+    // With a saved `Authorization` header, a 401 means that token was
+    // refused, and signing in with OAuth would not replace it.
+    const tokenRefused =
+      isUnauthorized(cause) &&
+      Object.keys(server.headers).some((name) => name.toLowerCase() === "authorization");
+    return new SharedMcpProxyError({
       server: server.name,
-      needsSignIn: isUnauthorized(cause),
-      message: isUnauthorized(cause)
-        ? `Sign in to ${server.name} in T3 Code (Settings → Integrations → Shared MCP servers).`
-        : `Could not reach ${server.name}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      needsSignIn: isUnauthorized(cause) && !tokenRefused,
+      message: tokenRefused
+        ? `${server.name} refused the saved Authorization header. Update it in Settings → Integrations → Shared MCP servers.`
+        : isUnauthorized(cause)
+          ? `Sign in to ${server.name} in T3 Code (Settings → Integrations → Shared MCP servers).`
+          : `Could not reach ${server.name}: ${cause instanceof Error ? cause.message : String(cause)}`,
     });
+  };
 
   const connect = async (server: SharedMcpServer): Promise<Client> => {
     const key = sharedMcpServerKey(server);
