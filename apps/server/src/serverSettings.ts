@@ -400,7 +400,9 @@ const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProv
 
 // Drivers that start disabled, so a session in the history means the user
 // turned them on before the instance kept an explicit flag.
-const HISTORY_RESTORED_DRIVERS = ["cursor", "grok", "opencode"] as const;
+const HISTORY_RESTORED_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "opencode"].map((driver) => ProviderDriverKind.make(driver)),
+);
 
 /**
  * Move each customized legacy `providers.<kind>` blob into the driver's
@@ -421,25 +423,25 @@ function migrateLegacyProviderSettings(
     readonly providerInstanceId: string | null;
   }>,
 ): ServerSettings {
-  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
-  const usedProviderInstances = new Set(
+  // History rows are raw SQL text; compare them as strings.
+  const usedProviders = new Set<string>(providerHistory.map(({ providerName }) => providerName));
+  const usedProviderInstances = new Set<string>(
     providerHistory.map(
       ({ providerName, providerInstanceId }) => providerInstanceId ?? providerName,
     ),
   );
-  const isHistoryRestored = (driver: string) =>
-    (HISTORY_RESTORED_DRIVERS as ReadonlyArray<string>).includes(driver);
 
-  const providerInstances: Record<string, ProviderInstanceConfig> = Object.fromEntries(
-    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
-      instanceId,
+  const providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> = {};
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances) as Array<
+    [ProviderInstanceId, ProviderInstanceConfig]
+  >) {
+    providerInstances[instanceId] =
       instance.enabled === undefined &&
-      isHistoryRestored(instance.driver) &&
+      HISTORY_RESTORED_DRIVERS.has(instance.driver) &&
       usedProviderInstances.has(instanceId)
         ? { ...instance, enabled: true }
-        : instance,
-    ]),
-  );
+        : instance;
+  }
 
   // History restores a never-configured cursor/grok/opencode slot too.
   const legacyEntries = new Map(Object.entries(legacyProviders));
@@ -457,7 +459,7 @@ function migrateLegacyProviderSettings(
     const explicitEnabled = typeof rawEnabled === "boolean" ? rawEnabled : undefined;
     const enabled =
       explicitEnabled ??
-      (isHistoryRestored(driver) && usedProviders.has(driver) ? true : undefined);
+      (HISTORY_RESTORED_DRIVERS.has(driver) && usedProviders.has(driver) ? true : undefined);
     const driverDefault = resolveProviderInstanceEnabled({ driver, config: {} });
     if (Object.keys(config).length === 0 && (enabled === undefined || enabled === driverDefault)) {
       continue;
@@ -471,7 +473,7 @@ function migrateLegacyProviderSettings(
 
   return {
     ...settings,
-    providerInstances: providerInstances as ServerSettings["providerInstances"],
+    providerInstances,
   };
 }
 

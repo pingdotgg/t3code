@@ -40,7 +40,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -1511,25 +1511,24 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
  * Built-in drivers that stay off until the user turns them on. Matches the
  * `enabled` decoding default of each driver's settings schema.
  */
-const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
-  "cursor",
-  "grok",
-  "muse",
-  "pi",
-  "opencode",
-  "antigravity",
-]);
+const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "muse", "pi", "opencode", "antigravity"].map((driver) =>
+    ProviderDriverKind.make(driver),
+  ),
+);
 
 /** Built-in drivers whose default instance runs before the user configures it. */
-const DEFAULT_ENABLED_PROVIDER_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent"]);
+const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(
+  ["codex", "claudeAgent"].map((instanceId) => ProviderInstanceId.make(instanceId)),
+);
 
 /**
  * Whether the built-in default instance at `instanceId` is enabled while
  * settings have no `providerInstances` entry for it. Only Codex and Claude
  * start on; any other id without an entry has no running instance.
  */
-export const isUnconfiguredDefaultInstanceEnabled = (instanceId: string): boolean =>
-  DEFAULT_ENABLED_PROVIDER_DRIVERS.has(instanceId);
+export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>
+  DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId);
 
 /**
  * Default enabled state for a driver when neither the envelope nor the config
