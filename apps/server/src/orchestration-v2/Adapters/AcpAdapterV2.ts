@@ -2982,9 +2982,13 @@ export function makeAcpAdapterV2(
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
-          for (const subagent of context.subagents.values()) {
-            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
-              return true;
+          // Batch launches without child completion signals go idle when the
+          // root turn ends, so they must not hold it open.
+          if (flavor.subagentsIdleOnTurnCompletion !== true) {
+            for (const subagent of context.subagents.values()) {
+              if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
+                return true;
+              }
             }
           }
           return false;

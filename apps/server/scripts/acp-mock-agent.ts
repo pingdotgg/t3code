@@ -71,6 +71,9 @@ const exitAfterResidualCallbacks = process.env.T3_ACP_EXIT_AFTER_RESIDUAL_CALLBA
 const emitRunningCommandThenHang = process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG === "1";
 const emitRunningCommandThenHangOnFirstPrompt =
   process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG_FIRST_PROMPT === "1";
+const emitCommandOutlivingPrompt = process.env.T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT === "1";
+const reportOutlivingCommandExit = process.env.T3_ACP_REPORT_OUTLIVING_COMMAND_EXIT === "1";
+const emitSubagentLaunchThenEndTurn = process.env.T3_ACP_EMIT_SUBAGENT_LAUNCH_THEN_END_TURN === "1";
 const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
 const emitEmptySuccessfulBashThenHang =
   process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG === "1";
@@ -1342,6 +1345,95 @@ const program = Effect.gen(function* () {
         (emitEmptySuccessfulBashThenHang && promptCount === 2)
       ) {
         return yield* Effect.never;
+      }
+
+      if (emitCommandOutlivingPrompt) {
+        // Antigravity can answer end_turn while a command it started keeps running.
+        // A long-lived Node child stands in for the command on every platform.
+        const command = NodeChildProcess.spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1 << 30)"],
+          { stdio: "ignore" },
+        );
+        yield* Effect.callback<void>((resume) => {
+          command.once("spawn", () => resume(Effect.void));
+          command.once("error", (error) => resume(Effect.die(error)));
+        });
+        if (runningCommandPidPath !== undefined) {
+          NodeFS.writeFileSync(runningCommandPidPath, String(command.pid));
+        }
+        if (reportOutlivingCommandExit) {
+          yield* Effect.callback<void>((resume) => {
+            command.once("exit", () => resume(Effect.void));
+          }).pipe(
+            Effect.andThen(
+              agent.client.sessionUpdate({
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "command-outliving-prompt",
+                  status: "completed",
+                },
+              }),
+            ),
+            Effect.ignore,
+            Effect.forkDetach,
+          );
+        }
+        // Awaiting approval: not started, so it must not hold the turn open.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "command-awaiting-approval",
+            title: "run_command",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: "npm test" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "command-outliving-prompt",
+            title: "run_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "npm run dev" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Started the command." },
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
+      if (emitSubagentLaunchThenEndTurn) {
+        // ACP 1.1.1 batch launch: completes at once and never reports the children.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "subagent-launch",
+            title: "Running start_subagent",
+            kind: "other",
+            status: "completed",
+            rawOutput: "Started two agents.",
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Started the agents." },
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (
