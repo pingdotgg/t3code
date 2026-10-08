@@ -722,7 +722,7 @@ for (const protocol of ["auto", "ssh"] as const) {
         assert.deepStrictEqual(remotes, [expected]);
       }).pipe(
         Effect.provide(
-          makeLayer({
+          layer({
             provider: makeProvider({
               kind: "gitcafe",
               createRepository: () => Effect.succeed(CAFE_CLONE_URLS),
@@ -754,10 +754,12 @@ it.effect("clones GitCafe over HTTPS with automatic protocol selection", () =>
         repository: "acme/project",
         destinationPath: path.join(parent, "project"),
       });
-      assert.deepStrictEqual(calls, [["clone", CAFE_CLONE_URLS.url, "project"]]);
+      assert.deepStrictEqual(calls, [
+        ["clone", "--progress", "--", CAFE_CLONE_URLS.url, "project"],
+      ]);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           provider: makeProvider({
             kind: "gitcafe",
             getRepositoryCloneUrls: () => Effect.succeed(CAFE_CLONE_URLS),

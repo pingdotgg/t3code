@@ -68,7 +68,7 @@ const PullDetail = Schema.Struct({
 
 type Provider = SourceControlProvider.SourceControlProvider["Service"];
 type Operations = {
-  readonly [K in Exclude<keyof Provider, "kind">]: (
+  readonly [K in Exclude<keyof Provider, "kind" | "resolveLink">]: (
     input: Parameters<Provider[K]>[0],
   ) => Effect.Effect<Effect.Success<ReturnType<Provider[K]>>, GitCafeCliError>;
 };

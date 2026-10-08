@@ -416,7 +416,6 @@ function PullRequestCodeTab({
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines =
     review.inlineComment &&
-    review.verdicts.length > 0 &&
     commit === null &&
     (detail.provider !== "gitcafe" || renderedDiffRevision !== undefined);
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
