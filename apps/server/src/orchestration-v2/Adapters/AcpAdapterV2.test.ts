@@ -12328,7 +12328,11 @@ describe("AcpAdapterV2", () => {
       });
       assert.equal(taskkillCommands.length, 1);
       yield* Scope.close(runtimeScope, Exit.void);
-      assert.equal(taskkillCommands.length, 1);
+      // The scope finalizer picks its kill path from the host, not processGroupPlatform,
+      // so only a Windows host sends it through taskkill a second time.
+      const finalizerTaskkills = (yield* HostProcessPlatform) === "win32" ? 1 : 0;
+      assert.equal(taskkillCommands.length, 1 + finalizerTaskkills);
+      assert.deepEqual(taskkillCommands.at(-1), taskkillCommands[0]);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -12437,6 +12441,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("poisons the session when hard teardown defects and blocks replacement work", () =>
     Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
