@@ -34,12 +34,12 @@ export function buildActiveShellSnapshot(input: {
 }
 
 /**
- * Loads the regular navigation shell for the HTTP and WebSocket snapshots.
- * One transaction covers the thread rows, projects and sequence so they agree;
- * the threads are decoded after it commits, because the server shares one
- * SQLite connection and decoding a large shell takes longer than reading it.
+ * Loads the thread shell, projects and sequence for the shell snapshots.
+ * One transaction covers the reads so they agree; the threads are decoded
+ * after it commits, because the server shares one SQLite connection and
+ * decoding a large shell takes longer than reading it.
  */
-export const loadActiveShellSnapshot = <E1, E2, E3, E4>(input: {
+export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
   readonly sql: SqlClient.SqlClient;
   readonly readThreads: Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E2>, E1>;
   readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E3>;
@@ -53,11 +53,11 @@ export const loadActiveShellSnapshot = <E1, E2, E3, E4>(input: {
         snapshotSequence: input.latestSequence,
       }),
     );
-    return buildActiveShellSnapshot({
+    return {
       projects: read.projects,
       threads: yield* read.decodeThreads,
       snapshotSequence: read.snapshotSequence,
-    });
+    };
   });
 
 export type ShellApplicationEvent =

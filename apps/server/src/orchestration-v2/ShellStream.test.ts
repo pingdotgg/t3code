@@ -23,7 +23,7 @@ import {
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
-  loadActiveShellSnapshot,
+  loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -105,7 +105,7 @@ function storedThreadEvent(
   return { sequence, event: { threadId, ...event } } as OrchestrationV2StoredEvent;
 }
 
-describe("loadActiveShellSnapshot", () => {
+describe("loadShellSnapshotParts", () => {
   it.effect("decodes the threads after the read transaction releases the connection", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -119,7 +119,7 @@ describe("loadActiveShellSnapshot", () => {
         );
       const thread = shellFixture({});
 
-      const snapshot = yield* loadActiveShellSnapshot({
+      const snapshot = yield* loadShellSnapshotParts({
         sql,
         readThreads: step(
           "read threads",
@@ -141,7 +141,7 @@ describe("loadActiveShellSnapshot", () => {
         "decode threads:out of transaction",
       ]);
       expect(snapshot.snapshotSequence).toBe(7);
-      expect(snapshot.threads).toEqual([thread]);
+      expect(snapshot.threads.threads).toEqual([thread]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

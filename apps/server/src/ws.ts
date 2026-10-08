@@ -125,11 +125,12 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
+  buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
-  loadActiveShellSnapshot,
+  loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -967,12 +968,14 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const base = yield* loadActiveShellSnapshot({
-        sql,
-        readThreads: threadManagement.readShellSnapshot({ location: "active" }),
-        listProjects: projects.listShells(),
-        latestSequence: applicationEvents.latestApplicationSequence,
-      });
+      const base = buildActiveShellSnapshot(
+        yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+          listProjects: projects.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
+        }),
+      );
       const enriched = yield* enrichProjectShells(base.projects);
       return {
         snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
@@ -1738,19 +1741,16 @@ const layerWsRpc = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
-        // Same split as loadActiveShellSnapshot: decode after the read commits.
-        const read = yield* sql.withTransaction(
-          Effect.all({
-            decodeThreads: threadManagement.readShellSnapshot({ location: "archive" }),
-            snapshotSequence: applicationEvents.latestApplicationSequence,
-            projects: projectStore.listShells(),
-          }),
-        );
-        const threads = yield* read.decodeThreads;
+        const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "archive" }),
+          listProjects: projectStore.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
+        });
         return {
           schemaVersion: threads.schemaVersion,
-          snapshotSequence: read.snapshotSequence,
-          projects: read.projects,
+          snapshotSequence,
+          projects,
           threads: threads.archivedThreads,
         } as const;
       }).pipe(
