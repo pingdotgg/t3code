@@ -10,6 +10,8 @@ import {
   type ReviewCommentContextRecord,
   type ScopedThreadRef,
   type ThreadContextRecord,
+  type EnvironmentContextRecord,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
@@ -112,6 +114,20 @@ export function threadComposerContext(ref: ScopedThreadRef, title: string): Thre
     environmentId: ref.environmentId,
     threadId: ref.threadId,
     title: label,
+  };
+}
+
+/** Same identity as web: one record per machine, so mentioning it again reuses the chip. */
+export function environmentComposerContext(
+  environmentId: EnvironmentId,
+  label: string,
+): EnvironmentContextRecord {
+  return {
+    version: 1,
+    kind: "environment",
+    contextId: ComposerContextId.make(`environment_${environmentId}`),
+    label: sanitizeComposerContextLabel(label, "environment"),
+    environmentId,
   };
 }
 

@@ -1,4 +1,9 @@
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentMachineKind,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
@@ -47,5 +52,48 @@ export function matchComposerThreadItems(input: {
       thread: { environmentId: shell.environmentId, threadId: shell.id },
       label: shell.title,
       description: "Thread",
+    }));
+}
+
+export interface ComposerEnvironmentCandidate {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly machine: EnvironmentMachineKind;
+}
+
+export interface ComposerEnvironmentItem {
+  readonly id: string;
+  readonly type: "environment";
+  readonly environmentId: EnvironmentId;
+  readonly machine: EnvironmentMachineKind;
+  readonly label: string;
+  readonly description: string;
+}
+
+/**
+ * The user's machines the `@` picker offers, so the agent can link or work there. The
+ * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
+ * file picker.
+ */
+export function matchComposerEnvironmentItems(input: {
+  environments: ReadonlyArray<ComposerEnvironmentCandidate>;
+  environmentId: EnvironmentId;
+  query: string;
+}): ComposerEnvironmentItem[] {
+  const query = input.query.trim().toLowerCase();
+  if (query.length === 0) return [];
+  return input.environments
+    .filter(
+      (environment) =>
+        environment.environmentId !== input.environmentId &&
+        environment.label.toLowerCase().includes(query),
+    )
+    .map((environment) => ({
+      id: `environment:${environment.environmentId}`,
+      type: "environment",
+      environmentId: environment.environmentId,
+      machine: environment.machine,
+      label: environment.label,
+      description: "Machine",
     }));
 }

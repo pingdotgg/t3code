@@ -21,6 +21,8 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   "pull-request": { accent: "#7079e4", symbol: "git-pull-request" },
   skill: { accent: "#b261be", symbol: "cube" },
   thread: { accent: "#009c96", symbol: "text.bubble" },
+  // A machine: the record carries only its identity, so every machine wears one glyph.
+  environment: { accent: "#3f9a4f", symbol: "server.rack" },
 } as const;
 
 /**

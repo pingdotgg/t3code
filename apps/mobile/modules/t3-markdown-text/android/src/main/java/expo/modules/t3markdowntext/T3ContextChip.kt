@@ -160,6 +160,13 @@ class T3ContextChip(
           line(7f, 8f, 17f, 8f)
           line(7f, 12f, 14f, 12f)
         }
+        // Two stacked rack units, each with a status light, like the SF Symbol iOS draws.
+        "server.rack" -> {
+          addRoundRect(3f, 3f, 21f, 11f, 2f, 2f, Path.Direction.CW)
+          addRoundRect(3f, 13f, 21f, 21f, 2f, 2f, Path.Direction.CW)
+          line(7f, 7f, 7.01f, 7f)
+          line(7f, 17f, 7.01f, 17f)
+        }
         "terminal", "play.rectangle", "photo" -> {
           addRoundRect(2f, 4f, 22f, 20f, 2f, 2f, Path.Direction.CW)
           when (symbol) {

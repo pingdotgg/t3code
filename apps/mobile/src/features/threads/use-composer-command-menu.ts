@@ -5,17 +5,26 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  type ComposerEnvironmentCandidate,
+  matchComposerEnvironmentItems,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
+const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
 } from "@t3tools/contracts";
 import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
-import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
+import {
+  environmentComposerContext,
+  pullRequestComposerContext,
+  threadComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -175,6 +184,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  environments = EMPTY_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
@@ -193,6 +203,8 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   /** Candidates for `@` thread suggestions; the caller reads them from the entity store. */
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  /** Candidates for `@` machine suggestions: the user's environments. */
+  readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
@@ -507,8 +519,12 @@ export function useComposerCommandMenu({
             query: trigger.query,
           })
         : [];
+      const environmentItems = environmentId
+        ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
+        : [];
       return [
         ...threadItems,
+        ...environmentItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
           return {
@@ -528,6 +544,7 @@ export function useComposerCommandMenu({
     currentThreadId,
     environmentId,
     threadShells,
+    environments,
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,
@@ -552,6 +569,35 @@ export function useComposerCommandMenu({
         );
         if (!shell) return;
         const record = threadComposerContext(item.thread, shell.title);
+        const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+        const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+        if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+          Alert.alert(
+            "Too many context items",
+            "Remove some context from the draft and try again.",
+          );
+          return;
+        }
+        const result = replaceTextRange(
+          draftMessage,
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${formatComposerContextReference(record)} `,
+        );
+        onChangeDraftMessage(result.text);
+        if (!alreadyAttached) {
+          const draft = getComposerDraftSnapshot(ownerKey);
+          setComposerDraftContext(ownerKey, {
+            version: 1,
+            records: [...(draft.context?.records ?? []), record],
+          });
+        }
+        setSelection({ start: result.cursor, end: result.cursor });
+        return;
+      }
+      if (item.type === "environment") {
+        if (!ownerKey || trigger.kind !== "path") return;
+        const record = environmentComposerContext(item.environmentId, item.label);
         const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
         const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
         if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {

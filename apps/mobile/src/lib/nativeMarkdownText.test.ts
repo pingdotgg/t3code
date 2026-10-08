@@ -29,6 +29,13 @@ describe("nativeMarkdownTextRuns", () => {
     );
   });
 
+  it("draws a mentioned machine as a machine, not the generic file chip", () => {
+    expect(contextChipPresentation("environment")).toEqual({
+      accent: "#3f9a4f",
+      symbol: "server.rack",
+    });
+  });
+
   it("renders a video-named file with a declared document MIME type as a file chip", () => {
     expect(
       contextChipPresentation("file", {
