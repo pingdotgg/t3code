@@ -23,6 +23,7 @@ import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as EnvironmentHandlers from "./handlers.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
+import * as ProviderUsageLimitsMcpService from "../../ProviderUsageLimitsMcpService.ts";
 import * as UsageLimitsService from "../../../usage/UsageLimitsService.ts";
 
 const environmentId = EnvironmentId.make("environment:preferences");
@@ -35,7 +36,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     // Completes once the declaration's own check has read the caller.
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
-      Layer.mock(UsageLimitsService.UsageLimitsService)({}),
+      Layer.mock(ProviderUsageLimitsMcpService.ProviderUsageLimitsMcpService)({}),
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,
@@ -146,6 +147,7 @@ it.effect.each(["read-only", "wrong-environment", "missing-capability"] as const
       }).pipe(
         Effect.provide(
           McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+            Layer.provideMerge(ProviderUsageLimitsMcpService.layer),
             Layer.provideMerge(dependencies),
           ),
         ),

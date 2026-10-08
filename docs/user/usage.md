@@ -119,8 +119,9 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 Agents and read-only MCP clients can call `t3_provider_usage_limits` with no arguments to
 read this environment's cached provider and hub-account quota windows. Each window includes
-used and remaining percentages and any reported reset timestamp. `checkedAt`, `ageSeconds`,
-and the result's `readAt` show when the data was observed; the call does not refresh it.
+used and remaining percentages and any reported reset timestamp. `checkedAt` is when the quota
+was observed, and `ageSeconds` is its age at the result's `readAt`, when the MCP call read it.
+Reading cached data does not refresh or re-observe the quota.
 An elapsed reset timestamp does not prove that the provider has restored quota.
 
 `available` means the provider reported a snapshot, even if it contains no windows.

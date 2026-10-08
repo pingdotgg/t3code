@@ -15,7 +15,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-import * as UsageLimitsService from "../../../usage/UsageLimitsService.ts";
+import * as ProviderUsageLimitsMcpService from "../../ProviderUsageLimitsMcpService.ts";
 
 const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
@@ -77,7 +77,7 @@ const ProviderUsageLimitsTool = Tool.make("t3_provider_usage_limits", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     ServerEnvironment.ServerEnvironment,
-    UsageLimitsService.UsageLimitsService,
+    ProviderUsageLimitsMcpService.ProviderUsageLimitsMcpService,
   ],
 })
   .annotate(Tool.Readonly, true)
