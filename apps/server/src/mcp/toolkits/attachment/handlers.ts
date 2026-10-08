@@ -28,11 +28,15 @@ export function resolveAttachmentReferences(
 }
 
 export const layer = McpToolAccess.toLayer(AttachmentToolkit, {
-  t3_attachment_prepare_upload: McpToolAccess.writes((input) =>
-    Upload.issueAttachmentUploadUrl(input.upload).pipe(Effect.mapError(unavailable)),
+  // A pending upload belongs to no one until a send claims it, so linked
+  // callers may stage the uploads their own sends need.
+  t3_attachment_prepare_upload: McpToolAccess.writes(
+    (input) => Upload.issueAttachmentUploadUrl(input.upload).pipe(Effect.mapError(unavailable)),
+    { linkedCallers: "allowed" },
   ),
-  t3_attachment_discard: McpToolAccess.writes((input) =>
-    Upload.deletePendingAttachment(input.attachmentId).pipe(Effect.as({})),
+  t3_attachment_discard: McpToolAccess.writes(
+    (input) => Upload.deletePendingAttachment(input.attachmentId).pipe(Effect.as({})),
+    { linkedCallers: "allowed" },
   ),
   t3_thread_send_attachments: McpToolAccess.writesThreads(
     (input) => [input.threadId],

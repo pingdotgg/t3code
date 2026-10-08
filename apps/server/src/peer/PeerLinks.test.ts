@@ -240,6 +240,12 @@ it.effect(
           .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
           .pipe(Effect.flip);
         expect(older.reason).toBe("incompatible");
+        // Nor one whose link's work could reach the user's own threads there.
+        yield* Ref.set(b.descriptor, descriptorOf("environment-box", "Box", { linkFence: false }));
+        const unfenced = yield* a.links
+          .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(unfenced.reason).toBe("incompatible");
 
         // Plain http to a LAN address would carry the code and token in clear.
         const lan = yield* a.links

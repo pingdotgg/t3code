@@ -261,6 +261,7 @@ export const make = Effect.gen(function* () {
       serverBrowser: true,
       peerLinks: true,
       mcpModeLimitHeader: true,
+      linkFence: true,
     },
   };
 

@@ -13,6 +13,7 @@ import {
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  MCP_PEER_LINK_SOFTWARE_ID,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -152,6 +153,8 @@ const ClientIdPayload = Schema.Struct({
   v: Schema.Literal(1),
   n: Schema.String,
   r: Schema.Array(Schema.String),
+  /** Registered as another T3 Code environment's peer link. */
+  p: Schema.optionalKey(Schema.Literal(1)),
 });
 const decodeClientIdPayload = Schema.decodeUnknownOption(Schema.fromJsonString(ClientIdPayload));
 
@@ -159,6 +162,7 @@ export interface McpOAuthClient {
   readonly clientId: string;
   readonly name: string;
   readonly redirectUris: ReadonlyArray<string>;
+  readonly peerLink: boolean;
 }
 
 /** Problems the authorize page shows the user without redirecting anywhere. */
@@ -194,6 +198,7 @@ export interface AuthorizationRequest {
 interface PendingCode {
   readonly clientId: string;
   readonly clientName: string;
+  readonly peerLink: boolean;
   readonly redirectUri: string;
   readonly codeChallenge: string;
   readonly resource: string;
@@ -269,8 +274,10 @@ const make = Effect.gen(function* () {
 
   const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
 
-  const signClientId = (name: string, redirectUris: ReadonlyArray<string>) => {
-    const body = base64UrlEncode(JSON.stringify({ v: 1, n: name, r: redirectUris }));
+  const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
+    const body = base64UrlEncode(
+      JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1 } : {}) }),
+    );
     return `${body}.${sign("mcp-client-id", body)}`;
   };
 
@@ -286,7 +293,12 @@ const make = Effect.gen(function* () {
     }
     return Option.getOrUndefined(
       decodeClientIdPayload(json).pipe(
-        Option.map((payload) => ({ clientId, name: payload.n, redirectUris: payload.r })),
+        Option.map((payload) => ({
+          clientId,
+          name: payload.n,
+          redirectUris: payload.r,
+          peerLink: payload.p === 1,
+        })),
       ),
     );
   };
@@ -335,7 +347,13 @@ const make = Effect.gen(function* () {
       // than rejected: RFC 7591 lets the server answer with what it supports. Claude Code
       // asks for refresh_token, and hosted agents may ask for a client secret; every client
       // is registered as public and proves itself with PKCE instead.
-      return { clientId: signClientId(name, redirectUris), name, redirectUris };
+      const peerLink = metadata.software_id === MCP_PEER_LINK_SOFTWARE_ID;
+      return {
+        clientId: signClientId(name, redirectUris, peerLink),
+        name,
+        redirectUris,
+        peerLink,
+      };
     });
 
   const validateAuthorization: McpOAuth["Service"]["validateAuthorization"] = ({ urls, request }) =>
@@ -418,6 +436,7 @@ const make = Effect.gen(function* () {
         next.set(code, {
           clientId: authorization.client.clientId,
           clientName: authorization.client.name,
+          peerLink: authorization.client.peerLink,
           redirectUri: authorization.redirectUri,
           codeChallenge: authorization.codeChallenge,
           resource: authorization.resource,
@@ -522,6 +541,7 @@ const make = Effect.gen(function* () {
         .issueMcpClientSession({
           label: pending.clientName,
           access: pending.access,
+          peerLink: pending.peerLink,
           client: deriveAuthClientMetadata({ request }),
         })
         .pipe(
@@ -577,6 +597,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                   sessionId: client.sessionId,
                   label: client.label,
                   access: client.access,
+                  linked: client.peerLink,
                 },
                 capabilities: new Set<McpInvocationContext.McpCapability>([
                   "orchestration",

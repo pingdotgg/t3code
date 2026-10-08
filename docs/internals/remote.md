@@ -81,6 +81,24 @@ Unlinking on the linking side only forgets the token.
   receiving `/mcp` sends nothing while a wait is open and T3 Connect's edge
   drops idle requests after about 100 s.
 
+**Work a link starts stays within that link.** The receiving environment knows a
+session is a peer link because the linking side registers its OAuth client with
+the `t3code-peer-link` software id, and the marker is signed into the session.
+Threads that session launches carry it as an immutable `linkOrigin`, and so do
+the subagents, forks and `create_threads` they derive. The rules live in
+[`mcp/linkOrigin.ts`](../../apps/server/src/mcp/linkOrigin.ts) and run in the
+shared access declarations, not tool by tool:
+
+- linked work may change only threads with the same origin, not the user's own
+  threads and not another link's;
+- it cannot change projects, settings or scheduled tasks;
+- its project setup scripts are skipped
+  ([`ProjectSetupScriptRunner`](../../apps/server/src/project/ProjectSetupScriptRunner.ts)
+  checks every path that runs them).
+
+Reads are not fenced, and a client's own `thread.create` can never carry
+`linkOrigin`.
+
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user, inside the limits above.
 

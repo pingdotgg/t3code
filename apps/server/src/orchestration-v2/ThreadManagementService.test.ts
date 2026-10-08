@@ -42,17 +42,19 @@ it("stamps authoritative provenance on commands that create threads or messages"
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    // A client cannot claim a linked environment's origin for its own thread.
+    linkOrigin: { sessionId: "forged", label: "Somewhere else" },
   };
 
-  expect(
-    ThreadManagementService.withCreationProvenance(command, {
-      createdBy: "user",
-      creationSource: "web",
-    }),
-  ).toMatchObject({
+  const stamped = ThreadManagementService.withCreationProvenance(command, {
     createdBy: "user",
     creationSource: "web",
   });
+  expect(stamped).toMatchObject({
+    createdBy: "user",
+    creationSource: "web",
+  });
+  expect(stamped).not.toHaveProperty("linkOrigin");
 });
 
 it("leaves commands that do not create durable authored content unchanged", () => {

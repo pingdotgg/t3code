@@ -417,7 +417,9 @@ const make = Effect.gen(function* () {
                       scriptName: result.scriptName,
                       terminalId: result.terminalId,
                     }
-                  : { status: "no-script" },
+                  : result.status === "skipped-for-link"
+                    ? { status: "skipped" }
+                    : { status: "no-script" },
               ),
               // catchCause via reportFailed: the thread is already re-pointed at the
               // worktree, so even a defect in the setup runner must not fail the handoff.

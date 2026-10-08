@@ -1,4 +1,5 @@
 import {
+  type OrchestrationV2LinkOrigin,
   OrchestratorMcpFailure,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -15,6 +16,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
 import {
@@ -153,9 +155,28 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
     ),
   );
 
-/** Changes something that belongs to no thread, such as a pending upload or a scheduled task. */
-export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => orchestratingCaller.pipe(Effect.flatMap(() => handle(params))));
+/**
+ * Changes something that belongs to no thread, such as a pending upload or a
+ * scheduled task. Work a linked environment started may not: none of it
+ * carries the link's origin, so none of it is that link's.
+ */
+export const writes = <P, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: {
+    /** Whether a linked caller may make it, as for uploads its own sends need. */
+    readonly linkedCallers?: "allowed";
+  },
+) =>
+  declare((params: P) =>
+    orchestratingCaller.pipe(
+      Effect.tap((caller) =>
+        options?.linkedCallers === "allowed"
+          ? Effect.void
+          : assertNotLinked(caller, "change this environment's scheduled tasks"),
+      ),
+      Effect.flatMap(() => handle(params)),
+    ),
+  );
 
 /**
  * Changes the threads `threads` names. An omitted id is the caller's own
@@ -180,6 +201,7 @@ export const writesThreads = <P, A, E, R>(
           .pipe(Effect.mapError(unavailable));
         if (target !== null && target.deletedAt === null) {
           yield* assertTargetWithinLimits(caller.limits, target);
+          yield* assertSameLink(caller, target);
         }
       }
       // The target's user can raise its modes after the check above; the
@@ -209,23 +231,32 @@ const escalationDenied = (refusal: DispatchModeRefusal) =>
     message: `Thread ${refusal.threadId} now runs in ${refusal.runtimeMode}/${refusal.interactionMode} mode, above this caller's. Its user changed it while this call ran.`,
   });
 
-/** The modes a started thread runs with: those requested, else the caller's own. */
+/** How a thread starts: the modes requested, else the caller's own, and the link it is for. */
 export interface StartedModes {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** The linked environment the caller acts for. The thread must carry it. */
+  readonly linkOrigin: OrchestrationV2LinkOrigin | undefined;
 }
 
-/** Starts threads with the modes `modes` requests, which may not be broader than the caller's. */
+/**
+ * Starts threads with the modes `modes` requests, which may not be broader
+ * than the caller's. `linked` says what a linked caller gets: threads stamped
+ * with its `linkOrigin`, or a refusal where the tool cannot carry one.
+ */
 export const startsThreads = <P, A, E, R>(
   modes: (params: P) => {
     readonly runtimeMode?: RuntimeMode | undefined;
     readonly interactionMode?: ProviderInteractionMode | undefined;
   },
   handle: (params: P, modes: StartedModes) => Effect.Effect<A, E, R>,
+  linked: "stamped" | { readonly refused: string },
 ) =>
   declare((params: P) =>
     Effect.gen(function* () {
-      const { limits } = yield* writingCaller;
+      const caller = yield* writingCaller;
+      const { limits } = caller;
+      if (linked !== "stamped") yield* assertNotLinked(caller, linked.refused);
       const requested = modes(params);
       const started: StartedModes = {
         runtimeMode: yield* resolveRuntimeMode(limits.runtimeMode, requested.runtimeMode),
@@ -233,6 +264,7 @@ export const startsThreads = <P, A, E, R>(
           limits.interactionMode,
           requested.interactionMode,
         ),
+        linkOrigin: callerLinkOrigin(caller),
       };
       return yield* handle(params, started);
     }),
@@ -253,6 +285,7 @@ export const writesEnvironment = <P, A, E, R>(
   ) => Effect.Effect<A, E, R>,
 ) => {
   const check = orchestratingCaller.pipe(
+    Effect.tap((caller) => assertNotLinked(caller, "change projects or environment settings")),
     Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
   );
   return declare((params: P) => check.pipe(Effect.flatMap(() => handle(params, check))));

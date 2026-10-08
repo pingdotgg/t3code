@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -76,6 +78,21 @@ it.effect("resolves setup scripts through the standalone project service", () =>
           getById: () => Effect.succeed(Option.some(project)),
         }),
         Layer.mock(TerminalManager.TerminalManager)({ open, write, subscribe, closeIdle }),
+        // `thread-linked` was started from a linked environment; `thread-unread`
+        // cannot be read.
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: (threadId) =>
+            threadId === ThreadId.make("thread-unread")
+              ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+              : Effect.succeed(
+                  threadId === ThreadId.make("thread-linked")
+                    ? {
+                        ...liveThreadShell(threadId),
+                        linkOrigin: { sessionId: "s", label: "Laptop" },
+                      }
+                    : null,
+                ),
+        }),
         ServerSettings.layerTest(),
         NodeCrypto.layer,
       ),
@@ -178,5 +195,20 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       threadId: "thread-1",
       terminalId: observedTerminalId,
     });
+
+    // The project's own script never runs for work a linked environment started.
+    const opened = open.mock.calls.length;
+    const linked = yield* runner.runForThread({
+      threadId: "thread-linked",
+      projectId,
+      worktreePath: "/repo-worktree",
+    });
+    assert.deepEqual(linked, { status: "skipped-for-link" });
+    // Nor for one whose origin cannot be read.
+    const unread = yield* runner
+      .runForThread({ threadId: "thread-unread", projectId, worktreePath: "/repo-worktree" })
+      .pipe(Effect.flip);
+    assert.equal(unread._tag, "ProjectSetupScriptOperationError");
+    assert.equal(open.mock.calls.length, opened);
   }).pipe(Effect.provide(layer));
 });

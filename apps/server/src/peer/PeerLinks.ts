@@ -5,6 +5,7 @@ import {
   AuthMcpTokenError,
   EnvironmentHttpApi,
   EnvironmentId,
+  MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
@@ -197,7 +198,13 @@ const make = Effect.gen(function* () {
       // Only the peer's own refusals are rejections. A dropped connection or
       // an answer this version cannot read is classified below.
       const registered = yield* client.mcpOAuth
-        .register({ payload: { client_name: clientName, redirect_uris: [LINK_REDIRECT_URI] } })
+        .register({
+          payload: {
+            client_name: clientName,
+            redirect_uris: [LINK_REDIRECT_URI],
+            software_id: MCP_PEER_LINK_SOFTWARE_ID,
+          },
+        })
         .pipe(
           Effect.catchIf(Schema.is(AuthMcpRegistrationError), (error) =>
             Effect.fail(
@@ -301,7 +308,7 @@ const make = Effect.gen(function* () {
           message: "That address is this environment.",
         });
       }
-      if (peer.capabilities.mcpModeLimitHeader !== true) {
+      if (peer.capabilities.mcpModeLimitHeader !== true || peer.capabilities.linkFence !== true) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
