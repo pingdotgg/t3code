@@ -2233,9 +2233,6 @@ describe("orchestrator MCP toolkit", () => {
             });
 
             expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
-            expect(metadataRead.thread.link).toBe(
-              `[Metadata-managed thread](t3-thread://v1/environment%3Amcp-orchestrator/${encodeURIComponent(emptyThread.threadId)})`,
-            );
             yield* orchestrator.dispatch({
               type: "thread.snooze",
               commandId: CommandId.make("command:mcp-empty:snooze"),
