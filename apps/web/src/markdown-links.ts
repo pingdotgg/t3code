@@ -1,23 +1,13 @@
+import { fileBasename, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
-  fileBasename,
-  formatFilePathPosition,
   inlineCodeFilePathCandidate,
-  isRelativeFilePath,
   normalizeMarkdownLinkDestination,
-  parseFileUrlHref,
-  parseMarkdownFileLink,
-  safeDecodeURIComponent,
-  splitFilePathPosition,
-  workspaceRelativeFilePath,
-} from "@t3tools/client-runtime/markdown-links";
+  resolveMarkdownFileLinkTarget,
+} from "@t3tools/shared/markdownLinks";
+import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
-import { isTerminalLinkActivation, resolvePathLinkTarget } from "./terminal-links";
-
-export { normalizeMarkdownLinkDestination };
-
-const MARKDOWN_LINK_HREF_PATTERN =
-  /\[[^\]]*]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
+import { isTerminalLinkActivation } from "./terminal-links";
 
 export interface MarkdownFileLinkMeta {
   filePath: string;
@@ -27,15 +17,6 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
-}
-
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of markdown.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = (match[1] ?? match[2])?.trim();
-    if (href) hrefs.push(href);
-  }
-  return hrefs;
 }
 
 export function shouldOpenMarkdownFileLinkInEditor(
@@ -49,34 +30,10 @@ export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): bool
   return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 }
 
-export function isWindowsDrivePathHref(href: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
-}
-
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
   const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
   return target ? `${target.path}${target.hash}` : null;
-}
-
-/**
- * `baseDir` anchors relative links; it defaults to the workspace root and is the
- * file's own directory when rendering a markdown file. `cwd` stays the workspace
- * root so the result still knows whether the target is inside it.
- */
-export function resolveMarkdownFileLinkTarget(
-  href: string | undefined,
-  cwd?: string,
-  baseDir: string | undefined = cwd,
-): string | null {
-  if (!href) return null;
-  const target = parseMarkdownFileLink(href);
-  if (!target) return null;
-
-  const pathWithPosition = formatFilePathPosition(target);
-  if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
-  if (!baseDir) return null;
-  return resolvePathLinkTarget(pathWithPosition, baseDir);
 }
 
 /**

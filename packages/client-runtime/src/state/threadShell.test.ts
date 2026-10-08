@@ -5,7 +5,7 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
@@ -99,6 +99,30 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(threads.navigationThreadShellsAtom)).toBe(before);
     expect(registry.get(threads.threadShellsAtom)).toHaveLength(3);
+    dispose();
+    registry.dispose();
+  });
+
+  it("leaves switched-off environments out of navigation", () => {
+    const { registry, threads, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const environmentsOf = () =>
+      new Set(registry.get(threads.navigationThreadShellsAtom).map((t) => t.environmentId));
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
+
+    const setRemoteEnabled = (enabled: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+    setRemoteEnabled(false);
+    expect(environmentsOf()).toEqual(new Set([environmentId]));
+    setRemoteEnabled(true);
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
     dispose();
     registry.dispose();
   });

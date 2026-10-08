@@ -89,9 +89,33 @@ export interface AggregateOptions {
   readonly untilDay: string;
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
+  /** From {@link resolveModelAliases}. Mapped records bucket and price as their target. */
+  readonly modelAliases?: ReadonlyMap<string, string>;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+}
+
+/**
+ * Resolves user model mappings to their final target, so `a -> b` and
+ * `b -> c` both land on `c`. A model whose chain enters a loop is left
+ * unmapped.
+ */
+export function resolveModelAliases(
+  aliases: Readonly<Record<string, string>>,
+): ReadonlyMap<string, string> {
+  const resolved = new Map<string, string>();
+  for (const model of Object.keys(aliases)) {
+    const seen = new Set([model]);
+    let target = aliases[model]!;
+    while (Object.hasOwn(aliases, target) && !seen.has(target)) {
+      seen.add(target);
+      target = aliases[target]!;
+    }
+    // Stopping on a mapped model means the chain entered a loop.
+    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
+  }
+  return resolved;
 }
 
 export interface AggregateResult {
@@ -147,7 +171,8 @@ export class UsageAggregator {
    * can derive per-window facts (distinct sessions, for one) from the records
    * that landed rather than everything the mtime prefilter happened to admit.
    */
-  add(record: UsageRecord, sourcePath?: string): boolean {
+  add(input: UsageRecord, sourcePath?: string): boolean {
+    const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
         this.#duplicatesDropped += 1;
@@ -215,6 +240,14 @@ export class UsageAggregator {
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
+  }
+
+  /** The target's own rate applies, so a provider-specific `rateModel` is dropped. */
+  #mapModel(record: UsageRecord): UsageRecord {
+    const model = this.#options.modelAliases?.get(record.model);
+    if (model === undefined) return record;
+    const { rateModel: _rateModel, ...rest } = record;
+    return { ...rest, model };
   }
 
   /**

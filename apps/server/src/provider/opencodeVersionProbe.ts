@@ -6,10 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
-import { parseGenericCliVersion } from "./providerSnapshot.ts";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 export interface ProbedOpenCode {
   readonly generation: "v1" | "v2";

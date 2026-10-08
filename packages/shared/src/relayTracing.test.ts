@@ -3,14 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
-import {
-  makeRelayClientTracingLayer,
-  RelayClientTracer,
-  withRelayClientTracing,
-} from "./relayTracing.ts";
+import { RelayClientTracer, withLocalTracing, withRelayClientTracing } from "./relayTracing.ts";
+import * as RelayTracing from "./relayTracing.ts";
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
   return Tracer.make({
@@ -64,10 +61,10 @@ describe("withRelayClientTracing", () => {
 
   it.effect("preserves nested error causes in exported relay spans", () => {
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-    const httpClientLayer = FetchHttpClient.layer.pipe(
+    const layerHttpClient = FetchHttpClient.layer.pipe(
       Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
     );
-    const tracingLayer = makeRelayClientTracingLayer(
+    const layerTracing = RelayTracing.layer(
       {
         tracesUrl: "https://api.axiom.test/v1/traces",
         tracesDataset: "relay-traces",
@@ -78,18 +75,18 @@ describe("withRelayClientTracing", () => {
         runtime: "test",
         client: "test",
       },
-    ).pipe(Layer.provide(httpClientLayer));
+    ).pipe(Layer.provide(layerHttpClient));
     const rootCause = new Error("relay socket closed");
     const failure = new Error("relay request failed", { cause: rootCause });
-    const tracedApplication = Layer.effectDiscard(
+    const layerTracedApplication = Layer.effectDiscard(
       Effect.fail(failure).pipe(
         Effect.withSpan("relay.failed-operation"),
         withRelayClientTracing,
         Effect.exit,
       ),
-    ).pipe(Layer.provide(tracingLayer));
+    ).pipe(Layer.provide(layerTracing));
 
-    return Layer.build(tracedApplication).pipe(
+    return Layer.build(layerTracedApplication).pipe(
       Effect.scoped,
       Effect.andThen(
         Effect.sync(() => {
@@ -103,4 +100,50 @@ describe("withRelayClientTracing", () => {
       ),
     );
   });
+});
+
+describe("withLocalTracing", () => {
+  it.effect("keeps local work inside a relay span off the product tracer", () =>
+    Effect.gen(function* () {
+      const localSpans: Array<string> = [];
+      const productSpans: Array<string> = [];
+      const localTracer = collectingTracer(localSpans);
+      const productTracer = collectingTracer(productSpans);
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("relay.connection.nested"),
+        Effect.andThen(
+          Effect.void.pipe(
+            Effect.withSpan("sql.execute"),
+            Effect.withSpan("ServerSecretStore.get"),
+            withLocalTracing,
+          ),
+        ),
+        Effect.withSpan("environment.orchestration.threadSnapshot"),
+        withRelayClientTracing,
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+        Effect.withTracer(localTracer),
+      );
+
+      expect(productSpans).toEqual([
+        "relay.connection.nested",
+        "environment.orchestration.threadSnapshot",
+      ]);
+      expect(localSpans).toEqual(["sql.execute", "ServerSecretStore.get"]);
+    }),
+  );
+
+  it.effect("leaves the current tracer alone outside relay tracing", () =>
+    Effect.gen(function* () {
+      const localSpans: Array<string> = [];
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("sql.execute"),
+        withLocalTracing,
+        Effect.withTracer(collectingTracer(localSpans)),
+      );
+
+      expect(localSpans).toEqual(["sql.execute"]);
+    }),
+  );
 });

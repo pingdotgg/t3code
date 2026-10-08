@@ -991,6 +991,141 @@ describe("buildThreadListV2Items settled paging", () => {
   });
 });
 
+describe("buildThreadListV2Items settled sort reuse", () => {
+  const otherEnvironmentId = EnvironmentId.make("environment-2");
+
+  function makeSettled(
+    id: string,
+    settledAt: string,
+    overrides: Partial<EnvironmentThreadShell> = {},
+  ): EnvironmentThreadShell {
+    return makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      settledOverride: "settled",
+      settledAt,
+      ...overrides,
+    });
+  }
+
+  function settledOrder(
+    threads: ReadonlyArray<EnvironmentThreadShell>,
+    scope: EnvironmentId | null = null,
+  ) {
+    return buildThreadListV2Items({
+      threads,
+      environmentId: scope,
+      searchQuery: "",
+      now: NOW,
+    })
+      .items.filter((item) => item.variant === "slim")
+      .map((item) => `${item.thread.environmentId}:${item.thread.id}`);
+  }
+
+  function countDateParses(build: () => void): number {
+    const spy = vi.spyOn(Date, "parse");
+    try {
+      build();
+      return spy.mock.calls.length;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  const older = makeSettled("older", "2026-06-01T01:00:00.000Z");
+  const newer = makeSettled("newer", "2026-06-01T03:00:00.000Z");
+  const middle = makeSettled("middle", "2026-06-01T02:00:00.000Z");
+
+  it("orders settled rows newest first regardless of input order", () => {
+    expect(settledOrder([older, newer, middle])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+      `${environmentId}:older`,
+    ]);
+    expect(settledOrder([middle, older, newer])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+      `${environmentId}:older`,
+    ]);
+  });
+
+  it("re-sorts when a settled row is replaced, added, or removed", () => {
+    expect(settledOrder([older, newer])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:older`,
+    ]);
+    const resettledOlder = makeSettled("older", "2026-06-01T04:00:00.000Z");
+    expect(settledOrder([resettledOlder, newer])).toEqual([
+      `${environmentId}:older`,
+      `${environmentId}:newer`,
+    ]);
+    expect(settledOrder([resettledOlder, newer, middle])).toEqual([
+      `${environmentId}:older`,
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+    ]);
+    expect(settledOrder([newer, middle])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+    ]);
+  });
+
+  it("re-sorts when the same settled rows arrive in a different order", () => {
+    // Same id and timestamp on two environments: only the stable input order
+    // breaks the tie, so a reordered input must not reuse the previous output.
+    const first = makeSettled("twin", "2026-06-01T01:00:00.000Z");
+    const second = makeSettled("twin", "2026-06-01T01:00:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    expect(settledOrder([first, second])).toEqual([
+      `${environmentId}:twin`,
+      `${otherEnvironmentId}:twin`,
+    ]);
+    expect(settledOrder([second, first])).toEqual([
+      `${otherEnvironmentId}:twin`,
+      `${environmentId}:twin`,
+    ]);
+  });
+
+  it("skips the settled sort when only unsettled rows change", () => {
+    const settled = Array.from({ length: 50 }, (_, index) =>
+      makeSettled(`settled-${index}`, `2026-06-01T00:${String(index).padStart(2, "0")}:00.000Z`),
+    );
+    const streaming = makeThread({ id: ThreadId.make("streaming"), title: "Streaming" });
+    const baseline = countDateParses(() => settledOrder([streaming, ...settled]));
+    const updated = { ...streaming, updatedAt: "2026-06-01T23:00:00.000Z" };
+    let order: string[] = [];
+    const reused = countDateParses(() => {
+      order = settledOrder([updated, ...settled]);
+    });
+
+    expect(order).toEqual(settled.toReversed().map((thread) => `${environmentId}:${thread.id}`));
+    // The settled sort parses every settled row at least once.
+    expect(baseline - reused).toBeGreaterThanOrEqual(settled.length);
+  });
+
+  it("recomputes when builds alternate between environments", () => {
+    const remoteOlder = makeSettled("remote-older", "2026-06-01T01:30:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    const remoteNewer = makeSettled("remote-newer", "2026-06-01T05:00:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    const threads = [older, newer, remoteOlder, remoteNewer];
+
+    for (let round = 0; round < 2; round += 1) {
+      expect(settledOrder(threads, environmentId)).toEqual([
+        `${environmentId}:newer`,
+        `${environmentId}:older`,
+      ]);
+      expect(settledOrder(threads, otherEnvironmentId)).toEqual([
+        `${otherEnvironmentId}:remote-newer`,
+        `${otherEnvironmentId}:remote-older`,
+      ]);
+    }
+  });
+});
+
 function makePendingTask(id: string): PendingNewTask {
   const creation = {
     projectId: ProjectId.make("project-1"),
@@ -2156,5 +2291,149 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(shelfLoading.type === "v2-settled-shelf" && shelfLoading.disabled).toBe(true);
     expect(shelfLoaded.type === "v2-settled-shelf" && shelfLoaded.disabled).toBe(false);
     expect(threadListV2ListItemsAreEqual(shelfLoading, shelfLoaded)).toBe(false);
+  });
+});
+
+describe("Working section beta", () => {
+  const running = {
+    status: "running" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: NOW,
+  };
+  const finishedAt = (id: string, completedAt: string) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      latestRun: {
+        runId: RunId.make(`run-${id}`),
+        status: "completed",
+        requestedAt: "2026-06-01T00:00:00.000Z",
+        startedAt: "2026-06-01T00:00:00.000Z",
+        completedAt,
+        assistantMessageId: null,
+      },
+    });
+  const threads = [
+    finishedAt("finished-early", "2026-06-01T01:00:00.000Z"),
+    finishedAt("finished-late", "2026-06-01T03:00:00.000Z"),
+    makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
+    makeThread({
+      id: ThreadId.make("asks-approval"),
+      title: "asks-approval",
+      createdAt: "2026-06-01T02:00:00.000Z",
+      runtime: running,
+      hasPendingApprovals: true,
+    }),
+    makeThread({
+      id: ThreadId.make("pinned-working"),
+      title: "pinned-working",
+      runtime: running,
+      pinnedAt: "2026-06-01T00:00:00.000Z",
+    }),
+  ];
+  const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
+    buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+      ...input,
+    });
+  const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+    layout.items.map((item) => item.thread.id);
+
+  it("folds unpinned working threads into a collapsed shelf", () => {
+    const layout = build();
+    expect(ids(layout)).toEqual([
+      "pinned-working",
+      "finished-late",
+      "asks-approval",
+      "finished-early",
+    ]);
+    expect(layout.workingCount).toBe(1);
+    expect(layout.workingShelfHeaderIndex).toBe(4);
+
+    const off = build({ workingShelfEnabled: false });
+    expect(ids(off)).toContain("working");
+    expect(off.workingCount).toBe(0);
+  });
+
+  it("shows working rows as cards when expanded, or only the selected one when collapsed", () => {
+    expect(build({ workingShelfExpanded: true }).items.at(-1)).toMatchObject({
+      thread: { id: "working" },
+      variant: "card",
+    });
+    expect(ids(build({ selectedThreadKey: `${environmentId}:working` })).at(-1)).toBe("working");
+  });
+
+  it("orders the inbox by the latest return this device observed", () => {
+    const layout = build({
+      inboxReturnAt: (thread) =>
+        thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
+    });
+    expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
+  });
+
+  it("places the shelf after queued tasks and before snoozed and settled threads", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "active" }),
+        makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "snoozed",
+          runtime: running,
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("settled"),
+          title: "settled",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+      snoozedShelfExpanded: true,
+    });
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [makePendingTask("queued")],
+      workingCount: layout.workingCount,
+      workingShelfExpanded: true,
+      workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
+      snoozedCount: layout.snoozedCount,
+      snoozedShelfExpanded: true,
+      snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
+      settledCount: layout.settledCount,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+    });
+    expect(
+      items.map((item) =>
+        item.type === "v2-thread"
+          ? item.item.thread.id
+          : item.type === "v2-pending"
+            ? item.pendingTask.title
+            : item.type,
+      ),
+    ).toEqual([
+      "active",
+      "queued",
+      "v2-working-shelf",
+      "working",
+      "v2-snoozed-shelf",
+      "snoozed",
+      "v2-settled-shelf",
+      "settled",
+    ]);
   });
 });

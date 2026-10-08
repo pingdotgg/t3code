@@ -3,7 +3,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import type * as EffectAcpSchema from "effect-acp/compat";
+import * as Schema from "effect/Schema";
+import * as EffectAcpSchema from "effect-acp/compat";
+import * as EffectAcpSchemaV1 from "effect-acp/schema-v1";
 import {
   deriveToolActivityPresentation,
   mergeToolActivityData,
@@ -19,39 +21,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
-  if (!isRecord(value) || typeof value.currentModelId !== "string") {
-    return false;
-  }
-  if (!Array.isArray(value.availableModels)) {
-    return false;
-  }
-  return value.availableModels.every(
-    (model) =>
-      isRecord(model) &&
-      typeof model.modelId === "string" &&
-      typeof model.name === "string" &&
-      (model.description === undefined ||
-        model.description === null ||
-        typeof model.description === "string"),
-  );
-}
-
-function isSessionModeState(value: unknown): value is EffectAcpSchema.SessionModeState {
-  if (!isRecord(value) || typeof value.currentModeId !== "string") {
-    return false;
-  }
-  if (!Array.isArray(value.availableModes)) {
-    return false;
-  }
-  return value.availableModes.every(
-    (mode) =>
-      isRecord(mode) &&
-      typeof mode.id === "string" &&
-      typeof mode.name === "string" &&
-      (mode.description === undefined || typeof mode.description === "string"),
-  );
-}
+// Guards for the untyped `initialize._meta` states some agents (Grok) advertise.
+// Modes were removed from ACP v2, so the v1 wire schema is the source of truth.
+const isSessionModelState = Schema.is(EffectAcpSchema.SessionModelState);
+const isSessionModeState = Schema.is(EffectAcpSchemaV1.SessionModeState);
 
 export interface AcpSessionMode {
   readonly id: string;
@@ -1027,6 +1000,29 @@ export function toolCallProgressLength(state: AcpToolCallState): number {
   return Math.max(state.detail?.length ?? 0, contentChars, rawOutputChars);
 }
 
+function toolCallContentTexts(state: AcpToolCallState): string {
+  const content = state.data.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((entry) =>
+      isRecord(entry) ? (toolCallContentText(entry as EffectAcpSchema.ToolCallContent) ?? "") : "",
+    )
+    .join("\u0000");
+}
+
+// The output a user watches: detail, text content, and any `rawOutput`. A
+// streamed diff or `rawInput` is not part of it.
+export function toolCallVisibleOutputChanged(
+  previous: AcpToolCallState,
+  next: AcpToolCallState,
+): boolean {
+  return (
+    previous.detail !== next.detail ||
+    toolCallContentTexts(previous) !== toolCallContentTexts(next) ||
+    JSON.stringify(previous.data.rawOutput) !== JSON.stringify(next.data.rawOutput)
+  );
+}
+
 export function decideToolCallUpdateEmission(
   input: AcpToolCallEmitDecisionInput,
 ): AcpToolCallEmitDecision {
@@ -1134,9 +1130,7 @@ export function extractMcpToolCallIdentity(
   // (goose, qwen, claude-acp) or only through the namespaced function name
   // in the title. The verbatim wire title survives merges even when a later
   // titleless or LLM-enriched update replaces the presentation title, so
-  // match those rather than the summarized state title. Name-derived matches
-  // are gated on the known T3 tool inventory so path-like titles (for
-  // example "t3-code/README.md") never brand.
+  // match those rather than the summarized state title.
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
     ? isRecord(meta.goose.toolCall)
@@ -1160,15 +1154,22 @@ export function extractMcpToolCallIdentity(
       }
     }
   }
-  // A present-but-foreign origin assertion marks the whole call as another
-  // server's MCP call, so no loose name matching (meta or title) may brand it.
   const gooseExtension =
     typeof gooseToolCall?.extensionName === "string" ? gooseToolCall.extensionName.trim() : "";
   const assertsForeignOrigin =
     (metaServerId.length > 0 && !/^t3[-_ ]?code$/i.test(metaServerId)) ||
     (gooseExtension.length > 0 && !/^t3[-_ ]?code$/i.test(gooseExtension));
+  // A foreign origin never brands as T3. qwen's serverId marks a real MCP
+  // server, but goose reports its built-in extensions (developer__shell,
+  // edits) the same way as user MCP servers, so goose stays unclassified and
+  // keeps its command and file-change projections.
   if (assertsForeignOrigin) {
-    return undefined;
+    if (metaServerId.length === 0 || metaToolName.length === 0) return undefined;
+    const prefix = [`mcp__${metaServerId}__`, `mcp::${metaServerId}::`].find((prefix) =>
+      metaToolName.startsWith(prefix),
+    );
+    const tool = prefix === undefined ? metaToolName : metaToolName.slice(prefix.length);
+    return tool ? { server: metaServerId, tool } : undefined;
   }
   const candidates = [
     meta?.toolName,
@@ -1178,6 +1179,9 @@ export function extractMcpToolCallIdentity(
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
+    const qualified = /^mcp__(.+?)__(.+)$/i.exec(trimmed);
+    if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
+      return { server: qualified[1], tool: qualified[2] };
     const match =
       T3_MCP_TITLE_CALL.exec(trimmed) ??
       T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??

@@ -81,5 +81,5 @@ test.provider(
       const after = yield* getSession;
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:macie2", "live"], timeout: 180_000 },
 );

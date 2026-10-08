@@ -1,8 +1,8 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Schema, SchemaGetter } from "effect"
-import { Model } from "effect/unstable/schema"
-import { SqlClient, SqlModel, SqlResolver } from "effect/unstable/sql"
+import { Model } from "effect/schema"
+import { SqlClient, SqlModel, SqlResolver } from "effect/sql"
 
 class NameDecoder extends Context.Service<NameDecoder, { readonly prefix: string }>()("test/NameDecoder") {}
 class NameEncoder extends Context.Service<NameEncoder, { readonly prefix: string }>()("test/NameEncoder") {}

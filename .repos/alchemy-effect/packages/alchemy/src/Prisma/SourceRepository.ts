@@ -168,6 +168,7 @@ export interface SourceRepository extends Resource<
  * ```
  *
  * @resource
+ * @product Compute
  */
 export const SourceRepository = Resource<SourceRepository>(
   "Prisma.SourceRepository",

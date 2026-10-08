@@ -8,20 +8,21 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import { CursorDriver } from "./CursorDriver.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import { Cursor } from "../cursorSdk.ts";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
 
-const testLayer = ServerSecretStore.layer.pipe(
+const layerDeps = ServerSecretStore.layer.pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-cursor-driver-copy-command-",
@@ -53,8 +54,9 @@ const testLayer = ServerSecretStore.layer.pipe(
     ),
   ),
 );
+const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
-it.layer(testLayer)("CursorDriver", (it) => {
+it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>

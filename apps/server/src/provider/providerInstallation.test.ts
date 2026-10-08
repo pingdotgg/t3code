@@ -15,10 +15,10 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderInstallation } from "./providerInstallation.ts";
-import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity");
 const driver = ProviderDriverKind.make("antigravity");
@@ -147,7 +147,14 @@ describe("provider installation routing", () => {
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        settings: { providers: { antigravity: { binaryPath: "/external/agy" } } },
+        settings: {
+          providerInstances: {
+            [ProviderInstanceId.make("antigravity")]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { binaryPath: "/external/agy" },
+            },
+          },
+        },
       });
       const start = yield* Effect.flip(harness.router.start({ instanceId }));
       const remove = yield* Effect.flip(harness.router.remove({ instanceId }));
@@ -164,7 +171,14 @@ describe("provider installation routing", () => {
       const codexId = ProviderInstanceId.make("codex");
       const harness = yield* makeHarness({
         instance: instance(ProviderDriverKind.make("codex"), codexId),
-        settings: { providers: { codex: { setupMode: "managed" } } },
+        settings: {
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { setupMode: "managed" },
+            },
+          },
+        },
       });
       assert.equal((yield* harness.router.start({ instanceId: codexId })).driver, "codex");
       yield* harness.router.cancel({ instanceId: codexId, operationId: "operation" });
@@ -180,7 +194,14 @@ describe("provider installation routing", () => {
       const codexId = ProviderInstanceId.make("codex");
       const harness = yield* makeHarness({
         instance: instance(ProviderDriverKind.make("codex"), codexId),
-        settings: { providers: { codex: { setupMode: "existing" } } },
+        settings: {
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { setupMode: "existing" },
+            },
+          },
+        },
       });
       assert.include(
         (yield* Effect.flip(harness.router.start({ instanceId: codexId }))).detail,

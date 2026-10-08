@@ -226,8 +226,8 @@ retrieve the relevant chunks, then answer with the configured generation
 model. It returns an Effect, so call it like any other.
 
 ```diff lang="typescript"
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
    return {
      fetch: Effect.gen(function* () {

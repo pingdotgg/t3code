@@ -117,6 +117,7 @@ export function azureDevOpsProviderFailure(
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 

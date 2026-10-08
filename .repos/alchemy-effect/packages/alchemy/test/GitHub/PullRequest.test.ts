@@ -211,5 +211,13 @@ test.provider(
       );
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:pullrequest",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -3,7 +3,7 @@ import {
   formatAssistantCitationHref,
   parseAssistantCitationHref,
 } from "@t3tools/shared/assistantCitations";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
 import { randomUUID } from "./utils";
@@ -18,7 +18,7 @@ const CITATION_HASH_PREFIX = "assistant-citation=";
 
 /** Base64url keeps router hash normalization from decoding quote whitespace or source IDs. */
 export function assistantCitationHash(citation: AssistantCitation) {
-  return `${CITATION_HASH_PREFIX}${Encoding.encodeBase64Url(formatAssistantCitationHref(citation))}`;
+  return `${CITATION_HASH_PREFIX}${Base64Url.encode(formatAssistantCitationHref(citation))}`;
 }
 
 export function assistantCitationFromLocation(href: string) {
@@ -28,7 +28,7 @@ export function assistantCitationFromLocation(href: string) {
   if (!hash.startsWith(CITATION_HASH_PREFIX) || hash.length > 140_000) return null;
   try {
     return parseAssistantCitationHref(
-      Result.getOrThrow(Encoding.decodeBase64UrlString(hash.slice(CITATION_HASH_PREFIX.length))),
+      Result.getOrThrow(Base64Url.decodeString(hash.slice(CITATION_HASH_PREFIX.length))),
     );
   } catch {
     return null;

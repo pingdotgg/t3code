@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -440,7 +440,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       probe: acpRegistryProbeResult(
         input.instanceId,
         result.started,
-        result.resolved.agent.icon ?? null,
+        result.resolved.agent?.icon ?? null,
         {
           command: result.resolved.spawn.command,
           args: result.resolved.spawn.args,

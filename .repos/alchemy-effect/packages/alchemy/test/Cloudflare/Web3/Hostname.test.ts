@@ -41,21 +41,24 @@ const web3Entitled = !!process.env.CLOUDFLARE_TEST_WEB3;
 // `listAllZones`. On a non-entitled account each per-zone list answers
 // `Forbidden` and is skipped, so the result is a well-typed (possibly
 // empty) array. This always runs and proves the enumeration shape.
-test.provider("list returns a well-typed array of web3 hostnames", (stack) =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Cloudflare.Web3.Hostname);
-    const all = yield* provider.list();
+test.provider(
+  "list returns a well-typed array of web3 hostnames",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Cloudflare.Web3.Hostname);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const item of all) {
-      expect(typeof item.hostnameId).toBe("string");
-      expect(typeof item.zoneId).toBe("string");
-      expect(typeof item.name).toBe("string");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const item of all) {
+        expect(typeof item.hostnameId).toBe("string");
+        expect(typeof item.zoneId).toBe("string");
+        expect(typeof item.name).toBe("string");
+      }
 
-    // Keep the destroy bookend so the harness state stays clean.
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      // Keep the destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:web3", "live"] },
 );
 
 // Deploy a real Web3 hostname and assert `list()` surfaces it. Gated behind
@@ -88,5 +91,13 @@ test.provider.skipIf(!web3Entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:web3",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

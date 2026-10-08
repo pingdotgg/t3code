@@ -44,7 +44,8 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import {
@@ -52,22 +53,22 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "../../provider/Drivers/CursorSkills.ts";
-import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { t3OrchestrationPromptForFirstRun } from "../../provider/T3OrchestrationInstructions.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
-import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
 } from "../AttachmentPrompt.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
   type ProviderAdapterDriverCreateInput,
-} from "../ProviderAdapterDriver.ts";
+} from "@t3tools/provider-core/server/adapterDriver";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
@@ -1227,7 +1228,10 @@ export function makeCursorAdapterV2(
                 toolCall.result?.status === "success" &&
                 toolCall.result.value.diffString !== undefined
                   ? { diffStr: toolCall.result.value.diffString }
-                  : {}),
+                  : // A failed change keeps its error where the diff would be.
+                    toolCall.result?.status === "error" && outputText.trim().length > 0
+                    ? { diffStr: outputText }
+                    : {}),
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
               };
               break;
@@ -1248,8 +1252,20 @@ export function makeCursorAdapterV2(
             case "ls":
             case "readLints":
             case "semSearch": {
-              const results = cursorToolSearchResults(toolCall, path);
               const pattern = cursorToolSearchPattern(toolCall);
+              const searchPath =
+                toolCall.type === "grep"
+                  ? toolCall.args.path
+                  : toolCall.type === "glob"
+                    ? toolCall.args.targetDirectory
+                    : toolCall.type === "semSearch"
+                      ? toolCall.args.targetDirectories?.join(", ")
+                      : pattern;
+              // A failed search keeps its error as one row under the searched path.
+              const results =
+                toolCall.result?.status === "error" && outputText.trim().length > 0
+                  ? [{ fileName: searchPath?.trim() || ".", preview: outputText }]
+                  : cursorToolSearchResults(toolCall, path);
               turnItem = {
                 ...base,
                 title:
@@ -1267,6 +1283,12 @@ export function makeCursorAdapterV2(
               turnItem = {
                 ...base,
                 type: "dynamic_tool",
+                ...(toolCall.type === "mcp"
+                  ? mcpToolPresentation({
+                      serverName: toolCall.args.providerIdentifier,
+                      toolName: toolCall.args.toolName,
+                    })
+                  : {}),
                 toolName: cursorToolName(toolCall),
                 input: toolCall.args,
                 ...(cursorToolOutput(toolCall) === undefined
@@ -1550,10 +1572,10 @@ export function makeCursorAdapterV2(
               },
               prompt: args.prompt,
               title: args.description,
-              model: args.model?.trim() || null,
               result: null,
               startedAt: now,
             }),
+            model: args.model?.trim() || existing?.task.model || null,
             nativeTaskRef: {
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeId: input.callId,

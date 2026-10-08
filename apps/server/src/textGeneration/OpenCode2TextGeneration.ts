@@ -9,7 +9,6 @@
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
 import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,7 +19,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import type { OpenCode2Connection } from "../provider/opencode2/OpenCode2Server.ts";
 import * as OpenCode2Server from "../provider/opencode2/OpenCode2Server.ts";
 import { parseOpenCodeModelSlug } from "../provider/opencodeRuntime.ts";
-import { makeOpenCodeOperations, type OpenCodeJsonRunner } from "./OpenCodeTextGeneration.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -42,7 +41,7 @@ type Outcome =
 
 const runOnServer = (
   connection: OpenCode2Connection,
-  input: Parameters<OpenCodeJsonRunner>[0],
+  input: TextGenerationOperations.Request<Schema.Top>,
   attachmentsDir: string,
 ) =>
   Effect.gen(function* () {
@@ -188,10 +187,8 @@ const runOnServer = (
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-  const run: OpenCodeJsonRunner = (input) => {
-    // Each operation has its own output schema, as in 1.x.
-    const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
-    return server
+  const run: TextGenerationOperations.Runner = (input) =>
+    server
       .withConnection((connection) => runOnServer(connection, input, attachmentsDir))
       .pipe(
         Effect.mapError((cause) =>
@@ -203,19 +200,7 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
                 cause,
               }),
         ),
-        Effect.flatMap((raw) =>
-          decodeOutput(extractJsonObject(raw)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new TextGenerationError({
-                  operation: input.operation,
-                  detail: "OpenCode returned invalid structured output.",
-                  cause,
-                }),
-            ),
-          ),
-        ),
+        Effect.flatMap((raw) => TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw)),
       );
-  };
-  return makeOpenCodeOperations(run);
+  return TextGenerationOperations.fromRunner("OpenCode2TextGeneration", run);
 });

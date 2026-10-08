@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -124,6 +125,64 @@ describe("withMetrics", () => {
         }),
         true,
       );
+    }),
+  );
+
+  it.effect("counts interrupted work with an interrupt outcome and its duration", () =>
+    Effect.gen(function* () {
+      const counter = Metric.counter("with_metrics_interrupt_total");
+      const timer = Metric.timer("with_metrics_interrupt_duration");
+      const started = yield* Deferred.make<void>();
+
+      const fiber = yield* Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        withMetrics({ counter, timer, attributes: { operation: "interrupt" } }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.millis(5));
+      yield* Fiber.interrupt(fiber);
+
+      const snapshots = yield* Metric.snapshot;
+      assert.equal(
+        hasMetricSnapshot(snapshots, "with_metrics_interrupt_total", {
+          operation: "interrupt",
+          outcome: "interrupt",
+        }),
+        true,
+      );
+      const duration = findHistogramSnapshot(snapshots, "with_metrics_interrupt_duration", {
+        operation: "interrupt",
+      });
+      assert.equal(duration?.state.count, 1);
+      assert.equal(duration?.state.sum, 5);
+    }),
+  );
+
+  it.effect("measures durations on the monotonic clock, not the wall clock", () =>
+    Effect.gen(function* () {
+      const timer = Metric.timer("with_metrics_monotonic_duration");
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+
+      const fiber = yield* Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(finish)),
+        withMetrics({ timer, attributes: { operation: "monotonic" } }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.millis(10));
+      // A backward wall-clock correction must not shorten the measured duration.
+      yield* TestClock.setTime(0);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(fiber);
+
+      const snapshots = yield* Metric.snapshot;
+      const duration = findHistogramSnapshot(snapshots, "with_metrics_monotonic_duration", {
+        operation: "monotonic",
+      });
+      assert.equal(duration?.state.count, 1);
+      assert.equal(duration?.state.sum, 10);
     }),
   );
 

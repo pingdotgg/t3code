@@ -13,15 +13,18 @@ import {
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
   Platform,
+  ScrollView,
   View,
+  type ScrollViewProps,
   type GestureResponderEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
+import { ScrollViewMarker } from "react-native-screens";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -30,7 +33,10 @@ import { EmptyState } from "../../components/EmptyState";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
+import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
+import { nativeHeaderScrollEdgeEffects } from "../../native/scrollEdgeEffects";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -44,6 +50,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
@@ -51,6 +58,7 @@ import {
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   threadListV2ListItemsAreEqual,
+  threadListInboxReturns,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -59,7 +67,7 @@ import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-s
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
-  sortHomeProjectScopes,
+  findHomeProjectScope,
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
@@ -138,7 +146,6 @@ const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // swipe-row-activation), so render further ahead: a fast fling then reaches
 // rows that are already built instead of rows still being rebuilt.
 const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
-const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**
  * Top spacing between the list and the Android custom header. The Android
  * header is rendered in-flow above this screen and
@@ -217,17 +224,61 @@ function HomeTopContentSpacer() {
   return <View className="h-4" />;
 }
 
+function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
+  const insets = useSafeAreaInsets();
+  const primaryColumn = use(NativePrimaryColumnContext);
+  if (Platform.OS !== "ios") return <ScrollView {...props} />;
+
+  // v5 needs the actual content scroll view registered with its screen controller.
+  // The layout observer and header siblings prevent UIKit from finding it implicitly.
+  return (
+    <ScrollViewMarker
+      style={{ flex: 1 }}
+      scrollEdgeEffects={{
+        ...nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version),
+        // Retain the existing sidebar fade on iOS 26; iOS 27 uses the native bar material.
+        top: Number.parseInt(String(Platform.Version), 10) >= 27 ? "automatic" : "soft",
+      }}
+    >
+      <ScrollView
+        {...props}
+        // UIKit's scroll-edge material needs the scroll view's own surface color.
+        className={cn(props.className, primaryColumn ? "bg-drawer" : "bg-screen")}
+        // Use the column's measured inset so UIKit recognizes the resting top.
+        // Padding visually clears the bar but leaves the native scroll offset
+        // past its edge, activating scroll-edge protection before any scroll.
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
+      />
+    </ScrollViewMarker>
+  );
+}
+
+function renderHomeScrollView(props: ScrollViewProps) {
+  // FlatList clones this element with its cells and ref. Keep the marker inside
+  // the component so those cells remain children of the actual ScrollView.
+  return <HomeScrollView {...props} />;
+}
+
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const primaryColumn = use(NativePrimaryColumnContext);
+  const contentBackground = primaryColumn ? "bg-drawer" : "bg-screen";
+  const containerClassName = cn(
+    "flex-1",
+    Platform.OS === "android" ? "bg-header" : contentBackground,
+  );
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const selectedThreadKey = primaryColumn?.selectedThreadKey ?? null;
+  const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
-  const iosBottomToolbarClearance =
-    Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
-      ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
-      : 0;
+  // UIKit's column safe area already includes its bottom toolbar.
+  const iosBottomClearance = Math.max(columnMetrics?.safeArea.bottom ?? insets.bottom, 24);
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
@@ -335,42 +386,14 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const v2ScopeProjects = useMemo(
-    () =>
-      sortHomeProjectScopes({
-        scopes: projectScopes,
-        threads: props.threads,
-        pendingTasks: props.pendingTasks,
-        projectSortOrder: props.projectSortOrder,
-      }),
-    [
-      props.pendingTasks,
-      props.projects,
-      props.projectSortOrder,
-      props.selectedEnvironmentId,
-      props.threads,
-      projectScopes,
-    ],
-  );
   const v2ScopedProjectGroup = useMemo(
-    () =>
-      v2ProjectScopeKey === null
-        ? null
-        : (v2ScopeProjects.find(
-            (scope) =>
-              scope.key === v2ProjectScopeKey ||
-              scope.projectRefs.some(
-                (projectRef) =>
-                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
-                  v2ProjectScopeKey,
-              ),
-          ) ?? null),
-    [v2ProjectScopeKey, v2ScopeProjects],
+    () => findHomeProjectScope(projectScopes, v2ProjectScopeKey),
+    [v2ProjectScopeKey, projectScopes],
   );
   const v2ProjectTitleByProjectKey = useMemo(
     () =>
       new Map(
-        v2ScopeProjects.flatMap((scope) =>
+        projectScopes.flatMap((scope) =>
           scope.projectRefs.map(
             (projectRef) =>
               [
@@ -380,7 +403,7 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
         ),
       ),
-    [v2ScopeProjects],
+    [projectScopes],
   );
   const v2ScopedProjectKeys = useMemo(
     () =>
@@ -466,8 +489,11 @@ export function HomeScreen(props: HomeScreenProps) {
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    workingShelfEnabled,
+    workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   // The queued-start and snooze helpers need a clock while the list stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
@@ -520,8 +546,13 @@ export function HomeScreen(props: HomeScreenProps) {
           queuedThreadKeys,
         }),
       });
-    return new Map([...sectionAvailability("pinned"), ...sectionAvailability("active")]);
+    // The Working beta orders the inbox by time, so only pins can move.
+    return new Map([
+      ...sectionAvailability("pinned"),
+      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+    ]);
   }, [
+    workingShelfEnabled,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     props.threads,
@@ -533,6 +564,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeWakeTick,
   ]);
   const threadListV2Layout = useMemo(() => {
+    threadListInboxReturns.observe(workingShelfEnabled ? props.threads : null);
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
@@ -547,12 +579,18 @@ export function HomeScreen(props: HomeScreenProps) {
       queuedThreadKeys,
       settledLimit: settledVisibleCount,
       now: new Date().toISOString(),
+      workingShelfEnabled,
+      workingShelfExpanded,
+      inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
       settledShelfExpanded,
-      selectedThreadKey: null,
+      selectedThreadKey,
     });
   }, [
+    workingShelfEnabled,
+    workingShelfExpanded,
     pendingOrder,
+    selectedThreadKey,
     queuedThreadKeys,
     nowMinute,
     snoozeWakeTick,
@@ -606,6 +644,9 @@ export function HomeScreen(props: HomeScreenProps) {
       buildThreadListV2ListItems({
         items: threadListV2Layout.items,
         pendingTasks: v2PendingTasks,
+        workingCount: threadListV2Layout.workingCount,
+        workingShelfExpanded,
+        workingShelfHeaderIndex: threadListV2Layout.workingShelfHeaderIndex,
         snoozedCount: threadListV2Layout.snoozedCount,
         snoozedShelfExpanded,
         snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
@@ -628,6 +669,7 @@ export function HomeScreen(props: HomeScreenProps) {
       snoozeEnvironmentIds,
       threadListV2Layout,
       v2PendingTasks,
+      workingShelfExpanded,
     ],
   );
 
@@ -662,6 +704,16 @@ export function HomeScreen(props: HomeScreenProps) {
           />
         );
       }
+      if (item.type === "v2-working-shelf") {
+        return (
+          <ThreadListV2WorkingShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleWorkingShelf}
+          />
+        );
+      }
       if (item.type === "v2-snoozed-shelf") {
         return (
           <ThreadListV2SnoozedShelfHeader
@@ -685,6 +737,9 @@ export function HomeScreen(props: HomeScreenProps) {
       const thread = item.item.thread;
       return (
         <ThreadListV2Row
+          pane={primaryColumn ? "sidebar" : "screen"}
+          selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
+          fullSwipeWidth={fullSwipeWidth}
           onNewThreadOnBranch={props.onNewThreadOnBranch}
           thread={thread}
           variant={item.item.variant}
@@ -730,7 +785,7 @@ export function HomeScreen(props: HomeScreenProps) {
           reorderSupported={
             item.item.pinned
               ? pinReorderEnvironmentIds.has(thread.environmentId)
-              : activeReorderEnvironmentIds.has(thread.environmentId)
+              : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
           }
           canMoveUp={item.canMoveUp}
           canMoveDown={item.canMoveDown}
@@ -772,6 +827,9 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onDeletePendingTask,
       props.onSelectPendingTask,
       props.onSelectThread,
+      primaryColumn,
+      selectedThreadKey,
+      fullSwipeWidth,
       props.onNewThreadOnBranch,
       props.savedConnectionsById,
       resolveProviderInstance,
@@ -782,8 +840,10 @@ export function HomeScreen(props: HomeScreenProps) {
       titleRegenerationEnvironmentIds,
       toggleSettledShelf,
       toggleSnoozedShelf,
+      toggleWorkingShelf,
       v2ProjectTitleByProjectKey,
       props.searchQuery,
+      workingShelfEnabled,
     ],
   );
   const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
@@ -799,15 +859,20 @@ export function HomeScreen(props: HomeScreenProps) {
       listEnvironments,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
+      selectedThreadKey,
       threadSearchMatchByKey,
+      // Rows read it for their reorder menu items.
+      workingShelfEnabled,
     }),
     [
       projectByKey,
       props.searchQuery,
+      selectedThreadKey,
       props.savedConnectionsById,
       listEnvironments,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
+      workingShelfEnabled,
     ],
   );
 
@@ -833,14 +898,15 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (!hasAnyThreads) {
     return (
-      <View className="flex-1 bg-screen android:bg-header">
+      <View className={containerClassName}>
         <View
           className={cn(
-            "flex-1 items-center justify-center bg-screen px-8",
+            "flex-1 items-center justify-center px-8",
+            contentBackground,
             Platform.OS === "android" && "overflow-hidden rounded-t-[28px]",
           )}
           style={{
-            paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
+            paddingBottom: Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
             paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
           }}
         >
@@ -923,12 +989,12 @@ export function HomeScreen(props: HomeScreenProps) {
   }
 
   return (
-    <View className="flex-1 bg-screen android:bg-header">
+    <View className={containerClassName}>
       <View
         className={
           Platform.OS === "android"
             ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
-            : "flex-1 bg-screen"
+            : cn("flex-1", contentBackground)
         }
       >
         {/* Shared with the iPad sidebar: cells are reused across data
@@ -941,6 +1007,7 @@ export function HomeScreen(props: HomeScreenProps) {
             onTouchStart={(event) => trackListTouches(event, true)}
             onTouchEnd={(event) => trackListTouches(event, false)}
             onTouchCancel={(event) => trackListTouches(event, false)}
+            renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
             data={threadListV2Items}
             renderItem={renderV2Item}
             keyExtractor={v2KeyExtractor}
@@ -962,16 +1029,19 @@ export function HomeScreen(props: HomeScreenProps) {
             ListEmptyComponent={v2ListEmpty}
             style={{ flex: 1 }}
             automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-            contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+            contentInsetAdjustmentBehavior="never"
+            contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
+            contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
             showsVerticalScrollIndicator={false}
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
+              paddingHorizontal: primaryColumn ? 8 : 0,
               paddingBottom:
                 Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
+                  ? iosBottomClearance
                   : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? fabClearance : 88),
             }}
           />

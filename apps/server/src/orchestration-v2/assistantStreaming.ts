@@ -1,5 +1,5 @@
 import type { ResponseStreamingMode } from "@t3tools/contracts";
-import type { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 // An opening fence may sit at any indentation, since fences inside list
 // items are indented past the marker. A closing fence may be indented at most

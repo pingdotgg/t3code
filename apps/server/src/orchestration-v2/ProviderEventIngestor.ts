@@ -29,10 +29,11 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
-import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
-import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -79,7 +80,7 @@ export class ProviderTurnAnalytics extends Context.Reference<{
   defaultValue: () => ({ record: () => Effect.void }),
 }) {}
 
-export const analyticsLive = Layer.effect(
+export const layerAnalytics = Layer.effect(
   ProviderTurnAnalytics,
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;
@@ -465,7 +466,7 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 threadId: input.event.turnItem.threadId,
-                payload: input.event.turnItem,
+                payload: stripUnservedToolOutputImageBytes(input.event.turnItem),
                 runId: input.event.turnItem.runId,
                 nodeId: input.event.turnItem.nodeId,
               }),

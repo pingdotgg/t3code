@@ -78,8 +78,8 @@ const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(Clien
 const decodeRecordJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-function makeLayer(baseDir: string) {
-  const environmentLayer = DesktopEnvironment.layer({
+function layer(baseDir: string) {
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -96,7 +96,7 @@ function makeLayer(baseDir: string) {
   );
 
   return DesktopClientSettings.layer.pipe(
-    Layer.provideMerge(environmentLayer),
+    Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -109,7 +109,7 @@ const withClientSettings = <A, E, R>(
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-client-settings-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir)));
+    return yield* effect.pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
@@ -144,6 +144,34 @@ describe("DesktopClientSettings", () => {
             ),
             "settings",
           ),
+        );
+      }),
+    ),
+  );
+
+  it.effect("saves through a symlinked client settings file without replacing the link", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const dotfiles = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-client-settings-dotfiles-",
+        });
+        const linkedSettingsPath = `${dotfiles}/client-settings.json`;
+        yield* fileSystem.writeFileString(linkedSettingsPath, "{}\n");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.symlink(linkedSettingsPath, environment.clientSettingsPath);
+
+        yield* settings.set(clientSettings);
+
+        assert.equal(
+          yield* fileSystem.readLink(environment.clientSettingsPath),
+          linkedSettingsPath,
+        );
+        assert.deepEqual(
+          yield* decodeClientSettingsJson(yield* fileSystem.readFileString(linkedSettingsPath)),
+          clientSettings,
         );
       }),
     ),

@@ -1,11 +1,11 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Schema } from "effect"
-import * as PersistedCacheTest from "effect-test/unstable/persistence/PersistedCacheTest"
-import * as PersistedQueueTest from "effect-test/unstable/persistence/PersistedQueueTest"
-import * as SqlCleanupTest from "effect-test/unstable/persistence/SqlCleanupTest"
+import * as PersistedCacheTest from "effect-test/persistence/PersistedCacheTest"
+import * as PersistedQueueTest from "effect-test/persistence/PersistedQueueTest"
+import * as SqlCleanupTest from "effect-test/persistence/SqlCleanupTest"
+import { PersistedQueue, Persistence } from "effect/persistence"
+import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"
-import { PersistedQueue, Persistence } from "effect/unstable/persistence"
-import { SqlClient } from "effect/unstable/sql"
 import { MysqlContainer } from "./utils.ts"
 
 it.layer(MysqlContainer.layerClient, { timeout: "90 seconds" })("Persistence", (it) => {

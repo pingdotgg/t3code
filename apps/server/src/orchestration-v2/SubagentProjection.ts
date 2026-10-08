@@ -16,6 +16,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
@@ -56,6 +57,8 @@ export function makeSubagentChildThread(input: {
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
+    linkedPullRequest: null,
+    pullRequests: [],
     historyOrigin: undefined,
     providerInstanceId: input.providerInstanceId,
     modelSelection: input.modelSelection,
@@ -226,7 +229,11 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  const active = workRuns.some((run) => !terminal(run.status));
+  // A held queue waits for the user to resume it (after Stop, a restart, or a
+  // provider failure), so its runs are not work the task still owes.
+  const active = workRuns.some(
+    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  );
   const children =
     projection.subagents.some(
       (task) =>
@@ -239,7 +246,7 @@ export function delegatedTaskProgress(projection: {
     projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
-    .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
       active || resultRun === undefined

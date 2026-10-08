@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "workspace:*",
-    "@better-auth/api-key": "1.6.25",
+    "@better-auth/api-key": "catalog:",
     "@pierre/diffs": "^1.3.5",
     "alchemy": "workspace:*",
     "better-auth": "catalog:",

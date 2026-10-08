@@ -274,7 +274,7 @@ describe("mobile dependency graph", () => {
       ["native", "features", 8, "native must not add imports from features"],
       // lib -> state: attachment/session plumbing that predates the cycle
       // cleanup; each remaining edge needs a real owner-side seam.
-      ["lib", "state", 11, "lib must not add imports from state"],
+      ["lib", "state", 10, "lib must not add imports from state"],
     ];
 
     for (const [from, to, ceiling, message] of ceilings) {

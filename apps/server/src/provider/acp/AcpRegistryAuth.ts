@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
@@ -45,6 +45,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const coordinator = yield* Effect.serviceOption(
     AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
   );
+  const agentKey =
+    options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
   const resolve = catalog
@@ -139,7 +141,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
 
   const methods = Option.isSome(coordinator)
     ? coordinator.value
-        .runBackgroundProbe(options.settings.agentId, discoverMethods)
+        .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
           Effect.flatMap((result) =>
             Option.isSome(result)
@@ -327,7 +329,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         }),
       );
       yield* Option.isSome(coordinator)
-        ? coordinator.value.withForegroundStartup(options.settings.agentId, login)
+        ? coordinator.value.withForegroundStartup(agentKey, login)
         : login;
       yield* options.onChanged(true);
     });
@@ -353,15 +355,13 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     }),
   );
   const signOut = (
-    Option.isSome(coordinator)
-      ? coordinator.value.withForegroundStartup(options.settings.agentId, logout)
-      : logout
+    Option.isSome(coordinator) ? coordinator.value.withForegroundStartup(agentKey, logout) : logout
   ).pipe(Effect.andThen(options.onChanged(false)));
   return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
     // ACP doesn't advertise its credential scope. Conservatively treat all
     // instances of the same agent on this environment as sharing credentials.
-    credentialBinding: { owner: "provider", key: `acp:${options.settings.agentId}` },
+    credentialBinding: { owner: "provider", key: `acp:${agentKey}` },
     methods,
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),
     authenticate,

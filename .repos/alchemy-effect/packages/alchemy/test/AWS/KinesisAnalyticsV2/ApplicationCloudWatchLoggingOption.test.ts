@@ -44,6 +44,15 @@ const assertApplicationDeleted = Effect.fn(function* (applicationName: string) {
 
 describe.skipIf(!!process.env.FAST)(
   "AWS.KinesisAnalyticsV2.ApplicationCloudWatchLoggingOption",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:kinesisanalyticsv2",
+      "provider:aws:logs",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
   () => {
     test.provider(
       "attach a CloudWatch logging option, detach it, destroy",

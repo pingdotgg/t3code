@@ -1,11 +1,5 @@
-import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  MousePointer2Icon,
-  PaintbrushIcon,
-  PlusIcon,
-  XIcon,
-} from "lucide-react";
+import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide";
 import {
   useCallback,
   useEffect,
@@ -36,6 +30,7 @@ import {
 } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -164,6 +159,24 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         label: "Code surface",
         role: "codeBackground",
         roles: ["codeBackground", "codeForeground"],
+      },
+    ],
+  },
+  {
+    id: "search",
+    title: "Search",
+    families: [
+      {
+        id: "search-matches",
+        label: "Search matches",
+        role: "searchMatchBackground",
+        roles: ["searchMatchBackground", "searchMatchForeground"],
+      },
+      {
+        id: "current-match",
+        label: "Current match",
+        role: "searchMatchActiveBackground",
+        roles: ["searchMatchActiveBackground", "searchMatchActiveForeground"],
       },
     ],
   },
@@ -1221,7 +1234,7 @@ export function ThemeEditorPanel({
           variant="ghost"
           onClick={() => setIsMinimized(!isMinimized)}
         >
-          {isMinimized ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          <MorphIcon icon={isMinimized ? ChevronUp : ChevronDown} />
         </Button>
         <Button
           aria-label="Close the theme editor"

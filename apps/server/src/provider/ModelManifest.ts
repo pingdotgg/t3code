@@ -28,14 +28,15 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
-import type { ServerProviderDraft } from "./providerSnapshot.ts";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 
 const MODEL_MANIFEST_URL =
   "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
@@ -220,10 +221,7 @@ function isLegacyModel(
   const catalogModel =
     catalog?.find((model) => model.slug === slug) ??
     catalog?.find((model) => model.slug === family);
-  if (catalogModel) return catalogModel.status === "legacy";
-  const currentModels = manifest.currentModels[driverKind];
-  if (!currentModels) return false;
-  return !currentModels.includes(slug) && !currentModels.includes(family);
+  return catalogModel?.status === "legacy";
 }
 
 /**
@@ -411,7 +409,9 @@ export const make = Effect.gen(function* () {
     manifest = fetched;
     fetchedAtMs = now;
     yield* encodeManifestCache({ fetchedAtMs: now, manifest: fetched }).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(cachePath, serialized)),
+      Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
       Effect.ignoreCause,
     );
     return manifest;

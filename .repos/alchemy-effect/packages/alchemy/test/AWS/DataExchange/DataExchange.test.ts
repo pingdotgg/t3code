@@ -10,15 +10,18 @@ const { test } = Test.make({ providers: AWS.providers() });
 
 // Typed-error probe: proves the SDK decodes DataExchange errors as typed
 // tags. A missing data set surfaces as ResourceNotFoundException.
-test.provider("getDataSet on a nonexistent id fails with a typed error", () =>
-  Effect.gen(function* () {
-    const error = yield* Effect.flip(
-      dataexchange.getDataSet({
-        DataSetId: "ffffffffffffffffffffffffffffffff",
-      }),
-    );
-    expect(error._tag).toBe("ResourceNotFoundException");
-  }),
+test.provider(
+  "getDataSet on a nonexistent id fails with a typed error",
+  () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        dataexchange.getDataSet({
+          DataSetId: "ffffffffffffffffffffffffffffffff",
+        }),
+      );
+      expect(error._tag).toBe("ResourceNotFoundException");
+    }),
+  { tags: ["provider:aws", "provider:aws:dataexchange", "live"] },
 );
 
 // Data sets and revisions are cheap, instant metadata objects — the live
@@ -123,7 +126,10 @@ test.provider(
       );
       expect(dataSetError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dataexchange", "live"],
+    timeout: 300_000,
+  },
 );
 
 // Replacement: assetType is immutable, so changing it replaces the data set.
@@ -166,7 +172,10 @@ test.provider(
       );
       expect(newError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dataexchange", "live"],
+    timeout: 300_000,
+  },
 );
 
 // Event actions only attach to ENTITLED data sets (subscriptions / accepted
@@ -202,7 +211,10 @@ test.provider(
       );
       expect(error._tag).toBe("ValidationException");
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dataexchange", "live"],
+    timeout: 60_000,
+  },
 );
 
 // Full event-action lifecycle needs an entitled data set — run it from an
@@ -258,5 +270,8 @@ test.provider.skipIf(!process.env.AWS_TEST_DATAEXCHANGE_ENTITLED_DATASET_ID)(
       );
       expect(gone._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:dataexchange", "live"],
+    timeout: 300_000,
+  },
 );

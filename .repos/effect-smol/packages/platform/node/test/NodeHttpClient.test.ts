@@ -4,9 +4,6 @@ import { assert, describe, expect, it } from "@effect/vitest"
 import { Struct } from "effect"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as Schema from "effect/Schema"
-import * as Stream from "effect/Stream"
 import {
   HttpBody,
   HttpClient,
@@ -16,7 +13,10 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse
-} from "effect/unstable/http"
+} from "effect/http"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
+import * as Stream from "effect/Stream"
 import * as Http from "node:http"
 
 const Todo = Schema.Struct({
@@ -92,6 +92,18 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
     })
   ),
   HttpRouter.route("GET", "/text", Effect.succeed(HttpServerResponse.text("test"))),
+  HttpRouter.route(
+    "QUERY",
+    "/search",
+    Effect.gen(function*() {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      return HttpServerResponse.jsonUnsafe({
+        method: request.method,
+        contentType: request.headers["content-type"],
+        body: yield* request.text
+      })
+    })
+  ),
   HttpRouter.route("GET", "/bytes", Effect.succeed(HttpServerResponse.uint8Array(responseBytes))),
   ...formDataResponses.map(({ body, contentType, path }) =>
     HttpRouter.route("GET", path, Effect.succeed(HttpServerResponse.text(body, { contentType })))
@@ -202,6 +214,21 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
       }).pipe(
         Effect.provide(localServerTestLayer)
       ))
+
+    it.effect("round trips QUERY method, body, and content type through the local server", () =>
+      Effect.gen(function*() {
+        const body = JSON.stringify({ query: "effect" })
+        const response = yield* HttpClient.query("/search", {
+          body: HttpBody.text(body, "application/json")
+        })
+
+        assert.strictEqual(response.status, 200)
+        assert.deepStrictEqual(yield* response.json, {
+          method: "QUERY",
+          contentType: "application/json",
+          body
+        })
+      }).pipe(Effect.provide(localServerTestLayer)))
 
     it.effect("head request with schemaJson", () =>
       Effect.gen(function*() {

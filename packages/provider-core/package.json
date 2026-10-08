@@ -1,0 +1,154 @@
+{
+  "name": "@t3tools/provider-core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./server/adapterDriver": {
+      "types": "./src/server/adapterDriver.ts",
+      "import": "./src/server/adapterDriver.ts"
+    },
+    "./server/auth": {
+      "types": "./src/server/auth.ts",
+      "import": "./src/server/auth.ts"
+    },
+    "./server/collectStreamText": {
+      "types": "./src/server/collectStreamText.ts",
+      "import": "./src/server/collectStreamText.ts"
+    },
+    "./server/continuationRequests": {
+      "types": "./src/server/continuationRequests.ts",
+      "import": "./src/server/continuationRequests.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/errors": {
+      "types": "./src/server/errors.ts",
+      "import": "./src/server/errors.ts"
+    },
+    "./server/failure": {
+      "types": "./src/server/failure.ts",
+      "import": "./src/server/failure.ts"
+    },
+    "./server/handoffBudget": {
+      "types": "./src/server/handoffBudget.ts",
+      "import": "./src/server/handoffBudget.ts"
+    },
+    "./server/IdAllocator": {
+      "types": "./src/server/IdAllocator.ts",
+      "import": "./src/server/IdAllocator.ts"
+    },
+    "./server/instanceEnvironment": {
+      "types": "./src/server/instanceEnvironment.ts",
+      "import": "./src/server/instanceEnvironment.ts"
+    },
+    "./server/maintenance": {
+      "types": "./src/server/maintenance.ts",
+      "import": "./src/server/maintenance.ts"
+    },
+    "./server/maintenanceResolver": {
+      "types": "./src/server/maintenanceResolver.ts",
+      "import": "./src/server/maintenanceResolver.ts"
+    },
+    "./server/managedProvider": {
+      "types": "./src/server/managedProvider.ts",
+      "import": "./src/server/managedProvider.ts"
+    },
+    "./server/mcpSession": {
+      "types": "./src/server/mcpSession.ts",
+      "import": "./src/server/mcpSession.ts"
+    },
+    "./server/mcpToolPresentation": {
+      "types": "./src/server/mcpToolPresentation.ts",
+      "import": "./src/server/mcpToolPresentation.ts"
+    },
+    "./server/orchestrationInstructions": {
+      "types": "./src/server/orchestrationInstructions.ts",
+      "import": "./src/server/orchestrationInstructions.ts"
+    },
+    "./server/pathExpansion": {
+      "types": "./src/server/pathExpansion.ts",
+      "import": "./src/server/pathExpansion.ts"
+    },
+    "./server/processGroup": {
+      "types": "./src/server/processGroup.ts",
+      "import": "./src/server/processGroup.ts"
+    },
+    "./server/ProviderAdapter": {
+      "types": "./src/server/ProviderAdapter.ts",
+      "import": "./src/server/ProviderAdapter.ts"
+    },
+    "./server/ProviderHost": {
+      "types": "./src/server/ProviderHost.ts",
+      "import": "./src/server/ProviderHost.ts"
+    },
+    "./server/randomUuid": {
+      "types": "./src/server/randomUuid.ts",
+      "import": "./src/server/randomUuid.ts"
+    },
+    "./server/selectionTransition": {
+      "types": "./src/server/selectionTransition.ts",
+      "import": "./src/server/selectionTransition.ts"
+    },
+    "./server/snapshot": {
+      "types": "./src/server/snapshot.ts",
+      "import": "./src/server/snapshot.ts"
+    },
+    "./server/snapshotProbe": {
+      "types": "./src/server/snapshotProbe.ts",
+      "import": "./src/server/snapshotProbe.ts"
+    },
+    "./server/snapshotSettings": {
+      "types": "./src/server/snapshotSettings.ts",
+      "import": "./src/server/snapshotSettings.ts"
+    },
+    "./server/textGeneration": {
+      "types": "./src/server/textGeneration.ts",
+      "import": "./src/server/textGeneration.ts"
+    },
+    "./server/textGenerationOperations": {
+      "types": "./src/server/textGenerationOperations.ts",
+      "import": "./src/server/textGenerationOperations.ts"
+    },
+    "./server/textGenerationPolicy": {
+      "types": "./src/server/textGenerationPolicy.ts",
+      "import": "./src/server/textGenerationPolicy.ts"
+    },
+    "./server/textGenerationPrompts": {
+      "types": "./src/server/textGenerationPrompts.ts",
+      "import": "./src/server/textGenerationPrompts.ts"
+    },
+    "./server/textGenerationUtils": {
+      "types": "./src/server/textGenerationUtils.ts",
+      "import": "./src/server/textGenerationUtils.ts"
+    },
+    "./server/threadTitleContext": {
+      "types": "./src/server/threadTitleContext.ts",
+      "import": "./src/server/threadTitleContext.ts"
+    },
+    "./server/usageLimits": {
+      "types": "./src/server/usageLimits.ts",
+      "import": "./src/server/usageLimits.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

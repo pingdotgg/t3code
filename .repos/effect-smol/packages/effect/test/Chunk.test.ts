@@ -678,7 +678,7 @@ describe("Chunk", () => {
     )
     assertTuple(
       Chunk.partition(Chunk.make(1, 3), (n) => n > 2 ? Result.succeed(n) : Result.fail(n)),
-      [Chunk.make(1), Chunk.make(3)]
+      [Chunk.make(3), Chunk.make(1)]
     )
 
     assertTuple(
@@ -690,23 +690,23 @@ describe("Chunk", () => {
     )
     assertTuple(
       Chunk.partition(Chunk.make(1, 2), (n, i) => n + i > 2 ? Result.succeed(n + i) : Result.fail(`negative:${n + i}`)),
-      [Chunk.make("negative:1"), Chunk.make(3)]
+      [Chunk.make(3), Chunk.make("negative:1")]
     )
   })
 
   it("partition (identity)", () => {
     assertTuple(Chunk.partition(Chunk.empty(), identity), [Chunk.empty(), Chunk.empty()])
     assertTuple(Chunk.partition(Chunk.make(Result.succeed(1), Result.fail("a"), Result.succeed(2)), identity), [
-      Chunk.make("a"),
-      Chunk.make(1, 2)
+      Chunk.make(1, 2),
+      Chunk.make("a")
     ])
   })
 
   it("separate", () => {
     assertTuple(Chunk.separate(Chunk.empty()), [Chunk.empty(), Chunk.empty()])
     assertTuple(Chunk.separate(Chunk.make(Result.succeed(1), Result.fail("e"), Result.succeed(2))), [
-      Chunk.make("e"),
-      Chunk.make(1, 2)
+      Chunk.make(1, 2),
+      Chunk.make("e")
     ])
   })
 
@@ -746,6 +746,36 @@ describe("Chunk", () => {
     )
   })
 
+  it("combinators read sparse backing holes as undefined", () => {
+    const sparse: Array<number | undefined> = new Array(3)
+    sparse[0] = 1
+    sparse[2] = 3
+    const chunk = Chunk.fromArrayUnsafe(sparse)
+    const isUndefined = (a: unknown) => a === undefined
+    deepStrictEqual(Chunk.toArray(Chunk.filter(chunk, isUndefined)), [undefined])
+    deepStrictEqual(
+      Chunk.toArray(Chunk.filterMap(chunk, (a) => a === undefined ? Result.succeed("hole") : Result.failVoid)),
+      ["hole"]
+    )
+    deepStrictEqual(Chunk.toArray(Chunk.zipWith(chunk, chunk, (a, b) => [a, b])), [
+      [1, 1],
+      [undefined, undefined],
+      [3, 3]
+    ])
+    assertSome(Chunk.findLastIndex(chunk, isUndefined), 1)
+    assertTrue(Chunk.some(chunk, isUndefined))
+    assertFalse(Chunk.every(chunk, (a) => a !== undefined))
+    assertSome(Chunk.findLast(chunk, isUndefined), undefined)
+    deepStrictEqual(Chunk.toArray(Chunk.difference(Chunk.make(1, undefined, 2), chunk)), [2])
+    deepStrictEqual(Chunk.toArray(Chunk.difference(chunk, Chunk.make(3))), [1, undefined])
+  })
+
+  it("findLast", () => {
+    assertSome(Chunk.findLast(Chunk.make(1, 2, 3, 4), (n) => n % 2 === 1), 3)
+    assertNone(Chunk.findLast(Chunk.make(2, 4), (n) => n % 2 === 1))
+    assertNone(Chunk.findLast(Chunk.empty<number>(), (n) => n % 2 === 1))
+  })
+
   it("filterMap", () => {
     assertEquals(
       Chunk.filterMap(Chunk.make(1, 2, 3, 4), (n) => n % 2 === 0 ? Result.succeed(n * 2) : Result.failVoid),
@@ -779,6 +809,27 @@ describe("Chunk", () => {
   it("flatMap", () => {
     assertEquals(Chunk.flatMap(Chunk.make(1), (n) => Chunk.make(n, n + 1)), Chunk.make(1, 2))
     assertEquals(Chunk.flatMap(Chunk.make(1, 2, 3), (n) => Chunk.make(n, n + 1)), Chunk.make(1, 2, 2, 3, 3, 4))
+  })
+
+  it("flatMap preserves order and callback indices across chunk backings", () => {
+    const indices: Array<number> = []
+    const outer = Chunk.drop(Chunk.make(0, 1, 2, 3), 1)
+    const result = Chunk.flatMap(outer, (n, i) => {
+      indices.push(i)
+      return n === 2 ? Chunk.empty() : Chunk.appendAll(Chunk.of(n), Chunk.of(n + 10))
+    })
+    deepStrictEqual(Array.from(result), [1, 11, 3, 13])
+    deepStrictEqual(indices, [0, 1, 2])
+  })
+
+  it("flatMap and join read the holes of a sparse backing array as undefined", () => {
+    const sparse: Array<string> = new Array(3)
+    sparse[0] = "a"
+    sparse[2] = "c"
+    const chunk = Chunk.fromArrayUnsafe(sparse)
+    const doubled = Chunk.flatMap(chunk, (a) => Chunk.make(a, a))
+    deepStrictEqual(Array.from(doubled), ["a", "a", undefined, undefined, "c", "c"])
+    strictEqual(Chunk.join(chunk, "-"), "a--c")
   })
 
   it("union", () => {
@@ -889,6 +940,17 @@ describe("Chunk", () => {
     assertTrue(equivalence(Chunk.make(1, 2, 3), Chunk.make(1, 2, 3)))
     assertFalse(equivalence(Chunk.make(1, 2, 3), Chunk.make(1, 2)))
     assertFalse(equivalence(Chunk.make(1, 2, 3), Chunk.make(1, 2, 4)))
+  })
+
+  it("makeEquivalence is symmetric on a sparse backing array, whose holes read as undefined", () => {
+    const equivalence = Chunk.makeEquivalence(Equivalence.strictEqual<number | undefined>())
+    const holey: Array<number | undefined> = new Array(2)
+    holey[1] = 1
+    const sparse = Chunk.fromArrayUnsafe(holey)
+    assertFalse(equivalence(sparse, Chunk.make(5, 1)))
+    assertFalse(equivalence(Chunk.make(5, 1), sparse))
+    assertTrue(equivalence(sparse, Chunk.make(undefined, 1)))
+    assertTrue(equivalence(Chunk.make(undefined, 1), sparse))
   })
 
   it("differenceWith", () => {

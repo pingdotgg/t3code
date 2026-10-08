@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { Command, CliError } from "effect/unstable/cli";
+import { Command, CliError } from "effect/cli";
 
 import {
   mergePlatformUpdateManifests,

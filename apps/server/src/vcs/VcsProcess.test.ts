@@ -12,7 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   VcsProcessExitError,
@@ -30,10 +30,10 @@ const run = (input: VcsProcess.VcsProcessInput) =>
     return yield* process.run(input);
   });
 
-const liveLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerLive = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
-  effect.pipe(Effect.provide(liveLayer));
+  effect.pipe(Effect.provide(layerLive));
 
 const baseInput = {
   operation: "test.process-boundary",

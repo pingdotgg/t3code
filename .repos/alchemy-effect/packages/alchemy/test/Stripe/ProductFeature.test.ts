@@ -168,7 +168,16 @@ test.provider(
         }),
       );
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:entitlementsfeature",
+      "provider:stripe:product",
+      "provider:stripe:productfeature",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -224,7 +233,16 @@ test.provider(
         }),
       );
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:entitlementsfeature",
+      "provider:stripe:product",
+      "provider:stripe:productfeature",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -299,5 +317,14 @@ test.provider(
         }),
       );
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:entitlementsfeature",
+      "provider:stripe:product",
+      "provider:stripe:productfeature",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

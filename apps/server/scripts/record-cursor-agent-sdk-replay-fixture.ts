@@ -9,13 +9,13 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import {
   recordCursorAgentSdkReplayTranscript,
   type CursorAgentSdkReplayTranscript,
 } from "../src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts";
-import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   CURSOR_MODEL_SELECTION,
   MESSAGE_STEERING_INITIAL_PROMPT,

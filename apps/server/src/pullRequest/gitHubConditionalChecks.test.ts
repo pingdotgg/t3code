@@ -4,11 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import type { PullRequestCheck } from "@t3tools/contracts";
 
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import { makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
+import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -27,31 +26,46 @@ it.effect(
       let changed = "";
       let reads = 0;
       const requests: string[] = [];
+      const known: Array<unknown> = [];
       const revalidate = yield* makeChecksRevalidator.pipe(
         Effect.provide(
-          Layer.mock(GitHubCli.GitHubCli)({
-            execute: ({ args }) =>
+          Layer.mock(GitHubApi.GitHubApi)({
+            rest: ({ path, ifNoneMatch }) =>
               Effect.sync(() => {
-                const endpoint = args[1]!;
-                requests.push(endpoint);
-                const head = endpoint.endsWith("/pulls/1");
+                requests.push(path);
+                const head = path.endsWith("/pulls/1");
                 const modified =
-                  !args.includes("-H") || (endpoint.includes(changed) && changed !== "");
-                const next = endpoint.includes("check-runs") && endpoint.endsWith("page=1");
+                  ifNoneMatch === undefined || (path.includes(changed) && changed !== "");
+                const next = path.includes("check-runs") && path.endsWith("page=1");
+                const runs = path.includes("/actions/runs");
                 return {
-                  exitCode: ChildProcessSpawner.ExitCode(modified ? 0 : 1),
-                  stdout: modified
-                    ? `HTTP/2.0 200 OK\r\nEtag: "${sha}-${changed}"\r\n${next ? 'Link: <https://api.github.com/next>; rel="next"\r\n' : ""}\r\n${head ? encodeJson({ head: { sha }, base: { repo: { id: 1 } }, headRepositoryId: 2 }) : ""}`
-                    : "HTTP/2.0 304 Not Modified\r\n\r\n",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
+                  status: modified ? 200 : 304,
+                  headers: modified
+                    ? {
+                        etag: `"${sha}-${changed}"`,
+                        ...(next ? { link: '<https://api.github.com/next>; rel="next"' } : {}),
+                      }
+                    : {},
+                  body: !modified
+                    ? ""
+                    : head
+                      ? encodeJson({ head: { sha, repo: { id: 2 } }, base: { repo: { id: 1 } } })
+                      : runs
+                        ? encodeJson({
+                            workflow_runs: [
+                              { id: 9, status: "completed", conclusion: "action_required" },
+                            ],
+                          })
+                        : "{}",
+                  truncated: false,
+                  invalidUtf8: false,
                 };
               }),
           }),
         ),
       );
-      const read = Effect.sync(() => {
+      const read = Effect.gen(function* () {
+        known.push(yield* KnownWorkflowRuns);
         reads++;
         return {
           state: "open" as const,
@@ -64,10 +78,15 @@ it.effect(
       });
       const poll = (identity = credential) =>
         revalidate(reference, read).pipe(
-          Effect.provideService(GitHubCli.PinnedGitHubCredential, identity),
+          Effect.provideService(GitHubApi.PinnedGitHubCredential, identity),
         );
       yield* poll();
       expect(reads).toBe(1);
+      // The fork's runs were just confirmed, so the read is handed them instead of listing them.
+      expect(known[0]).toEqual({
+        headSha: sha,
+        runs: [{ id: 9, status: "completed", conclusion: "action_required" }],
+      });
       requests.length = 0;
       yield* poll();
       expect(reads).toBe(1);
@@ -113,27 +132,32 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubCli.GitHubCli)({
-          execute: ({ args }) =>
+        Layer.mock(GitHubApi.GitHubApi)({
+          rest: ({ path, ifNoneMatch }) =>
             unavailable
               ? Effect.fail(
-                  new GitHubCli.GitHubCliCommandError({
-                    command: "gh",
-                    cwd: "/repo",
-                    cause: undefined,
-                    httpStatus: 502,
+                  new GitHubApi.GitHubApiResponseError({
+                    host: "github.com",
+                    operation: "revalidateChecks",
+                    status: 502,
                   }),
                 )
-              : Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout:
-                    args.includes("-H") && etags
-                      ? "HTTP/2.0 304 Not Modified\n\n"
-                      : `HTTP/2.0 200 OK\n${etags ? 'Etag: "one"\n' : ""}\n${args[1]!.endsWith("/pulls/1") ? encodeJson({ head: { sha }, base: { repo: { id: 1 } }, headRepositoryId: 1 }) : ""}`,
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                }),
+              : Effect.succeed(
+                  ifNoneMatch !== undefined && etags
+                    ? { status: 304, headers: {}, body: "", truncated: false, invalidUtf8: false }
+                    : {
+                        status: 200,
+                        headers: etags ? { etag: '"one"' } : {},
+                        body: path.endsWith("/pulls/1")
+                          ? encodeJson({
+                              head: { sha, repo: { id: 1 } },
+                              base: { repo: { id: 1 } },
+                            })
+                          : "{}",
+                        truncated: false,
+                        invalidUtf8: false,
+                      },
+                ),
         }),
       ),
     );
@@ -141,7 +165,11 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
       reads++;
       return fail
         ? Effect.fail(
-            new GitHubCli.GitHubCliCommandError({ command: "gh", cwd: "/repo", cause: undefined }),
+            new GitHubApi.GitHubApiResponseError({
+              host: "github.com",
+              operation: "read",
+              status: 500,
+            }),
           )
         : Effect.succeed({
             state: "open" as const,
@@ -152,7 +180,7 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
     });
     const poll = () =>
       revalidate(reference, read).pipe(
-        Effect.provideService(GitHubCli.PinnedGitHubCredential, credential),
+        Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
       );
     yield* poll().pipe(Effect.flip);
     fail = false;
@@ -190,15 +218,13 @@ it.effect("falls back when REST checks are unavailable without retrying unsuppor
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubCli.GitHubCli)({
-          execute: () => {
+        Layer.mock(GitHubApi.GitHubApi)({
+          rest: () => {
             probes++;
             return Effect.fail(
-              new GitHubCli.GitHubCliCommandError({
-                command: "gh",
-                cwd: "/repo",
-                cause: undefined,
-                httpStatus: 404,
+              new GitHubApi.GitHubApiNotFoundError({
+                host: "github.com",
+                operation: "revalidateChecks",
               }),
             );
           },
@@ -211,7 +237,7 @@ it.effect("falls back when REST checks are unavailable without retrying unsuppor
     });
     for (let tick = 0; tick < 2; tick++)
       yield* revalidate(reference, read).pipe(
-        Effect.provideService(GitHubCli.PinnedGitHubCredential, credential),
+        Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
       );
     expect(probes).toBe(1);
     expect(reads).toBe(2);

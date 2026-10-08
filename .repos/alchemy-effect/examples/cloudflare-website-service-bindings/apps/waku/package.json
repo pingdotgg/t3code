@@ -1,0 +1,19 @@
+{
+  "name": "service-binding-waku",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "catalog:react-rsc",
+    "react-dom": "catalog:react-rsc",
+    "react-server-dom-webpack": "catalog:",
+    "waku": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

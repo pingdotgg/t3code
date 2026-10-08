@@ -19,10 +19,10 @@ import type { GrokSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
 

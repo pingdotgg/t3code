@@ -1092,6 +1092,32 @@ export const size = (self: TxQueueState): Effect.Effect<number> => TxChunk.size(
 export const isEmpty = (self: TxQueueState): Effect.Effect<boolean> => TxChunk.isEmpty(self.items)
 
 /**
+ * Checks whether the queue is non-empty.
+ *
+ * **Example** (Checking whether a queue is non-empty)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, TxQueue } from "effect"
+ *
+ * const program = Effect.gen(function*() {
+ *   const queue = yield* TxQueue.bounded<number>(10)
+ *
+ *   const empty = yield* TxQueue.isNonEmpty(queue)
+ *
+ *   yield* TxQueue.offer(queue, 42)
+ *   const nonEmpty = yield* TxQueue.isNonEmpty(queue)
+ *   return [empty, nonEmpty] as const
+ * })
+ *
+ * await Effect.runPromise(program) // => [false, true]
+ * ```
+ *
+ * @category predicates
+ * @since 4.0.0
+ */
+export const isNonEmpty = (self: TxQueueState): Effect.Effect<boolean> => TxChunk.isNonEmpty(self.items)
+
+/**
  * Checks whether the queue is at capacity.
  *
  * **Example** (Checking whether a queue is full)
