@@ -35,6 +35,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     layerSetup,
     NodeSqliteClient.layer({
       filename: dbPath,
+      readerWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",
