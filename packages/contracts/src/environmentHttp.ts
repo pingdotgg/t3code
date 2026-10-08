@@ -170,6 +170,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   {
     code: Schema.Literal("insufficient_scope"),
     requiredScope: AuthEnvironmentScope,
+    requiredPermission: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
@@ -179,7 +180,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   }
 
   override get message(): string {
-    return `This request needs the ${this.requiredScope} scope, which this client does not have.`;
+    return `This request needs the ${this.requiredPermission ?? this.requiredScope} scope, which this client does not have.`;
   }
 }
 
@@ -583,6 +584,14 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+/**
+ * `compactTurnItems=1` opts into `turnItemsOmitLocalVisible`. Other values are
+ * ignored, and older servers ignore the whole query.
+ */
+const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+  compactTurnItems: Schema.optionalKey(Schema.String),
+});
+
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
 });
@@ -614,6 +623,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("threadBoundedSnapshot", "/api/orchestration/threads/:threadId/bounded", {
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
+      query: EnvironmentOrchestrationThreadBoundedSnapshotQuery,
       success: OrchestrationV2ThreadBoundedSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

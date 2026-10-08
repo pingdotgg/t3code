@@ -215,7 +215,7 @@ export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined
   return effort === "ultracode";
 }
 
-export function resolveClaudeCatalogContextWindow(
+function resolveClaudeCatalogContextWindow(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection | undefined,
 ): string | undefined {

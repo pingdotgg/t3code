@@ -801,6 +801,16 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("provider enabled defaults", () => {
+  it("keeps Muse disabled until a configured instance opts in", () => {
+    const muse = ProviderDriverKind.make("muse");
+    expect(decodeServerSettings({}).providers.muse.enabled).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: muse, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: muse, enabled: true, config: {} })).toBe(true);
+    expect(
+      resolveProviderInstanceEnabled({ driver: muse, enabled: true, config: { enabled: false } }),
+    ).toBe(false);
+  });
+
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);

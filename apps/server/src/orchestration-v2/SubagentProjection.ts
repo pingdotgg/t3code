@@ -229,7 +229,11 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  const active = workRuns.some((run) => !terminal(run.status));
+  // A held queue waits for the user to resume it (after Stop, a restart, or a
+  // provider failure), so its runs are not work the task still owes.
+  const active = workRuns.some(
+    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  );
   const children =
     projection.subagents.some(
       (task) =>

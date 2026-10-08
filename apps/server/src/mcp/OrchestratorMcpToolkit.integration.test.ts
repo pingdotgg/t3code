@@ -1873,6 +1873,20 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
+            // A queue Stop held waits for the user; it is not pending child work.
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId
+                      ? { ...run, status: "queued", queueHeld: true }
+                      : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(false);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Stop the child's later work too.",
@@ -2228,6 +2242,41 @@ describe("orchestrator MCP toolkit", () => {
             yield* orchestrator.dispatch({
               type: "thread.unsettle",
               commandId: CommandId.make("command:mcp-empty:unsettle"),
+              threadId: emptyThread.threadId,
+              reason: "user",
+            });
+
+            expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make("command:mcp-empty:snooze"),
+              threadId: emptyThread.threadId,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedListCall = yield* invoke("t3_thread_list", { snoozed: true, limit: 100 });
+            const snoozedList = yield* decodeThreadListResult(
+              snoozedListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedList.threads.map((thread) => thread.threadId)).toEqual([
+              emptyThread.threadId,
+            ]);
+            expect(snoozedList.threads[0]).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedReadCall = yield* invoke("t3_thread_read", {
+              threadId: emptyThread.threadId,
+            });
+            const snoozedRead = yield* decodeThreadReadResult(
+              snoozedReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedRead.thread).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.unsnooze",
+              commandId: CommandId.make("command:mcp-empty:unsnooze"),
               threadId: emptyThread.threadId,
               reason: "user",
             });

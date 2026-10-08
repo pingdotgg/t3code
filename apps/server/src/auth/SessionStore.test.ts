@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,6 +20,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./utils.ts";
 
 const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -290,6 +291,34 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
     }).pipe(Effect.provide(layerSessionStore())),
   );
+  it.effect("keeps recorded scopes unchanged for both token versions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
+      const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
+      // Accept prerelease v2 credentials without widening their recorded grant.
+      const [encodedPayload] = issued.token.split(".");
+      const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
+      expect(currentClaims).toContain('"v":1');
+      const legacyPayload = base64UrlEncode(currentClaims.replace('"v":1', '"v":2'));
+      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
+      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
+
+      expect((yield* sessions.verify(issued.token)).scopes).toEqual(legacyScopes);
+      expect((yield* sessions.verify(legacyToken)).scopes).toEqual(legacyScopes);
+    }).pipe(
+      Effect.provide(
+        SessionStore.layer.pipe(
+          Layer.provideMerge(ServerSecretStore.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+          Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+          Layer.provide(layerServerConfig()),
+        ),
+      ),
+    ),
+  );
+
   it.effect("rejects malformed session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -346,13 +375,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(verified.method).toBe("bearer-access-token");
       expect(verified.subject).toBe("test-clock");
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-      ]);
+      expect(verified.scopes).toEqual(AuthStandardClientScopes);
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
@@ -426,6 +449,47 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         previous.sessionId,
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+
+  it.effect.each(["insert", "revoke"] as const)(
+    "keeps existing browser sessions valid when replacement cannot %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const previous = yield* sessions.issue({ subject: "one-time-token" });
+        const unrelated = yield* sessions.issue({ subject: "one-time-token" });
+        if (operation === "insert") {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated insert failure');
+            END
+          `;
+        } else {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_revocation BEFORE UPDATE OF revoked_at ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated revocation failure');
+            END
+          `;
+        }
+
+        const error = yield* sessions
+          .issue({
+            subject: "replacement-pairing",
+            scopes: ["orchestration:read"],
+            replaceSessionId: previous.sessionId,
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("SessionCredentialIssueError");
+        expect((yield* sessions.verify(previous.token)).sessionId).toBe(previous.sessionId);
+        expect((yield* sessions.verify(unrelated.token)).sessionId).toBe(unrelated.sessionId);
+        expect((yield* sessions.listActive()).map((session) => session.sessionId).sort()).toEqual(
+          [previous.sessionId, unrelated.sessionId].sort(),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>

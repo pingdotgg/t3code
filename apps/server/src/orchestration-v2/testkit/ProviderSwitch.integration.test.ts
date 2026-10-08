@@ -34,7 +34,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
-import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
+import {
+  ClaudeBackgroundWorkBlocksQueryReplacementError,
+  ClaudeProviderCapabilitiesV2,
+} from "../Adapters/ClaudeAdapterV2.ts";
 import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
@@ -53,6 +56,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2HistoricalContext,
   ProviderAdapterProtocolError,
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
@@ -104,6 +108,8 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  /** Starts left to refuse the way Claude does while background work runs. */
+  readonly refuseStarts?: Ref.Ref<number>;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
@@ -226,6 +232,17 @@ function makeTestAdapter(input: {
                 (yield* Ref.getAndSet(input.failStartOnce, false))
               )
                 return yield* unimplemented(input.driver, "turn start failed after injection");
+              if (
+                input.refuseStarts !== undefined &&
+                (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
+              )
+                return yield* new ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+                });
               yield* Effect.yieldNow;
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
@@ -1186,6 +1203,101 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("keeps the native session after turns refused before reaching the provider", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const refuseStarts = yield* Ref.make(0);
+        const generation = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            refuseStarts,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`refused-start:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`refused-start:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("refused-start:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Refused start",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(yield* run(1), "completed");
+          // Run 3 carries run 2's missed request as a handoff and is refused too.
+          yield* Ref.set(refuseStarts, 2);
+          assert.equal(yield* run(2), "failed");
+          assert.equal(yield* run(3), "failed");
+          assert.equal(yield* run(4), "completed");
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 2);
+          // Nothing reached the provider, so the next turn continues the same
+          // native session instead of replacing it with a summary.
+          assert.equal(yield* Ref.get(generation), 1);
+          assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.include(turns[1]?.text, "Request 2");
+          assert.include(turns[1]?.text, "Request 3");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "refused-start-keeps-native",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(
