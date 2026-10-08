@@ -1250,6 +1250,7 @@ const layerWsRpc = (
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -2552,7 +2553,9 @@ const layerWsRpc = (
                   ),
                 ),
             onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+              // Metadata resolved while the folder was empty may describe an
+              // enclosing repository, such as a home directory under Git.
+              projectEnrichment.refresh(project.workspaceRoot).pipe(
                 Effect.andThen(
                   projectService.update({
                     commandId: CommandId.make(`project-clone-done:${project.projectId}`),
