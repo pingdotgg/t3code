@@ -903,6 +903,7 @@ describe("UsageService", () => {
             environmentProjects,
           );
         }).pipe(
+          Effect.scoped,
           Effect.provide(
             layerService({
               prefix: "usage-service-home-refresh-test",
@@ -1008,6 +1009,7 @@ describe("UsageService", () => {
         const restored = yield* service.readSummary(WINDOW);
         assert.deepStrictEqual(restored.buckets, original.buckets);
       }).pipe(
+        Effect.scoped,
         Effect.provide(
           layerService({ prefix: "usage-service-price-overrides-test", home, settings }),
         ),
@@ -1074,6 +1076,7 @@ describe("UsageService", () => {
             appended.buckets,
           );
         }).pipe(
+          Effect.scoped,
           Effect.provide(
             layerService({
               prefix: "usage-service-large-record-test",
