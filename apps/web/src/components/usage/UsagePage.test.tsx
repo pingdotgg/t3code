@@ -75,6 +75,7 @@ beforeEach(() => {
     environments,
     selectedEnvironments: environments,
     isPending: false,
+    shown: null,
     isPartial: false,
     refresh: vi.fn(),
   });
