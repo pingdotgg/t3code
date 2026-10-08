@@ -44,6 +44,33 @@ export function nativeWorkspacePopAction(
     : null;
 }
 
+/** A native card pop must preserve pushes made before its completion event reaches JS. */
+export function nativeStackPopAction(
+  state: Pick<NavigationState, "key" | "index" | "routes">,
+  dismissedKey: string,
+  destinationKey?: string,
+) {
+  const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
+  const destinationIndex =
+    destinationKey === undefined
+      ? sourceIndex - 1
+      : state.routes.findIndex((route) => route.key === destinationKey);
+  if (
+    sourceIndex <= 0 ||
+    sourceIndex > state.index ||
+    destinationIndex < 0 ||
+    destinationIndex >= sourceIndex
+  ) {
+    return null;
+  }
+  return {
+    type: "POP" as const,
+    payload: { count: sourceIndex - destinationIndex },
+    source: dismissedKey,
+    target: state.key,
+  };
+}
+
 /** Group pushes with the modal that owns their native stack. */
 export function partitionStackPresentations<T>(
   routes: readonly T[],
