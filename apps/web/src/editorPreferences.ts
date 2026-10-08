@@ -4,6 +4,7 @@ import {
   EditorId,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  editorOpensFiles,
 } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
@@ -56,12 +57,16 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   return [effectiveEditor, setLastEditor] as const;
 }
 
+/** Resolves the preferred editor for opening a file path. */
 function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
-  const availableEditorIds = new Set(availableEditors);
+  const availableEditorIds = new Set(availableEditors.filter(editorOpensFiles));
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  // A workspace-only preference (GitHub Desktop) stays for workspace opens.
+  if (editor && (stored === null || editorOpensFiles(stored))) {
+    setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  }
   return editor ?? null;
 }
 

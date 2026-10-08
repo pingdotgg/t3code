@@ -17,6 +17,11 @@ type EditorDefinition = {
    * `zed://ssh/<host><path>` shape.
    */
   readonly remoteScheme?: string;
+  /**
+   * Opens a repository, not a file. Offered only for workspace opens and never
+   * used as the preferred editor for file links.
+   */
+  readonly workspaceOnly?: true;
 };
 
 export const EDITORS = [
@@ -79,6 +84,13 @@ export const EDITORS = [
   { id: "rubymine", label: "RubyMine", commands: ["rubymine"], launchStyle: "line-column" },
   { id: "rustrover", label: "RustRover", commands: ["rustrover"], launchStyle: "line-column" },
   { id: "webstorm", label: "WebStorm", commands: ["webstorm"], launchStyle: "line-column" },
+  {
+    id: "github-desktop",
+    label: "GitHub Desktop",
+    commands: ["github"],
+    launchStyle: "direct-path",
+    workspaceOnly: true,
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
@@ -97,6 +109,12 @@ export const LaunchEditorInput = Schema.Struct({
   reveal: Schema.optional(Schema.Boolean),
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
+
+/** Editors that can open a file, not just a workspace directory. */
+export const editorOpensFiles = (id: EditorId): boolean => {
+  const editor: EditorDefinition | undefined = EDITORS.find((candidate) => candidate.id === id);
+  return editor?.workspaceOnly !== true;
+};
 
 const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
 

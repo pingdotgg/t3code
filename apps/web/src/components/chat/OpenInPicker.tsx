@@ -36,6 +36,7 @@ import {
   CursorIcon,
   FileExplorerIcon,
   FinderIcon,
+  GitHubDesktopIcon,
   Icon,
   KiroIcon,
   TraeIcon,
@@ -180,6 +181,11 @@ export const resolveOpenInOptions = (
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: GitHubDesktopIcon,
+      value: "github-desktop",
       kind: "brand",
     },
     {

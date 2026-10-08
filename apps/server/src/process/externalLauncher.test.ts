@@ -961,6 +961,12 @@ for (const { platform, installPath, editor, args } of [
     args: ["/workspace with spaces/file.ts:12:4"],
   },
   {
+    platform: "darwin",
+    installPath: "Applications/GitHub Desktop.app/Contents/Resources/app/static/github.sh",
+    editor: "github-desktop",
+    args: ["/workspace with spaces/file.ts:12:4"],
+  },
+  {
     platform: "win32",
     installPath: "Programs/Cursor/resources/app/bin/cursor.cmd",
     editor: "cursor",
@@ -989,6 +995,12 @@ for (const { platform, installPath, editor, args } of [
     installPath: "Programs/Zed/bin/zed.exe",
     editor: "zed",
     args: ["/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "win32",
+    installPath: "GitHubDesktop/bin/github.bat",
+    editor: "github-desktop",
+    args: ['^"/workspace^ with^ spaces/file.ts:12:4^"'],
   },
   {
     platform: "linux",
@@ -1031,12 +1043,13 @@ for (const { platform, installPath, editor, args } of [
           ),
         );
         assert.ok(spawned);
+        const batchScript = /\.(cmd|bat)$/.test(executable);
         assert.equal(
           spawned.command,
-          executable.endsWith(".cmd") ? `^"${executable.replaceAll(" ", "^ ")}^"` : executable,
+          batchScript ? `^"${executable.replaceAll(" ", "^ ")}^"` : executable,
         );
         assert.deepEqual(spawned.args, args);
-        assert.equal(spawned.options.shell, executable.endsWith(".cmd"));
+        assert.equal(spawned.options.shell, batchScript);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
