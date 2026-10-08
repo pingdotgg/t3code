@@ -223,8 +223,9 @@ export function gitCafeViewerPermissions(
     ],
     stackRebase: merge,
     // Pull projections cannot attest to a grant's independent comment selectors. Like cafe pr
-    // comment, offer the write and let the comment endpoint authorize it.
-    comment: true,
+    // comment, offer the write and let the comment endpoint authorize it, except on a locked
+    // conversation, where only moderators may still speak.
+    comment: pull?.lockedAt == null || moderate,
     resolve: moderate,
     verdicts: review ? ["approve", "request-changes", "comment"] : [],
     requestReviewers: moderate,

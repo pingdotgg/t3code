@@ -231,6 +231,10 @@ describe("GitCafe action writes", () => {
         state: "pending",
         operation: { kind: "stack-restack", id: "prsrop_01bbbbbbbbbbbbbbbbbbbbbbbb" },
       });
+      // Pending, but it says the reader has to act rather than wait.
+      expect(pending?.detail).toBe(
+        "Stack restack is paused on a conflict and needs you on GitCafe: 1/2 pull requests restacked; Resolve conflicts.",
+      );
       expect(latest.calls[0]?.endpoint.endsWith("/pulls/stacks/3/restacks/latest")).toBe(true);
       expect(latest.calls[0]?.method).toBeUndefined();
     }),

@@ -1115,14 +1115,16 @@ export function PullRequestDetailPanel({
     // through that path rather than a second one. Every other action here only changes metadata;
     // a merge does move the branch too, but it also closes the pull request, where the diff is
     // no longer what anyone is looking at.
+    // Only the panel's own reads are scoped to the pull request still on screen; the list hears
+    // about every finished action, so its note on the acted row is always settled.
     if (isCurrentScope) {
       if (pullRequestActionNeedsHostRefresh(action)) {
         void refreshFromHost();
       } else {
         refreshDetail();
       }
-      onActed?.(action, "done");
     }
+    onActed?.(action, "done");
     return true;
   };
 

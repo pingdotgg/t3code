@@ -76,6 +76,7 @@ export const PullDetailSchema = Schema.Struct({
   sourceRepo: Schema.NullOr(Schema.Struct({ owner: Schema.String, name: Schema.String })),
   observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
+  lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   capabilities: Schema.Struct({
     comment: Schema.Boolean,
     review: Schema.Boolean,

@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { PositiveInt, TrimmedNonEmptyString, type ChangeRequest } from "@t3tools/contracts";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -258,70 +258,86 @@ export const make = Effect.gen(function* () {
         detail,
         ...(cause === undefined ? {} : { cause }),
       });
-    const { token } = yield* credentials
-      .get(host)
-      .pipe(
-        Effect.mapError((cause) =>
-          failed(
-            cause._tag === "GitCafeCliMissingError"
-              ? "CLI_UNAVAILABLE"
-              : cause._tag === "GitCafeNotSignedInError"
-                ? "AUTHENTICATION_REQUIRED"
-                : "COMMAND_FAILED",
-            null,
-            cause.message,
-            cause,
-          ),
-        ),
-      );
-    const base = HttpClientRequest.make(
-      (input.method ?? "GET") as HttpClientRequest.HttpClientRequest["method"],
-    )(`https://${host}/api${input.endpoint}`).pipe(
-      HttpClientRequest.bearerToken(Redacted.value(token)),
-      HttpClientRequest.setHeaders({
-        accept: "application/json",
-        "user-agent": "t3code",
-        ...input.headers,
-      }),
-    );
-    const request =
-      input.body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, input.body);
-    const { status, collected } = yield* Effect.gen(function* () {
-      const response = yield* httpClient
-        .execute(request)
-        // The client's own span would record the query string, which can carry branch names.
-        .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
-      const collected = yield* collectUint8StreamText({
-        stream: response.stream,
-        maxBytes: input.maxOutputBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-      }).pipe(
-        // 204 and many refusals carry no body at all, which is an empty answer.
-        Effect.catchIf(
-          (cause) => cause.reason._tag === "EmptyBodyError",
-          () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
-        ),
-      );
-      return { status: response.status, collected };
-    }).pipe(
-      Effect.timeout(API_TIMEOUT),
-      Effect.mapError((cause) =>
-        cause._tag === "TimeoutError"
-          ? failed(
-              "TIMEOUT",
+    const credential = () =>
+      credentials
+        .get(host)
+        .pipe(
+          Effect.mapError((cause) =>
+            failed(
+              cause._tag === "GitCafeCliMissingError"
+                ? "CLI_UNAVAILABLE"
+                : cause._tag === "GitCafeNotSignedInError"
+                  ? "AUTHENTICATION_REQUIRED"
+                  : "COMMAND_FAILED",
               null,
-              `GitCafe did not answer within ${Duration.toSeconds(API_TIMEOUT)} seconds. Check the connection and try refreshing.`,
+              cause.message,
               cause,
-            )
-          : failed("COMMAND_FAILED", null, "Could not reach GitCafe.", cause),
-      ),
-    );
+            ),
+          ),
+        );
+    const send = (token: Redacted.Redacted<string>) => {
+      const base = HttpClientRequest.make(
+        (input.method ?? "GET") as HttpClientRequest.HttpClientRequest["method"],
+      )(`https://${host}/api${input.endpoint}`).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(token)),
+        HttpClientRequest.setHeaders({
+          accept: "application/json",
+          "user-agent": "t3code",
+          ...input.headers,
+        }),
+      );
+      return input.body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, input.body);
+    };
+    const exchange = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.gen(function* () {
+        const response = yield* httpClient.execute(request).pipe(
+          // The client's own span would record the query string, which can carry branch names.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+          // A redirect is never followed with the token attached; GitCafe's API answers in place.
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        );
+        const collected = yield* collectUint8StreamText({
+          stream: response.stream,
+          maxBytes: input.maxOutputBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+        }).pipe(
+          // 204 and many refusals carry no body at all, which is an empty answer.
+          Effect.catchIf(
+            (cause) => cause.reason._tag === "EmptyBodyError",
+            () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
+          ),
+        );
+        return { status: response.status, collected };
+      }).pipe(
+        Effect.timeout(API_TIMEOUT),
+        Effect.mapError((cause) =>
+          cause._tag === "TimeoutError"
+            ? failed(
+                "TIMEOUT",
+                null,
+                `GitCafe did not answer within ${Duration.toSeconds(API_TIMEOUT)} seconds. Check the connection and try refreshing.`,
+                cause,
+              )
+            : failed("COMMAND_FAILED", null, "Could not reach GitCafe.", cause),
+        ),
+      );
+    const first = yield* credential();
+    let answer = yield* exchange(send(first.token));
+    // The source may hold a newer token than the one that was refused. A `cafe` login that was
+    // just refreshed answers again with the new one, once; an environment token cannot change.
+    if (answer.status === 401) {
+      yield* credentials.invalidate(host);
+      if (first.source === "cafe") {
+        const fresh = yield* credential();
+        if (Redacted.value(fresh.token) !== Redacted.value(first.token))
+          answer = yield* exchange(send(fresh.token));
+      }
+    }
+    const { status, collected } = answer;
     if (status >= 200 && status < 300) {
       if (collected.truncated)
         return yield* failed("RESPONSE_TOO_LARGE", status, "GitCafe's response was too large.");
       return collected.text;
     }
-    // The source may hold a newer token than the one that was refused.
-    if (status === 401) yield* credentials.invalidate(host);
     const problem = Option.getOrUndefined(decodeProblem(collected.text));
     return yield* failed(
       problemCode(problem?.type, status),

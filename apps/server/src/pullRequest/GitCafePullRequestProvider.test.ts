@@ -84,6 +84,20 @@ describe("deployed GitCafe PR API", () => {
     expect(permissions.actions).toEqual([]);
   });
 
+  it("keeps a locked conversation's composer for moderators only", () => {
+    const locked = (moderate: boolean) =>
+      gitCafeViewerPermissions({
+        ...detail,
+        state: "open",
+        author: { ...detail.author, kind: "local" },
+        mergeRoute: "native",
+        lockedAt: time,
+        capabilities: { comment: false, review: false, merge: false, edit: false, moderate },
+      }).comment;
+    expect(locked(false)).toBe(false);
+    expect(locked(true)).toBe(true);
+  });
+
   it.effect.each([
     ["merged", 404, true],
     ["closed", 404, true],

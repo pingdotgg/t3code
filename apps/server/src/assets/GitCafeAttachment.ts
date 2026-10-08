@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as GitCafeCredentials from "../sourceControl/GitCafeCredentials.ts";
 
@@ -44,7 +44,11 @@ export const downloadGitCafeAttachment = Effect.fn("GitCafeAttachment.download")
           HttpClientRequest.setHeader("user-agent", "t3code"),
         ),
       )
-      .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
+      .pipe(
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        // GitCafe serves attachment bytes in place; a redirect is never followed with the token.
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+      );
     if (response.status === 401) yield* credentials.invalidate(host);
     if (response.status < 200 || response.status >= 300) return null;
     return yield* collectBounded(response.stream, MAX_ATTACHMENT_BYTES);

@@ -124,6 +124,13 @@ interface MergeBody {
   readonly strategy: string;
 }
 
+/** Paused stack states that only a person can move on, by what they are waiting for. */
+const NEEDS_ATTENTION: Partial<Record<string, string>> = {
+  paused_conflict: "paused on a conflict",
+  paused_policy: "paused by a branch policy",
+  awaiting_credential: "waiting for a credential",
+};
+
 export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
   const request = gitCafeWriteApi(cli);
   /**
@@ -162,10 +169,16 @@ export function makeGitCafeActionWrites(cli: GitCafeCli.GitCafeCli["Service"]) {
         : `${outcome.completedStepCount}/${outcome.stepCount} pull requests restacked`;
     const problem =
       "error" in outcome ? (outcome.error ?? outcome.stopReason) : outcome.pauseReason;
+    const label = kind === "stack-land" ? "Stack landing" : "Stack restack";
+    // Still pending, because GitCafe resumes it, but waiting on the reader rather than on time.
+    const waitingOn = NEEDS_ATTENTION[outcome.state];
     return {
       operation: { kind, id: outcome.id },
       state: outcome.state === "completed" ? "completed" : failed ? "failed" : "pending",
-      detail: `${kind === "stack-land" ? "Stack landing" : "Stack restack"} ${outcome.state}: ${progress}${problem ? `; ${problem.message}` : ""}.`,
+      detail:
+        waitingOn === undefined
+          ? `${label} ${outcome.state}: ${progress}${problem ? `; ${problem.message}` : ""}.`
+          : `${label} is ${waitingOn} and needs you on GitCafe: ${progress}${problem ? `; ${problem.message}` : ""}.`,
     };
   };
   const continueStackLand = Effect.fn("GitCafeActionWrites.continueStackLand")(function* (

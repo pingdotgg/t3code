@@ -430,6 +430,34 @@ layer("GitCafeCli", (it) => {
       ]);
     }),
   );
+  it.effect.each([
+    { name: "a refreshed cafe login is retried once", source: "cafe", rotates: true, calls: 2 },
+    { name: "an unchanged cafe login is not retried", source: "cafe", rotates: false, calls: 1 },
+    { name: "an environment token is not retried", source: "env", rotates: true, calls: 1 },
+  ] as const)("after a 401, $name", (scenario) =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      getCredential.mockImplementation((host) =>
+        Effect.succeed({
+          host,
+          token: Redacted.make(scenario.rotates && lookups++ > 0 ? "new-token" : "old-token"),
+          source: scenario.source,
+        }),
+      );
+      http.mockImplementation((request) =>
+        request.headers.authorization === "Bearer new-token"
+          ? reply({ handle: "alice" })
+          : reply({ type: "https://cafe.sh/errors/authentication-required" }, 401),
+      );
+      const cafe = yield* GitCafeCli.GitCafeCli;
+      const result = yield* cafe
+        .api({ cwd: "/repo", endpoint: "/auth/principal" })
+        .pipe(Effect.result);
+      expect(http).toHaveBeenCalledTimes(scenario.calls);
+      expect(result._tag).toBe(scenario.calls === 2 ? "Success" : "Failure");
+      expect(invalidateCredential).toHaveBeenCalledWith("git.cafe");
+    }),
+  );
   it.effect("maps problem documents to codes and drops a refused token", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
