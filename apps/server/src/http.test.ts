@@ -336,7 +336,7 @@ describe("MCP App asset responses", () => {
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("content-security-policy")).toBe(
-          "sandbox allow-scripts allow-forms allow-popups",
+          "sandbox allow-scripts allow-forms allow-popups allow-downloads",
         );
         expect(response.headers.get("content-length")).toBe(
           String(new TextEncoder().encode(transformed).byteLength),

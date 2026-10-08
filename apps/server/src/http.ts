@@ -4,7 +4,6 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
-import { injectMcpAppCookieBootstrap, MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
@@ -29,7 +28,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { ASSET_ROUTE_PREFIX, readMcpAppDocument, resolveAsset } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -180,24 +179,13 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     !asset.download &&
     headers["Content-Type"] === "text/html; charset=utf-8"
   ) {
-    const fs = yield* FileSystem.FileSystem;
-    // Saved captures also contain a bounded CSP meta tag added after the raw HTML limit.
-    const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
-    const chunks = yield* fs.stream(asset.path, { bytesToRead: limit + 1 }).pipe(Stream.runCollect);
-    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-    if (size > limit) {
+    const document = yield* readMcpAppDocument(asset.path);
+    if (document._tag === "TooLarge") {
       return HttpServerResponse.text("MCP App is too large to preview.", { status: 413 });
     }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const html = injectMcpAppCookieBootstrap(new TextDecoder().decode(bytes));
     // The served bytes differ from the saved capture: do not reuse its file
     // length or validators. HEAD reports the transformed document's length.
-    const response = HttpServerResponse.text(html, { headers });
+    const response = HttpServerResponse.text(document.html, { headers });
     return method === "HEAD"
       ? HttpServerResponse.empty({ status: 200, headers: response.headers })
       : response;
