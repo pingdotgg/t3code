@@ -809,6 +809,65 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("approves a workflow child's approval in full access after its turn ended", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      // Muse runs workflow children without the session's allowAll mode.
+      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+      yield* fake.emit("approval/requested", childApproval);
+      const asked = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(asked.runtimeRequest.status, "pending");
+      assert.isNull(asked.runtimeRequest.providerTurnId);
+      const decision = yield* fake.takeCall("approval/decide");
+      assert.strictEqual(decision.params.choiceId, "once");
+      yield* fake.emit("approval/resolved", childApproval);
+      const resolved = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(resolved.runtimeRequest.status, "resolved");
+      assert.strictEqual(resolved.runtimeRequest.decision, "accept");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a workflow child's approval pending for the user past the turn's end", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const policy = ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        runtimeMode: "approval-required",
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      );
+      const { nativeId } = yield* startConversation(harness, fake);
+      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+      yield* fake.emit("approval/requested", childApproval);
+      const asked = yield* harness.takeEvent("runtime_request.updated");
+      assert.isNull(asked.runtimeRequest.providerTurnId);
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      assert.isFalse(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status !== "pending",
+        ),
+      );
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: asked.runtimeRequest.id,
+        decision: "decline",
+      });
+      const decision = yield* fake.takeCall("approval/decide");
+      assert.strictEqual(decision.params.choiceId, "deny");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("validates structured answers and preserves selected labels with a custom note", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
