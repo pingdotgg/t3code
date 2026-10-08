@@ -20,6 +20,8 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -338,17 +340,24 @@ const openRuntime = Effect.fnUntraced(function* (
   threadId = THREAD_ID,
   providerSessionId = SESSION_ID,
   forkFake?: FakePi,
+  sessionScope?: Scope.Scope,
 ) {
   const adapter = yield* makeAdapter(fake, "", forkFake);
-  const runtime = yield* adapter.openSession({
-    threadId,
-    providerSessionId,
-    modelSelection: modelSelection(model),
-    runtimePolicy,
-  });
+  const runtime = yield* adapter
+    .openSession({
+      threadId,
+      providerSessionId,
+      modelSelection: modelSelection(model),
+      runtimePolicy,
+    })
+    .pipe(Effect.provideService(Scope.Scope, sessionScope ?? (yield* Effect.scope)));
   const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
+  const capturedEvents: Array<ProviderAdapterV2Event> = [];
   yield* runtime.events.pipe(
-    Stream.runForEach((event) => Queue.offer(emitted, event)),
+    Stream.runForEach((event) => {
+      capturedEvents.push(event);
+      return Queue.offer(emitted, event);
+    }),
     Effect.forkScoped,
   );
   const takeEvent = (predicate: (event: ProviderAdapterV2Event) => boolean) =>
@@ -358,7 +367,7 @@ const openRuntime = Effect.fnUntraced(function* (
         if (predicate(event)) return event;
       }
     });
-  return { runtime, takeEvent };
+  return { runtime, takeEvent, capturedEvents };
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -461,6 +470,204 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(layerTest));
 
 describe("PiAdapterV2", () => {
+  it.effect.each(["completed", "failed", "interrupted", "teardown"] as const)(
+    "coalesces ordered text bursts and flushes the tail on %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        // Live usage needs a context window, and the `provider_turn.updated` it
+        // emits is the only thing a `message_update` projects. That makes it the
+        // barrier that says the deltas before it are buffered, without the
+        // flush boundary a tool or a settle would introduce.
+        fake.queueState({
+          model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+        });
+        const sessionScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(sessionScope, Exit.void));
+        const { runtime, takeEvent, capturedEvents } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          sessionScope,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+        const deltas = Array.from({ length: 64 }, (_, i) => `${i}:ą🙂\n`);
+        const text = deltas.join("");
+        const events: Array<ProviderAdapterV2Event> = [];
+        let turnId: OrchestrationV2ProviderTurn["id"] | undefined;
+        for (const [contentIndex, type] of [
+          [0, "text_delta"],
+          [1, "thinking_delta"],
+        ] as const) {
+          for (const delta of deltas) {
+            yield* fake.emit({
+              type: "message_update",
+              assistantMessageEvent: { type, contentIndex, delta },
+            });
+          }
+        }
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId: "tool",
+          toolName: "bash",
+          args: { command: "echo test" },
+        });
+        for (const delta of deltas) {
+          yield* fake.emit({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", contentIndex: 2, delta },
+          });
+        }
+        // Live usage is the only thing a `message_update` projects, so its
+        // event is a barrier that says every delta above is buffered without
+        // the flush a tool, an interrupt or a settle would have introduced.
+        yield* fake.emit({
+          type: "message_update",
+          usage: { totalTokens: 4321 },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 2, delta: "" },
+        });
+        // `takeEvent` drops whatever it scans past, and the running turn
+        // arrives before the barrier, so keep its id on the way through.
+        while (true) {
+          const event = yield* takeEvent(() => true);
+          events.push(event);
+          if (event.type === "provider_turn.updated" && event.providerTurn.status === "running")
+            turnId = event.providerTurn.id;
+          if (
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.tokenUsage?.usedTokens === 4321
+          ) {
+            break;
+          }
+        }
+        // Nothing between the barrier and the ending below is a flush
+        // boundary, so the coalescer's own `STREAM_FLUSH_MS` timer is the only
+        // thing that can project these 64 deltas, and the projection it makes
+        // is the next event out.
+        yield* TestClock.adjust(50);
+        const timedEvent = yield* takeEvent(() => true);
+        events.push(timedEvent);
+        if (ending === "interrupted" || ending === "teardown") {
+          yield* fake.emit({
+            type: "tool_execution_update",
+            toolCallId: "tool",
+            toolName: "bash",
+            partialResult: { content: [{ type: "text", text: "ready" }] },
+          });
+        }
+        if (ending === "failed") {
+          yield* fake.emit({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: "failed" },
+          });
+        }
+        if (ending === "completed" || ending === "failed")
+          yield* fake.emit({ type: "agent_settled" });
+        while (true) {
+          const event = yield* takeEvent(() => true);
+          events.push(event);
+          if (event.type === "provider_turn.updated" && event.providerTurn.status === "running")
+            turnId = event.providerTurn.id;
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.output === "ready"
+          ) {
+            if (ending === "teardown") yield* Scope.close(sessionScope, Exit.void);
+            if (ending === "interrupted") {
+              yield* runtime.interruptTurn({
+                providerThread,
+                providerTurnId: turnId!,
+              });
+              yield* fake.emit({ type: "agent_settled" });
+            }
+          }
+          // A close settles nothing, so the completed text it flushes is the only
+          // thing that ends the stream. Both text segments are complete by then.
+          if (event.type === "turn.terminal") break;
+          if (
+            ending === "teardown" &&
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            !event.turnItem.streaming
+          ) {
+            const completed = events.filter(
+              (candidate) =>
+                candidate.type === "turn_item.updated" &&
+                candidate.turnItem.type === "assistant_message" &&
+                !candidate.turnItem.streaming,
+            );
+            if (completed.length >= 2) break;
+          }
+        }
+        const items = events
+          .filter((event) => event.type === "turn_item.updated")
+          .map((event) => event.turnItem);
+        const texts = items.filter((event) => event.type === "assistant_message");
+        const reasoning = items.filter((event) => event.type === "reasoning");
+        const toolIndex = items.findIndex((event) => event.type === "command_execution");
+        // 64 deltas per block, and each burst is projected once: a projection
+        // per delta would give 64 of each. The block after the tool is the one
+        // the coalescer's own timer projected, the only flush in its window.
+        const timed = items[toolIndex + 1];
+        assert.isAbove(toolIndex, 0);
+        assert.isTrue(timed?.type === "assistant_message" && timed.streaming);
+        assert.equal(timed?.type === "assistant_message" ? timed.text : undefined, text);
+        assert.lengthOf(
+          texts.filter((event) => event.streaming),
+          2,
+        );
+        assert.lengthOf(reasoning, 2);
+        assert.equal(texts.find((event) => event.streaming)?.text, text);
+        assert.equal(reasoning.find((event) => event.streaming)?.text, text);
+        assert.deepEqual(
+          texts.filter((event) => !event.streaming).map((event) => event.text),
+          [text, text],
+        );
+        assert.equal(items[toolIndex - 1]?.type, "reasoning");
+        const thinking = items[toolIndex - 1];
+        assert.equal(thinking?.type === "reasoning" ? thinking.text : undefined, text);
+        // `ordinal` is reserved when a segment first buffers a delta, so it cannot
+        // order events. The two text segments straddle the tool in emission order.
+        const leadingText = items.findIndex((event) => event.type === "assistant_message");
+        const trailingText = items.findIndex(
+          (event, index) => index > toolIndex && event.type === "assistant_message",
+        );
+        assert.isBelow(leadingText, toolIndex);
+        assert.isAbove(trailingText, toolIndex);
+        // Closing the session flushes; it settles nothing.
+        assert.equal(
+          events.some((event) => event.type === "turn.terminal"),
+          ending !== "teardown",
+        );
+        if (ending !== "teardown") {
+          assert.equal(events.at(-1)?.type, "turn.terminal");
+          const terminal = events.at(-1);
+          assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, ending);
+          // Closing an already finalized turn must leave no second terminal in the queue.
+          yield* Scope.close(sessionScope, Exit.void);
+          yield* TestClock.adjust(0);
+          assert.lengthOf(
+            capturedEvents.filter((event) => event.type === "turn.terminal"),
+            1,
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    // The coalescer's timer projection is awaited below, so a coalescer that
+    // stopped firing it would hang there rather than fail an assertion. Bound it.
+    5_000,
+  );
+
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

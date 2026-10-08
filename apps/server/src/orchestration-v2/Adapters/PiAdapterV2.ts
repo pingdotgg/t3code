@@ -1,3 +1,4 @@
+import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 /**
  * PiAdapterV2 — orchestrator-v2 adapter for the Pi coding agent
  * (https://pi.dev), driving `pi --mode rpc` over stdio JSONL via `PiRpc.ts`.
@@ -259,7 +260,6 @@ interface PiStreamItemState {
   readonly kind: "assistant_message" | "reasoning";
   text: string;
   completed: boolean;
-  flushScheduled: boolean;
   readonly startedAt: DateTime.Utc;
 }
 
@@ -298,6 +298,7 @@ interface ActivePiTurn {
   nextItemOrdinal: number;
   /** Increments on assistant `message_start` so content indexes stay unique. */
   messageOrdinal: number;
+  lastTextDeltaItemId: string | null;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   /**
@@ -873,20 +874,18 @@ export function makePiAdapterV2(
           });
         });
 
-      const scheduleStreamFlush = (turn: ActivePiTurn, item: PiStreamItemState) =>
-        Effect.gen(function* () {
-          if (item.flushScheduled || item.completed) return;
-          item.flushScheduled = true;
-          yield* Effect.sleep(Duration.millis(STREAM_FLUSH_MS)).pipe(
-            Effect.andThen(
-              Effect.suspend(() => {
-                item.flushScheduled = false;
-                return item.completed ? Effect.void : emitStreamItem(turn, item, true);
-              }),
-            ),
-            Effect.forkIn(scope),
-          );
-        });
+      const textDeltaTurns = new Map<string, ActivePiTurn>();
+      const textDeltas = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: STREAM_FLUSH_MS,
+        emit: (update) =>
+          Effect.gen(function* () {
+            const turn = textDeltaTurns.get(update.turnId);
+            if (turn === undefined) return;
+            const item = turn.streamItems.get(update.itemId);
+            if (item === undefined) return;
+            yield* emitStreamItem(turn, { ...item, text: update.text }, !update.completed);
+          }),
+      });
 
       const streamItemFor = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
@@ -902,10 +901,10 @@ export function makePiAdapterV2(
           kind,
           text: "",
           completed: false,
-          flushScheduled: false,
           startedAt,
         };
         turn.streamItems.set(nativeItemId, item);
+        textDeltaTurns.set(turn.providerTurn.id, turn);
         // Ordinal reserved on first delta so items appear in stream order.
         itemOrdinal(turn, nativeItemId);
         return item;
@@ -916,7 +915,14 @@ export function makePiAdapterV2(
           if (item.completed) return Effect.void;
           item.completed = true;
           if (text !== undefined && text.length > 0) item.text = text;
-          return item.text.length === 0 ? Effect.void : emitStreamItem(turn, item, false);
+          return textDeltas
+            .complete({
+              turnId: turn.providerTurn.id,
+              itemId: item.nativeItemId,
+              finalText: item.text,
+              emitEmpty: false,
+            })
+            .pipe(Effect.asVoid);
         });
 
       const completeOpenStreamItems = (turn: ActivePiTurn) =>
@@ -924,7 +930,7 @@ export function makePiAdapterV2(
           Array.from(turn.streamItems.values()).filter((item) => !item.completed),
           (item) => completeStreamItem(turn, item),
           { discard: true },
-        );
+        ).pipe(Effect.ensuring(Effect.sync(() => textDeltaTurns.delete(turn.providerTurn.id))));
 
       // ── tools ─────────────────────────────────────────────
 
@@ -1557,6 +1563,9 @@ export function makePiAdapterV2(
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const state = threadState;
         const turn = state?.activeTurn ?? null;
+        if (turn !== null && event["type"] !== "message_update") {
+          yield* textDeltas.flushPendingTurn(turn.providerTurn.id);
+        }
         switch (event["type"]) {
           case "agent_start": {
             if (turn === null) {
@@ -1589,8 +1598,17 @@ export function makePiAdapterV2(
                 deltaType === "text_delta" ? "assistant_message" : "reasoning",
                 contentIndex,
               );
+              if (item.completed) return;
               item.text += recordString(delta, "delta") ?? "";
-              yield* scheduleStreamFlush(turn, item);
+              if (turn.lastTextDeltaItemId !== item.nativeItemId) {
+                yield* textDeltas.flushPendingTurn(turn.providerTurn.id);
+              }
+              turn.lastTextDeltaItemId = item.nativeItemId;
+              yield* textDeltas.append({
+                turnId: turn.providerTurn.id,
+                itemId: item.nativeItemId,
+                delta: recordString(delta, "delta") ?? "",
+              });
               return;
             }
             if (deltaType === "text_end" || deltaType === "thinking_end") {
@@ -2335,6 +2353,7 @@ export function makePiAdapterV2(
               itemOrdinals: new Map(),
               nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               messageOrdinal: 0,
+              lastTextDeltaItemId: null,
               streamItems: new Map(),
               toolArgs: new Map(),
               toolStartedAt: new Map(),
@@ -2482,6 +2501,7 @@ export function makePiAdapterV2(
             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
               return yield* protocolError(`Pi turn ${interruptInput.providerTurnId} is not active`);
             }
+            yield* textDeltas.flushPendingTurn(turn.providerTurn.id);
             turn.interrupted = true;
             if (
               interruptInput.requestRuntimeRestart === true ||
@@ -2832,6 +2852,18 @@ export function makePiAdapterV2(
             ),
           ),
       };
+      yield* Effect.addFinalizer(() =>
+        sessionEventPermit.withPermits(1)(
+          Effect.suspend(() =>
+            // Coalescing buffers a burst, so a session that goes away mid-response
+            // still has to project what is buffered. Dropping it loses the tail.
+            // Nothing here settles a turn: closing a session is not a terminal.
+            threadState?.activeTurn == null
+              ? Effect.void
+              : completeOpenStreamItems(threadState.activeTurn),
+          ),
+        ),
+      );
       return runtime;
     }),
   });

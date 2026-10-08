@@ -1,3 +1,4 @@
+import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import type {
   AgentMessage,
   AgentOptions,
@@ -828,6 +829,7 @@ interface ActiveCursorTurn {
   // Item ordinals allocated in this turn. No later turn looks items up here.
   readonly itemOrdinals: Map<string, number>;
   readonly tools: Map<string, ActiveCursorToolCall>;
+  lastShell: ActiveCursorToolCall | null;
   readonly subagents: Map<string, ActiveCursorSubagent>;
   readonly assistant: ActiveCursorTextStream;
   readonly assistantReply: CursorTransportFailure;
@@ -1084,6 +1086,23 @@ export function makeCursorAdapterV2(
           });
         });
 
+        const textDeltas = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit: (update) =>
+            Effect.gen(function* () {
+              const context = yield* Ref.get(activeTurn);
+              if (context === null || context.providerTurnId !== update.turnId) return;
+              for (const kind of ["assistant", "reasoning"] as const) {
+                const segment = context[kind].current;
+                if (segment?.nativeItemId !== update.itemId) continue;
+                segment.text = update.text;
+                yield* kind === "assistant"
+                  ? emitAssistant(context, update.completed)
+                  : emitReasoning(context, update.completed);
+              }
+            }),
+        });
+
         const appendTextSegment = Effect.fnUntraced(function* (input: {
           readonly context: ActiveCursorTurn;
           readonly stream: ActiveCursorTextStream;
@@ -1098,14 +1117,23 @@ export function makeCursorAdapterV2(
               text: "",
             };
           }
-          input.stream.current.text += input.text;
+          yield* resolveItemOrdinal(input.context, input.stream.current.nativeItemId);
+          yield* textDeltas.append({
+            turnId: input.context.providerTurnId,
+            itemId: input.stream.current.nativeItemId,
+            delta: input.text,
+          });
         });
 
         const completeAssistant = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
           if (context.assistant.current === null) {
             return;
           }
-          yield* emitAssistant(context, true);
+          yield* textDeltas.complete({
+            turnId: context.providerTurnId,
+            itemId: context.assistant.current.nativeItemId,
+            emitEmpty: false,
+          });
           context.assistant.current = null;
         });
 
@@ -1113,7 +1141,11 @@ export function makeCursorAdapterV2(
           if (context.reasoning.current === null) {
             return;
           }
-          yield* emitReasoning(context, true);
+          yield* textDeltas.complete({
+            turnId: context.providerTurnId,
+            itemId: context.reasoning.current.nativeItemId,
+            emitEmpty: false,
+          });
           context.reasoning.current = null;
         });
 
@@ -1308,6 +1340,19 @@ export function makeCursorAdapterV2(
           });
         });
 
+        const shellDeltas = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit: (update) =>
+            Effect.gen(function* () {
+              const context = yield* Ref.get(activeTurn);
+              if (context === null || context.providerTurnId !== update.turnId) return;
+              const shell = context.tools.get(update.itemId);
+              if (shell === undefined) return;
+              shell.streamedOutput = update.text;
+              if (!update.completed) yield* emitToolArtifacts({ active: shell, completed: false });
+            }),
+        });
+
         const ensureToolStarted = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
           callId: string,
@@ -1328,6 +1373,7 @@ export function makeCursorAdapterV2(
             streamedOutput: "",
           };
           context.tools.set(callId, active);
+          if (toolCall.type === "shell") context.lastShell = active;
           yield* emitToolArtifacts({ active, completed: false });
           return active;
         });
@@ -1851,7 +1897,18 @@ export function makeCursorAdapterV2(
                 yield* emitToolArtifacts({ active, completed });
               }
               if (completed) {
+                yield* shellDeltas.complete({
+                  turnId: context.providerTurnId,
+                  itemId: update.callId,
+                  emitEmpty: false,
+                });
                 context.tools.delete(update.callId);
+                if (context.lastShell?.callId === update.callId) {
+                  context.lastShell =
+                    Array.from(context.tools.values())
+                      .toReversed()
+                      .find((candidate) => candidate.toolCall.type === "shell") ?? null;
+                }
               }
             }
           }
@@ -1876,6 +1933,9 @@ export function makeCursorAdapterV2(
           if (context.finalized) {
             return;
           }
+          if (update.type !== "shell-output-delta") {
+            yield* shellDeltas.flushPendingTurn(context.providerTurnId);
+          }
           switch (update.type) {
             case "text-delta":
               context.assistantReply.push(update.text);
@@ -1886,7 +1946,6 @@ export function makeCursorAdapterV2(
                 kind: "assistant",
                 text: update.text,
               });
-              yield* emitAssistant(context, false);
               return;
             case "thinking-delta":
               yield* completeAssistant(context);
@@ -1896,7 +1955,6 @@ export function makeCursorAdapterV2(
                 kind: "reasoning",
                 text: update.text,
               });
-              yield* emitReasoning(context, false);
               return;
             case "thinking-completed":
               yield* completeReasoning(context);
@@ -1914,14 +1972,16 @@ export function makeCursorAdapterV2(
               yield* completeReasoning(context);
               return;
             case "shell-output-delta": {
-              const shell = Array.from(context.tools.values())
-                .toReversed()
-                .find((candidate) => candidate.toolCall.type === "shell");
-              if (shell === undefined) {
+              const shell = context.lastShell;
+              if (shell === null) {
                 return;
               }
-              shell.streamedOutput += shellOutputText(update.event);
-              yield* emitToolArtifacts({ active: shell, completed: false });
+              yield* textDeltas.flushPendingTurn(context.providerTurnId);
+              yield* shellDeltas.append({
+                turnId: context.providerTurnId,
+                itemId: shell.callId,
+                delta: shellOutputText(update.event),
+              });
               return;
             }
             default:
@@ -1963,6 +2023,9 @@ export function makeCursorAdapterV2(
           }
           input.context.finalized = true;
           const completedAt = yield* DateTime.now;
+          yield* completeReasoning(input.context);
+          yield* completeAssistant(input.context);
+          yield* shellDeltas.flushTurn(input.context.providerTurnId);
           // Tools still here never got a tool-call-completed. A stopped or
           // failed turn cut them short, so they end with the turn's status.
           for (const tool of input.context.tools.values()) {
@@ -1986,8 +2049,6 @@ export function makeCursorAdapterV2(
               status: input.status === "completed" ? "idle" : input.status,
             });
           }
-          yield* completeReasoning(input.context);
-          yield* completeAssistant(input.context);
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2235,6 +2296,7 @@ export function makeCursorAdapterV2(
               completed,
               itemOrdinals: new Map(),
               tools: new Map(),
+              lastShell: null,
               subagents: new Map(),
               assistant: {
                 current: null,
@@ -2352,6 +2414,17 @@ export function makeCursorAdapterV2(
         );
 
         const closeSession = Effect.fnUntraced(function* () {
+          // Coalescing buffers a burst, so a session that goes away mid-response still
+          // has to project what is buffered. Dropping it loses the tail. Nothing
+          // settles the turn: closing a session is not a turn terminal.
+          const context = yield* Ref.get(activeTurn);
+          if (context !== null) {
+            yield* completeReasoning(context);
+            yield* completeAssistant(context);
+            // A tool still open here never got its completion, so it stays
+            // running rather than ending with a status nothing chose.
+            yield* shellDeltas.flushPendingTurn(context.providerTurnId);
+          }
           const existing = yield* Ref.get(liveAgent);
           if (existing !== null) {
             yield* existing.session.close.pipe(Effect.ignore);
@@ -2460,6 +2533,8 @@ export function makeCursorAdapterV2(
                   detail: `Cursor provider turn ${turnInput.providerTurnId} is not active.`,
                 });
               }
+              yield* textDeltas.flushPendingTurn(context.providerTurnId);
+              yield* shellDeltas.flushPendingTurn(context.providerTurnId);
               context.interrupted = true;
               yield* context.run.cancel;
               const stopped = yield* Deferred.await(context.completed).pipe(

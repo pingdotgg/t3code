@@ -97,6 +97,7 @@ import {
 } from "../SubagentProjection.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "./OpenCodeAdapterV2.ts";
 import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
 
@@ -217,6 +218,7 @@ interface ActiveTurn {
   providerTurn: OrchestrationV2ProviderTurn;
   /** Open text and reasoning blocks, keyed `<assistantMessageID>:<kind>:<ordinal>`. */
   readonly texts: Map<string, OpenBlock>;
+  lastTextDeltaItemId?: string;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
   readonly ordinals: Map<string, number>;
@@ -1084,8 +1086,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       });
 
-    /** One text or reasoning block, re-emitted with its accumulated text on every change. */
-    const emitText = Effect.fnUntraced(function* (
+    /** Project one text or reasoning block after a batch or completion. */
+    const projectText = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
       data: {
@@ -1152,6 +1154,67 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           streaming: !completed,
         },
       });
+    });
+
+    const textDeltas = yield* makeProviderTextDeltaCoalescer({
+      flushIntervalMs: 50,
+      emit: (update) =>
+        Effect.gen(function* () {
+          const state = threads.get(update.turnId);
+          const turn = state?.active;
+          const entry = turn?.texts.get(update.itemId);
+          if (state === undefined || turn === undefined || entry === undefined) return;
+          yield* projectText(
+            state,
+            turn,
+            entry.block,
+            entry.kind,
+            (text) => text,
+            update.completed,
+          );
+        }),
+    });
+
+    const emitText = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      data: {
+        readonly assistantMessageID: string;
+        readonly ordinal: number;
+        readonly text?: string;
+      },
+      kind: "text" | "reasoning",
+      update: (current: string) => string,
+      completed = "text" in data,
+    ) {
+      const nativeId = `${data.assistantMessageID}:${kind}:${data.ordinal}`;
+      if (turn.lastTextDeltaItemId !== nativeId) {
+        yield* textDeltas.flushPendingTurn(state.sessionId);
+      }
+      turn.lastTextDeltaItemId = nativeId;
+      const entry = turn.texts.get(nativeId) ?? {
+        block: data,
+        kind,
+        startedAt: yield* DateTime.now,
+        text: "",
+      };
+      entry.text = update(entry.text);
+      turn.texts.set(nativeId, entry);
+      if (completed) {
+        yield* textDeltas.complete({
+          turnId: state.sessionId,
+          itemId: nativeId,
+          finalText: entry.text,
+          emitEmpty: false,
+        });
+        // The completing emit reads this entry, so retire it only afterwards: a
+        // finished block must not be projected a second time when the turn closes.
+        turn.texts.delete(nativeId);
+      } else if (entry.text.length > 0) {
+        // Reserve ordering before a tool or another block can arrive.
+        ordinalOf(turn, nativeId);
+        yield* textDeltas.setText({ turnId: state.sessionId, itemId: nativeId, text: entry.text });
+      }
     });
 
     const emitTool = Effect.fnUntraced(function* (
@@ -1678,7 +1741,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       const turn = state.active;
       if (turn === undefined) return;
-      state.active = undefined;
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       // OpenCode drops a request when the asking session's execution ends. A
       // subagent's request shown on this turn ends with it too, unless the
@@ -1697,6 +1759,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const open of turn.texts.values()) {
         yield* emitText(state, turn, open.block, open.kind, (text) => text, true);
       }
+      yield* textDeltas.flushTurn(state.sessionId);
+      state.active = undefined;
       for (const id of turn.tools.keys()) {
         yield* emitTool(
           state,
@@ -2191,6 +2255,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       event: OpenCode2StreamEvent,
     ) {
+      if (!event.type.startsWith("session.text.") && !event.type.startsWith("session.reasoning.")) {
+        yield* textDeltas.flushPendingTurn(state.sessionId);
+      }
       switch (event.type) {
         case "session.text.started":
         case "session.reasoning.started":
@@ -2886,6 +2953,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Subscribed before any session or prompt call, so no event of theirs is missed.
     yield* follow(yield* connection.events).pipe(Effect.forkScoped);
 
+    yield* Effect.addFinalizer(() =>
+      lock.withPermit(
+        // Coalescing buffers a burst, so a session that goes away mid-response
+        // still has to project what is buffered. Dropping it loses the tail.
+        // Nothing here settles a turn: closing a session is not a terminal.
+        Effect.forEach(
+          threads.values(),
+          (state) =>
+            state.active === undefined ? Effect.void : textDeltas.flushTurn(state.sessionId),
+          { discard: true },
+        ),
+      ),
+    );
     // A server T3 did not start keeps running after T3 stops, so stop the turns
     // it would otherwise finish unseen. A spawned server stops with its owner.
     if (connection.external) {

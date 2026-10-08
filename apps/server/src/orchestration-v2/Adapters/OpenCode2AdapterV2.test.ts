@@ -516,20 +516,189 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("projects every text block in full when the execution ends", () =>
+    Effect.gen(function* () {
+      const deltas = Array.from({ length: 16 }, (_, i) => `${i}:ą🙂\n`);
+      const text = deltas.join("");
+      const head = "msg_0eb735d5b001oAFVeY5jz3WD4Z";
+      const tail = "msg_0eb735d5c002qR8nM3kT9wX2bYc";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.text.started", { sessionID: SESSION, assistantMessageID: head, ordinal: 0 }),
+        ...deltas.map((delta) =>
+          event("session.text.delta", {
+            sessionID: SESSION,
+            assistantMessageID: head,
+            ordinal: 0,
+            delta,
+          }),
+        ),
+        event("session.reasoning.started", {
+          sessionID: SESSION,
+          assistantMessageID: head,
+          ordinal: 1,
+        }),
+        ...deltas.map((delta) =>
+          event("session.reasoning.delta", {
+            sessionID: SESSION,
+            assistantMessageID: head,
+            ordinal: 1,
+            delta,
+          }),
+        ),
+        event("session.tool.input.started", {
+          sessionID: SESSION,
+          assistantMessageID: head,
+          id: "call_shell",
+          name: "shell",
+        }),
+        event("session.tool.called", {
+          sessionID: SESSION,
+          assistantMessageID: head,
+          id: "call_shell",
+          input: { command: "echo hi" },
+          executed: false,
+        }),
+        event("session.text.started", { sessionID: SESSION, assistantMessageID: tail, ordinal: 0 }),
+        // The last block never gets a `session.text.ended`: the execution ends
+        // with it open, which is the case where losing its text is silent.
+        ...deltas.map((delta) =>
+          event("session.text.delta", {
+            sessionID: SESSION,
+            assistantMessageID: tail,
+            ordinal: 0,
+            delta,
+          }),
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      const items = seen
+        .filter((event) => event.type === "turn_item.updated")
+        .map((event) => event.turnItem);
+      const textItems = items.flatMap((item) =>
+        item.type === "assistant_message" || item.type === "reasoning" ? [item] : [],
+      );
+      const projectionsOf = (nativeId: string) =>
+        textItems.filter((item) => item.nativeItemRef?.nativeId === nativeId);
+      const headItem = `${head}:text:0`;
+      const thinkingItem = `${head}:reasoning:1`;
+      const tailItem = `${tail}:text:0`;
+      // One running projection per burst, each carrying the whole accumulated
+      // text: not one per delta, and not the deltas concatenated.
+      assert.deepEqual(
+        projectionsOf(headItem).map((item) => item.text),
+        [text, text],
+      );
+      assert.deepEqual(
+        projectionsOf(thinkingItem).map((item) => item.text),
+        [text, text],
+      );
+      assert.deepEqual(
+        projectionsOf(tailItem).map((item) => item.text),
+        [text, text],
+      );
+      // The last of each pair is the completed one, including the block the
+      // execution ended with still open.
+      assert.isFalse(projectionsOf(headItem).at(-1)?.streaming);
+      assert.isFalse(projectionsOf(tailItem).at(-1)?.streaming);
+      const toolIndex = items.findIndex((item) => item.type === "command_execution");
+      assert.isAbove(toolIndex, 0);
+      assert.isBelow(
+        items.findIndex((item) => item.nativeItemRef?.nativeId === headItem),
+        toolIndex,
+      );
+      assert.isAbove(
+        items.findIndex((item) => item.nativeItemRef?.nativeId === tailItem),
+        toolIndex,
+      );
+      const terminal = seen.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops running turns on an external server when the session closes", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make();
+      const deltas = Array.from({ length: 8 }, (_, i) => `${i}:\n`);
+      const text = deltas.join("");
+      const open = "msg_0eb735d5d003wS4pQ1zL6yH8kD";
       const { runtime, thread } = yield* resumed(
         [
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
+          // A block still open when the session goes away, so the flush the
+          // close owes has to carry the text that was buffered for it.
+          event("session.text.started", {
+            sessionID: SESSION,
+            assistantMessageID: open,
+            ordinal: 0,
+          }),
+          ...deltas.map((delta) =>
+            event("session.text.delta", {
+              sessionID: SESSION,
+              assistantMessageID: open,
+              ordinal: 0,
+              delta,
+            }),
+          ),
+          // The tool's own item is the ack that the deltas above were buffered:
+          // nothing before it projects them, and closing the scope must not
+          // race the stream that is still delivering them.
+          event("session.tool.input.started", {
+            sessionID: SESSION,
+            assistantMessageID: open,
+            id: "call_shell",
+            name: "shell",
+          }),
           out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: true }),
         ],
         { external: true },
       ).pipe(Scope.provide(scope));
+      const buffered = yield* Deferred.make<void>();
+      const collected = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.includes("call_shell") === true
+            ? Deferred.succeed(buffered, void 0)
+            : Effect.void,
+        ),
+        // A close settles nothing, so the block it completes is the only stop.
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === `${open}:text:0` &&
+            event.turnItem.type === "assistant_message" &&
+            !event.turnItem.streaming,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(buffered);
       yield* Scope.close(scope, Exit.void);
+      const seen = yield* Fiber.join(collected);
+      assert.isFalse(seen.some((event) => event.type === "turn.terminal"));
+      const projected = seen.flatMap((event) =>
+        event.type !== "turn_item.updated" ||
+        event.turnItem.nativeItemRef?.nativeId !== `${open}:text:0`
+          ? []
+          : [event.turnItem],
+      );
+      assert.deepEqual(
+        projected.map((item) => (item.type === "assistant_message" ? item.text : undefined)),
+        [text, text],
+      );
+      const last = projected.at(-1);
+      assert.isTrue(last?.type === "assistant_message" && !last.streaming);
     }),
   );
 
