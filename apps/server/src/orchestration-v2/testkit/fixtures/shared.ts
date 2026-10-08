@@ -365,6 +365,12 @@ export const CURSOR_MODEL_SELECTION = {
   model: "composer-2.5",
 } satisfies ModelSelection;
 
+/** Muse fixtures are recorded against this model; the account's listed models may differ. */
+export const MUSE_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("muse"),
+  model: "muse-spark-1.3-contributor",
+} satisfies ModelSelection;
+
 export const GROK_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("grok"),
   model: "grok-build",
