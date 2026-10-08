@@ -32,7 +32,12 @@
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",
     "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-blockquote": "^3.31.3",
     "@tiptap/extension-code": "^3.31.3",
+    "@tiptap/extension-code-block": "^3.31.3",
+    "@tiptap/extension-heading": "^3.31.3",
+    "@tiptap/extension-horizontal-rule": "^3.31.3",
+    "@tiptap/extension-list": "^3.31.3",
     "@tiptap/extension-task-item": "^3.31.3",
     "@tiptap/extension-task-list": "^3.31.3",
     "@tiptap/pm": "^3.31.3",
@@ -55,10 +60,7 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
-    "rehype-raw": "^7.0.0",
-    "rehype-sanitize": "^6.0.0",
-    "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1",
+    "remark-gfm": "catalog:",
     "tailwind-merge": "^3.4.0",
     "unbash": "^5.0.0",
     "zustand": "^5.0.11"
@@ -83,7 +85,7 @@
     "jsdom": "^30.0.1",
     "react-test-renderer": "19.2.6",
     "tailwindcss": "^4.0.0",
-    "unified": "^11.0.5",
+    "unified": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

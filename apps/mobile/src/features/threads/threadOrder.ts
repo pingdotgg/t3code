@@ -134,22 +134,32 @@ export function computeThreadMoveAvailability(input: {
   // A reorder in flight locks the whole list until its receipt lands.
   if (input.pendingOrder != null) return result;
   const rows = input.ordered;
-  const orderedIds = rows.map(rowId);
-  const indexById = new Map(orderedIds.map((id, index) => [id, index] as const));
-  const keysById = new Map(
-    (input.allThreads ?? input.ordered).map(
-      (row) => [rowId(row), rowOrder(row, input.section).key] as const,
-    ),
-  );
-  const writableIds = new Set(
-    (input.allThreads ?? input.ordered)
-      .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
-      .map(rowId),
-  );
-  const visibleIds = new Set(orderedIds);
-  const reservedKeys = new Set(
-    [...keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
-  );
+  // With no neighbor there is no up/down move, so skip the allThreads indexes.
+  if (rows.length < 2) {
+    for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
+    return result;
+  }
+  // Plain loops: this runs per section on every Home rebuild over all shells,
+  // and the map/filter/spread chains it replaces dominated it with garbage.
+  const orderedIds: string[] = [];
+  const indexById = new Map<string, number>();
+  for (const row of rows) {
+    const id = rowId(row);
+    indexById.set(id, orderedIds.length);
+    orderedIds.push(id);
+  }
+  const keysById = new Map<string, string | null>();
+  const writableIds = new Set<string>();
+  for (const row of input.allThreads ?? input.ordered) {
+    const id = rowId(row);
+    keysById.set(id, rowOrder(row, input.section).key);
+    if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
+  }
+  // Read after the loop so a duplicate id reserves only its final key.
+  const reservedKeys = new Set<string>();
+  keysById.forEach((key, id) => {
+    if (key != null && !indexById.has(id)) reservedKeys.add(key);
+  });
   // Mirror of `planPinnedReorder` for adjacent swaps, hoisted so every row is
   // answered in O(1) amortized instead of one planner probe per row:
   //
