@@ -703,43 +703,38 @@ const CAFE_CLONE_URLS = {
   sshUrl: "ssh@git.cafe:acme/project.git",
 };
 
-for (const protocol of ["auto", "ssh"] as const) {
-  it.effect(
-    `publishes GitCafe with ${protocol === "auto" ? "HTTPS by default" : "explicit SSH"}`,
-    () => {
-      const remotes: string[] = [];
-      return Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        const result = yield* service.publishRepository({
-          cwd: "/workspace",
-          provider: "gitcafe",
-          repository: "acme/project",
-          visibility: "private",
-          protocol,
-        });
-        const expected = protocol === "auto" ? CAFE_CLONE_URLS.url : CAFE_CLONE_URLS.sshUrl;
-        assert.strictEqual(result.remoteUrl, expected);
-        assert.deepStrictEqual(remotes, [expected]);
-      }).pipe(
-        Effect.provide(
-          layer({
-            provider: makeProvider({
-              kind: "gitcafe",
-              createRepository: () => Effect.succeed(CAFE_CLONE_URLS),
+it.effect.each(["auto", "ssh"] as const)("publishes GitCafe with protocol %s", (protocol) => {
+  const remotes: string[] = [];
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const result = yield* service.publishRepository({
+      cwd: "/workspace",
+      provider: "gitcafe",
+      repository: "acme/project",
+      visibility: "private",
+      protocol,
+    });
+    const expected = protocol === "auto" ? CAFE_CLONE_URLS.url : CAFE_CLONE_URLS.sshUrl;
+    assert.strictEqual(result.remoteUrl, expected);
+    assert.deepStrictEqual(remotes, [expected]);
+  }).pipe(
+    Effect.provide(
+      layer({
+        provider: makeProvider({
+          kind: "gitcafe",
+          createRepository: () => Effect.succeed(CAFE_CLONE_URLS),
+        }),
+        git: {
+          ensureRemote: (input) =>
+            Effect.sync(() => {
+              remotes.push(input.url);
+              return "origin";
             }),
-            git: {
-              ensureRemote: (input) =>
-                Effect.sync(() => {
-                  remotes.push(input.url);
-                  return "origin";
-                }),
-            },
-          }),
-        ),
-      );
-    },
+        },
+      }),
+    ),
   );
-}
+});
 
 it.effect("clones GitCafe over HTTPS with automatic protocol selection", () =>
   Effect.gen(function* () {

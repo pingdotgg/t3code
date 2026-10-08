@@ -12,52 +12,51 @@ const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128]);
 const resource = { _tag: "gitcafe-attachment", host: "git.cafe", attachmentId: "attach_123abc" };
 
 describe("GitCafe attachment download", () => {
-  for (const [name, chunks, code, expected] of [
+  it.effect.each([
     ["binary bytes across chunks", [png.slice(0, 4), png.slice(4)], 0, png],
     ["failed authentication", [png], 1, null],
     ["over limit", [new Uint8Array(10 * 1024 * 1024), png], 0, null],
-  ] as const) {
-    it.effect(name, () =>
-      Effect.gen(function* () {
-        expect(yield* downloadGitCafeAttachment("staging.git.cafe", "attach_123abc")).toEqual(
-          expected,
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
-            spawn: (command) => {
-              expect(command).toMatchObject({
-                command: "cafe",
-                args: [
-                  "--host",
-                  "https://staging.git.cafe/api",
-                  "--no-input",
-                  "--no-update-check",
-                  "api",
-                  "/attachments/attach_123abc",
-                ],
-              });
-              return Effect.succeed(
-                ChildProcessSpawner.makeHandle({
-                  pid: ChildProcessSpawner.ProcessId(1),
-                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
-                  isRunning: Effect.succeed(false),
-                  kill: () => Effect.void,
-                  unref: Effect.succeed(Effect.void),
-                  stdin: Sink.drain,
-                  stdout: Stream.fromIterable(chunks),
-                  stderr: Stream.make(new TextEncoder().encode("diagnostic")),
-                  all: Stream.empty,
-                  getInputFd: () => Sink.drain,
-                  getOutputFd: () => Stream.empty,
-                }),
-              );
-            },
-          }),
-        ),
+  ] as const)("downloads %s", ([, chunks, code, expected]) =>
+    Effect.gen(function* () {
+      expect(yield* downloadGitCafeAttachment("staging.git.cafe", "attach_123abc")).toEqual(
+        expected,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
+          spawn: (command) => {
+            expect(command).toMatchObject({
+              command: "cafe",
+              args: [
+                "--host",
+                "https://staging.git.cafe/api",
+                "--no-input",
+                "--no-update-check",
+                "api",
+                "/attachments/attach_123abc",
+              ],
+            });
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.fromIterable(chunks),
+                stderr: Stream.make(new TextEncoder().encode("diagnostic")),
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          },
+        }),
       ),
-    );
-  }
+    ),
+  );
+
   it("only accepts fixed GitCafe hosts and attachment ids", () => {
     const valid = Schema.is(AssetResource);
     expect(valid(resource)).toBe(true);

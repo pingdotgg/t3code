@@ -84,13 +84,14 @@ describe("deployed GitCafe PR API", () => {
     expect(permissions.actions).toEqual([]);
   });
 
-  for (const [state, status, succeeds] of [
+  it.effect.each([
     ["merged", 404, true],
     ["closed", 404, true],
     ["open", 404, false],
     ["merged", 503, false],
-  ] as const) {
-    it.effect(`handles unavailable source statistics for ${state} PRs with HTTP ${status}`, () =>
+  ] as const)(
+    "handles unavailable source statistics for %s PRs with HTTP %s",
+    ([state, status, succeeds]) =>
       Effect.gen(function* () {
         const provider = yield* make;
         const result = yield* provider.getChangeRequest(target).pipe(Effect.result);
@@ -131,8 +132,8 @@ describe("deployed GitCafe PR API", () => {
           }),
         ),
       ),
-    );
-  }
+  );
+
   it.effect("decodes flat linked PR details without loading activity", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
@@ -550,8 +551,9 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
-  for (const fails of [false, true]) {
-    it.effect(`reads activity with read-only reactions (reaction request fails: ${fails})`, () =>
+  it.effect.each([false, true])(
+    "reads activity with read-only reactions (reaction request fails: %s)",
+    (fails) =>
       Effect.gen(function* () {
         const provider = yield* make;
         const activity = yield* provider.getChangeRequestActivity(target);
@@ -598,8 +600,8 @@ describe("deployed GitCafe PR API", () => {
           }),
         ),
       ),
-    );
-  }
+  );
+
   it.effect("reports root commits without fabricating an empty diff", () =>
     Effect.gen(function* () {
       const provider = yield* make;
@@ -746,13 +748,14 @@ describe("deployed GitCafe PR API", () => {
       expect(calls).toHaveLength(0);
     }).pipe(Effect.provide(withApi((input) => (calls.push(input), detail))));
   });
-  for (const [changeType, oldContent, newContent, expected] of [
+  it.effect.each([
     ["change", "before", "after", ["before", "after"]],
     ["new", null, "created", ["", "created"]],
     ["deleted", "removed", null, ["removed", ""]],
     ["rename-changed", "old name", "new name", ["old name", "new name"]],
-  ] as const) {
-    it.effect(`expands ${changeType} files from the pull snapshot`, () =>
+  ] as const)(
+    "expands %s files from the pull snapshot",
+    ([changeType, oldContent, newContent, expected]) =>
       Effect.gen(function* () {
         const provider = yield* make;
         const result = yield* provider.getDiffFileContents!({
@@ -775,8 +778,8 @@ describe("deployed GitCafe PR API", () => {
           }),
         ),
       ),
-    );
-  }
+  );
+
   it.effect("expands an old displayed revision without substituting the latest pull", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
@@ -807,32 +810,31 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
-  for (const [mismatch, response] of [
+  it.effect.each([
     ["version", { version: 4, headOid: "displayed-head", comparisonBaseOid: "displayed-base" }],
     ["head", { version: 3, headOid: "other-head", comparisonBaseOid: "displayed-base" }],
     ["base", { version: 3, headOid: "displayed-head", comparisonBaseOid: "other-base" }],
-  ] as const) {
-    it.effect(`rejects diff-file contents with a mismatched response ${mismatch}`, () =>
-      Effect.gen(function* () {
-        const provider = yield* make;
-        const result = yield* provider.getDiffFileContents!({
-          ...target,
-          changeType: "change",
-          oldPath: "file.ts",
-          newPath: "file.ts",
-          reviewRevision: { version: 3, headOid: "displayed-head", baseOid: "displayed-base" },
-        }).pipe(Effect.flip);
-        expect(result.detail).toContain("different diff snapshot");
-      }).pipe(
-        Effect.provide(
-          withApi(() => ({
-            ...response,
-            file: { oldContent: "old", newContent: "new" },
-          })),
-        ),
+  ] as const)("rejects diff-file contents with a mismatched response %s", ([mismatch, response]) =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiffFileContents!({
+        ...target,
+        changeType: "change",
+        oldPath: "file.ts",
+        newPath: "file.ts",
+        reviewRevision: { version: 3, headOid: "displayed-head", baseOid: "displayed-base" },
+      }).pipe(Effect.flip);
+      expect(result.detail).toContain("different diff snapshot");
+    }).pipe(
+      Effect.provide(
+        withApi(() => ({
+          ...response,
+          file: { oldContent: "old", newContent: "new" },
+        })),
       ),
-    );
-  }
+    ),
+  );
+
   it.effect("reports unavailable full-file content", () =>
     Effect.gen(function* () {
       const provider = yield* make;

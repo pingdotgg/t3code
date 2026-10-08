@@ -66,17 +66,19 @@ function output(data: unknown, exitCode = 0, stderr = ""): VcsProcess.VcsProcess
 function failure(code: string, status: number | null) {
   return JSON.stringify({ schemaVersion: 1, error: { code, status, message: `Failure ${code}` } });
 }
+const HOSTS = ["git.cafe", "staging.git.cafe"] as const;
 afterEach(() => vi.resetAllMocks());
 
 layer("GitCafeCli", (it) => {
-  for (const host of ["git.cafe", "staging.git.cafe"]) {
-    const hostContext = {
-      ...context,
-      provider: { ...context.provider, baseUrl: `https://${host}` },
-      remoteUrl: `ssh@${host}:team/project.git`,
-    };
-    it.effect(`keeps ${host} repository lookup, PR reads, and fork checkout on their origin`, () =>
-      Effect.gen(function* () {
+  it.effect.each(HOSTS)(
+    "keeps %s repository lookup, PR reads, and fork checkout on their origin",
+    (host) => {
+      const hostContext = {
+        ...context,
+        provider: { ...context.provider, baseUrl: `https://${host}` },
+        remoteUrl: `ssh@${host}:team/project.git`,
+      };
+      return Effect.gen(function* () {
         const cafe = yield* GitCafeCli.GitCafeCli;
         run.mockReturnValueOnce(Effect.succeed(output({ name: "project", defaultBranch: "main" })));
         expect(
@@ -121,36 +123,36 @@ layer("GitCafeCli", (it) => {
         expect(run.mock.calls.every(([input]) => input.args?.[1] === `https://${host}/api`)).toBe(
           true,
         );
-      }),
-    );
-    it.effect(`publishes repositories on ${host} with matching Git URLs`, () =>
-      Effect.gen(function* () {
-        run.mockReturnValueOnce(
-          Effect.succeed(
-            output({
-              schemaVersion: 1,
-              data: {
-                resource: {
-                  owner: "team",
-                  name: "new",
-                  repoId: "repo_new",
-                  state: "complete",
-                },
+      });
+    },
+  );
+  it.effect.each(HOSTS)("publishes repositories on %s with matching Git URLs", (host) =>
+    Effect.gen(function* () {
+      run.mockReturnValueOnce(
+        Effect.succeed(
+          output({
+            schemaVersion: 1,
+            data: {
+              resource: {
+                owner: "team",
+                name: "new",
+                repoId: "repo_new",
+                state: "complete",
               },
-            }),
-          ),
-        );
-        const cafe = yield* GitCafeCli.GitCafeCli;
-        const urls = yield* cafe.createRepository({
-          cwd: "/repo",
-          repository: `https://${host}/team/new`,
-          visibility: "private",
-        });
-        expect(urls.url).toBe(`https://${host}/team/new`);
-        expect(run.mock.calls[0]?.[0].args?.slice(0, 2)).toEqual(["--host", `https://${host}/api`]);
-      }),
-    );
-  }
+            },
+          }),
+        ),
+      );
+      const cafe = yield* GitCafeCli.GitCafeCli;
+      const urls = yield* cafe.createRepository({
+        cwd: "/repo",
+        repository: `https://${host}/team/new`,
+        visibility: "private",
+      });
+      expect(urls.url).toBe(`https://${host}/team/new`);
+      expect(run.mock.calls[0]?.[0].args?.slice(0, 2)).toEqual(["--host", `https://${host}/api`]);
+    }),
+  );
   it.effect("rejects unsupported API origins before invoking the CLI", () =>
     Effect.gen(function* () {
       const cafe = yield* GitCafeCli.GitCafeCli;
@@ -491,8 +493,9 @@ layer("GitCafeCli", (it) => {
       expect(yield* cafe.getDefaultBranch({ cwd: "/repo", context })).toBe("trunk");
     }),
   );
-  for (const force of [true, false]) {
-    it.effect(`checkout ${force ? "replaces" : "preserves"} an existing local branch`, () =>
+  it.effect.each([true, false])(
+    "checkout with force=%s keeps the existing local branch in step",
+    (force) =>
       Effect.gen(function* () {
         run.mockReturnValueOnce(Effect.succeed(output(pull)));
         if (force) run.mockReturnValueOnce(Effect.succeed(output(null)));
@@ -515,8 +518,7 @@ layer("GitCafeCli", (it) => {
           });
         expect(switchRef).toHaveBeenCalledWith({ cwd: "/repo", refName: "feature" });
       }),
-    );
-  }
+  );
 });
 
 it("discovery identifies a valid account and keeps transient failures separate from sign-out", () => {

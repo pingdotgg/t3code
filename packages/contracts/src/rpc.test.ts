@@ -10,8 +10,9 @@ describe("pull request action responses", () => {
   const rpc = WsRpcGroup.requests.get(WS_METHODS.pullRequestsRunAction)!;
   const codec = Schema.toCodecJson(Rpc.exitSchema(rpc));
 
-  for (const state of ["pending", "completed", "failed"] as const) {
-    it(`preserves ${state} operation outcomes through the RPC JSON codec`, () => {
+  it.each(["pending", "completed", "failed"] as const)(
+    "preserves %s operation outcomes through the RPC JSON codec",
+    (state) => {
       const outcome = {
         operation: { kind: "merge", id: "merge_acceptance" },
         state,
@@ -22,8 +23,8 @@ describe("pull request action responses", () => {
       expect(Schema.decodeUnknownSync(codec)(JSON.parse(JSON.stringify(encoded)))).toEqual(
         Exit.succeed(outcome),
       );
-    });
-  }
+    },
+  );
 
   it("retains void responses for actions without durable operations", () => {
     const encoded = Schema.encodeSync(codec)(Exit.succeed(undefined));
