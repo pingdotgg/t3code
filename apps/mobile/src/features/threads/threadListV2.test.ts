@@ -991,6 +991,141 @@ describe("buildThreadListV2Items settled paging", () => {
   });
 });
 
+describe("buildThreadListV2Items settled sort reuse", () => {
+  const otherEnvironmentId = EnvironmentId.make("environment-2");
+
+  function makeSettled(
+    id: string,
+    settledAt: string,
+    overrides: Partial<EnvironmentThreadShell> = {},
+  ): EnvironmentThreadShell {
+    return makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      settledOverride: "settled",
+      settledAt,
+      ...overrides,
+    });
+  }
+
+  function settledOrder(
+    threads: ReadonlyArray<EnvironmentThreadShell>,
+    scope: EnvironmentId | null = null,
+  ) {
+    return buildThreadListV2Items({
+      threads,
+      environmentId: scope,
+      searchQuery: "",
+      now: NOW,
+    })
+      .items.filter((item) => item.variant === "slim")
+      .map((item) => `${item.thread.environmentId}:${item.thread.id}`);
+  }
+
+  function countDateParses(build: () => void): number {
+    const spy = vi.spyOn(Date, "parse");
+    try {
+      build();
+      return spy.mock.calls.length;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  const older = makeSettled("older", "2026-06-01T01:00:00.000Z");
+  const newer = makeSettled("newer", "2026-06-01T03:00:00.000Z");
+  const middle = makeSettled("middle", "2026-06-01T02:00:00.000Z");
+
+  it("orders settled rows newest first regardless of input order", () => {
+    expect(settledOrder([older, newer, middle])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+      `${environmentId}:older`,
+    ]);
+    expect(settledOrder([middle, older, newer])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+      `${environmentId}:older`,
+    ]);
+  });
+
+  it("re-sorts when a settled row is replaced, added, or removed", () => {
+    expect(settledOrder([older, newer])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:older`,
+    ]);
+    const resettledOlder = makeSettled("older", "2026-06-01T04:00:00.000Z");
+    expect(settledOrder([resettledOlder, newer])).toEqual([
+      `${environmentId}:older`,
+      `${environmentId}:newer`,
+    ]);
+    expect(settledOrder([resettledOlder, newer, middle])).toEqual([
+      `${environmentId}:older`,
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+    ]);
+    expect(settledOrder([newer, middle])).toEqual([
+      `${environmentId}:newer`,
+      `${environmentId}:middle`,
+    ]);
+  });
+
+  it("re-sorts when the same settled rows arrive in a different order", () => {
+    // Same id and timestamp on two environments: only the stable input order
+    // breaks the tie, so a reordered input must not reuse the previous output.
+    const first = makeSettled("twin", "2026-06-01T01:00:00.000Z");
+    const second = makeSettled("twin", "2026-06-01T01:00:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    expect(settledOrder([first, second])).toEqual([
+      `${environmentId}:twin`,
+      `${otherEnvironmentId}:twin`,
+    ]);
+    expect(settledOrder([second, first])).toEqual([
+      `${otherEnvironmentId}:twin`,
+      `${environmentId}:twin`,
+    ]);
+  });
+
+  it("skips the settled sort when only unsettled rows change", () => {
+    const settled = Array.from({ length: 50 }, (_, index) =>
+      makeSettled(`settled-${index}`, `2026-06-01T00:${String(index).padStart(2, "0")}:00.000Z`),
+    );
+    const streaming = makeThread({ id: ThreadId.make("streaming"), title: "Streaming" });
+    const baseline = countDateParses(() => settledOrder([streaming, ...settled]));
+    const updated = { ...streaming, updatedAt: "2026-06-01T23:00:00.000Z" };
+    let order: string[] = [];
+    const reused = countDateParses(() => {
+      order = settledOrder([updated, ...settled]);
+    });
+
+    expect(order).toEqual(settled.toReversed().map((thread) => `${environmentId}:${thread.id}`));
+    // The settled sort parses every settled row at least once.
+    expect(baseline - reused).toBeGreaterThanOrEqual(settled.length);
+  });
+
+  it("recomputes when builds alternate between environments", () => {
+    const remoteOlder = makeSettled("remote-older", "2026-06-01T01:30:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    const remoteNewer = makeSettled("remote-newer", "2026-06-01T05:00:00.000Z", {
+      environmentId: otherEnvironmentId,
+    });
+    const threads = [older, newer, remoteOlder, remoteNewer];
+
+    for (let round = 0; round < 2; round += 1) {
+      expect(settledOrder(threads, environmentId)).toEqual([
+        `${environmentId}:newer`,
+        `${environmentId}:older`,
+      ]);
+      expect(settledOrder(threads, otherEnvironmentId)).toEqual([
+        `${otherEnvironmentId}:remote-newer`,
+        `${otherEnvironmentId}:remote-older`,
+      ]);
+    }
+  });
+});
+
 function makePendingTask(id: string): PendingNewTask {
   const creation = {
     projectId: ProjectId.make("project-1"),
