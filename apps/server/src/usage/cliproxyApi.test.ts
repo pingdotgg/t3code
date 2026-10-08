@@ -213,6 +213,42 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reports only the exhausted weekly allowance for an unstarted Claude session", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: { utilization: 100, resets_at: "2099-01-01T00:00:00Z" },
+            limits: [
+              { kind: "session", percent: 0, resets_at: null, is_active: false },
+              {
+                kind: "weekly_all",
+                percent: 100,
+                resets_at: "2099-01-01T00:00:00Z",
+                is_active: true,
+              },
+            ],
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.windows).toEqual([
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 100,
+          windowDurationMins: 10080,
+          resetsAt: "2099-01-01T00:00:00.000Z",
+        },
+      ]);
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();

@@ -169,6 +169,9 @@ export function claudeUsageResponseToLimits(input: {
   for (const id of Object.keys(WINDOWS)) {
     const window = response.rate_limits[id as "five_hour" | "seven_day"];
     if (!window || typeof window.utilization !== "number") continue;
+    // An unstarted session has no reset and zero usage. Showing it as 100%
+    // left is misleading when the weekly allowance already blocks requests.
+    if (id === "five_hour" && window.utilization === 0 && window.resets_at === null) continue;
     windows.push(makeWindow(id, window.utilization, isoFromString(window.resets_at)));
   }
   // The CLI filters `model_scoped` to the overage-included allowlist, which
