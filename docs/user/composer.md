@@ -211,17 +211,9 @@ After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
 
-To give every agent the same MCP server, add it once in **Settings →
-Integrations → Shared MCP servers** (on mobile, **Settings → Shared MCP
-servers**) with a name, an `http(s)` URL, and any headers it needs, such as
-`Authorization: Bearer …`. New agent sessions on that environment get it
-whichever provider runs them. Agents reach it through T3 Code, which connects to
-the server for them, so header values and sign-ins stay on the T3 Code server
-as secrets and agents never see them. For a server that uses OAuth, choose
-**Sign in** from its menu and finish in your browser; T3 Code keeps the login
-and refreshes it. Use **Test connection** to check the server answers, and the
-switch to pause it without removing it. Only tools are shared, not resources or
-prompts.
+To give every agent the same MCP server, including one that needs a login, add
+it once in **Settings → Integrations → Shared MCP servers**. See
+[Shared MCP servers](./shared-mcp-servers.md).
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
