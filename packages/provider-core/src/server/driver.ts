@@ -58,6 +58,12 @@ export interface ProviderDriverMetadata {
    * rejects multi-instance configurations with a clear error.
    */
   readonly supportsMultipleInstances?: boolean;
+  /**
+   * Whether the server runs an instance at `defaultInstanceIdForDriver(kind)`
+   * even when settings have no entry for it. Defaults to `true`; drivers that
+   * need user input before they can run (such as the ACP Registry) opt out.
+   */
+  readonly hasDefaultInstance?: boolean;
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &
@@ -188,11 +194,8 @@ export interface ProviderDriver<Config, R = never> {
    */
   readonly configSchema: Schema.Codec<Config, unknown>;
   /**
-   * Default config payload used when the legacy
-   * `ServerSettings.providers.<kind>` entry is empty or when the driver
-   * is auto-bootstrapped without user configuration. Returning a typed
-   * default keeps the migration path simple — no special-casing needed
-   * to construct a "blank" instance.
+   * Config used when an instance has no config blob, such as the default
+   * instance of a driver the user never configured.
    */
   readonly defaultConfig: () => Config;
   /**

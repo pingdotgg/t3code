@@ -23,6 +23,8 @@ import {
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
   type ProviderInstanceMutation,
+  defaultInstanceIdForDriver,
+  isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -384,68 +386,109 @@ const ServerSettingsJson = fromLenientJson(
   }),
 );
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
-const PersistedOptionalProviderSettings = Schema.Struct({
-  providers: Schema.optionalKey(
-    Schema.Struct({
-      cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-      grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-      opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-    }),
-  ),
-});
-const decodePersistedOptionalProviderSettingsJsonExit = Schema.decodeUnknownExit(
-  fromLenientJson(PersistedOptionalProviderSettings),
+/**
+ * The retired `providers.<kind>` map, read without its old schemas. Before
+ * `providerInstances` existed each built-in driver had one blob there; it
+ * now only feeds `migrateLegacyProviderSettings`.
+ */
+const LegacyProviderSettingsJson = fromLenientJson(
+  Schema.Struct({
+    providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
+const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
+
+// Drivers that start disabled, so a session in the history means the user
+// turned them on before the instance kept an explicit flag.
+const HISTORY_RESTORED_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "opencode"].map((driver) => ProviderDriverKind.make(driver)),
 );
 
-function restoreUsedProviders(
+/**
+ * Move each customized legacy `providers.<kind>` blob into the driver's
+ * default `providerInstances` slot. An explicit instance already in that slot
+ * wins. Blobs that match a fresh install (empty, or only an `enabled` flag
+ * equal to the driver default) carry nothing and are dropped.
+ *
+ * A cursor/grok/opencode slot without an `enabled` flag is enabled when
+ * provider history shows the driver was used, which is how those drivers
+ * were opted into before they had an explicit flag. Callers run this only
+ * while the settings file still has the retired map, so it happens once.
+ */
+function migrateLegacyProviderSettings(
   settings: ServerSettings,
-  persisted: typeof PersistedOptionalProviderSettings.Type,
+  legacyProviders: Readonly<Record<string, unknown>>,
   providerHistory: ReadonlyArray<{
     readonly providerName: string;
     readonly providerInstanceId: string | null;
   }>,
 ): ServerSettings {
-  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
-  const usedProviderInstances = new Set(
+  // History rows are raw SQL text; compare them as strings.
+  const usedProviders = new Set<string>(providerHistory.map(({ providerName }) => providerName));
+  const usedProviderInstances = new Set<string>(
     providerHistory.map(
       ({ providerName, providerInstanceId }) => providerInstanceId ?? providerName,
     ),
   );
-  const providerInstances = Object.fromEntries(
-    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
-      instanceId,
+
+  const providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> = {};
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances) as Array<
+    [ProviderInstanceId, ProviderInstanceConfig]
+  >) {
+    providerInstances[instanceId] =
       instance.enabled === undefined &&
-      (instance.driver === "cursor" ||
-        instance.driver === "grok" ||
-        instance.driver === "opencode") &&
+      HISTORY_RESTORED_DRIVERS.has(instance.driver) &&
       usedProviderInstances.has(instanceId)
         ? { ...instance, enabled: true }
-        : instance,
-    ]),
-  );
+        : instance;
+  }
+
+  // History restores a never-configured cursor/grok/opencode slot too.
+  const legacyEntries = new Map(Object.entries(legacyProviders));
+  for (const driver of HISTORY_RESTORED_DRIVERS) {
+    if (!legacyEntries.has(driver)) legacyEntries.set(driver, {});
+  }
+  for (const [kind, blob] of legacyEntries) {
+    if (!isProviderDriverKind(kind) || blob === null || typeof blob !== "object") continue;
+    if (Array.isArray(blob)) continue;
+    const driver = kind;
+    const instanceId = defaultInstanceIdForDriver(driver);
+    if (Object.hasOwn(providerInstances, instanceId)) continue;
+
+    const { enabled: rawEnabled, ...config } = blob as Record<string, unknown>;
+    const explicitEnabled = typeof rawEnabled === "boolean" ? rawEnabled : undefined;
+    const enabled =
+      explicitEnabled ??
+      (HISTORY_RESTORED_DRIVERS.has(driver) && usedProviders.has(driver) ? true : undefined);
+    const driverDefault = resolveProviderInstanceEnabled({ driver, config: {} });
+    if (Object.keys(config).length === 0 && (enabled === undefined || enabled === driverDefault)) {
+      continue;
+    }
+    providerInstances[instanceId] = {
+      driver,
+      ...(enabled === undefined ? {} : { enabled }),
+      config,
+    } satisfies ProviderInstanceConfig;
+  }
 
   return {
     ...settings,
-    providers: {
-      ...settings.providers,
-      cursor: {
-        ...settings.providers.cursor,
-        enabled: persisted.providers?.cursor?.enabled ?? usedProviders.has("cursor"),
-      },
-      grok: {
-        ...settings.providers.grok,
-        enabled: persisted.providers?.grok?.enabled ?? usedProviders.has("grok"),
-      },
-      opencode: {
-        ...settings.providers.opencode,
-        enabled: persisted.providers?.opencode?.enabled ?? usedProviders.has("opencode"),
-      },
-    },
     providerInstances,
   };
 }
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+].map((driver) => ProviderDriverKind.make(driver));
 
 /** ACP Registry instances reject every application text-generation operation. */
 function selectionSupportsTextGeneration(
@@ -463,14 +506,13 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
-  // instance wins over the legacy providers map, which decodes to defaults
-  // (codex enabled) when the Providers UI has only written providerInstances.
-  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
-    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-  });
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  // The built-in default instances in preference order. A slot without an
+  // explicit instance uses its driver's default enabled state.
+  const fallback = TEXT_GENERATION_FALLBACK_DRIVERS.find((driver) =>
+    resolveProviderInstanceEnabled(
+      settings.providerInstances[defaultInstanceIdForDriver(driver)] ?? { driver, config: {} },
+    ),
+  );
   if (!fallback) {
     return settings;
   }
@@ -496,17 +538,6 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
 ]);
-
-// Preserve both enabled states because provider history cannot recover a new opt-in.
-const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
-  ...DEFAULT_SERVER_SETTINGS,
-  providers: {
-    ...DEFAULT_SERVER_SETTINGS.providers,
-    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
-    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
-    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
-  },
-};
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -671,7 +702,7 @@ const make = Effect.gen(function* () {
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
+        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
       );
 
       return yield* writeFileStringAtomically({
@@ -740,7 +771,7 @@ const make = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
-    let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     // A file that failed to decode must stay on disk for the user to repair;
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
@@ -748,12 +779,12 @@ const make = Effect.gen(function* () {
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
       const decoded = decodeServerSettingsJsonExit(raw);
-      const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
-      if (persistedSettings._tag === "Success") {
-        persisted = persistedSettings.value;
+      const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
+      if (legacySettings._tag === "Success") {
+        legacyProviders = legacySettings.value.providers;
       }
-      if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
-        const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+      if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
+        const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         settingsFileTrusted = false;
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
@@ -817,14 +848,18 @@ const make = Effect.gen(function* () {
           );
 
     const loaded = foldProviderInstanceEnabledFlags(
-      restoreUsedProviders(settings, persisted, providerHistory),
+      legacyProviders === undefined
+        ? settings
+        : migrateLegacyProviderSettings(settings, legacyProviders, providerHistory),
     );
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
     const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
-    if (migrated !== loaded) {
+    // A file still carrying the retired `providers` map is rewritten once so
+    // the migrated instances persist and the old key disappears.
+    if (migrated !== loaded || (settingsFileTrusted && legacyProviders !== undefined)) {
       yield* writeSettingsAtomically(migrated);
     }
     return migrated;

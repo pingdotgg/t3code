@@ -103,8 +103,9 @@ produce catches them.
 
 ## Where a driver plugs in
 
-- **Contracts:** settings schema and patch, default model, and display name in
-  [`packages/contracts`](../../packages/contracts/src). New providers are off by default.
+- **Contracts:** settings schema, default model, and display name in
+  [`packages/contracts`](../../packages/contracts/src). Instances store that config in
+  `providerInstances`. New providers are off by default.
 - **Server:** the driver in [`provider/Drivers`](../../apps/server/src/provider/Drivers) and its entry
   in [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). Also its position in
   the [status order](../../apps/server/src/provider/providerStatusCache.ts), a compatibility policy

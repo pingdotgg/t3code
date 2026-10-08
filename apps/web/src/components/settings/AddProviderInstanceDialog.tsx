@@ -7,7 +7,6 @@ import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_UNIFIED_SETTINGS,
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
   ProviderInstanceId,
@@ -21,7 +20,6 @@ import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
 } from "../../hooks/useSettings";
-import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
@@ -139,15 +137,12 @@ export function AddProviderInstanceDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
-  const existingIds = useMemo(() => {
-    const ids = new Set(["codex", "claudeAgent", ...Object.keys(settings.providerInstances ?? {})]);
-    const defaults = DEFAULT_UNIFIED_SETTINGS.providers as Record<string, unknown>;
-    // Reserve configured legacy slots too, so adding an account cannot replace them.
-    for (const [kind, config] of Object.entries(settings.providers ?? {})) {
-      if (!Equal.equals(config, defaults[kind])) ids.add(kind);
-    }
-    return ids;
-  }, [settings.providerInstances, settings.providers]);
+  // Codex and Claude run at their default slots before they are configured, so
+  // those ids stay reserved; other unconfigured default slots are free to take.
+  const existingIds = useMemo(
+    () => new Set(["codex", "claudeAgent", ...Object.keys(settings.providerInstances ?? {})]),
+    [settings.providerInstances],
+  );
 
   const driverOption = providerClients.get(driver) ?? DEFAULT_DRIVER_OPTION;
   const isAcpRegistry = driver === ACP_REGISTRY_DRIVER_KIND;

@@ -636,14 +636,11 @@ describe("instance-scoped model selection", () => {
     const nativeModel = "gemini-3.1-pro";
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
-      providers: {
-        ...DEFAULT_UNIFIED_SETTINGS.providers,
-        antigravity: {
-          ...DEFAULT_UNIFIED_SETTINGS.providers.antigravity,
-          customModels: ["api-only-model"],
-        },
-      },
       providerInstances: {
+        [ProviderInstanceId.make("antigravity")]: {
+          driver,
+          config: { customModels: ["api-only-model"] },
+        },
         [customId]: { driver, config: { customModels: ["unknown-model"] } },
       },
     };

@@ -8,6 +8,8 @@ import {
   MessageId,
   type OrchestrationV2ThreadProjection,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -59,8 +61,11 @@ const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
 const layerServerSettings = ServerSettings.layerTest({
-  providers: {
-    grok: { enabled: true },
+  providerInstances: {
+    [ProviderInstanceId.make("grok")]: {
+      driver: ProviderDriverKind.make("grok"),
+      enabled: true,
+    },
   },
 });
 const layerBackgroundPolicy = BackgroundPolicy.layer.pipe(
