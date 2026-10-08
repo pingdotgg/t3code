@@ -55,7 +55,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       className={className}
-      sandbox="allow-scripts allow-forms allow-popups"
+      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
     />
   );
 }
