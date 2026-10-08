@@ -12,6 +12,10 @@
  * remain visible. Antigravity databases are memoised in memory while the
  * database and its WAL keep the same `(size, mtime, ctime)`.
  *
+ * Cursor's account API is slow, so its source answers from a cache and marks
+ * itself `refreshing` while a background refresh runs; `awaitRefresh` waits
+ * for that refresh instead. See `cursorAccountCache`.
+ *
  * @module UsageService
  */
 import * as NodeOS from "node:os";
@@ -38,6 +42,8 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -55,7 +61,18 @@ import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAu
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
-import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+import {
+  CURSOR_ACCOUNT_CACHE_FILE_NAME,
+  CURSOR_ACCOUNT_TTL_MS,
+  cursorFetchRange,
+  decodeCursorAccountCaches,
+  encodeCursorAccountCaches,
+  isCursorCacheFresh,
+  mergeCursorFetch,
+  type CursorAccountCache,
+  type CursorCredentialSource,
+} from "./cursorAccountCache.ts";
+import * as CursorUsageReader from "./cursorUsageReader.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -91,8 +108,13 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Longest window the UI offers, plus slack. Older entries are pruned. */
-const CACHE_RETENTION_DAYS = 90;
+/**
+ * The longest window the UI offers, 90 days, plus its `MTIME_SLACK_MS`, rounded
+ * up. Older entries are pruned.
+ */
+const CACHE_RETENTION_DAYS = 92;
+
+const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
@@ -195,11 +217,26 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const cursorAccountReader = yield* CursorUsageReader.CursorAccountReader;
 
   const fileCache: ScanCache = new Map();
   const antigravityCache = makeAntigravityUsageCache();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
+  /** Cursor account caches by credential source. */
+  const cursorCaches = new Map<string, CursorAccountCache>();
+  let cursorCacheDirty = false;
+  /**
+   * The last failed refresh per credential source, standing for a TTL so a
+   * client refetching a broken login does not refetch Cursor each time. A
+   * `null` error means there is no login: no source to report.
+   */
+  const cursorFailures = new Map<
+    string,
+    { readonly atMs: number; readonly error: string | null }
+  >();
+  /** The refresh in flight per credential source, which every read joins. */
+  const cursorRefreshes = new Map<string, Deferred.Deferred<void>>();
   const isWithinDirectory = (filePath: string, dir: string) => {
     const relative = path.relative(dir, filePath);
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
@@ -208,6 +245,7 @@ export const make = Effect.gen(function* () {
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
   const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const cursorCachePath = path.join(config.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -398,7 +436,7 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Loads the persisted scan cache exactly once per process.
+   * Loads the persisted scan and Cursor account caches exactly once per process.
    *
    * `Effect.cached` makes concurrent first readers await the same load rather
    * than each seeing a "loaded" flag set before the read finished and cold
@@ -411,6 +449,9 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
+      for (const [key, cache] of decodeCursorAccountCaches(yield* readDocument(cursorCachePath))) {
+        cursorCaches.set(key, cache);
+      }
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
         document = yield* readDocument(legacyScanCachePath);
@@ -432,25 +473,52 @@ export const make = Effect.gen(function* () {
   // keeps an older snapshot from landing after a newer one.
   const persistLock = yield* Semaphore.make(1);
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared before encoding, so a scan that changes the cache while this
-    // write is in flight marks it dirty again. A failed write restores the
-    // flag, so the next scan retries instead of leaving disk stale.
-    cacheDirty = false;
-    yield* Effect.sync(() =>
-      writeScanCache(fileCache, { sources: Object.fromEntries(sourceCache) }),
-    ).pipe(
-      Effect.flatMap((contents) => writeCacheFile(scanCachePath, contents)),
-      // A cache we cannot write is a slower next start, not a failed read.
-      Effect.catchCause(() =>
-        Effect.sync(() => {
-          cacheDirty = true;
-        }),
-      ),
-      persistLock.withPermit,
-    );
-  });
+  // Each dirty flag is cleared before encoding, so a change while the write is
+  // in flight marks it dirty again. A failed write restores the flag, so the
+  // next persist retries instead of leaving disk stale. A cache we cannot
+  // write is a slower next start, not a failed read.
+  const persistCaches = Effect.gen(function* () {
+    if (cacheDirty) {
+      cacheDirty = false;
+      yield* Effect.sync(() =>
+        writeScanCache(fileCache, { sources: Object.fromEntries(sourceCache) }),
+      ).pipe(
+        Effect.flatMap((contents) => writeCacheFile(scanCachePath, contents)),
+        Effect.catchCause(() =>
+          Effect.sync(() => {
+            cacheDirty = true;
+          }),
+        ),
+      );
+    }
+    if (cursorCacheDirty) {
+      cursorCacheDirty = false;
+      yield* Effect.sync(() => encodeCursorAccountCaches(cursorCaches)).pipe(
+        Effect.flatMap((contents) => writeCacheFile(cursorCachePath, contents)),
+        Effect.catchCause(() =>
+          Effect.sync(() => {
+            cursorCacheDirty = true;
+          }),
+        ),
+      );
+    }
+  }).pipe(persistLock.withPermit, Effect.withSpan("UsageService.persistCaches"));
+
+  const pendingPersists = new Set<Fiber.Fiber<void>>();
+  /** Writes dirty caches in the background, after the summary that dirtied them answers. */
+  const schedulePersist = Effect.forkDetach(persistCaches).pipe(
+    Effect.map((fiber) => {
+      pendingPersists.add(fiber);
+      fiber.addObserver(() => pendingPersists.delete(fiber));
+    }),
+  );
+  /** Waits for every write scheduled so far, as a restart would need. */
+  const awaitPersisted = Effect.suspend(() => Fiber.awaitAll([...pendingPersists])).pipe(
+    Effect.asVoid,
+  );
+  // A write still running when the service shuts down finishes first, so the
+  // next start does not lose the last scan.
+  yield* Effect.addFinalizer(() => awaitPersisted);
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -541,58 +609,223 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
+    /** Answered from a cache while a refresh runs. */
+    readonly refreshing?: true;
   }
+
+  const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
+    source: {
+      readonly provider: UsageProviderKind;
+      readonly dir: string;
+      readonly volumeId: string;
+      readonly fileName?: string;
+    },
+    windowStartMs: number,
+  ) {
+    const { provider, dir, volumeId, fileName } = source;
+    const exists = yield* fileSystem
+      .exists(dir)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+    if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
+    const files = yield* Effect.promise(() =>
+      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+    );
+    // A cold parse waits on disk reads, so a few files in flight read
+    // close to twice as fast. Results keep walk order.
+    const read = yield* Effect.forEach(
+      files,
+      (file) =>
+        readFileRecords(file.path, file.size, file.mtimeMs, provider).pipe(
+          Effect.map((result) => ({ path: file.path, ...result })),
+        ),
+      { concurrency: TRANSCRIPT_READ_CONCURRENCY },
+    );
+    const parsedFiles = read.map(({ path, records, update }) => {
+      if (update === undefined) return { path, records };
+      // A scan of another window may have cached its own read of this file
+      // meanwhile. Then keep whichever read saw the later file, so a slower
+      // scan never replaces newer usage with older.
+      const current = fileCache.get(path);
+      if (
+        current === update.replaces ||
+        current === undefined ||
+        !isLaterRead(current, update.entry)
+      ) {
+        fileCache.set(path, update.entry);
+        cacheDirty = true;
+      }
+      return { path, records };
+    });
+    return { provider, dir, volumeId, files: parsedFiles } satisfies ScannedDir;
+  });
+
+  /** Fetches what one account cache is missing, then persists it if anything changed. */
+  const refreshCursorAccount = Effect.fn("UsageService.refreshCursorAccount")(function* (
+    credential: CursorCredentialSource,
+    credentialKey: string,
+    retentionStartMs: number,
+  ) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const fetchMissing = (cache: CursorAccountCache | undefined) => {
+      const range = cursorFetchRange(cache, retentionStartMs, nowMs);
+      return cursorAccountReader
+        .read(credential, range.sinceMs, range.untilMs)
+        .pipe(Effect.map((result) => ({ range, result })));
+    };
+    let base = cursorCaches.get(credentialKey);
+    let fetched = yield* fetchMissing(base);
+    // Another login's history replaces the cached account's, even if reading it fails.
+    if (
+      base !== undefined &&
+      fetched.result.accountKey !== null &&
+      fetched.result.accountKey !== base.accountKey
+    ) {
+      cursorCaches.delete(credentialKey);
+      cursorCacheDirty = true;
+      base = undefined;
+      fetched = yield* fetchMissing(base);
+    }
+    const { range, result } = fetched;
+    if (result.missing || result.error !== null || result.accountKey === null) {
+      cursorFailures.set(credentialKey, {
+        atMs: nowMs,
+        error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
+      });
+      yield* schedulePersist;
+      return;
+    }
+    const merged = mergeCursorFetch(
+      base,
+      result.accountKey,
+      range,
+      result.records,
+      nowMs,
+      retentionStartMs,
+    );
+    cursorCaches.set(credentialKey, merged.cache);
+    cursorFailures.delete(credentialKey);
+    // An unchanged edge is not worth rewriting the file for: after a restart
+    // the cache just refetches a slightly wider edge.
+    if (merged.changed) {
+      cursorCacheDirty = true;
+      yield* schedulePersist;
+    }
+  });
+
+  /** Joins the refresh in flight, or starts one. */
+  const startCursorRefresh = (
+    credential: CursorCredentialSource,
+    credentialKey: string,
+    retentionStartMs: number,
+  ) =>
+    // Enrollment and fork are atomic, so an interrupted caller cannot leave a
+    // registered refresh that nothing will finish.
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        const current = cursorRefreshes.get(credentialKey);
+        if (current !== undefined) return current;
+        const done = Deferred.makeUnsafe<void>();
+        cursorRefreshes.set(credentialKey, done);
+        // Detached: a departing client must not cancel a fetch later reads reuse.
+        yield* refreshCursorAccount(credential, credentialKey, retentionStartMs).pipe(
+          Effect.catchCause(() =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((atMs) =>
+                cursorFailures.set(credentialKey, { atMs, error: CURSOR_ACCOUNT_READ_ERROR }),
+              ),
+            ),
+          ),
+          Effect.ensuring(
+            Effect.suspend(() => {
+              cursorRefreshes.delete(credentialKey);
+              return Deferred.succeed(done, undefined);
+            }),
+          ),
+          Effect.forkDetach,
+        );
+        return done;
+      }),
+    );
+
+  /**
+   * The Cursor account source. A cache inside its TTL, or a refresh that failed
+   * inside it, answers directly. Otherwise a refresh starts: `awaitRefresh`
+   * waits for it, and anything else answers from the cache marked `refreshing`.
+   */
+  const cursorAccountSource = Effect.fn("UsageService.cursorAccountSource")(function* (
+    credential: CursorCredentialSource,
+    authPath: string,
+    windowStartMs: number,
+    retentionStartMs: number,
+    awaitRefresh: boolean,
+  ) {
+    // No saved login means there is no account source to report, not a setup error.
+    if (
+      typeof credential === "string" &&
+      !(yield* fileSystem.exists(credential).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return null;
+    }
+    const credentialKey = typeof credential === "string" ? credential : "keychain";
+    const nowMs = yield* Clock.currentTimeMillis;
+    const recentFailure = cursorFailures.get(credentialKey);
+    let refreshing = false;
+    if (
+      (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
+      !isCursorCacheFresh(cursorCaches.get(credentialKey), nowMs)
+    ) {
+      const refresh = yield* startCursorRefresh(credential, credentialKey, retentionStartMs);
+      if (awaitRefresh) yield* Deferred.await(refresh);
+      else refreshing = true;
+    }
+
+    const cache = cursorCaches.get(credentialKey);
+    const failure = refreshing ? undefined : cursorFailures.get(credentialKey);
+    const failureMessage = failure === undefined ? undefined : failure.error;
+    if (failureMessage === null) return null;
+    if (cache === undefined) {
+      return {
+        provider: "cursor",
+        dir: authPath,
+        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(authPath)),
+        // Never combine a local fallback with another server's account-wide history.
+        ...(refreshing
+          ? { files: [], refreshing: true }
+          : { files: null, message: failureMessage ?? CURSOR_ACCOUNT_READ_ERROR }),
+      } satisfies ScannedDir;
+    }
+    // The same account includes CLI and desktop history from every machine.
+    // A stable remote fingerprint prevents connected environments counting it twice.
+    const source = `cursor-account:${cache.accountKey}`;
+    return {
+      provider: "cursor",
+      dir: source,
+      hostId: "cursor.com",
+      volumeId: cache.accountKey,
+      files: [
+        {
+          path: source,
+          records: cache.records.filter((record) => record.timestampMs >= windowStartMs),
+        },
+      ],
+      ...(failureMessage === undefined
+        ? { status: "ok" }
+        : { status: "partial", message: failureMessage }),
+      ...(refreshing ? { refreshing: true } : {}),
+    } satisfies ScannedDir;
+  });
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
+    awaitRefresh: boolean,
   ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideService(Path.Path, path),
     );
-    const scanned: ScannedDir[] = [];
-    for (const { provider, dir, volumeId, fileName } of dirs) {
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      if (!exists) {
-        scanned.push({ provider, dir, volumeId, files: null });
-        continue;
-      }
-      const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
-      );
-      // A cold parse waits on disk reads, so a few files in flight read
-      // close to twice as fast. Results keep walk order.
-      const read = yield* Effect.forEach(
-        files,
-        (file) =>
-          readFileRecords(file.path, file.size, file.mtimeMs, provider).pipe(
-            Effect.map((result) => ({ path: file.path, ...result })),
-          ),
-        { concurrency: TRANSCRIPT_READ_CONCURRENCY },
-      );
-      const parsedFiles = read.map(({ path, records, update }) => {
-        if (update === undefined) return { path, records };
-        // A scan of another window may have cached its own read of this file
-        // meanwhile. Then keep whichever read saw the later file, so a slower
-        // scan never replaces newer usage with older.
-        const current = fileCache.get(path);
-        if (
-          current === update.replaces ||
-          current === undefined ||
-          !isLaterRead(current, update.entry)
-        ) {
-          fileCache.set(path, update.entry);
-          cacheDirty = true;
-        }
-        return { path, records };
-      });
-      scanned.push({ provider, dir, volumeId, files: parsedFiles });
-    }
 
     const home = NodeOS.homedir();
     const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
@@ -610,156 +843,168 @@ export const make = Effect.gen(function* () {
       return [...canonical];
     });
     const dataHome = hostEnvironment["XDG_DATA_HOME"]?.trim();
-    for (const dir of yield* envRoots("OPENCODE_DATA_DIR", [
-      path.join(
-        dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(home, ".local", "share"),
-        "opencode",
-      ),
-    ])) {
-      const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
-      scanned.push({
-        provider: "opencode",
-        dir,
-        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
-        files: result.missing && !result.error ? null : result.files,
-        status: result.error ? "partial" : "ok",
-        ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
-      });
-    }
-    const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
-      ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
-        path.join(home, ".gemini", name),
-      ),
-      path.join(home, ".config", "antigravity"),
-    ]);
-    for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
-      if (instance.driver === "antigravity") {
-        const directories = yield* resolveAntigravityInstanceDirectories(
-          config.stateDir,
-          ProviderInstanceId.make(instanceId),
-        ).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(
-            (cause) =>
-              new UsageReadError({
-                reason: "scanFailed",
-                detail: "Antigravity profile directory could not be resolved.",
-                cause,
-              }),
-          ),
-        );
-        antigravityRoots.push(path.join(directories.profile, "antigravity-acp"));
-      }
-    }
-    const antigravityDirs = new Set<string>();
-    for (const root of antigravityRoots) {
-      const resolvedRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
-      const nested = path.join(resolvedRoot, "conversations");
-      const dir = (yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false))))
-        ? nested
-        : resolvedRoot;
-      antigravityDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
-    }
-    const antigravity = yield* Effect.promise(() =>
-      readAntigravityUsage([...antigravityDirs], windowStartMs, antigravityCache),
-    );
-    for (const dir of antigravityDirs) {
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      const failed = antigravity.errors.some(
-        (error) => error === dir || error.startsWith(`${dir}${path.sep}`),
+
+    const openCode = Effect.gen(function* () {
+      const roots = yield* envRoots("OPENCODE_DATA_DIR", [
+        path.join(
+          dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(home, ".local", "share"),
+          "opencode",
+        ),
+      ]);
+      return yield* Effect.forEach(
+        roots,
+        (dir) =>
+          Effect.gen(function* () {
+            const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
+            return {
+              provider: "opencode",
+              dir,
+              volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
+              files: result.missing && !result.error ? null : result.files,
+              status: result.error ? "partial" : "ok",
+              ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
+            } satisfies ScannedDir;
+          }),
+        { concurrency: "unbounded" },
       );
-      scanned.push({
-        provider: "antigravity",
-        dir,
-        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
-        files: !exists && !failed ? null : antigravity.files.filter((file) => file.root === dir),
-        status: failed ? "partial" : "ok",
-        ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
-      });
-    }
-    const cursorUserHome =
-      (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-    const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-    const cursorHome =
-      platform === "darwin"
-        ? path.join(cursorUserHome, "Library", "Application Support")
-        : platform === "win32"
-          ? hostEnvironment["APPDATA"] || path.join(cursorUserHome, "AppData", "Roaming")
-          : configHome && path.isAbsolute(configHome)
-            ? configHome
-            : path.join(cursorUserHome, ".config");
-    const cursorAuthPath =
-      platform === "darwin"
-        ? path.join(cursorUserHome, ".cursor", "auth.json")
-        : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-    const loginUnavailable =
-      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-      Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-      credentialStore === "memory";
-    if (
-      platform === "darwin" &&
-      credentialStore !== "file" &&
-      !loginUnavailable &&
-      !settings.cursorKeychainUsageEnabled
-    ) {
-      scanned.push({
-        provider: "cursor",
-        dir: cursorAuthPath,
-        volumeId: "",
-        files: null,
-        message: "Cursor account usage is off on this environment.",
-        action: "enableCursorKeychain",
-      });
-      return scanned;
-    }
-    const cursorUntilMs = yield* Clock.currentTimeMillis;
-    const account = loginUnavailable
-      ? {
-          accountKey: null,
-          records: [],
-          missing: true,
-          error: "Cursor account history needs a Cursor CLI login on this server.",
-        }
-      : yield* Effect.promise(() =>
-          readCursorAccountUsage(
-            platform === "darwin" && credentialStore !== "file"
-              ? { kind: "keychain" }
-              : cursorAuthPath,
-            windowStartMs,
-            cursorUntilMs,
-          ),
-        );
-    // No saved login means there is no account source to report, not a setup error.
-    if (account.missing && account.error === null) return scanned;
-    if (account.accountKey !== null && account.error === null && !account.missing) {
-      // The same account includes CLI and desktop history from every machine.
-      // A stable remote fingerprint prevents connected environments counting it twice.
-      const source = `cursor-account:${account.accountKey}`;
-      scanned.push({
-        provider: "cursor",
-        dir: source,
-        hostId: "cursor.com",
-        volumeId: account.accountKey,
-        files: [{ path: source, records: account.records }],
-        status: "ok",
-      });
-      return scanned;
-    }
-    scanned.push({
-      provider: "cursor",
-      dir: cursorAuthPath,
-      volumeId: yield* Effect.promise(() => readDirectoryVolumeId(cursorAuthPath)),
-      // Never combine a local fallback with another server's account-wide history.
-      files: null,
-      message:
-        account.error ?? "Cursor account history needs a Cursor CLI login saved on this server.",
     });
+
+    const antigravity = Effect.gen(function* () {
+      const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
+        ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
+          path.join(home, ".gemini", name),
+        ),
+        path.join(home, ".config", "antigravity"),
+      ]);
+      for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+        if (instance.driver === "antigravity") {
+          const directories = yield* resolveAntigravityInstanceDirectories(
+            config.stateDir,
+            ProviderInstanceId.make(instanceId),
+          ).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError(
+              (cause) =>
+                new UsageReadError({
+                  reason: "scanFailed",
+                  detail: "Antigravity profile directory could not be resolved.",
+                  cause,
+                }),
+            ),
+          );
+          antigravityRoots.push(path.join(directories.profile, "antigravity-acp"));
+        }
+      }
+      const antigravityDirs = new Set<string>();
+      for (const root of antigravityRoots) {
+        const resolvedRoot = yield* fileSystem
+          .realPath(root)
+          .pipe(Effect.orElseSucceed(() => root));
+        const nested = path.join(resolvedRoot, "conversations");
+        const dir = (yield* fileSystem
+          .exists(nested)
+          .pipe(Effect.catchCause(() => Effect.succeed(false))))
+          ? nested
+          : resolvedRoot;
+        antigravityDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
+      }
+      const result = yield* Effect.promise(() =>
+        readAntigravityUsage([...antigravityDirs], windowStartMs, antigravityCache),
+      );
+      const scanned: ScannedDir[] = [];
+      for (const dir of antigravityDirs) {
+        const exists = yield* fileSystem
+          .exists(dir)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        const failed = result.errors.some(
+          (error) => error === dir || error.startsWith(`${dir}${path.sep}`),
+        );
+        scanned.push({
+          provider: "antigravity",
+          dir,
+          volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
+          files: !exists && !failed ? null : result.files.filter((file) => file.root === dir),
+          status: failed ? "partial" : "ok",
+          ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
+        });
+      }
+      return scanned;
+    });
+
+    const cursor = Effect.gen(function* () {
+      const cursorUserHome =
+        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
+      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
+      const cursorHome =
+        platform === "darwin"
+          ? path.join(cursorUserHome, "Library", "Application Support")
+          : platform === "win32"
+            ? hostEnvironment["APPDATA"] || path.join(cursorUserHome, "AppData", "Roaming")
+            : configHome && path.isAbsolute(configHome)
+              ? configHome
+              : path.join(cursorUserHome, ".config");
+      const cursorAuthPath =
+        platform === "darwin"
+          ? path.join(cursorUserHome, ".cursor", "auth.json")
+          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
+      const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
+      const loginUnavailable =
+        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
+        Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
+        credentialStore === "memory";
+      const useKeychain = platform === "darwin" && credentialStore !== "file";
+      if (useKeychain && !loginUnavailable && !settings.cursorKeychainUsageEnabled) {
+        return [
+          {
+            provider: "cursor",
+            dir: cursorAuthPath,
+            volumeId: "",
+            files: null,
+            message: "Cursor account usage is off on this environment.",
+            action: "enableCursorKeychain",
+          } satisfies ScannedDir,
+        ];
+      }
+      if (loginUnavailable) {
+        return [
+          {
+            provider: "cursor",
+            dir: cursorAuthPath,
+            volumeId: yield* Effect.promise(() => readDirectoryVolumeId(cursorAuthPath)),
+            files: null,
+            message: "Cursor account history needs a Cursor CLI login on this server.",
+          } satisfies ScannedDir,
+        ];
+      }
+      const source = yield* cursorAccountSource(
+        useKeychain ? { kind: "keychain" } : cursorAuthPath,
+        cursorAuthPath,
+        windowStartMs,
+        retentionCutoffMs,
+        awaitRefresh,
+      );
+      return source === null ? [] : [source];
+    });
+
+    // Independent sources scan together. Transcript directories go one at a
+    // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
+    // keeps this order, since aggregation keeps the first copy of a duplicate.
+    const [transcripts, openCodeDirs, antigravityDirs, cursorDirs] = yield* Effect.all(
+      [
+        Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)),
+        openCode,
+        antigravity,
+        cursor,
+      ],
+      { concurrency: "unbounded" },
+    );
+    const scanned: readonly ScannedDir[] = [
+      ...transcripts,
+      ...openCodeDirs,
+      ...antigravityDirs,
+      ...cursorDirs,
+    ];
     return scanned;
   });
 
@@ -818,7 +1063,10 @@ export const make = Effect.gen(function* () {
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
     const [, scannedDirs] = yield* Effect.all(
-      [ensureRates(false), collectDirs(windowStartMs, settings, retentionCutoffMs)],
+      [
+        ensureRates(false),
+        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+      ],
       { concurrency: 2 },
     );
 
@@ -859,7 +1107,7 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, hostId: sourceHostId },
+      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -910,12 +1158,12 @@ export const make = Effect.gen(function* () {
         message:
           message ?? (files === null ? "No transcript directory on this environment." : null),
         ...(action ? { action } : {}),
+        ...(refreshing ? { refreshing } : {}),
       });
     }
 
     const pruned = pruneScanCache(fileCache, retentionCutoffMs);
     if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
@@ -952,6 +1200,8 @@ export const make = Effect.gen(function* () {
       settings.usagePriceOverrides,
       settings.usageModelAliases,
       settings.cursorKeychainUsageEnabled,
+      // A waiting read must never share a scan that answers with `refreshing`.
+      input.awaitRefresh === true,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
@@ -968,9 +1218,12 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
+        // The cache write is registered before the waiters resume, so they
+        // can await it, but its fiber starts after they have the summary.
         yield* scanSummary(input, settings).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
+              Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),
               Effect.andThen(Deferred.done(created, exit)),
             ),
           ),
@@ -984,7 +1237,9 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates } as const;
+  // `awaitPersisted` is outside the service interface: tests use it to restart
+  // against what a previous instance wrote.
+  return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

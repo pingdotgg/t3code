@@ -254,7 +254,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
 
   return {
     threadState,
-    loadEarlier: () => historyController.loadEarlier(TARGET.environmentId, THREAD_ID),
+    loadEarlier: (throughEntryId?: string) =>
+      historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
     inputs,
     observed,
     latest,
@@ -780,6 +781,7 @@ describe("EnvironmentThreads", () => {
       const harness = yield* makeHarness({
         historyHttpClient: HttpClient.make((request, url) => {
           expect(url.searchParams.get("cursor")).toBe("socket-history-cursor");
+          expect(url.searchParams.get("throughEntryId")).toBe(olderItem.id);
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -837,13 +839,146 @@ describe("EnvironmentThreads", () => {
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
       });
-      expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+      expect(yield* harness.loadEarlier(olderItem.id)).toEqual({ _tag: "loaded" });
       const expanded = yield* SubscriptionRef.get(harness.threadState);
       expect(
         Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
       ).toBe(true);
       expect(expanded.history.hasMoreHistory).toBe(false);
     }),
+  );
+
+  it.effect.each(["complete", "replacement snapshot", "retry"] as const)(
+    "progressively reveals conversation history before activity, then handles %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const common = {
+          threadId: THREAD_ID,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed",
+          title: null,
+          startedAt: "2026-06-20T00:00:00.000Z",
+          completedAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+        };
+        const message = {
+          ...common,
+          id: "item:older-message",
+          ordinal: 1,
+          type: "assistant_message",
+          messageId: "message:older",
+          text: "COD4 result",
+          streaming: false,
+        };
+        const activity = {
+          ...common,
+          id: "item:older-command",
+          ordinal: 2,
+          type: "command_execution",
+          input: "pwd",
+          output: "",
+          exitCode: 0,
+        };
+        const projected = (item: typeof message | typeof activity, position: number) => ({
+          position,
+          visibility: "local",
+          sourceThreadId: THREAD_ID,
+          sourceItemId: item.id,
+          item,
+        });
+        const activityStarted = yield* Deferred.make<void>();
+        const releaseActivity = yield* Deferred.make<void>();
+        let activityRequests = 0;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) =>
+            Effect.gen(function* () {
+              expect(url.searchParams.get("cursor")).toBe("progressive-cursor");
+              const conversationOnly = url.searchParams.get("view") === "conversation";
+              if (!conversationOnly && activityRequests++ === 0) {
+                yield* Deferred.succeed(activityStarted, undefined);
+                yield* Deferred.await(releaseActivity);
+                if (mode === "retry")
+                  return HttpClientResponse.fromWeb(
+                    request,
+                    new Response("Activity unavailable", { status: 503 }),
+                  );
+              }
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 14,
+                  items: conversationOnly
+                    ? [projected(message, 0)]
+                    : [projected(message, 0), projected(activity, 1)],
+                  nextCursor: "next-cursor",
+                  hasMoreHistory: true,
+                }),
+              );
+            }),
+          ),
+        });
+        yield* Queue.offer(harness.inputs, {
+          ...snapshot(BASE_PROJECTION, 14),
+          historyCursor: "progressive-cursor",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 47,
+          payloadBudgetExceeded: false,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (state) => state.history.historyCursor === "progressive-cursor",
+        );
+        const loading = yield* harness.loadEarlier(message.messageId).pipe(Effect.forkScoped);
+        yield* Deferred.await(activityStarted);
+        const preview = yield* SubscriptionRef.get(harness.threadState);
+        expect(preview.history).toMatchObject({
+          loading: true,
+          historyCursor: "progressive-cursor",
+          expanded: true,
+        });
+        expect(
+          Option.getOrThrow(preview.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual([message.id]);
+        if (mode === "replacement snapshot") {
+          yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION, 15));
+          yield* awaitThreadState(
+            harness.observed,
+            (state) => state.history.historyCursor === null,
+          );
+        }
+        yield* Deferred.succeed(releaseActivity, undefined);
+        const result = yield* Fiber.join(loading);
+        if (mode === "replacement snapshot") {
+          expect(result).toEqual({ _tag: "noop" });
+          const state = yield* SubscriptionRef.get(harness.threadState);
+          expect(Option.getOrThrow(state.data).visibleTurnItems).toEqual(
+            BASE_PROJECTION.visibleTurnItems,
+          );
+          expect(state.history.historyCursor).toBeNull();
+          return;
+        }
+        if (mode === "retry") {
+          expect(result._tag).toBe("error");
+          // The ordinary load-earlier button must also finish a failed search load.
+          expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        } else expect(result).toEqual({ _tag: "loaded" });
+        const complete = yield* SubscriptionRef.get(harness.threadState);
+        expect(complete.history).toMatchObject({
+          loading: false,
+          historyCursor: "next-cursor",
+          error: null,
+          latestLocalTurnOrdinal: 47,
+        });
+        expect(
+          Option.getOrThrow(complete.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual([message.id, activity.id]);
+        expect(Option.getOrThrow(complete.data).turnItems).toHaveLength(2);
+      }),
   );
 
   it.effect("restores compact socket snapshot turnItems before reducing and caching", () =>

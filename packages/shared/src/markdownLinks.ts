@@ -1,23 +1,36 @@
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "./path.ts";
+import {
+  type FilePathPosition,
+  formatFilePathPosition,
+  parseFileUrlHref,
+  resolvePathLinkTarget,
+  splitFilePathPosition,
+} from "./fileLinks.ts";
 
-const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
+
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+
 const RELATIVE_FILE_NAME_PATTERN =
   /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
+
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
-const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
-const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
+
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
+
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 // A final dot between digits marks a version or model id (`glm-5.3`,
 // `Qwen2.5-Coder`), not an extension. `ls.1` and `libfoo.so.1` stay files.
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
@@ -46,6 +59,7 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/workspace/",
   "/workspaces/",
 ] as const;
+
 // `Name:digits` also matches `error:1`, `port:3000`, and `TODO:12`.
 const EXTENSIONLESS_FILE_NAMES = new Set([
   "Makefile",
@@ -76,7 +90,9 @@ const EXTENSIONLESS_FILE_NAMES = new Set([
   "README",
   "CODEOWNERS",
 ]);
+
 const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
+
 // These allowlists avoid classifying dotted directories such as `conf.d/`
 // or filenames such as `Makefile.in:12` as hosts.
 const GENERIC_HOSTNAME_TLDS = new Set([
@@ -106,6 +122,7 @@ const GENERIC_HOSTNAME_TLDS = new Set([
   "store",
   "link",
 ]);
+
 // Country codes also name file extensions. A :line suffix makes `.pl`
 // and `.pt` files more likely than hostnames.
 const COUNTRY_HOSTNAME_TLDS = new Set([
@@ -198,11 +215,6 @@ export function normalizeMarkdownLinkDestination(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
-/** Browser URL parsers write `C:/foo` as `/C:/foo` for file URLs. */
-export function stripSlashPrefixedWindowsDrive(path: string): string {
-  return SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path) ? path.slice(1) : path;
-}
-
 export function splitMarkdownLinkSearchAndHash(value: string): {
   readonly path: string;
   readonly hash: string;
@@ -215,54 +227,6 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
     path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
     hash,
   };
-}
-
-/**
- * Turns a `file:` URL into a host path, still percent-encoded so callers that
- * decode every destination in one place do not decode file URLs twice. A
- * non-localhost authority becomes a UNC share.
- */
-export function parseFileUrlHref(
-  href: string,
-): { readonly path: string; readonly hash: string } | null {
-  try {
-    const parsed = new URL(href);
-    if (parsed.protocol.toLowerCase() !== "file:") return null;
-
-    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
-    const path = uncHostname
-      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
-      : parsed.pathname;
-    if (path.length === 0) return null;
-    return { path: stripSlashPrefixedWindowsDrive(path), hash: parsed.hash };
-  } catch {
-    return null;
-  }
-}
-
-export interface FilePathPosition {
-  readonly path: string;
-  readonly line?: number;
-  readonly column?: number;
-}
-
-export function splitFilePathPosition(path: string, hash = ""): FilePathPosition {
-  const suffixMatch = path.match(POSITION_SUFFIX_CAPTURE_PATTERN);
-  const match = suffixMatch ?? hash.match(POSITION_HASH_PATTERN);
-  if (!match?.[1]) return { path };
-
-  const line = Number.parseInt(match[1], 10);
-  const column = match[2] === undefined ? undefined : Number.parseInt(match[2], 10);
-  return {
-    path: suffixMatch ? path.slice(0, -suffixMatch[0].length) : path,
-    ...(line > 0 ? { line } : {}),
-    ...(column !== undefined && column > 0 ? { column } : {}),
-  };
-}
-
-export function formatFilePathPosition(position: FilePathPosition): string {
-  if (!position.line) return position.path;
-  return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
 /** Keeps filename and destination-path labels compact without discarding prose. */
@@ -288,7 +252,7 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
 }
 
-export function isRelativeFilePath(path: string): boolean {
+function isRelativeFilePath(path: string): boolean {
   return (
     RELATIVE_PATH_PREFIX_PATTERN.test(path) ||
     (!path.startsWith("/") && !isWindowsAbsolutePath(path))
@@ -342,28 +306,54 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   return looksLikeFilePath(position.path, path) ? position : null;
 }
 
-export function fileBasename(path: string): string {
-  // A trailing separator is a valid way to write a directory. Trim it before
-  // taking the final segment so the label is never empty.
-  const trimmed = path.replace(/[/\\]+$/, "");
-  if (trimmed.length === 0) return path;
-  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
+
+const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
+
+export function extractInlineCodeSpans(text: string): string[] {
+  const spans: string[] = [];
+  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
+  for (let index = 0; index < segments.length; index += 2) {
+    for (const match of (segments[index] ?? "").matchAll(INLINE_CODE_SPAN_PATTERN)) {
+      const span = match[1]?.trim();
+      if (span) spans.push(span);
+    }
+  }
+  return spans;
 }
 
-export function workspaceRelativeFilePath(
-  path: string,
-  workspaceRoot: string | null | undefined,
+const MARKDOWN_LINK_HREF_PATTERN =
+  /\[[^\]]*]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
+
+export function extractMarkdownLinkHrefs(markdown: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of markdown.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = (match[1] ?? match[2])?.trim();
+    if (href) hrefs.push(href);
+  }
+  return hrefs;
+}
+
+/**
+ * `baseDir` anchors relative links; it defaults to the workspace root and is the
+ * file's own directory when rendering a markdown file. `cwd` stays the workspace
+ * root so the result still knows whether the target is inside it.
+ */
+export function resolveMarkdownFileLinkTarget(
+  href: string | undefined,
+  cwd?: string,
+  baseDir: string | undefined = cwd,
 ): string | null {
-  if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
-  ).replace(/\/+$/, "");
-  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
-  const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
-  const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
-  if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
-  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
+  if (!href) return null;
+  const target = parseMarkdownFileLink(href);
+  if (!target) return null;
+
+  const pathWithPosition = formatFilePathPosition(target);
+  if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
+  if (!baseDir) return null;
+  return resolvePathLinkTarget(pathWithPosition, baseDir);
+}
+
+export function isWindowsDrivePathHref(href: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }

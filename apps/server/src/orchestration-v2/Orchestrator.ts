@@ -1,3 +1,8 @@
+import type {
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
+  OrchestrationV2ThreadHistoryPage,
+} from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -100,6 +105,7 @@ import {
   type ProjectionRecordFilter,
   type ProjectionRecords,
   type ProjectionCheckpointContext,
+  type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -280,6 +286,18 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly searchThreadStream: (
+    input: OrchestrationV2SearchThreadInput,
+  ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
+  readonly searchThread: (
+    input: OrchestrationV2SearchThreadInput,
+  ) => Effect.Effect<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
+  readonly getThreadHistoryPage: (
+    threadId: ThreadId,
+    cursor: string,
+    throughEntryId?: string,
+    conversationOnly?: boolean,
+  ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
     options: ProjectionTimelinePageOptions,
@@ -319,11 +337,16 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
-  readonly getShellSnapshot: (options?: {
-    readonly location?: "active" | "archive";
-    /** Background sweeps only: skips settled threads. */
-    readonly unsettledOnly?: boolean;
-  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
+  readonly getShellSnapshot: (
+    options?: ShellSnapshotOptions,
+  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
+  /** See `ProjectionStoreV2Shape.readShellSnapshot`. */
+  readonly readShellSnapshot: (
+    options?: ShellSnapshotOptions,
+  ) => Effect.Effect<
+    Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>,
+    OrchestratorV2Error
+  >;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
@@ -10818,12 +10841,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
+  const shellProjectionError = (cause: unknown) =>
+    new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
+
   return OrchestratorV2.of({
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,
     delegatedTaskResultPending,
     dispatch: dispatchWithReceipt,
+    searchThreadStream: (input) =>
+      projectionStore
+        .searchThreadStream(input)
+        .pipe(
+          Stream.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+          ),
+        ),
+    searchThread: (input) =>
+      projectionStore
+        .searchThread(input)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+          ),
+        ),
+    getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly) =>
+      projectionStore
+        .getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getTimelinePage: (threadId, options) =>
       projectionStore
         .getTimelinePage(threadId, options)
@@ -10861,15 +10907,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadSnapshotWindow(threadId, options)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getShellSnapshot: (options) =>
-      projectionStore.getShellSnapshot(options).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: ThreadId.make("thread:shell"),
-              cause,
-            }),
+      projectionStore.getShellSnapshot(options).pipe(Effect.mapError(shellProjectionError)),
+    readShellSnapshot: (options) =>
+      projectionStore
+        .readShellSnapshot(options)
+        .pipe(
+          Effect.mapError(shellProjectionError),
+          Effect.map(Effect.mapError(shellProjectionError)),
         ),
-      ),
     getThreadShell: (threadId) =>
       projectionStore
         .getThreadShell(threadId)
@@ -10959,6 +11004,11 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
+    searchThreadStream: (input) =>
+      Stream.fail(new OrchestratorProjectionError({ threadId: input.threadId })),
+    searchThread: (input) =>
+      Effect.fail(new OrchestratorProjectionError({ threadId: input.threadId })),
+    getThreadHistoryPage: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getTimelinePage: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getMessageCount: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getTurnItem: ({ threadId }) => Effect.fail(new OrchestratorProjectionError({ threadId })),
@@ -10992,6 +11042,13 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         }),
       ),
     getShellSnapshot: () =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId: ThreadId.make("thread:shell"),
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    readShellSnapshot: () =>
       Effect.fail(
         new OrchestratorProjectionError({
           threadId: ThreadId.make("thread:shell"),

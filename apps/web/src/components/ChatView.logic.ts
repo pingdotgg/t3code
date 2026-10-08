@@ -38,7 +38,7 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@t3tools/shared/codexArtifactTemplates";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   type ChatMessage,

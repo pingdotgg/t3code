@@ -1000,6 +1000,29 @@ export function toolCallProgressLength(state: AcpToolCallState): number {
   return Math.max(state.detail?.length ?? 0, contentChars, rawOutputChars);
 }
 
+function toolCallContentTexts(state: AcpToolCallState): string {
+  const content = state.data.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((entry) =>
+      isRecord(entry) ? (toolCallContentText(entry as EffectAcpSchema.ToolCallContent) ?? "") : "",
+    )
+    .join("\u0000");
+}
+
+// The output a user watches: detail, text content, and any `rawOutput`. A
+// streamed diff or `rawInput` is not part of it.
+export function toolCallVisibleOutputChanged(
+  previous: AcpToolCallState,
+  next: AcpToolCallState,
+): boolean {
+  return (
+    previous.detail !== next.detail ||
+    toolCallContentTexts(previous) !== toolCallContentTexts(next) ||
+    JSON.stringify(previous.data.rawOutput) !== JSON.stringify(next.data.rawOutput)
+  );
+}
+
 export function decideToolCallUpdateEmission(
   input: AcpToolCallEmitDecisionInput,
 ): AcpToolCallEmitDecision {
