@@ -844,6 +844,126 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it.each([
+    { isWorking: true, attachmentsOnly: false, superseded: false },
+    { isWorking: false, attachmentsOnly: false, superseded: false },
+    { isWorking: false, attachmentsOnly: true, superseded: false },
+    { isWorking: false, attachmentsOnly: false, superseded: true },
+  ])("keeps submitted replies visible: %j", ({ isWorking, attachmentsOnly, superseded }) => {
+    const runId = RunId.make("response-run");
+    const entries: TimelineEntry[] = [
+      {
+        id: "before",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:01Z",
+        entry: {
+          id: "before",
+          createdAt: "2026-01-01T00:00:01Z",
+          runId,
+          tone: "tool",
+          label: "Read files",
+          itemType: "command_execution",
+          toolLifecycleStatus: "completed",
+        },
+      },
+      {
+        id: "response",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:02Z",
+        ...(superseded
+          ? {
+              attempt: {
+                id: RunAttemptId.make("response-attempt"),
+                runId,
+                attemptOrdinal: 1,
+                rootNodeId: NodeId.make("response-root"),
+                status: "superseded" as const,
+              },
+            }
+          : {}),
+        entry: {
+          id: "response",
+          createdAt: "2026-01-01T00:00:02Z",
+          runId,
+          tone: "tool",
+          label: "Answered questions",
+          itemType: "user_input_request",
+          toolLifecycleStatus: "completed",
+          questionAnswer: {
+            requestId: RuntimeRequestId.make("response-request"),
+            answers: attachmentsOnly
+              ? {}
+              : { scope: "Continue independently using the available tools." },
+            questionTextById: { scope: "How should I proceed?" },
+            attachmentsByQuestionId: attachmentsOnly
+              ? {
+                  scope: [
+                    {
+                      type: "file",
+                      id: "response-file",
+                      name: "instructions.txt",
+                      mimeType: "text/plain",
+                      sizeBytes: 42,
+                    },
+                  ],
+                }
+              : {},
+          },
+        },
+      },
+      {
+        id: "after",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "after",
+          createdAt: "2026-01-01T00:00:03Z",
+          runId,
+          tone: "tool",
+          label: "Run checks",
+          itemType: "command_execution",
+          toolLifecycleStatus: isWorking ? "inProgress" : "completed",
+        },
+      },
+      {
+        id: "final",
+        kind: "message",
+        createdAt: "2026-01-01T00:00:04Z",
+        message: {
+          id: MessageId.make("final"),
+          role: "assistant",
+          text: "I checked the implementation.",
+          runId,
+          createdAt: "2026-01-01T00:00:04Z",
+          updatedAt: "2026-01-01T00:00:04Z",
+          streaming: isWorking,
+        },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking,
+      runningRunId: isWorking ? runId : null,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    const response = rows.find((row) => row.id === "response");
+    expect(response).toMatchObject({
+      kind: "work",
+      isExpandedToolGroup: false,
+      groupedEntries: [{ id: "response" }],
+    });
+    expect(
+      rows
+        .filter((row) => row.kind === "work-live")
+        .every((row) => !row.groupedEntries.some((entry) => entry.id === "response")),
+    ).toBe(true);
+    expect(rows.findIndex((row) => row.id === "response")).toBeLessThan(
+      rows.findIndex((row) => row.id === "final"),
+    );
+  });
+
   it.each(["waiting", "completed"] as const)(
     "groups approval and user-input requests with commands without expanding them when %s",
     (status) => {

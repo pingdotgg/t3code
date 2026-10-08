@@ -528,6 +528,75 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("shows submitted answers with user attribution and keeps long replies expandable", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    const reply = Array.from(
+      { length: 15 },
+      (_, index) => `Instruction ${index + 1}: continue with the focused checks.`,
+    ).join("\n");
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "submitted-reply",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "submitted-reply",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Answered questions",
+                  tone: "tool",
+                  itemType: "user_input_request",
+                  questionAnswer: {
+                    requestId: ApprovalRequestId.make("reply-request"),
+                    answers: { scope: reply, checks: ["Tests", "Typecheck"] },
+                    questionTextById: { scope: "How should I proceed?", checks: "Which checks?" },
+                    attachmentsByQuestionId: {},
+                  },
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      expect(renderer!.root.findAllByType("h3").map((node) => node.children.join(""))).toEqual([
+        "You",
+        "You",
+      ]);
+      const toggle = renderer!.root.find(
+        (node) => node.type === "button" && node.props["aria-expanded"] === false,
+      );
+      await act(() => toggle.props.onClick());
+      expect(
+        renderer!.root.find(
+          (node) => node.type === "button" && node.props["aria-expanded"] === true,
+        ),
+      ).toBeDefined();
+      expect(JSON.stringify(renderer!.toJSON())).toContain(
+        "Instruction 15: continue with the focused checks.",
+      );
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Tests, Typecheck");
+      await act(() =>
+        renderer!.root
+          .find((node) => node.type === "button" && node.props["aria-expanded"] === true)
+          .props.onClick(),
+      );
+      expect(
+        renderer!.root.find(
+          (node) => node.type === "button" && node.props["aria-expanded"] === false,
+        ),
+      ).toBeDefined();
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("leads an unanswered question row with the question text", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("requestAnimationFrame", () => 0);
