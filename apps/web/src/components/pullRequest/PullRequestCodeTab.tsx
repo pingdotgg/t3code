@@ -858,7 +858,7 @@ function PullRequestCodeTab({
                 </TooltipPopup>
               </Tooltip>
             ) : (
-              "Viewed"
+              <span className="@max-xs:hidden">Viewed</span>
             )}
           </label>
         </span>
@@ -1503,7 +1503,7 @@ function PullRequestCodeTab({
             // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
             // interaction, but its native host outline clips and competes with the focus
             // indicators on its actual controls.
-            className="h-full overflow-auto [scrollbar-gutter:stable]"
+            className="@container h-full overflow-auto [scrollbar-gutter:stable]"
             viewerRef={setViewer}
             items={items}
             selectedLines={selectedLines}
