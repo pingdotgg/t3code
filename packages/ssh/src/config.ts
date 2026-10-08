@@ -11,21 +11,54 @@ import { SshHostDiscoveryError } from "./errors.ts";
 
 const NO_HOSTS: ReadonlyArray<string> = [] as const;
 
-function stripInlineComment(line: string): string {
-  const hashIndex = line.indexOf("#");
-  return (hashIndex >= 0 ? line.slice(0, hashIndex) : line).trim();
-}
-
 function splitDirectiveArgs(value: string): ReadonlyArray<string> {
-  const args: Array<string> = [];
-  for (const rawEntry of value
-    .replace(/=(?!=)/gu, " ")
-    .trim()
-    .split(/\s+/u)) {
-    const entry = rawEntry.trim();
-    if (entry.length > 0) {
-      args.push(entry);
+  const match = /^\s*([^\s=]+)\s*=?\s*(.*)$/u.exec(value);
+  if (!match) {
+    return NO_HOSTS;
+  }
+
+  const args = [match[1]!];
+  const remainder = match[2]!;
+  let entry = "";
+  let quote = "";
+  let started = false;
+  for (let index = 0; index < remainder.length; index += 1) {
+    const character = remainder[index]!;
+    const next = remainder[index + 1];
+    if (
+      character === "\\" &&
+      (next === '"' || next === "'" || next === "\\" || (quote === "" && next === " "))
+    ) {
+      entry += next;
+      index += 1;
+      started = true;
+    } else if (quote !== "") {
+      if (character === quote) {
+        quote = "";
+      } else {
+        entry += character;
+      }
+    } else if (character === '"' || character === "'") {
+      quote = character;
+      started = true;
+    } else if (/\s/u.test(character)) {
+      if (started) {
+        args.push(entry);
+        entry = "";
+        started = false;
+      }
+    } else if (character === "#" && !started) {
+      break;
+    } else {
+      entry += character;
+      started = true;
     }
+  }
+  if (quote !== "") {
+    return NO_HOSTS;
+  }
+  if (started) {
+    args.push(entry);
   }
   return args;
 }
@@ -111,12 +144,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   const raw = yield* fs.readFileString(resolvedPath);
 
   for (const line of raw.split(/\r?\n/u)) {
-    const stripped = stripInlineComment(line);
-    if (stripped.length === 0) {
-      continue;
-    }
-
-    const [directive = "", ...rawArgs] = splitDirectiveArgs(stripped);
+    const [directive = "", ...rawArgs] = splitDirectiveArgs(line);
     const normalizedDirective = directive.toLowerCase();
     if (normalizedDirective === "include") {
       for (const includePattern of rawArgs) {

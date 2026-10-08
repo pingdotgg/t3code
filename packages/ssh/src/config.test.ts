@@ -1,6 +1,7 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -19,6 +20,43 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
+  const hostPlatform = HostProcessPlatform.defaultValue();
+  // Verified with OpenSSH 10.2's `ssh -G -F <config> <alias>`.
+  for (const { name, filename, quoted } of [
+    { name: "unquoted", filename: "plain.conf", quoted: false },
+    { name: "quoted", filename: "quoted.conf", quoted: true },
+    { name: "space", filename: "with space.conf", quoted: true },
+    { name: "equals", filename: "with=equals.conf", quoted: true },
+    { name: "hash", filename: "with#hash.conf", quoted: true },
+    { name: "escaped-quote", filename: 'with"quote.conf', quoted: true },
+  ]) {
+    it.effect.skipIf(name === "escaped-quote" && hostPlatform === "win32")(
+      `discovers hosts from a ${name} Include path`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const homeDir = yield* makeTempHomeDir();
+          const sshDir = path.join(homeDir, ".ssh");
+          yield* fs.makeDirectory(sshDir);
+          const includedPath = path.join(homeDir, filename);
+          yield* fs.writeFileString(includedPath, `Host ${name}\n  HostName ${name}.example.com\n`);
+          const argument = quoted ? `"${includedPath.replaceAll('"', '\\"')}"` : includedPath;
+          yield* fs.writeFileString(path.join(sshDir, "config"), `Include ${argument} # comment\n`);
+
+          assert.deepEqual(yield* discoverSshHosts({ homeDir }), [
+            {
+              alias: name,
+              hostname: name,
+              username: null,
+              port: null,
+              source: "ssh-config",
+            },
+          ]);
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
