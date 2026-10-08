@@ -308,6 +308,7 @@ interface ServerTab {
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   loading: boolean;
+  loadFailure: Extract<PreviewNavStatus, { _tag: "LoadFailed" }> | null;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -515,6 +516,7 @@ const make = Effect.gen(function* () {
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
+    tab.loadFailure = navStatus._tag === "LoadFailed" ? navStatus : null;
     void tab.cdp
       .send("Page.getNavigationHistory")
       .catch(() => null)
@@ -536,13 +538,19 @@ const make = Effect.gen(function* () {
       });
   };
 
-  const reportLoaded = async (tab: ServerTab) => {
+  const reportLoaded = async (tab: ServerTab, confirmedNavigation = false) => {
     const url = tab.page.url();
+    const loadFailure = tab.loadFailure;
     // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
-    if (url === "about:blank" || url.startsWith("chrome-error://")) return;
+    if (
+      (loadFailure && (!confirmedNavigation || url === loadFailure.url)) ||
+      url === "about:blank" ||
+      url.startsWith("chrome-error://")
+    )
+      return;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
     // A navigation that started while reading the title owns the status now.
-    if (tab.loading || tab.page.url() !== url) return;
+    if (tab.loadFailure !== loadFailure || tab.loading || tab.page.url() !== url) return;
     report(tab, { _tag: "Success", url: url.slice(0, 2048), title });
   };
 
@@ -751,6 +759,7 @@ const make = Effect.gen(function* () {
       colorScheme: "system",
       zoomFactor: 1,
       loading: false,
+      loadFailure: snapshot.navStatus._tag === "LoadFailed" ? snapshot.navStatus : null,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -775,7 +784,7 @@ const make = Effect.gen(function* () {
     });
     page.on("framenavigated", (frame) => {
       // Same-document navigations (SPA routes) fire no load event.
-      if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
+      if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab, true);
     });
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
@@ -1119,6 +1128,15 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      ...(tab.loadFailure
+        ? {
+            navigationError: {
+              url: tab.loadFailure.url,
+              code: tab.loadFailure.code,
+              description: tab.loadFailure.description,
+            },
+          }
+        : {}),
       control: {
         owner:
           tab.control.controller !== null

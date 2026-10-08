@@ -10,6 +10,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type DesktopPreviewColorScheme,
   type DesktopPreviewFavicon,
+  type DesktopPreviewNavStatus,
   type PreviewEvent,
   type PreviewListResult,
   type PreviewSessionSnapshot,
@@ -25,6 +26,7 @@ export interface DesktopPreviewOverlay {
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
+  loadFailure: Extract<DesktopPreviewNavStatus, { kind: "LoadFailed" }> | null;
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
@@ -373,6 +375,9 @@ function isPreviewStateEqual(
       previous.canGoBack === next.canGoBack &&
       previous.canGoForward === next.canGoForward &&
       previous.loading === next.loading &&
+      previous.loadFailure?.url === next.loadFailure?.url &&
+      previous.loadFailure?.code === next.loadFailure?.code &&
+      previous.loadFailure?.description === next.loadFailure?.description &&
       previous.zoomFactor === next.zoomFactor &&
       previous.pictureInPicture === next.pictureInPicture &&
       previous.colorScheme === next.colorScheme &&

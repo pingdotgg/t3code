@@ -315,6 +315,7 @@ describe("previewStateStore (single-tab)", () => {
     });
     applyPreviewDesktopState(ref, snapshot.tabId, {
       hasWebContents: true,
+      loadFailure: null,
       canGoBack: true,
       canGoForward: false,
       loading: false,
@@ -336,6 +337,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, snapshot);
     const overlay = {
       hasWebContents: true,
+      loadFailure: null,
       canGoBack: true,
       canGoForward: false,
       loading: false,
@@ -370,6 +372,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, second);
     applyPreviewDesktopState(ref, first.tabId, {
       hasWebContents: true,
+      loadFailure: null,
       canGoBack: true,
       canGoForward: false,
       loading: false,
@@ -421,6 +424,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, active);
     applyPreviewDesktopState(ref, stale.tabId, {
       hasWebContents: true,
+      loadFailure: null,
       canGoBack: false,
       canGoForward: false,
       loading: false,
@@ -551,6 +555,7 @@ describe("previewStateStore (single-tab)", () => {
     beginPreviewSessionClose(ref, previous.tabId);
     applyPreviewDesktopState(ref, previous.tabId, {
       hasWebContents: true,
+      loadFailure: null,
       canGoBack: false,
       canGoForward: false,
       loading: false,

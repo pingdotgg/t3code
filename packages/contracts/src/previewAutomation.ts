@@ -79,6 +79,14 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  /** Present after a failed main-frame navigation. Availability describes the host, not the page. */
+  navigationError: Schema.optional(
+    Schema.Struct({
+      url: Schema.String,
+      code: Schema.Int,
+      description: Schema.String,
+    }),
+  ),
   control: Schema.optional(
     Schema.Struct({
       owner: Schema.Literals(["agent", "human", "unclaimed"]),

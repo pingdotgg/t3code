@@ -120,6 +120,7 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
     loading: state.navStatus.kind === "Loading",
+    loadFailure: state.navStatus.kind === "LoadFailed" ? state.navStatus : null,
     zoomFactor: state.zoomFactor,
     pictureInPicture: state.pictureInPicture,
     colorScheme: state.colorScheme,

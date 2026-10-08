@@ -32,6 +32,7 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const encodeAutomationStatus = Schema.encodeSync(PreviewAutomationStatus);
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -203,6 +204,23 @@ describe("PreviewAutomationError", () => {
 });
 
 describe("PreviewAutomationStatus", () => {
+  it("preserves main-frame failure details through status serialization", () => {
+    const status = {
+      available: true,
+      visible: false,
+      tabId: "preview-t",
+      url: "http://localhost:5733/",
+      title: "",
+      loading: false,
+      navigationError: {
+        url: "http://localhost:5733/",
+        code: -102,
+        description: "ERR_CONNECTION_REFUSED",
+      },
+    };
+    expect(decodeAutomationStatus(encodeAutomationStatus(status))).toEqual(status);
+  });
+
   it("accepts old hosts without viewport data and exposes it from current hosts", () => {
     const base = {
       available: true,

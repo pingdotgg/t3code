@@ -26,6 +26,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type Ref,
+  type ReactNode,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -153,6 +154,8 @@ export function ServerBrowserSurface(props: {
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
+  /** Replaces the page while keeping the stream and ownership controls connected. */
+  readonly pageOverlay?: ReactNode;
   readonly className?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
@@ -166,6 +169,7 @@ export function ServerBrowserSurface(props: {
     onFirstFrame,
     onViewport,
     onControl,
+    pageOverlay,
     className,
     ref,
   } = props;
@@ -747,7 +751,7 @@ export function ServerBrowserSurface(props: {
       <div className="relative min-h-0 flex-1">
         <canvas
           ref={canvasRef}
-          className="block size-full touch-none object-contain"
+          className={cn("block size-full touch-none object-contain", pageOverlay && "invisible")}
           onPointerDown={handlePointer}
           onPointerMove={handlePointer}
           onPointerUp={handlePointer}
@@ -762,6 +766,7 @@ export function ServerBrowserSurface(props: {
             controller={control?.controller === "agent" ? "agent" : "none"}
           />
         ) : null}
+        {pageOverlay ? <div className="absolute inset-0 z-10">{pageOverlay}</div> : null}
         {/* Focus target for page keyboard input. Pinned top-left so focusing it never
           scrolls the surface; 16px keeps iOS from zooming the app on focus. */}
         <textarea

@@ -261,6 +261,92 @@ beforeEach(() => {
   desktopConnections.length = 0;
 });
 
+it.live(
+  "reports main-frame navigation failures until a retry begins while keeping the host available",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const page = contexts[0]!.page;
+        const url = "http://localhost:5733/";
+        yield* Effect.promise(() => page.goto(url));
+        const request = {
+          isNavigationRequest: () => true,
+          frame: () => page,
+          url: () => url,
+          method: () => "GET",
+          failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+        };
+        page.emit("request", request);
+        page.emit("requestfailed", request);
+        page.emit("load");
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        const failed = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(failed).toMatchObject({
+          available: true,
+          loading: false,
+          navigationError: { url, code: -102, description: "ERR_CONNECTION_REFUSED" },
+        });
+
+        page.emit("requestfailed", {
+          ...request,
+          frame: () => ({}),
+          failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+        });
+        expect(
+          yield* broker.invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "status",
+            input: {},
+          }),
+        ).toMatchObject({ navigationError: failed.navigationError });
+
+        yield* Effect.promise(() => page.goto("https://previous.example/"));
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        const restored = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(restored).toMatchObject({
+          available: true,
+          loading: false,
+          url: "https://previous.example/",
+        });
+        expect(restored).not.toHaveProperty("navigationError");
+
+        page.emit("request", request);
+        page.emit("requestfailed", request);
+
+        page.emit("request", request);
+        const retrying = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(retrying.loading).toBe(true);
+        expect(retrying).not.toHaveProperty("navigationError");
+        yield* Effect.promise(() => page.goto(url));
+        const loaded = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(loaded).toMatchObject({ available: true, loading: false, url });
+        expect(loaded).not.toHaveProperty("navigationError");
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.live("readiness none responds immediately but takeover input waits for navigation commit", () =>
   Effect.scoped(
     Effect.gen(function* () {

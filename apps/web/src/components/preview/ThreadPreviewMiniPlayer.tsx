@@ -47,8 +47,12 @@ import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
-import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
+import type {
+  PreviewStreamControl,
+  PreviewStreamViewport,
+} from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
+import { describePreviewError } from "./errorCodeMessages";
 import {
   clampPreviewMiniPlayerPosition,
   NO_PREVIEW_MINI_PLAYER_OBSTACLES,
@@ -130,7 +134,17 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   );
   const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
   const serverTab = snapshot?.runtime === "server" && !nativeServerTab;
+  const loadFailure =
+    serverTab || !desktopOverlay
+      ? snapshot?.navStatus._tag === "LoadFailed"
+        ? snapshot.navStatus
+        : null
+      : desktopOverlay.loadFailure;
+  const loading =
+    serverTab || !desktopOverlay ? snapshot?.navStatus._tag === "Loading" : desktopOverlay.loading;
+  const nativeSurfaceVisible = Boolean(desktopOverlay?.hasWebContents) && !loadFailure && !loading;
   const [streamViewport, setStreamViewport] = useState<PreviewStreamViewport | null>(null);
+  const [serverControl, setServerControl] = useState<PreviewStreamControl | null>(null);
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const serverPictureInPicture =
     useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
@@ -146,6 +160,23 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
+  };
+
+  const close = () => usePreviewMiniPlayerStore.getState().close(threadRef);
+
+  const retry = () => {
+    if (serverTab) {
+      if (loadFailure) serverSurfaceRef.current?.navigate(loadFailure.url);
+      else serverSurfaceRef.current?.reload();
+    } else if (previewBridge && loadFailure) {
+      void previewBridge.navigate(runtimeTabId, loadFailure.url).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to retry preview",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      });
+    }
   };
 
   const toggleNativePictureInPicture = async () => {
@@ -196,7 +227,10 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
                   aria-label={
                     poppedOut ? "Close popped-out preview" : "Pop preview into separate window"
                   }
-                  disabled={!serverTab && !desktopOverlay?.hasWebContents}
+                  disabled={
+                    !poppedOut &&
+                    (serverTab ? Boolean(loadFailure || loading) : !nativeSurfaceVisible)
+                  }
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={toggleNativePictureInPicture}
                 />
@@ -226,6 +260,18 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               followSize={false}
               controlPosition="bottom"
               onViewport={setStreamViewport}
+              onControl={setServerControl}
+              pageOverlay={
+                loadFailure || loading ? (
+                  <BrowserMiniPlayerStatus
+                    loadFailure={loadFailure}
+                    loading={loading}
+                    retryDisabled={serverControl?.controller !== "you"}
+                    onRetry={retry}
+                    onClose={close}
+                  />
+                ) : undefined
+              }
               className="size-full"
             />
           </div>
@@ -233,22 +279,77 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
           <>
             <BrowserSurfaceSlot
               tabId={runtimeTabId}
-              visible={Boolean(desktopOverlay?.hasWebContents)}
+              visible={nativeSurfaceVisible}
               cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
               zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
               fitSourceContent
               layoutVersion={`${frame.x}:${frame.y}`}
               className="absolute inset-0"
             />
-            {!desktopOverlay?.hasWebContents ? (
-              <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-                Reconnecting preview…
+            {!nativeSurfaceVisible ? (
+              <div className="pointer-events-auto absolute inset-0 z-[48] overflow-hidden rounded-[inherit]">
+                <BrowserMiniPlayerStatus
+                  loadFailure={loadFailure}
+                  loading={loading}
+                  retryDisabled={!previewBridge || !desktopOverlay?.hasWebContents}
+                  onRetry={retry}
+                  onClose={close}
+                />
               </div>
             ) : null}
           </>
         )
       }
     </MiniPlayerShell>
+  );
+}
+
+function BrowserMiniPlayerStatus({
+  loadFailure,
+  loading,
+  retryDisabled,
+  onRetry,
+  onClose,
+}: {
+  readonly loadFailure: { readonly url: string; readonly description: string } | null;
+  readonly loading: boolean;
+  readonly retryDisabled: boolean;
+  readonly onRetry: () => void;
+  readonly onClose: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 overflow-auto bg-background px-4 py-3 text-center text-xs text-muted-foreground">
+      <div role={loadFailure ? "alert" : "status"} className="min-w-0 w-full">
+        <p className="font-medium text-foreground">
+          {loadFailure
+            ? "Preview couldn't load"
+            : loading
+              ? "Loading preview…"
+              : "Reconnecting preview…"}
+        </p>
+        {loadFailure ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger render={<p className="mt-1 truncate" />}>
+                {loadFailure.url}
+              </TooltipTrigger>
+              <TooltipPopup>{loadFailure.url}</TooltipPopup>
+            </Tooltip>
+            <p className="mt-1">{describePreviewError(loadFailure.description)}</p>
+          </>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {loadFailure ? (
+          <Button size="xs" disabled={retryDisabled} onClick={onRetry}>
+            Retry
+          </Button>
+        ) : null}
+        <Button variant="outline" size="xs" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
   );
 }
 
