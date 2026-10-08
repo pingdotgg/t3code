@@ -1281,4 +1281,67 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(installAttempts).toBe(2);
     }),
   );
+
+  it.effect("restarts on the pin when the first post-install probe failed", () =>
+    Effect.gen(function* () {
+      const olderClient = {
+        status: "available",
+        executablePath: "/managed/2025.9.0/cloudflared",
+        source: "managed",
+        version: "2025.9.0",
+      } as const;
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      // The first resolve after the install misses the new binary, as when a
+      // scanner briefly holds it; later resolves see it.
+      let missedProbes = 0;
+      const spawned = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 10, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => {
+              if (installed && missedProbes === 0) {
+                missedProbes += 1;
+                return olderClient;
+              }
+              return installed ? pinnedClient : olderClient;
+            }),
+            install: Effect.sync(() => {
+              installed = true;
+              return pinnedClient;
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" });
+      expect(yield* Queue.take(spawned)).toBe(olderClient.executablePath);
+      yield* Effect.yieldNow;
+      // The missed probe kept the older connector running.
+      expect(Option.isNone(yield* Queue.poll(spawned))).toBe(true);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
+    }),
+  );
 });

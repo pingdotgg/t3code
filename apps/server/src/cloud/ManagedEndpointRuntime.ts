@@ -338,7 +338,10 @@ export const make = Effect.gen(function* () {
       yield* Effect.sleep(Duration.millis(RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS));
       const desiredConfig = yield* Ref.get(desiredConfigRef);
       if (!desiredConfig || desiredConfig.providerKind !== "cloudflare_tunnel") return;
-      if (!needsPinnedRelayClient(yield* relayClient.resolve)) return;
+      // Judge the running connector, not the disk: the pin can be installed while
+      // an older connector still runs because its post-install probe failed.
+      const active = yield* Ref.get(activeRef);
+      if (!needsPinnedRelayClient(active?.executable ?? (yield* relayClient.resolve))) return;
       yield* installPinnedRelayClient;
     }
   }).pipe(Effect.ensuring(Ref.set(retryLoopRunningRef, false)));
