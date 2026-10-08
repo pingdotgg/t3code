@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
+  type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -33,15 +34,59 @@ export interface McpClientCaller {
   readonly label: string;
   /** Read only, or the most the threads it starts or changes may run with. */
   readonly access: AuthMcpClientAccess;
+  /**
+   * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
+   * another environment passing on the limits of the agent it calls for.
+   */
+  readonly narrowedTo?: ClientModes | undefined;
 }
 
 /**
- * The runtime mode a client caller's writes are capped at. A read-only client
- * never reaches a write (`McpToolAccess` refuses it first), so it maps to the
- * lowest mode rather than to nothing.
+ * `T3-Mode-Limit: <runtimeMode>/<interactionMode>` lets an OAuth client cap
+ * a request below what it was approved with: another environment passes on
+ * the limits of the agent it calls for. It can only narrow (see
+ * `clientModeCeiling`), so a client gains nothing by sending a broad one.
  */
-export const clientRuntimeModeCeiling = (client: McpClientCaller | undefined): RuntimeMode =>
-  client === undefined || client.access === "read-only" ? "approval-required" : client.access;
+export const MODE_LIMIT_HEADER = "t3-mode-limit";
+
+export interface ClientModes {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+const runtimeModeRank: Record<RuntimeMode, number> = {
+  "approval-required": 0,
+  "auto-accept-edits": 1,
+  auto: 2,
+  "full-access": 3,
+};
+const interactionModeRank: Record<ProviderInteractionMode, number> = { plan: 0, default: 1 };
+
+/**
+ * The modes a client caller's writes are capped at: what it was approved
+ * with, narrowed by what it asked for on this request. A read-only client
+ * never reaches a write (`McpToolAccess` refuses it first), so it maps to the
+ * lowest runtime mode rather than to nothing.
+ */
+export const clientModeCeiling = (client: McpClientCaller | undefined): ClientModes => {
+  const approved: ClientModes = {
+    runtimeMode:
+      client === undefined || client.access === "read-only" ? "approval-required" : client.access,
+    interactionMode: "default",
+  };
+  const asked = client?.narrowedTo;
+  if (asked === undefined) return approved;
+  return {
+    runtimeMode:
+      runtimeModeRank[asked.runtimeMode] < runtimeModeRank[approved.runtimeMode]
+        ? asked.runtimeMode
+        : approved.runtimeMode,
+    interactionMode:
+      interactionModeRank[asked.interactionMode] < interactionModeRank[approved.interactionMode]
+        ? asked.interactionMode
+        : approved.interactionMode,
+  };
+};
 
 /**
  * Who is calling and what they may do. Tool parameters choose the target
