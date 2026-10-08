@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -102,6 +103,7 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
