@@ -292,7 +292,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readThread(input.threadId);
+      const { threads, projection, caller } = yield* readThread(input.threadId);
+      // An agent settling its own thread is always mid-turn, and settling
+      // stops the provider session. Its thread settles when the turn completes.
+      if (
+        input.action === "settle" &&
+        caller?.id === projection.thread.id &&
+        caller.activeRunId !== null
+      ) {
+        yield* threads
+          .settleAfterRun({
+            projectId: caller.projectId,
+            threadId: caller.id,
+            runId: caller.activeRunId,
+          })
+          .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+        return { settlesWhenTurnEnds: true as const };
+      }
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       let command: OrchestrationV2Command;
       switch (input.action) {

@@ -326,6 +326,18 @@ export interface ThreadManagementServiceShape {
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
+  /**
+   * Waits for `runId` to end, then settles the thread if the run completed.
+   * Settling stops the provider session, so an agent that settles its own
+   * thread uses this to wait for its turn to end. A run that ends any other
+   * way leaves the thread active, as does anything `thread.settle` refuses
+   * then, such as a queued message.
+   */
+  readonly settleAfterRun: (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+  }) => Effect.Effect<void, ThreadManagementFailure>;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
@@ -401,6 +413,8 @@ function latestSteerableRun(
     )
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
+
+const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -724,6 +738,19 @@ const make = Effect.gen(function* () {
       return { threadId: input.threadId, run, timedOut: !isTerminalRunStatus(run.status) };
     });
 
+  const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
+    "orchestrationV2.threadManagement.settleAfterRun",
+  )(function* (input) {
+    // A turn that outlives this wait leaves its thread active.
+    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
+    if (run?.status !== "completed") return;
+    yield* dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
+      threadId: input.threadId,
+    });
+  });
+
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = (input) =>
     Effect.gen(function* () {
       const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
@@ -829,6 +856,7 @@ const make = Effect.gen(function* () {
     listProjectThreads,
     sendToThread,
     waitForThread,
+    settleAfterRun,
     interruptThread,
     stopDelegatedTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
