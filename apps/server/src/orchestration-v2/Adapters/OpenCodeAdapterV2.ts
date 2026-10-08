@@ -3044,6 +3044,7 @@ export function makeOpenCodeAdapterV2(
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               // No title: OpenCode generates one from the first prompt only when
@@ -3100,6 +3101,14 @@ export function makeOpenCodeAdapterV2(
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              yield* sdkCall("session.update", { sessionID: sessionId }, () =>
+                client.session.update({
+                  sessionID: sessionId,
+                  permission: openCodePermissionRules(
+                    threadInput.runtimePolicy ?? input.runtimePolicy,
+                  ),
+                }),
+              );
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
@@ -3682,6 +3691,15 @@ export function makeOpenCodeAdapterV2(
                   }),
               );
               const nativeSession = unwrapData("session.fork", response);
+              // OpenCode forks history without retaining the session permission policy.
+              yield* sdkCall("session.update", { sessionID: nativeSession.id }, () =>
+                client.session.update({
+                  sessionID: nativeSession.id,
+                  permission: openCodePermissionRules(
+                    forkInput.runtimePolicy ?? input.runtimePolicy,
+                  ),
+                }),
+              );
               const forkedAt = yield* DateTime.now;
               const providerThread = makeProviderThread({
                 idAllocator,
