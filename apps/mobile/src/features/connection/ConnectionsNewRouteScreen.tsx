@@ -65,6 +65,8 @@ export function ConnectionsNewRouteScreen({
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const screenFocused = useIsFocused();
   const [scannerLocked, setScannerLocked] = useState(false);
+  // A good scan parks the camera so it can't re-read the code over later edits.
+  const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
@@ -109,7 +111,11 @@ export function ConnectionsNewRouteScreen({
   // Opening the sheet never prompts; a tap on the scan card asks for the camera.
   const handleScanPress = useCallback(async () => {
     const permission = await requestCameraPermission();
-    if (permission.granted || permission.canAskAgain) return;
+    if (permission.granted) {
+      setScanComplete(false);
+      return;
+    }
+    if (permission.canAskAgain) return;
     Alert.alert(
       "Camera access needed",
       "Camera access was denied for this app. Open Settings to enable it.",
@@ -134,13 +140,14 @@ export function ConnectionsNewRouteScreen({
         setHostInput(host);
         setCodeInput(code);
         onChangeConnectionPairingUrl(pairingUrl);
+        setScanComplete(true);
+        setScannerLocked(false);
       } catch (error) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Alert.alert(
           "Invalid QR code",
           error instanceof Error ? error.message : "Scanned QR code was not recognized.",
         );
-      } finally {
         setTimeout(() => {
           setScannerLocked(false);
         }, 600);
@@ -217,7 +224,7 @@ export function ConnectionsNewRouteScreen({
       >
         <View collapsable={false} className="gap-6.5">
           <PairingScanCard
-            cameraActive={cameraPermission?.granted === true && screenFocused}
+            cameraActive={cameraPermission?.granted === true && screenFocused && !scanComplete}
             onScan={handleQrScan}
             onScanPress={() => {
               void handleScanPress();
