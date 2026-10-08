@@ -9,6 +9,7 @@ import { piClient } from "@t3tools/provider-pi/client";
 /** The provider client definitions this mobile build ships. */
 const providerClients = makeProviderClientRegistry([
   cursorClient,
+  grokClient,
   museClient,
   openCodeClient,
   piClient,
