@@ -10,7 +10,8 @@
  *   node scripts/record-grok-acp-replay-fixture.ts --scenario simple
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { GrokSettings, type ProviderReplayEntry } from "@t3tools/contracts";
+import { type ProviderReplayEntry } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
@@ -31,7 +32,7 @@ import {
   GROK_PROVIDER,
   grokLaunchRuntimeMode,
   makeGrokAdapterV2,
-} from "../src/orchestration-v2/Adapters/GrokAdapterV2.ts";
+} from "@t3tools/provider-grok/testing";
 import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -43,7 +44,7 @@ import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixture
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { makeGrokAcpRuntime } from "../src/provider/acp/GrokAcpSupport.ts";
+import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const wallClock = Clock.Clock.defaultValue();

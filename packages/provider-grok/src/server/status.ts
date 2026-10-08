@@ -1,12 +1,12 @@
 import {
   type CustomModelSetting,
-  type GrokSettings,
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderAuth,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { GrokSettings } from "../settings.ts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Crypto from "effect/Crypto";
@@ -41,9 +41,9 @@ import {
   isValidGrokReasoningEffortToken,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
-} from "./acp/GrokAcpSupport.ts";
+} from "./acpSupport.ts";
 import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
-import { discoverGrokSkills } from "./Drivers/GrokSkills.ts";
+import { discoverGrokSkills } from "./skills.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",

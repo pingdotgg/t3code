@@ -33,6 +33,7 @@ const workspaceFiles = [
   "packages/provider-pi/package.json",
   "packages/provider-acp/package.json",
   "packages/provider-cursor/package.json",
+  "packages/provider-grok/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
   "packages/effect-acp/package.json",

@@ -1,16 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  GrokSettings,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as EffectAcpErrors from "effect-acp/errors";
-import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
+import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +25,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProjectStore from "../ProjectStore.ts";
-import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
+import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -43,7 +43,7 @@ import {
   makeGrokAdapterV2,
   GrokProviderCapabilitiesV2,
   type GrokAdapterV2Options,
-} from "./GrokAdapterV2.ts";
+} from "@t3tools/provider-grok/testing";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",

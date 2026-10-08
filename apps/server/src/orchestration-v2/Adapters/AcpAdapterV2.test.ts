@@ -12,7 +12,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
-  GrokSettings,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -27,6 +26,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
@@ -64,7 +64,7 @@ import {
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   registerXAiBackgroundTaskTracking,
-} from "../../provider/acp/XAiAcpExtension.ts";
+} from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterProtocolError,
@@ -93,7 +93,7 @@ import {
   type AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
-import { makeGrokAdapterV2 } from "./GrokAdapterV2.ts";
+import { makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
 import {
   acpRegistryPromptFailure,
   registerMistralVibeAcpExtensions,

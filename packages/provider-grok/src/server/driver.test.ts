@@ -9,27 +9,15 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as ServerConfig from "../../config.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
-import { GrokDriver } from "./GrokDriver.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import { GrokDriver } from "./driver.ts";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderHostLive from "../ProviderHostLive.ts";
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
-const layerDeps = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-grok-driver-update-",
-}).pipe(
+const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(
-    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-      shouldRunScopeWork: () => Effect.succeed(false),
-    }),
-  ),
   Layer.provideMerge(
     Layer.succeed(
       ProviderEventLoggers.ProviderEventLoggers,
@@ -42,10 +30,6 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
       HttpClient.make(() => Effect.die("Disabled Grok must not make an HTTP request")),
     ),
   ),
-);
-const layerTest = ProviderHostLive.layer.pipe(
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provideMerge(layerDeps),
 );
 
 const noSpawner = ChildProcessSpawner.make(() =>

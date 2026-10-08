@@ -33,7 +33,7 @@ import {
   xAiPromptCompleteFromSessionUpdate,
   xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
-} from "./XAiAcpExtension.ts";
+} from "./xaiAcpExtension.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
