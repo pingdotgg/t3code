@@ -33,24 +33,23 @@ import {
 
 export const AllowGitHubReserve = GitHubApi.AllowGitHubReserve;
 
-const gitHubCliFailureFields = {
-  command: Schema.Literal("gh"),
+const gitHubFailureFields = {
   cwd: Schema.String,
   cause: Schema.Defect(),
 } as const;
 
-export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnavailableError>()(
-  "GitHubCliUnavailableError",
-  gitHubCliFailureFields,
+export class GitHubRepositoryUnavailableError extends Schema.TaggedError<GitHubRepositoryUnavailableError>()(
+  "GitHubRepositoryUnavailableError",
+  gitHubFailureFields,
 ) {
   override get message(): string {
     return "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.";
   }
 }
 
-export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAuthenticationError>()(
-  "GitHubCliAuthenticationError",
-  gitHubCliFailureFields,
+export class GitHubRepositoryAuthenticationError extends Schema.TaggedError<GitHubRepositoryAuthenticationError>()(
+  "GitHubRepositoryAuthenticationError",
+  gitHubFailureFields,
 ) {
   override get message(): string {
     // A missing or turned-off credential already says what to do about it.
@@ -60,9 +59,9 @@ export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAu
   }
 }
 
-export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLimitError>()(
-  "GitHubCliRateLimitError",
-  { ...gitHubCliFailureFields, retryAt: Schema.optionalKey(Schema.Finite) },
+export class GitHubRepositoryRateLimitError extends Schema.TaggedError<GitHubRepositoryRateLimitError>()(
+  "GitHubRepositoryRateLimitError",
+  { ...gitHubFailureFields, retryAt: Schema.optionalKey(Schema.Finite) },
 ) {
   override get message(): string {
     return "GitHub API rate limit exceeded. Requests resume when the limit resets.";
@@ -71,16 +70,16 @@ export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLim
 
 export class GitHubPullRequestNotFoundError extends Schema.TaggedError<GitHubPullRequestNotFoundError>()(
   "GitHubPullRequestNotFoundError",
-  gitHubCliFailureFields,
+  gitHubFailureFields,
 ) {
   override get message(): string {
     return "Pull request not found. Check the PR number or URL and try again.";
   }
 }
 
-export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandError>()(
-  "GitHubCliCommandError",
-  { ...gitHubCliFailureFields, httpStatus: Schema.optional(Schema.Int) },
+export class GitHubRepositoryCommandError extends Schema.TaggedError<GitHubRepositoryCommandError>()(
+  "GitHubRepositoryCommandError",
+  { ...gitHubFailureFields, httpStatus: Schema.optional(Schema.Int) },
 ) {
   override get message(): string {
     // GitHub's own reason ("A pull request already exists…") or the failed step's, when known.
@@ -92,15 +91,14 @@ export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandEr
   }
 }
 
-const gitHubCliDecodeFields = {
-  command: Schema.Literal("gh"),
+const gitHubDecodeFields = {
   cwd: Schema.String,
   cause: Schema.Defect(),
 } as const;
 
 export class GitHubPullRequestListDecodeError extends Schema.TaggedError<GitHubPullRequestListDecodeError>()(
   "GitHubPullRequestListDecodeError",
-  gitHubCliDecodeFields,
+  gitHubDecodeFields,
 ) {
   override get message(): string {
     return "GitHub returned an invalid pull request list.";
@@ -109,7 +107,7 @@ export class GitHubPullRequestListDecodeError extends Schema.TaggedError<GitHubP
 
 export class GitHubChangeRequestListDecodeError extends Schema.TaggedError<GitHubChangeRequestListDecodeError>()(
   "GitHubChangeRequestListDecodeError",
-  gitHubCliDecodeFields,
+  gitHubDecodeFields,
 ) {
   override get message(): string {
     return "GitHub returned an invalid change request list.";
@@ -118,7 +116,7 @@ export class GitHubChangeRequestListDecodeError extends Schema.TaggedError<GitHu
 
 export class GitHubPullRequestDecodeError extends Schema.TaggedError<GitHubPullRequestDecodeError>()(
   "GitHubPullRequestDecodeError",
-  gitHubCliDecodeFields,
+  gitHubDecodeFields,
 ) {
   override get message(): string {
     return "GitHub returned an invalid pull request.";
@@ -127,53 +125,56 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedError<GitHubPullR
 
 export class GitHubRepositoryDecodeError extends Schema.TaggedError<GitHubRepositoryDecodeError>()(
   "GitHubRepositoryDecodeError",
-  gitHubCliDecodeFields,
+  gitHubDecodeFields,
 ) {
   override get message(): string {
     return "GitHub returned an invalid repository.";
   }
 }
 
-export const GitHubCliError = Schema.Union([
-  GitHubCliUnavailableError,
-  GitHubCliAuthenticationError,
-  GitHubCliRateLimitError,
+export const GitHubRepositoryApiError = Schema.Union([
+  GitHubRepositoryUnavailableError,
+  GitHubRepositoryAuthenticationError,
+  GitHubRepositoryRateLimitError,
   GitHubPullRequestNotFoundError,
-  GitHubCliCommandError,
+  GitHubRepositoryCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
 ]);
-export type GitHubCliError = typeof GitHubCliError.Type;
+export type GitHubRepositoryApiError = typeof GitHubRepositoryApiError.Type;
 
-export const isGitHubCliError = Schema.is(GitHubCliError);
+export const isGitHubRepositoryApiError = Schema.is(GitHubRepositoryApiError);
 
 /** Maps a GitHub API failure onto the errors callers of this service already handle. */
-function fromGitHubApiError(cwd: string, error: GitHubApi.GitHubApiError): GitHubCliError {
-  const context = { command: "gh" as const, cwd, cause: error };
+function fromGitHubApiError(
+  cwd: string,
+  error: GitHubApi.GitHubApiError,
+): GitHubRepositoryApiError {
+  const context = { cwd, cause: error };
   switch (error._tag) {
     case "GitHubCliMissingError":
-      return new GitHubCliUnavailableError(context);
+      return new GitHubRepositoryUnavailableError(context);
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
     case "GitHubApiAuthenticationError":
-      return new GitHubCliAuthenticationError(context);
+      return new GitHubRepositoryAuthenticationError(context);
     case "GitHubCliFailedError":
-      return new GitHubCliCommandError(context);
+      return new GitHubRepositoryCommandError(context);
     case "GitHubApiRateLimitError":
-      return new GitHubCliRateLimitError({
+      return new GitHubRepositoryRateLimitError({
         ...context,
         ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
       });
     case "SourceControlRateLimitPausedError":
-      return new GitHubCliRateLimitError({ ...context, retryAt: error.retryAt });
+      return new GitHubRepositoryRateLimitError({ ...context, retryAt: error.retryAt });
     case "GitHubApiNotFoundError":
       return new GitHubPullRequestNotFoundError(context);
     case "GitHubApiResponseError":
-      return new GitHubCliCommandError({ ...context, httpStatus: error.status });
+      return new GitHubRepositoryCommandError({ ...context, httpStatus: error.status });
     case "GitHubApiRequestError":
-      return new GitHubCliCommandError(context);
+      return new GitHubRepositoryCommandError(context);
   }
 }
 
@@ -208,15 +209,15 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
-export class GitHubCli extends Context.Service<
-  GitHubCli,
+export class GitHubRepositoryApi extends Context.Service<
+  GitHubRepositoryApi,
   {
     readonly listOpenPullRequests: (input: {
       readonly cwd: string;
       readonly headSelector: string;
       readonly limit?: number;
       readonly rateLimitHost?: string;
-    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubRepositoryApiError>;
 
     /**
      * Pull requests whose head is `headSelector` (a branch, or `owner:branch` for a fork), in the
@@ -230,24 +231,24 @@ export class GitHubCli extends Context.Service<
       readonly limit: number;
       /** The checkout's GitHub API host. Without it, the host comes from the git remotes. */
       readonly rateLimitHost?: string;
-    }) => Effect.Effect<ReadonlyArray<NormalizedGitHubPullRequestRecord>, GitHubCliError>;
+    }) => Effect.Effect<ReadonlyArray<NormalizedGitHubPullRequestRecord>, GitHubRepositoryApiError>;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
       readonly rateLimitHost?: string;
-    }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+    }) => Effect.Effect<GitHubPullRequestSummary, GitHubRepositoryApiError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
-    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubRepositoryApiError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
-    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubRepositoryApiError>;
 
     readonly createPullRequest: (input: {
       readonly cwd: string;
@@ -255,20 +256,20 @@ export class GitHubCli extends Context.Service<
       readonly headSelector: string;
       readonly title: string;
       readonly bodyFile: string;
-    }) => Effect.Effect<void, GitHubCliError>;
+    }) => Effect.Effect<void, GitHubRepositoryApiError>;
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly rateLimitHost?: string;
-    }) => Effect.Effect<string | null, GitHubCliError>;
+    }) => Effect.Effect<string | null, GitHubRepositoryApiError>;
 
     readonly checkoutPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
       readonly force?: boolean;
-    }) => Effect.Effect<void, GitHubCliError>;
+    }) => Effect.Effect<void, GitHubRepositoryApiError>;
   }
->()("t3/sourceControl/GitHubCli") {}
+>()("t3/sourceControl/GitHubRepositoryApi") {}
 
 /**
  * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a
@@ -385,7 +386,7 @@ class PullRequestsByHeadRead extends Request.Class<
     readonly allowReserve: boolean;
   },
   ReadonlyArray<NormalizedGitHubPullRequestRecord>,
-  GitHubCliError
+  GitHubRepositoryApiError
 > {}
 
 /** One aliased `pullRequests` connection per lookup, each head and state passed as a variable. */
@@ -549,7 +550,7 @@ export const make = Effect.gen(function* () {
 
   const gitRead = (cwd: string, args: ReadonlyArray<string>) =>
     process.run({
-      operation: "GitHubCli.resolveRepository",
+      operation: "GitHubRepositoryApi.resolveRepository",
       command: "git",
       args,
       cwd,
@@ -558,13 +559,13 @@ export const make = Effect.gen(function* () {
     });
 
   const commandFailure = (cwd: string, detail: string) =>
-    new GitHubCliCommandError({ command: "gh", cwd, cause: new Error(detail) });
+    new GitHubRepositoryCommandError({ cwd, cause: new Error(detail) });
 
   /**
    * The repository `gh` would act on in `cwd`: GH_REPO, else the remote `gh` would pick, else
    * the remote the caller resolved the provider from, else the best-ranked GitHub remote.
    */
-  const resolveRepository = Effect.fn("GitHubCli.resolveRepository")(function* (input: {
+  const resolveRepository = Effect.fn("GitHubRepositoryApi.resolveRepository")(function* (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
   }) {
@@ -623,7 +624,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     input: GitHubApi.GitHubGraphQlInput,
     decode: (raw: string) => Result.Result<A, unknown>,
-    onDecodeFailure: (cause: unknown) => GitHubCliError,
+    onDecodeFailure: (cause: unknown) => GitHubRepositoryApiError,
   ) =>
     api.graphql(input).pipe(
       Effect.mapError((error) => fromGitHubApiError(cwd, error)),
@@ -646,7 +647,7 @@ export const make = Effect.gen(function* () {
       Pick<PullRequestsByHeadRead, "headRefName" | "state" | "limit">
     >;
     readonly allowReserve: boolean;
-    readonly onDecodeFailure: (cause: unknown) => GitHubCliError;
+    readonly onDecodeFailure: (cause: unknown) => GitHubRepositoryApiError;
   }) => {
     const query = buildPullRequestsByHeadQuery(input.lookups);
     return graphqlJson(
@@ -668,7 +669,6 @@ export const make = Effect.gen(function* () {
         decoded.data.repository === null
           ? Effect.fail(
               new GitHubPullRequestNotFoundError({
-                command: "gh",
                 cwd: input.cwd,
                 cause: new Error("The repository could not be read."),
               }),
@@ -697,8 +697,7 @@ export const make = Effect.gen(function* () {
         locator: { host, owner, name },
         lookups: entries.map((entry) => entry.request),
         allowReserve,
-        onDecodeFailure: (cause) =>
-          new GitHubChangeRequestListDecodeError({ command: "gh", cwd, cause }),
+        onDecodeFailure: (cause) => new GitHubChangeRequestListDecodeError({ cwd, cause }),
       }).pipe(
         Effect.map((aliases) => {
           for (const [index, entry] of entries.entries()) {
@@ -724,7 +723,7 @@ export const make = Effect.gen(function* () {
     RequestResolver.setDelay(BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW),
   );
 
-  const listByHead = Effect.fn("GitHubCli.listByHead")(function* (input: {
+  const listByHead = Effect.fn("GitHubRepositoryApi.listByHead")(function* (input: {
     readonly cwd: string;
     readonly headSelector: string;
     readonly state: PullRequestListState;
@@ -759,7 +758,7 @@ export const make = Effect.gen(function* () {
   const toSummaries = (rows: ReadonlyArray<NormalizedGitHubPullRequestRecord>) =>
     rows.map(pullRequestSummary);
 
-  const readPullRequest = Effect.fn("GitHubCli.readPullRequest")(function* (input: {
+  const readPullRequest = Effect.fn("GitHubRepositoryApi.readPullRequest")(function* (input: {
     readonly cwd: string;
     readonly reference: string;
     readonly rateLimitHost?: string | undefined;
@@ -787,7 +786,6 @@ export const make = Effect.gen(function* () {
         }))[0];
       if (found === undefined) {
         return yield* new GitHubPullRequestNotFoundError({
-          command: "gh",
           cwd: input.cwd,
           cause: new Error("No pull request has this head branch."),
         });
@@ -799,7 +797,7 @@ export const make = Effect.gen(function* () {
         ? parsed.locator
         : yield* resolveRepository({ cwd: input.cwd, host: input.rateLimitHost });
     const decodeFailure = (cause: unknown) =>
-      new GitHubPullRequestDecodeError({ command: "gh", cwd: input.cwd, cause });
+      new GitHubPullRequestDecodeError({ cwd: input.cwd, cause });
     const decoded = yield* graphqlJson(
       input.cwd,
       {
@@ -815,7 +813,6 @@ export const make = Effect.gen(function* () {
     const node = decoded.data.repository?.pullRequest;
     if (node == null) {
       return yield* new GitHubPullRequestNotFoundError({
-        command: "gh",
         cwd: input.cwd,
         cause: new Error("The pull request does not exist."),
       });
@@ -825,7 +822,7 @@ export const make = Effect.gen(function* () {
     return record;
   });
 
-  const readRepository = Effect.fn("GitHubCli.readRepository")(function* (
+  const readRepository = Effect.fn("GitHubRepositoryApi.readRepository")(function* (
     cwd: string,
     locator: GitHubRepositoryLocator,
   ) {
@@ -838,7 +835,6 @@ export const make = Effect.gen(function* () {
     const decoded = decodeRawRepository(response.body);
     if (Result.isFailure(decoded)) {
       return yield* new GitHubRepositoryDecodeError({
-        command: "gh",
         cwd,
         cause: decoded.failure,
       });
@@ -846,23 +842,23 @@ export const make = Effect.gen(function* () {
     return decoded.success;
   });
 
-  const readViewerLogin = Effect.fn("GitHubCli.readViewerLogin")(function* (
+  const readViewerLogin = Effect.fn("GitHubRepositoryApi.readViewerLogin")(function* (
     cwd: string,
     host: string,
   ) {
     const response = yield* rest(cwd, { host, operation: "getViewer", path: "user" });
     const decoded = decodeViewerLogin(response.body);
     if (Result.isFailure(decoded)) {
-      return yield* new GitHubCliCommandError({ command: "gh", cwd, cause: decoded.failure });
+      return yield* new GitHubRepositoryCommandError({ cwd, cause: decoded.failure });
     }
     return decoded.success.login;
   });
 
   const gitFailure = (cwd: string) => (cause: unknown) =>
-    new GitHubCliCommandError({ command: "gh", cwd, cause });
+    new GitHubRepositoryCommandError({ cwd, cause });
 
   const runGit = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
-    git.execute({ operation: `GitHubCli.checkoutPullRequest.${operation}`, cwd, args });
+    git.execute({ operation: `GitHubRepositoryApi.checkoutPullRequest.${operation}`, cwd, args });
 
   /**
    * `gh pr checkout` in plain git: the head branch is fetched from the remote that holds it (a
@@ -870,8 +866,8 @@ export const make = Effect.gen(function* () {
    * track the head. A head branch that is gone is read from the base's `refs/pull/<n>/head`.
    * An existing branch fast-forwards, or with `force` is reset to the pull request.
    */
-  const checkoutPullRequest: GitHubCli["Service"]["checkoutPullRequest"] = Effect.fn(
-    "GitHubCli.checkoutPullRequest",
+  const checkoutPullRequest: GitHubRepositoryApi["Service"]["checkoutPullRequest"] = Effect.fn(
+    "GitHubRepositoryApi.checkoutPullRequest",
   )(function* (input) {
     const reference = parsePullRequestReference(input.reference);
     const pullRequest = yield* readPullRequest({ cwd: input.cwd, reference: input.reference });
@@ -994,7 +990,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(gitFailure(input.cwd)));
   });
 
-  return GitHubCli.of({
+  return GitHubRepositoryApi.of({
     listPullRequestsByHead: (input) =>
       AllowGitHubReserve.pipe(
         Effect.flatMap((allowReserve) => listByHead({ ...input, allowReserve })),
@@ -1043,7 +1039,6 @@ export const make = Effect.gen(function* () {
         const decoded = decodeRawRepository(response.body);
         if (Result.isFailure(decoded)) {
           return yield* new GitHubRepositoryDecodeError({
-            command: "gh",
             cwd: input.cwd,
             cause: decoded.failure,
           });
@@ -1083,7 +1078,7 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitHubCli, make).pipe(
+export const layer = Layer.effect(GitHubRepositoryApi, make).pipe(
   Layer.provideMerge(GitHubApi.layer),
   Layer.provideMerge(GitHubCredentials.layer),
   Layer.provideMerge(GitHubGraphQlBudget.layer),

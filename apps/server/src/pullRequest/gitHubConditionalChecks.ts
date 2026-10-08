@@ -9,7 +9,7 @@ import { PositiveInt, type PullRequestChecks } from "@t3tools/contracts";
 
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import type { GitHubPullRequestDetail } from "./gitHubPullRequestJson.ts";
-import type { GitHubPullRequestCliError } from "./GitHubPullRequestCli.ts";
+import type { GitHubPullRequestApiError } from "./GitHubPullRequestApi.ts";
 import type { ProviderRepositoryRef } from "./PullRequestProvider.ts";
 
 const HeadSchema = Schema.Struct({
@@ -70,7 +70,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
       Pick<GitHubPullRequestDetail, "state" | "checks" | "headSha"> & {
         workflowApprovalsRequired?: number;
       },
-      GitHubPullRequestCliError
+      GitHubPullRequestApiError
     >,
   ) =>
     Effect.gen(function* () {

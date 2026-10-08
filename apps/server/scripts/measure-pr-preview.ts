@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
-import * as GitHubPullRequestCli from "../src/pullRequest/GitHubPullRequestCli.ts";
+import * as GitHubPullRequestApi from "../src/pullRequest/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/pullRequest/GitHubPullRequestProvider.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
@@ -73,7 +73,7 @@ const measuredApi = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-const services = GitHubPullRequestCli.layer.pipe(
+const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(measuredApi),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),

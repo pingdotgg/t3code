@@ -16,7 +16,7 @@ import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts";
-import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
+import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
@@ -61,11 +61,11 @@ export const make = Effect.map(
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
   Layer.provide(
-    GitHubPullRequestCli.layer.pipe(
+    GitHubPullRequestApi.layer.pipe(
       Layer.provide(
         GitHubApi.layer.pipe(
           Layer.provide(GitHubCredentials.layer),
-          // The same layers GitHubCli merges, so both share one budget and one pause per host.
+          // The same layers GitHubRepositoryApi merges, so both share one budget and one pause per host.
           Layer.provide(GitHubGraphQlBudget.layer),
           Layer.provide(SourceControlRateLimit.layer),
         ),
