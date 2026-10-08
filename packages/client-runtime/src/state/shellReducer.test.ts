@@ -1,8 +1,12 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
-import { applyShellStreamEvent, mergeShellSnapshotProjects } from "./shellReducer.ts";
+import {
+  applyShellStreamEvent,
+  mergeShellSnapshotProjects,
+  reuseUnchangedThreadShells,
+} from "./shellReducer.ts";
 
 const repositoryIdentity = {
   canonicalKey: "github.com/example/repo",
@@ -461,5 +465,41 @@ describe("applyShellStreamEvent", () => {
     } as never);
 
     expect(next).toBe(v2ShellSnapshot);
+  });
+});
+
+describe("reuseUnchangedThreadShells", () => {
+  const link: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number: 3,
+    url: "https://github.com/pingdotgg/t3code/pull/3",
+    source: "agent",
+    linkedAt: "2026-06-20T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
+  const linked = { ...v2ThreadShell, pullRequests: [link] };
+  const other = { ...v2ThreadShell, id: ThreadId.make("thread-other"), title: "Other" };
+
+  it("keeps the previous object for an unchanged row, even without its deferred links", () => {
+    const previous = { ...v2ShellSnapshot, threads: [linked, other] };
+    const { pullRequests: _links, ...withoutLinks } = linked;
+    const next = reuseUnchangedThreadShells(previous, {
+      ...v2ShellSnapshot,
+      snapshotSequence: 5,
+      threads: [withoutLinks, { ...other, title: "Renamed" }],
+    });
+    expect(next.snapshotSequence).toBe(5);
+    expect(next.threads[0]).toBe(linked);
+    expect(next.threads[1]).not.toBe(other);
+    expect(next.threads[1]?.title).toBe("Renamed");
+  });
+
+  it("returns the incoming snapshot when no row is unchanged", () => {
+    const incoming = { ...v2ShellSnapshot, threads: [{ ...other, title: "Renamed" }] };
+    expect(reuseUnchangedThreadShells({ ...v2ShellSnapshot, threads: [other] }, incoming)).toBe(
+      incoming,
+    );
   });
 });

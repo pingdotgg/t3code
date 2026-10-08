@@ -1,6 +1,5 @@
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
-  StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   Persistence,
 } from "@t3tools/client-runtime/platform";
@@ -16,6 +15,7 @@ import {
   attachProjectFaviconDatabase,
   projectFaviconDatabaseCache,
 } from "../lib/projectFaviconDatabaseCache";
+import { decodeStoredShellSnapshot } from "./shell-cache-decoding";
 
 const SERVER_CONFIG_CACHE_SCHEMA_VERSION = 1;
 const VCS_REFS_CACHE_SCHEMA_VERSION = 1;
@@ -32,9 +32,6 @@ const StoredVcsRefs = Schema.Struct({
   refs: VcsListRefsResult,
 });
 
-const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(StoredOrchestrationShellSnapshot),
-);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
 );
@@ -113,7 +110,15 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
-      }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconDatabaseCache.hydrate()))),
+      }).pipe(
+        // Read cached project icons in parallel with the shell so the first rows can show
+        // them, instead of making the thread list wait for the icon read after the decode.
+        Effect.zipWith(
+          Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
+          (snapshot) => snapshot,
+          { concurrent: true },
+        ),
+      ),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
       const payload = yield* encodeStoredShellSnapshot({
