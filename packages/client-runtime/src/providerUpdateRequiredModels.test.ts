@@ -18,4 +18,18 @@ describe("formatProviderUpdateRequiredNotice", () => {
       formatProviderUpdateRequiredNotice({ driver: ProviderDriverKind.make("codex") }),
     ).toBeNull();
   });
+
+  it("names only the gated models a search matches", () => {
+    const provider = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      updateRequiredModels: [
+        { slug: "claude-a", name: "Model A", minVersion: "2.1.9" },
+        { slug: "claude-b", name: "Model B", minVersion: "2.1.10" },
+      ],
+    };
+    expect(formatProviderUpdateRequiredNotice(provider, " model a ")).toBe(
+      "Update Claude Code to v2.1.9 or newer to use Model A.",
+    );
+    expect(formatProviderUpdateRequiredNotice(provider, "gpt")).toBeNull();
+  });
 });

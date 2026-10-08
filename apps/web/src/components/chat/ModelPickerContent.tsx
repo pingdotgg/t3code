@@ -594,10 +594,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // Models the manifest announces that this provider's installed CLI is too
   // old to run. Without this, a new model just seems missing until the user
   // happens to update the CLI.
-  const updateRequiredNotice =
-    !isSearching && selectedEntry
-      ? formatProviderUpdateRequiredNotice(selectedEntry.snapshot)
-      : null;
+  // A search spans every instance, so it can explain gated matches from any of them.
+  const updateRequiredNotices = (
+    isSearching
+      ? instanceEntries.filter(matchesLockedProvider)
+      : selectedEntry
+        ? [selectedEntry]
+        : []
+  ).flatMap((entry) => {
+    const notice = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
+    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+  });
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -1087,9 +1094,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : (
               <>
                 <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
-                {updateRequiredNotice ? (
-                  <p className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground">
-                    {updateRequiredNotice}{" "}
+                {updateRequiredNotices.map(({ instanceId, notice }) => (
+                  <p
+                    key={instanceId}
+                    className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+                  >
+                    {notice}{" "}
                     <InlineButton
                       onClick={() => {
                         props.onRequestClose?.();
@@ -1099,7 +1109,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       Provider settings
                     </InlineButton>
                   </p>
-                ) : null}
+                ))}
               </>
             )}
           </div>
