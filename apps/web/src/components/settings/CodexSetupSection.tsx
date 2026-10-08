@@ -12,6 +12,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { codexAuthHandoffUrl } from "@t3tools/shared/codexAuthHandoff";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { isLoopbackHost } from "@t3tools/shared/preview";
@@ -32,7 +33,7 @@ import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
 import { ChatGptAccountPicker } from "./ChatGptAccountPicker";
 import { Input } from "../ui/input";
-import { OpenAI } from "../Icons";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
@@ -67,6 +68,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   const content =
     props.mode === "existing" && props.presentation === "onboarding" ? (
       <CodexWelcomeCard
+        provider={props.provider}
         title={props.displayName || props.provider?.displayName || "Codex"}
         description={
           existingReady ? (
@@ -127,6 +129,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
     ) : props.mode === "existing" ? null : props.provider?.setup === undefined ? (
       props.presentation === "onboarding" ? (
         <CodexWelcomeCard
+          provider={props.provider}
           title={props.displayName || props.provider?.displayName || "Codex"}
           description={<CodexSignInDescription />}
           control={
@@ -769,6 +772,7 @@ function ManagedCodexSetup({
       <>
         {accountPicker}
         <CodexWelcomeCard
+          provider={provider}
           title={displayName || provider?.displayName || "Codex"}
           description={
             installActive ? (
@@ -1112,12 +1116,14 @@ function CodexSignInDescription({
 
 /** A single, calm setup row for the first-run welcome screen. */
 function CodexWelcomeCard({
+  provider,
   title,
   description,
   control,
   secondaryControl,
   children,
 }: {
+  readonly provider: ServerProvider | undefined;
   readonly title: string;
   readonly description: ReactNode;
   readonly control?: ReactNode;
@@ -1128,7 +1134,14 @@ function CodexWelcomeCard({
   return (
     <div className="rounded-lg border border-border bg-background px-4 py-4">
       <div className="flex flex-wrap items-center gap-3">
-        <OpenAI className="size-5 shrink-0 fill-foreground" />
+        <ProviderInstanceIcon
+          driverKind={ProviderDriverKind.make("codex")}
+          displayName={title}
+          accentColor={provider?.accentColor}
+          icon={provider?.icon}
+          badgeLabel={provider?.badgeLabel}
+          iconClassName="size-5"
+        />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium">{title}</h3>
           <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</div>

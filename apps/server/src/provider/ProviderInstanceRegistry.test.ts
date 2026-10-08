@@ -312,6 +312,36 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("restyles an instance in place without rebuilding its runtime", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const base = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+        config: makeCodexConfig({}),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+        drivers: [CodexDriver],
+        configMap: { [instanceId]: base },
+      });
+      const before = yield* registry.getInstance(instanceId);
+      expect(yield* before!.appearance!).toEqual({ icon: undefined, badgeLabel: undefined });
+
+      yield* mutator.reconcile({
+        [instanceId]: { ...base, icon: "initials", badgeLabel: "KI" },
+      });
+      const restyled = yield* registry.getInstance(instanceId);
+      expect(restyled).toBe(before);
+      expect(yield* restyled!.appearance!).toEqual({ icon: "initials", badgeLabel: "KI" });
+
+      // A runtime change still rebuilds.
+      yield* mutator.reconcile({
+        [instanceId]: { ...base, icon: "initials", badgeLabel: "KI", displayName: "Personal" },
+      });
+      expect(yield* registry.getInstance(instanceId)).not.toBe(before);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       // Old settings files can carry both flags with conflicting values.

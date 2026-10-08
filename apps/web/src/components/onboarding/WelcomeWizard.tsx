@@ -980,6 +980,9 @@ function AgentCard({
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
+        accentColor={provider?.accentColor}
+        icon={provider?.icon}
+        badgeLabel={provider?.badgeLabel}
         iconClassName="size-5"
       />
       <div className="min-w-0 flex-1">

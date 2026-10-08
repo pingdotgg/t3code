@@ -22,7 +22,7 @@ import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { Alert, Linking, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, type ProviderGlyphAppearance } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -126,6 +126,8 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
 /** One account: icon, name and plan on a single line, then its windows. */
 export function AccountLimits(props: {
   readonly driver: Driver;
+  /** The instance's chosen glyph and badge text, when the account is an instance. */
+  readonly appearance?: ProviderGlyphAppearance | undefined;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
@@ -151,7 +153,7 @@ export function AccountLimits(props: {
       }
     >
       <View className="flex-row items-center gap-2">
-        <ProviderIcon provider={props.driver} size={16} />
+        <ProviderIcon provider={props.driver} appearance={props.appearance} size={16} />
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
           {props.instanceLabel !== props.label ? (

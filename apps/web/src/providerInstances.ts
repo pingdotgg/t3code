@@ -53,6 +53,9 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /** Chosen glyph (driver slug or initials icon); unset draws the driver's own. */
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
   /** Registry identity used to resolve the official icon for generic ACP instances. */
   readonly acpRegistryAgentId?: string | undefined;
   /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
@@ -126,6 +129,8 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName: resolveProviderInstanceDisplayName(snapshot),
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      icon: snapshot.icon,
+      badgeLabel: snapshot.badgeLabel,
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
