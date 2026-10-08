@@ -7,7 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { GrokSettings } from "@t3tools/contracts";
 
 import {
@@ -720,7 +720,7 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
           }).pipe(Effect.provideService(HttpClient.HttpClient, client));
           expect(malformed.unavailable).toEqual({
             reason: "probeFailed",
-            message: "Grok could not read usage limits.",
+            message: "Grok could not read saved credentials.",
           });
         }
       }).pipe(Effect.scoped),
@@ -758,32 +758,86 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
       }),
   );
 
-  it.effect("sanitizes HTTP failures and malformed billing responses, keeping the account", () =>
-    Effect.gen(function* () {
-      for (const response of [
-        new Response("private response", { status: 401 }),
-        Response.json({ config: { creditUsagePercent: "private-value" } }),
-      ]) {
-        const { email, usageLimits: limits } = yield* readGrokAccount({
-          HOME: "/definitely/not/a/grok-home",
-          GROK_AUTH:
-            '{"https://accounts.x.ai/sign-in":{"key":"private-token","email":"someone@example.com"}}',
-        }).pipe(
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(HttpClientResponse.fromWeb(request, response)),
+  it.effect(
+    "classifies billing failures without exposing response bodies, keeping the account",
+    () =>
+      Effect.gen(function* () {
+        for (const [response, message] of [
+          [
+            new Response("private response", { status: 401 }),
+            "Grok sign-in was rejected. Reconnect Grok in provider settings.",
+          ],
+          [
+            new Response("private response", { status: 403 }),
+            "Grok usage limits are unavailable for this account.",
+          ],
+          [
+            new Response("private response", { status: 429 }),
+            "Grok usage-limit checks are rate limited. Try again soon.",
+          ],
+          [
+            new Response("private response", { status: 503 }),
+            "Grok billing is temporarily unavailable.",
+          ],
+          [new Response("private response", { status: 418 }), "Grok billing returned HTTP 418."],
+          [
+            new Response("{", { headers: { "content-type": "application/json" } }),
+            "Grok returned an invalid usage-limits response.",
+          ],
+          [
+            Response.json({ config: { creditUsagePercent: "private-value" } }),
+            "Grok returned an invalid usage-limits response.",
+          ],
+        ] as const) {
+          const { email, usageLimits: limits } = yield* readGrokAccount({
+            HOME: "/definitely/not/a/grok-home",
+            GROK_AUTH:
+              '{"https://accounts.x.ai/sign-in":{"key":"private-token","email":"someone@example.com"}}',
+          }).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(HttpClientResponse.fromWeb(request, response)),
+              ),
             ),
+          );
+          expect(email).toBe("someone@example.com");
+          expect(limits.windows).toEqual([]);
+          expect(limits.unavailable).toEqual({
+            reason: "probeFailed",
+            message,
+          });
+        }
+      }),
+  );
+
+  it.effect("reports a transport failure without exposing its cause", () =>
+    readGrokAccount({
+      HOME: "/definitely/not/a/grok-home",
+      GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"private-token"}}',
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause: new Error("private transport cause"),
+              }),
+            }),
           ),
-        );
-        expect(email).toBe("someone@example.com");
-        expect(limits.windows).toEqual([]);
-        expect(limits.unavailable).toEqual({
-          reason: "probeFailed",
-          message: "Grok could not read usage limits.",
-        });
-      }
-    }),
+        ),
+      ),
+      Effect.tap(({ usageLimits }) =>
+        Effect.sync(() =>
+          expect(usageLimits.unavailable).toEqual({
+            reason: "probeFailed",
+            message: "Grok could not connect to the billing service.",
+          }),
+        ),
+      ),
+    ),
   );
 });
 

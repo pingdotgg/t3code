@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
@@ -35,6 +35,36 @@ const GrokUsageResponse = Schema.Struct({
     }),
   ),
 });
+
+function unavailableGrokUsageLimits(checkedAt: string, message: string) {
+  return makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed", message });
+}
+
+function grokUsageProbeFailureMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "_tag" in error) {
+    if (error._tag === "TimeoutError") return "Grok usage-limit check timed out.";
+    if (error._tag === "ParseError" || error._tag === "SchemaError") {
+      return "Grok returned an invalid usage-limits response.";
+    }
+  }
+  if (
+    HttpClientError.isHttpClientError(error) &&
+    (error.reason._tag === "DecodeError" || error.reason._tag === "EmptyBodyError")
+  ) {
+    return "Grok returned an invalid usage-limits response.";
+  }
+  return "Grok could not connect to the billing service.";
+}
+
+function grokUsageHttpFailureMessage(status: number): string {
+  if (status === 401) {
+    return "Grok sign-in was rejected. Reconnect Grok in provider settings.";
+  }
+  if (status === 403) return "Grok usage limits are unavailable for this account.";
+  if (status === 429) return "Grok usage-limit checks are rate limited. Try again soon.";
+  if (status >= 500) return "Grok billing is temporarily unavailable.";
+  return `Grok billing returned HTTP ${status}.`;
+}
 
 export function grokUsageResponseToLimits(
   response: typeof GrokUsageResponse.Type,
@@ -141,15 +171,14 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const probeFailed = makeUnavailableUsageLimits({
+  const credentialFailed = unavailableGrokUsageLimits(
     checkedAt,
-    reason: "probeFailed",
-    message: "Grok could not read usage limits.",
-  });
+    "Grok could not read saved credentials.",
+  );
   const credential = yield* Effect.option(
     readGrokCredential(environment).pipe(Effect.timeout("10 seconds")),
   );
-  if (Option.isNone(credential)) return { email: undefined, usageLimits: probeFailed };
+  if (Option.isNone(credential)) return { email: undefined, usageLimits: credentialFailed };
   const email = credential.value?.email?.trim() || undefined;
   const token = credential.value?.key?.trim();
   if (!token) {
@@ -163,13 +192,16 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
         HttpClientRequest.bearerToken(token),
       ),
     );
-    const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
+    if (response.status < 200 || response.status >= 300) {
+      return unavailableGrokUsageLimits(checkedAt, grokUsageHttpFailureMessage(response.status));
+    }
+    const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(response);
     return grokUsageResponseToLimits(body, checkedAt);
   }).pipe(
     Effect.timeout("10 seconds"),
-    Effect.orElseSucceed(() => probeFailed),
+    Effect.catch((error) =>
+      Effect.succeed(unavailableGrokUsageLimits(checkedAt, grokUsageProbeFailureMessage(error))),
+    ),
   );
   return { email, usageLimits };
 });
