@@ -56,6 +56,28 @@ describe("formatShortTimestamp", () => {
   });
 });
 
+describe("resolveHour12", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it.each([
+    ["en-GB", false],
+    ["en-US", true],
+  ])(
+    "follows the %s clock for System default and the explicit settings",
+    async (locale, hour12) => {
+      vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => locale } });
+      vi.resetModules();
+      const { resolveHour12: resolve } = await import("./timestampFormat");
+      expect(resolve("locale")).toBe(hour12);
+      expect(resolve("12-hour")).toBe(true);
+      expect(resolve("24-hour")).toBe(false);
+    },
+  );
+});
+
 describe("resolveWeekStartsOn", () => {
   it.each([
     ["en-US", 0],

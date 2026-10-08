@@ -126,19 +126,38 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
   return starts;
 }
 
+/** Hour fields for the hourly labels. Without `hour12` they keep the `en-US` 12-hour clock. */
+function hourOptions(hour12: boolean | undefined): Intl.DateTimeFormatOptions {
+  if (hour12 === undefined) return { hour: "numeric" };
+  return hour12 ? { hour: "numeric", hourCycle: "h12" } : { hour: "2-digit", hourCycle: "h23" };
+}
+
+/**
+ * Formats an hour label. Like `2 PM`, a 24-hour label names the whole hour, so
+ * it reads `14:00` even when the rolling bucket starts at 14:37. A bare `14`
+ * does not read as a time.
+ */
+function formatHour(format: Intl.DateTimeFormat, date: Date, hour12: boolean | undefined): string {
+  if (hour12 !== false) return format.format(date);
+  return format
+    .formatToParts(date)
+    .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
+    .join("");
+}
+
 /**
  * A rolling bucket start rendered in the viewer's requested time zone.
  *
  * Repeated wall-clock hours during a fall-back transition include their short
  * zone name so the two distinct buckets remain distinguishable.
  */
-export function formatHourShort(hourStart: string, timeZone?: string): string {
+export function formatHourShort(hourStart: string, timeZone?: string, hour12?: boolean): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
   const options = timeZone === undefined ? {} : { timeZone };
   const hourFormat = dateTimeFormatter("en-US", {
     ...options,
-    hour: "numeric",
+    ...hourOptions(hour12),
   });
   const wallHourFormat = dateTimeFormatter("en-CA", {
     ...options,
@@ -153,24 +172,26 @@ export function formatHourShort(hourStart: string, timeZone?: string): string {
     (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
   );
 
-  if (!isRepeatedHour) return hourFormat.format(instant);
-  return dateTimeFormatter("en-US", {
-    ...(timeZone === undefined ? {} : { timeZone }),
-    hour: "numeric",
+  if (!isRepeatedHour) return formatHour(hourFormat, instant, hour12);
+  const zonedHourFormat = dateTimeFormatter("en-US", {
+    ...options,
+    ...hourOptions(hour12),
     timeZoneName: "short",
-  }).format(instant);
+  });
+  return formatHour(zonedHourFormat, instant, hour12);
 }
 
-/** `2026-08-11T14:37:00Z` to `Aug 11, 2 PM` in the requested zone. */
-export function formatDateTimeShort(instant: string, timeZone?: string): string {
+/** `2026-08-11T14:37:00Z` to `Aug 11, 2 PM` (or `Aug 11, 14:00`) in the requested zone. */
+export function formatDateTimeShort(instant: string, timeZone?: string, hour12?: boolean): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
-  return dateTimeFormatter("en-US", {
+  const dateHourFormat = dateTimeFormatter("en-US", {
     ...(timeZone === undefined ? {} : { timeZone }),
     month: "short",
     day: "numeric",
-    hour: "numeric",
-  }).format(date);
+    ...hourOptions(hour12),
+  });
+  return formatHour(dateHourFormat, date, hour12);
 }
 
 /** An hourly tooltip label relative to the rolling window's end date. */
@@ -178,11 +199,12 @@ export function formatRelativeHourShort(
   hourStart: string,
   relativeTo: string,
   timeZone?: string,
+  hour12?: boolean,
 ): string {
   const instant = new Date(hourStart);
   const reference = new Date(relativeTo);
   if (Number.isNaN(instant.getTime()) || Number.isNaN(reference.getTime())) {
-    return formatDateTimeShort(hourStart, timeZone);
+    return formatDateTimeShort(hourStart, timeZone, hour12);
   }
 
   const dayFormat = dateTimeFormatter("en-CA", {
@@ -194,11 +216,11 @@ export function formatRelativeHourShort(
   const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
   const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
-  const hour = formatHourShort(hourStart, timeZone);
+  const hour = formatHourShort(hourStart, timeZone, hour12);
 
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
-  return formatDateTimeShort(hourStart, timeZone);
+  return formatDateTimeShort(hourStart, timeZone, hour12);
 }
 
 /**

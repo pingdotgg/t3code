@@ -53,6 +53,19 @@ function readHostSystemLocale(): string | null {
 
 const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
 
+const localeUsesHour12 =
+  new Intl.DateTimeFormat(timestampLocale, { hour: "numeric" }).resolvedOptions().hour12 ?? false;
+
+/**
+ * Whether a time format setting shows a 12-hour clock. "System default"
+ * follows the same locale as the other timestamps. For formatters that take
+ * an explicit `hour12`, such as the usage page's hourly labels.
+ */
+export function resolveHour12(timestampFormat: TimestampFormat): boolean {
+  if (timestampFormat === "locale") return localeUsesHour12;
+  return timestampFormat === "12-hour";
+}
+
 const WEEKDAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
 type WeekdayIndex = (typeof WEEKDAY_INDEXES)[number];
 

@@ -30,6 +30,7 @@ import {
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
@@ -38,6 +39,7 @@ import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { resolveHour12 } from "../../timestampFormat";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -113,6 +115,7 @@ export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
     option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
   ) => {
@@ -325,7 +328,7 @@ export function UsagePage() {
 
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-      ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
+      ? `${formatDateTimeShort(window.sinceTime, window.timeZone, hour12)} to ${formatDateTimeShort(window.untilTime, window.timeZone, hour12)}`
       : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:flex">
@@ -636,6 +639,7 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      hour12={hour12}
                     />
                   </div>
                 </section>
@@ -825,7 +829,7 @@ export function UsagePage() {
                             >
                               <td className="py-2 text-foreground">
                                 {"hourStart" in period
-                                  ? formatHourShort(period.hourStart, window.timeZone)
+                                  ? formatHourShort(period.hourStart, window.timeZone, hour12)
                                   : formatDayShort(period.day)}
                               </td>
                               {activeProviders.map((provider) => (
@@ -865,6 +869,7 @@ export function UsagePage() {
             resolution: isPast24Hours ? "hour" : "day",
             timeZone: window.timeZone,
             referenceTime: window.untilTime,
+            hour12,
           }}
           onSetPrice={() => {
             setSelectedModelKey(null);
