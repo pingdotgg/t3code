@@ -227,9 +227,11 @@ export function hasRelayRoute(
  * in use: the paired token for a bearer route, the T3 Connect credential for
  * relay. A learned route the server still reports keeps its place, so the
  * user's order holds; one it no longer reports is dropped, so a changed LAN
- * address replaces the old one. Routes the user saved are never touched, and
- * an address already saved is not learned twice. A learned route is marked as
- * Tailscale while the server reports it on its Tailscale interface.
+ * address replaces the old one. Routes the user saved are never removed or
+ * moved, and an address already saved is not learned twice. Any direct route
+ * the server reports is marked as Tailscale while the server finds it on its
+ * Tailscale interface, so a route paired by its numeric Tailscale address keeps
+ * that label.
  */
 export function mergeLearnedRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
@@ -284,8 +286,14 @@ export function mergeLearnedRoutes(input: {
     }),
   );
   const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
-    if (!isLearned(route)) return [route];
     const url = routeHttpBaseUrl(route);
+    if (!isLearned(route)) {
+      return [
+        url === null || !reported.has(normalized(url))
+          ? route
+          : withNetwork(route, tailscaleOrigins.has(normalized(url))),
+      ];
+    }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
@@ -336,7 +344,7 @@ export interface ReportedEndpoint {
   readonly kind?: string;
 }
 
-/** The learned route with its Tailscale mark set or cleared; the same route when unchanged. */
+/** The direct route with its Tailscale mark set or cleared; the same route when unchanged. */
 function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {
   const profile = Option.getOrNull(route.profile);
   if (profile?._tag !== "BearerConnectionProfile") return route;

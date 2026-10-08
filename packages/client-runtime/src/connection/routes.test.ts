@@ -188,6 +188,22 @@ describe("learned routes", () => {
     ).toBeNull();
   });
 
+  it("labels a paired numeric Tailscale address Tailscale once the server confirms it", () => {
+    const paired = direct("paired", "http://100.101.102.103:3773/");
+    const other = direct("other", "http://100.96.0.1:3773/");
+    const entry = entryWithRoutes(relayOnly, [paired, other, RELAY]);
+    expect(connectionRouteLabel(paired)).toBe("VPN");
+    const confirmed = mergeLearnedRoutes({
+      entry,
+      activeRoute: paired,
+      reported: [{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }],
+      allowInsecure: true,
+    })!;
+    // Same routes in the same order; only the label of the confirmed one changes.
+    expect(ids(confirmed)).toEqual(["paired", "other", "relay"]);
+    expect(confirmed.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
+  });
+
   it("leaves user routes alone and does not learn an address already saved", () => {
     const entry: ConnectionCatalogEntry = {
       target: LAN.target,

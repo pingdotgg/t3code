@@ -49,7 +49,6 @@ import {
   connectionRoutes,
   entryWithRoutes,
   findRouteToSameAddress,
-  isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
@@ -910,8 +909,9 @@ export const make = Effect.gen(function* () {
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
-        // A learned route owns its profile (address, authorization, network);
-        // the credential stays with the route it borrows from.
+        // Save new learned profiles and any whose Tailscale mark changed. A
+        // learned route owns its profile; the credential stays with the route
+        // it borrows from.
         const previousProfiles = new Map(
           connectionRoutes(entry).map((route) => [
             connectionRouteId(route.target),
@@ -919,7 +919,6 @@ export const make = Effect.gen(function* () {
           ]),
         );
         for (const route of routes) {
-          if (!isLearned(route)) continue;
           const profile = Option.getOrNull(route.profile);
           if (
             profile === null ||
