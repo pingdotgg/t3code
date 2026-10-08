@@ -398,6 +398,14 @@
     "./cloudExecutionLabels": {
       "types": "./src/cloudExecutionLabels.ts",
       "default": "./src/cloudExecutionLabels.ts"
+    },
+    "./mcp-apps": {
+      "types": "./src/mcpApps/host.ts",
+      "default": "./src/mcpApps/host.ts"
+    },
+    "./state/mcp-apps": {
+      "types": "./src/state/mcpApps.ts",
+      "default": "./src/state/mcpApps.ts"
     }
   },
   "scripts": {

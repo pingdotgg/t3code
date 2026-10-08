@@ -135,10 +135,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     [busy, canWriteSourceControl, gitStatus.data, hasPrimaryRemote, menuItems],
   );
 
-  useEffect(() => {
-    void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
-  }, [gitActions]);
-
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
