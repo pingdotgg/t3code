@@ -160,6 +160,7 @@ export function isAutoSettlementCandidate(
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
   const wokeOnCompletion =
+    thread.status === "completed" &&
     snoozedAtMs !== null &&
     requestedAtMs !== null &&
     requestedAtMs > snoozedAtMs &&
