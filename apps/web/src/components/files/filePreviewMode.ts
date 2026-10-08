@@ -1,4 +1,4 @@
-import type { ProjectReadFileError } from "@t3tools/contracts";
+import type { AssetResource, ProjectReadFileError, ScopedThreadRef } from "@t3tools/contracts";
 import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 
 /** Resolve workspace links before choosing between the explorer and a file preview. */
@@ -56,4 +56,21 @@ export function setMarkdownTaskChecked(
   }
 
   return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
+}
+
+/**
+ * The asset for a file the panel shows. A draft has no thread on the server
+ * yet, so it names its workspace root instead of a thread to resolve one from.
+ */
+export function workspaceAssetResource(input: {
+  readonly kind: "workspace-file" | "media-file";
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly workspaceRoot: string;
+  readonly absolutePath: string;
+}): AssetResource {
+  if (input.draft) {
+    return { _tag: "draft-workspace-file", cwd: input.workspaceRoot, path: input.absolutePath };
+  }
+  return { _tag: input.kind, threadId: input.threadRef.threadId, path: input.absolutePath };
 }
