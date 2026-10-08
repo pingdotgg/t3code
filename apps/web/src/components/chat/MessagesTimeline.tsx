@@ -200,6 +200,8 @@ import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
+  isTimelineMinimapRowVisible,
+  resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
@@ -1115,35 +1117,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
-    const scrollTop = state.scroll ?? 0;
-    const scrollBottom = scrollTop + (state.scrollLength ?? 0);
-
-    const itemBounds = minimapItems.map((item) => ({
-      top: resolveTimelineRowTop(state, item.rowIndex),
-      height: resolveTimelineRowHeight(state, item.rowIndex),
-    }));
-
-    for (const [index, item] of minimapItems.entries()) {
+    const visibleRange = resolveTimelineMinimapVisibleRange(state);
+    for (const item of minimapItems) {
       const strip = minimapStripMap.get(item.id);
-      const bounds = itemBounds[index];
-      const rowTop = bounds?.top ?? null;
-      const rowHeight = bounds?.height ?? null;
-      const inView =
-        rowTop !== null &&
-        rowTop < scrollBottom &&
-        rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
-
-      // Skip no-op attribute writes: this runs for every strip on every scroll
-      // tick, and rewriting an unchanged attribute still dirties style state.
+      // Offscreen position caches can lag behind row size changes.
+      const inView = isTimelineMinimapRowVisible(
+        item.rowIndex,
+        visibleRange.start,
+        visibleRange.end,
+      );
       const next = inView ? "true" : "false";
       if (strip && strip.dataset.inView !== next) {
         strip.dataset.inView = next;
       }
     }
     const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
-      scrollTop,
-      scrollBottom,
-      itemBounds,
+      visibleStart: visibleRange.start,
+      visibleEnd: visibleRange.end,
+      rowIndices: minimapItems.map((item) => item.rowIndex),
     });
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
@@ -1163,6 +1154,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onIsAtEndChange,
     reportContentOverflow,
   ]);
+
+  const itemMeasurementFrameRef = useRef<number | null>(null);
+  const handleItemSizeChanged = useCallback(() => {
+    reportContentOverflow();
+    if (itemMeasurementFrameRef.current !== null) return;
+    // Read after LegendList has applied all row measurements for this frame.
+    itemMeasurementFrameRef.current = requestAnimationFrame(() => {
+      itemMeasurementFrameRef.current = null;
+      handleScroll();
+    });
+  }, [handleScroll, reportContentOverflow]);
+
+  useEffect(
+    () => () => {
+      if (itemMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(itemMeasurementFrameRef.current);
+        itemMeasurementFrameRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -1436,7 +1448,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
-            onItemSizeChanged={reportContentOverflow}
+            onItemSizeChanged={handleItemSizeChanged}
             className={cn(
               "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
@@ -1499,24 +1511,6 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 function getItemType(item: MessagesTimelineRow) {
   return item.kind === "message" ? `message:${item.message.role}` : item.kind;
-}
-
-interface TimelinePositionState {
-  readonly contentLength?: number;
-  readonly scroll?: number;
-  readonly scrollLength?: number;
-  readonly positionAtIndex?: (index: number) => number | undefined;
-  readonly sizeAtIndex?: (index: number) => number | undefined;
-}
-
-function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
-  const top = state.positionAtIndex?.(rowIndex);
-  return typeof top === "number" && Number.isFinite(top) ? top : null;
-}
-
-function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number) {
-  const height = state.sizeAtIndex?.(rowIndex);
-  return typeof height === "number" && Number.isFinite(height) ? height : null;
 }
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
