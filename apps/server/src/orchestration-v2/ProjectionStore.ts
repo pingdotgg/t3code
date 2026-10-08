@@ -77,6 +77,7 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+import { COMMAND_OUTPUT_WIRE_PREFIX_LENGTH } from "./WireProjection.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -4897,6 +4898,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
+            // Background work outlives its turn: a dev server started many turns
+            // ago still runs, and Stop finds it in turnItems. Carry the thread's
+            // unfinished background items into the recent window without making
+            // them visible rows; older history pages show them in place.
+            const pendingBackgroundItems =
+              historyAnchor === undefined
+                ? yield* selectShellPendingTurnItemRows([threadId]).pipe(
+                    Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)),
+                  )
+                : [];
+            const loadedItemIds = new Set(projection.turnItems.map((item) => item.id));
+            const missingBackgroundItems = pendingBackgroundItems.filter(
+              (item) => !loadedItemIds.has(item.id),
+            );
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
@@ -4907,7 +4922,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
-              projection,
+              projection:
+                missingBackgroundItems.length === 0
+                  ? projection
+                  : {
+                      ...projection,
+                      turnItems: [...missingBackgroundItems, ...projection.turnItems].toSorted(
+                        (left, right) => left.ordinal - right.ordinal,
+                      ),
+                    },
             };
           }),
         )
@@ -5152,10 +5175,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN ${sql.in(threadIds)}
           `;
 
+    // A dev server's output can grow for hours. Readers of pending work never
+    // need more of it than the wire keeps, so stop there instead of decoding it all.
+    const pendingTurnItemPayloadJson = sql`
+      CASE
+        WHEN i.type = 'command_execution'
+          AND length(json_extract(i.payload_json, '$.output')) > ${COMMAND_OUTPUT_WIRE_PREFIX_LENGTH}
+        THEN json_set(
+          i.payload_json,
+          '$.output',
+          substr(json_extract(i.payload_json, '$.output'), 1, ${COMMAND_OUTPUT_WIRE_PREFIX_LENGTH})
+        )
+        ELSE i.payload_json
+      END AS payload_json
+    `;
+
     const selectShellPendingTurnItemRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
         ? sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+            SELECT i.thread_id, ${pendingTurnItemPayloadJson}
             FROM orchestration_v2_projection_turn_items i
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id
@@ -5165,15 +5203,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               -- this the shell reports Waiting for work no one will finish,
               -- matching the item_count query's exclusion above.
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              -- Persistent monitors are never pending work; skip decoding them.
+              AND NOT (
+                i.type = 'dynamic_tool'
+                AND json_type(i.payload_json, '$.input.persistent') = 'true'
+              )
           `
         : sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+            SELECT i.thread_id, ${pendingTurnItemPayloadJson}
             FROM orchestration_v2_projection_turn_items i
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
               AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              AND NOT (
+                i.type = 'dynamic_tool'
+                AND json_type(i.payload_json, '$.input.persistent') = 'true'
+              )
               AND i.thread_id IN ${sql.in(threadIds)}
           `;
 

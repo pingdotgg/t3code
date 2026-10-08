@@ -88,13 +88,15 @@ describe("threadHistoryMerge", () => {
 
   it("does not resurrect a local item hidden while an older page was in flight", () => {
     const stalePageRow = row(1);
+    const runId = "run-rolled-back" as never;
     const currentItem = {
       ...stalePageRow.item,
-      output: "newer live output",
+      runId,
       updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
     };
     const projection = {
       ...v2Projection,
+      runs: [{ id: runId, status: "rolled_back" }] as never,
       turnItems: [currentItem],
       visibleTurnItems: [],
     };
@@ -104,6 +106,31 @@ describe("threadHistoryMerge", () => {
     expect(merged).toBe(projection);
     expect(merged.turnItems).toEqual([currentItem]);
     expect(merged.visibleTurnItems).toEqual([]);
+  });
+
+  it("shows retained background work at its history position with live state", () => {
+    // Cold open kept the still-running command in turnItems without a row.
+    const pageRow = row(1);
+    const currentItem = {
+      ...pageRow.item,
+      status: "interrupted" as const,
+      updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
+    };
+    const recent = row(5);
+    const projection = {
+      ...v2Projection,
+      turnItems: [recent.item, currentItem],
+      visibleTurnItems: [{ ...recent, position: 0 }],
+    };
+
+    const merged = mergeOlderHistoryIntoProjection(projection, [row(0), pageRow]);
+
+    expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-5",
+    ]);
+    expect(merged.visibleTurnItems[1]?.item).toBe(currentItem);
   });
 
   it("marks history expanded after a successful page", () => {

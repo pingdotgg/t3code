@@ -5,6 +5,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 /**
  * Match the V1 conversation windows. Item/byte budgets only apply to histories
@@ -291,35 +292,25 @@ function isLocalProjectedRow(
 }
 
 /**
- * Visibility for superseded `run_interrupt_result` rows depends on a matching
- * `run_interrupt_request` in `turnItems`. Keep every small request item from the
- * full projection even when it sits outside the recent visible window, so a
- * later history page that introduces the matching result still has the request
- * available for live attempt/run reducers.
+ * Turn items kept from the full projection even when they sit outside the
+ * recent visible window:
+ * - Every small `run_interrupt_request`. Visibility for superseded
+ *   `run_interrupt_result` rows depends on a matching request, so a later
+ *   history page that introduces the result still needs it for live
+ *   attempt/run reducers.
+ * - Background work that is still running. Stop and the Waiting strip derive
+ *   it from `turnItems`, so an old dev server must not drop out of the
+ *   snapshot while it runs.
  */
-function retainedInterruptRequestTurnItems(
+function windowIndependentTurnItems(
   projection: OrchestrationV2ThreadProjection,
-  visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2TurnItem[] {
-  const visibleLocalIds = new Set<string>();
-  for (const row of visible) {
-    if (isLocalProjectedRow(projection, row)) {
-      visibleLocalIds.add(String(row.sourceItemId));
-    }
-  }
-
-  const retained: OrchestrationV2TurnItem[] = [];
-  for (const item of projection.turnItems) {
-    if (item.type !== "run_interrupt_request") {
-      continue;
-    }
-    // Already covered by local turnItems for the visible window.
-    if (visibleLocalIds.has(String(item.id))) {
-      continue;
-    }
-    retained.push(item);
-  }
-  return retained;
+  const pendingBackground = new Set(
+    pendingBackgroundTurnItems({ turnItems: projection.turnItems, runs: projection.runs }),
+  );
+  return projection.turnItems.filter(
+    (item) => item.type === "run_interrupt_request" || pendingBackground.has(item),
+  );
 }
 
 function localTurnItemsForVisibleWindow(
@@ -431,19 +422,14 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
-  // Reserve bytes for small interrupt-request dependencies that may sit outside
-  // the recent window but are required for visibility of results inside it.
-  const dependencyReserve = (() => {
-    // Upper bound: all request items in the full projection. Window selection
-    // uses this reserve so the final contribution stays under the cap.
-    let reserve = 0;
-    for (const item of controlProjection.turnItems) {
-      if (item.type === "run_interrupt_request") {
-        reserve += bytesOfJson(item);
-      }
-    }
-    return reserve;
-  })();
+  // Reserve bytes for dependencies that may sit outside the recent window.
+  // Upper bound: every candidate in the full projection. Window selection uses
+  // this reserve so the final contribution stays under the cap.
+  const dependencyCandidates = windowIndependentTurnItems(controlProjection);
+  let dependencyReserve = 0;
+  for (const item of dependencyCandidates) {
+    dependencyReserve += bytesOfJson(item);
+  }
   const controlBytes = bytesOfJson({
     ...controlProjection,
     messages: [],
@@ -469,15 +455,11 @@ export function buildBoundedThreadProjection(input: {
   });
   const visibleTurnItems = renumberPositions(window.items);
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
-  const dependencyTurnItems = retainedInterruptRequestTurnItems(
-    controlProjection,
-    visibleTurnItems,
-  );
   const turnItemById = new Map<string, OrchestrationV2TurnItem>();
   for (const item of windowTurnItems) {
     turnItemById.set(String(item.id), item);
   }
-  for (const item of dependencyTurnItems) {
+  for (const item of dependencyCandidates) {
     turnItemById.set(String(item.id), item);
   }
   const turnItems = [...turnItemById.values()];
