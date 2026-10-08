@@ -219,6 +219,8 @@ interface ActiveTurn {
   readonly texts: Map<string, OpenBlock>;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
+  /** The last node state emitted for each text, reasoning and tool block. */
+  readonly nodes: Map<string, string>;
   readonly ordinals: Map<string, number>;
   nextOrdinal: number;
   /** Input includes cache reads and writes, as 1.x reports it; the parts are also kept apart. */
@@ -1016,6 +1018,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       lastError: string | null,
     ) =>
       Effect.gen(function* () {
+        // The session is shared by every thread on this instance and is persisted
+        // once per attached thread, so a repeat of the same state is not worth a write.
+        if (session.status === status && session.lastError === lastError) return;
         session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
         yield* emit({ type: "provider_session.updated", driver, providerSession: session });
       });
@@ -1061,28 +1066,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: OrchestrationV2ExecutionNode["status"],
       startedAt: DateTime.Utc,
       completedAt: DateTime.Utc | null,
-    ) =>
-      emit({
-        type: "node.updated",
-        driver,
-        node: {
-          id: idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId: nativeId }),
-          threadId: turn.input.threadId,
-          runId: turn.input.runId,
-          parentNodeId: turn.input.rootNodeId,
-          rootNodeId: turn.input.rootNodeId,
-          kind,
-          status,
-          countsForRun: false,
-          providerThreadId: state.providerThread.id,
-          providerTurnId: turn.providerTurn.id,
-          nativeItemRef: ref(nativeId),
-          runtimeRequestId: null,
-          checkpointScopeId: null,
-          startedAt,
-          completedAt,
-        },
-      });
+    ) => {
+      const node: OrchestrationV2ExecutionNode = {
+        id: idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId: nativeId }),
+        threadId: turn.input.threadId,
+        runId: turn.input.runId,
+        parentNodeId: turn.input.rootNodeId,
+        rootNodeId: turn.input.rootNodeId,
+        kind,
+        status,
+        countsForRun: false,
+        providerThreadId: state.providerThread.id,
+        providerTurnId: turn.providerTurn.id,
+        nativeItemRef: ref(nativeId),
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt,
+        completedAt,
+      };
+      // Text and tool updates arrive per delta while their node stays the same.
+      const key = JSON.stringify(node);
+      if (turn.nodes.get(nativeId) === key) return Effect.void;
+      turn.nodes.set(nativeId, key);
+      return emit({ type: "node.updated", driver, node });
+    };
 
     /** One text or reasoning block, re-emitted with its accumulated text on every change. */
     const emitText = Effect.fnUntraced(function* (
@@ -1248,6 +1255,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       texts: new Map(),
       tools: new Map(),
       startedAt: new Map(),
+      nodes: new Map(),
       ordinals: new Map(),
       nextOrdinal: providerTurn.ordinal * 100 + 1,
       usage: { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
@@ -1279,6 +1287,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         : (call.completedAt ?? updatedAt);
       const childProviderThreadId = call.child?.providerThread.id ?? null;
       const childThreadId = call.child?.subagent?.appThread.id ?? null;
+      // Reconnect backfill can report this call through emitTool, so its cached node is stale now.
+      turn.nodes.delete(call.nativeId);
       yield* emit({
         type: "node.updated",
         driver,

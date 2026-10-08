@@ -516,6 +516,48 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("emits a streaming block's node only when it changes, and every text update", () =>
+    Effect.gen(function* () {
+      const block = {
+        sessionID: SESSION,
+        assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+        ordinal: 0,
+      };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.reasoning.started", block),
+        event("session.reasoning.delta", { ...block, delta: "Check 17" }),
+        event("session.reasoning.delta", { ...block, delta: " and 23." }),
+        event("session.reasoning.ended", { ...block, text: "Check 17 and 23." }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "node.updated" && event.node.kind === "reasoning"
+            ? [event.node.status]
+            : [],
+        ),
+        ["running", "completed"],
+      );
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+            ? [event.turnItem.text]
+            : [],
+        ),
+        ["Check 17", "Check 17 and 23.", "Check 17 and 23."],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops running turns on an external server when the session closes", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make();
@@ -3201,6 +3243,70 @@ describe("OpenCode2 adapter", () => {
       const statuses = [...(yield* Fiber.join(ended))].map((terminal) => terminal.status);
       assert.deepEqual(statuses, ["completed", "completed"]);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
+  it.effect("reports the shared session's status only when it changes", () =>
+    Effect.gen(function* () {
+      const OTHER = "ses_f148ca2deffeOtherSession000";
+      const promptInto = (
+        session: string,
+        recorded: string,
+      ): ReadonlyArray<ProviderReplayEntry> => [
+        out("session.prompt", { sessionID: session, id: recorded, text: "<any>" }),
+        replyData("session.prompt", {
+          id: recorded,
+          sessionID: session,
+          time: { created: 1790656601410 },
+          type: "user",
+          payload: { text: "hi" },
+          delivery: "steer",
+        }),
+      ];
+      const { runtime, thread } = yield* resumed([
+        out("session.get", { sessionID: OTHER }),
+        replyData("session.get", sessionInfo({ id: OTHER })),
+        out("permission.list", { sessionID: OTHER }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID: OTHER }),
+        replyData("session.form.list", []),
+        ...promptInto(SESSION, "msg_recorded_turn_a"),
+        out("session.instructions.entry.put", { sessionID: OTHER, key: "t3-code", value: "<any>" }),
+        reply("session.instructions.entry.put", null),
+        ...promptInto(OTHER, "msg_recorded_turn_b"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: OTHER }),
+      ]);
+      const other = {
+        ...thread,
+        id: ProviderThreadId.make("provider-thread:opencode2-adapter:other"),
+        nativeThreadRef: {
+          driver: OPENCODE_PROVIDER,
+          nativeId: OTHER,
+          strength: "strong" as const,
+        },
+      };
+      yield* runtime.resumeThread({
+        providerThread: other,
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      let ended = 0;
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal" && ++ended === 2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.startTurn(turnInput(other));
+      // The second turn starts and the first ends while the session stays running.
+      assert.deepEqual(
+        [...(yield* Fiber.join(collected))].flatMap((event) =>
+          event.type === "provider_session.updated" ? [event.providerSession.status] : [],
+        ),
+        ["running", "ready"],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect.each([
