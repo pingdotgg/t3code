@@ -41,6 +41,13 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     NodeFS.cpSync(sourcePath, destinationPath);
   }
 
+  const mobileDependencies = NodePath.resolve(repoRoot, "apps/mobile/deps");
+  if (NodeFS.existsSync(mobileDependencies)) {
+    NodeFS.cpSync(mobileDependencies, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
+      recursive: true,
+    });
+  }
+
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
   if (NodeFS.existsSync(patchesDirectory)) {
     NodeFS.cpSync(patchesDirectory, NodePath.resolve(targetRoot, "patches"), { recursive: true });

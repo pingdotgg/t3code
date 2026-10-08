@@ -2279,7 +2279,8 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
     );
     if (text) {
       expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
-        summary: "First paragraph. Second paragraph.",
+        summary: "Thinking",
+        thought: "First paragraph.",
         live: true,
       });
     } else {
@@ -2292,6 +2293,32 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
     }
   },
 );
+
+it("keeps the latest thought under the live tool status", () => {
+  const at = "2026-06-20T00:00:02.000Z";
+  const thought: OrchestrationV2TurnItem = {
+    ...base("found-thought", at, 1),
+    type: "reasoning",
+    status: "completed",
+    streaming: false,
+    text: "Found the cause: no commits yet. Checking the UI next.",
+  };
+  const tool = { ...command(at), status: "running" as const, completedAt: null };
+  const rows = deriveThreadFeedPresentation(
+    buildThreadFeed([projected(userMessage(), 0), projected(thought, 1), projected(tool, 2)]),
+    { runId, status: "running", startedAt: at, completedAt: null },
+    new Set(),
+    new Set(),
+    at,
+  );
+  expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
+    thought: "Found the cause: no commits yet.",
+    live: true,
+  });
+  expect(rows.find((row) => row.type === "work-toggle")).not.toMatchObject({
+    summary: "Thinking",
+  });
+});
 
 it("stops stranded thinking after a steer and follows the next thought or tool", () => {
   const at = "2026-06-20T00:00:02.000Z";
@@ -2316,7 +2343,8 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
       at,
     );
   expect(rows([first]).find((row) => row.type === "work-toggle")).toMatchObject({
-    summary: "first-thought",
+    summary: "Thinking",
+    thought: "first-thought",
     live: true,
     shimmer: true,
   });
@@ -2340,9 +2368,11 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   ]) {
     const live = rows(items).filter((row) => row.type === "work-toggle" && row.shimmer);
     expect(live).toHaveLength(1);
-    expect(live[0]).toMatchObject({
-      summary: items.at(-1)!.type === "reasoning" ? "next-thought" : "Running vp",
-    });
+    expect(live[0]).toMatchObject(
+      items.at(-1)!.type === "reasoning"
+        ? { summary: "Thinking", thought: "next-thought" }
+        : { summary: "Running vp" },
+    );
   }
   expect(first.status).toBe("running");
 });

@@ -24,6 +24,7 @@ import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
+  ChangeRequest,
   GitActionProgressEvent,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
@@ -37,12 +38,11 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SourceControlProviderError as SourceControlProviderFailure,
   TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -53,7 +53,6 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
 import {
   ForgejoPullRequestSchema,
@@ -92,7 +91,10 @@ interface FakeGhScenario {
     headRepositoryOwnerLogin?: string | null;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
-  failWith?: GitHubCli.GitHubCliError;
+  /** The detail the provider fails with, the way a GitHub failure reaches GitManager. */
+  failWith?: string;
+  /** The raw failure behind `failWith`, which must stay out of anything shown or logged. */
+  failCause?: unknown;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
 }
@@ -111,7 +113,12 @@ type FakeGitTextGeneration = TextGeneration.TextGeneration["Service"];
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
 
-function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequestSummary | null {
+type FakePullRequestSummary = Omit<ChangeRequest, "provider" | "state" | "updatedAt"> & {
+  readonly state?: ChangeRequest["state"];
+  readonly updatedAt?: string;
+};
+
+function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
@@ -381,8 +388,12 @@ function createTextGeneration(
   };
 }
 
-function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
-  service: GitHubCli.GitHubCli["Service"];
+/**
+ * A GitHub source control provider over a fake `gh`. The fake still speaks gh's command shapes,
+ * which is what `ghCalls` records and the tests assert on; the provider methods translate to them.
+ */
+function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
+  service: SourceControlProvider["Service"];
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
@@ -394,16 +405,20 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   );
   const ghCalls: string[] = [];
 
-  // The fake still speaks in gh's command shapes; the service methods below translate to them.
+  const fail = (cwd: string, detail: string, cause?: unknown, operation = "fakeGh") =>
+    new SourceControlProviderFailure({ provider: "github", operation, cwd, detail, cause });
+
+  /** `operation` is the provider method the call answers, which a failure reports. */
   const execute = (input: {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
-  }): Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCli.GitHubCliError> => {
+    readonly operation: string;
+  }): Effect.Effect<VcsProcess.VcsProcessOutput, SourceControlProviderFailure> => {
     const args = [...input.args];
     ghCalls.push(args.join(" "));
 
     if (scenario.failWith && ghCalls.length > (scenario.failAfterCalls ?? 0)) {
-      return Effect.fail(scenario.failWith);
+      return Effect.fail(fail(input.cwd, scenario.failWith, scenario.failCause, input.operation));
     }
 
     if (args[0] === "pr" && args[1] === "list") {
@@ -485,14 +500,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           }
           return fakeGhOutput("");
         },
-        catch: (error) =>
-          GitHubCli.isGitHubCliError(error)
-            ? error
-            : new GitHubCli.GitHubCliCommandError({
-                command: "gh",
-                cwd: input.cwd,
-                cause: error,
-              }),
+        catch: (error) => fail(input.cwd, "GitHub request failed.", error),
       });
     }
 
@@ -501,13 +509,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       if (typeof repository === "string" && args.includes("nameWithOwner,url,sshUrl")) {
         const cloneUrls = scenario.repositoryCloneUrls?.[repository];
         if (!cloneUrls) {
-          return Effect.fail(
-            new GitHubCli.GitHubCliCommandError({
-              command: "gh",
-              cwd: input.cwd,
-              cause: new Error(`Unexpected repository lookup: ${repository}`),
-            }),
-          );
+          return Effect.fail(fail(input.cwd, `Unexpected repository lookup: ${repository}`));
         }
         return Effect.succeed(
           fakeGhOutput(
@@ -522,72 +524,86 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.succeed(fakeGhOutput(`${scenario.defaultBranch ?? "main"}\n`));
     }
 
-    return Effect.fail(
-      new GitHubCli.GitHubCliCommandError({
-        command: "gh",
-        cwd: input.cwd,
-        cause: new Error(`Unexpected gh command: ${args.join(" ")}`),
-      }),
-    );
+    return Effect.fail(fail(input.cwd, `Unexpected gh command: ${args.join(" ")}`));
   };
+
+  /** What GitHubSourceControlProvider makes of a pull request it read. */
+  const toChangeRequest = (summary: FakePullRequestSummary): ChangeRequest => ({
+    ...summary,
+    provider: "github",
+    state: summary.state ?? "open",
+    closedAt: summary.closedAt ?? null,
+    mergedAt: summary.mergedAt ?? null,
+    updatedAt:
+      summary.updatedAt === undefined
+        ? Option.none()
+        : Option.some(DateTime.makeUnsafe(summary.updatedAt)),
+  });
 
   return {
     service: {
-      // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
-      listPullRequestsByHead: (input) =>
+      kind: "github",
+      listChangeRequests: (input) =>
+        input.state === "open"
+          ? execute({
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              args: [
+                "pr",
+                "list",
+                "--head",
+                input.headSelector,
+                "--state",
+                "open",
+                "--limit",
+                String(input.limit ?? 1),
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
+              ],
+            }).pipe(
+              Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+              Effect.map((raw) =>
+                raw
+                  .map((entry) => normalizeFakePullRequestSummary(entry))
+                  .filter((entry): entry is FakePullRequestSummary => entry !== null)
+                  .map(toChangeRequest),
+              ),
+            )
+          : // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
+            execute({
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              args: [
+                "pr",
+                "list",
+                "--head",
+                input.headSelector,
+                "--state",
+                input.state,
+                "--limit",
+                String(input.limit ?? 20),
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+              ],
+            }).pipe(
+              Effect.map((result) => {
+                const raw = result.stdout.trim();
+                if (raw.length === 0) return [];
+                const decoded = decodeGitHubPullRequestListJson(raw);
+                return Result.isSuccess(decoded)
+                  ? decoded.success.map((record) => ({ provider: "github" as const, ...record }))
+                  : [];
+              }),
+            ),
+      createChangeRequest: (input) =>
         execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            input.headSelector,
-            "--state",
-            input.state,
-            "--limit",
-            String(input.limit),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
-        }).pipe(
-          Effect.map((result) => {
-            const raw = result.stdout.trim();
-            if (raw.length === 0) return [];
-            const decoded = decodeGitHubPullRequestListJson(raw);
-            return Result.isSuccess(decoded) ? decoded.success : [];
-          }),
-        ),
-      listOpenPullRequests: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            input.headSelector,
-            "--state",
-            "open",
-            "--limit",
-            String(input.limit ?? 1),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
-        }).pipe(
-          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
-          Effect.map((raw) =>
-            raw
-              .map((entry) => normalizeFakePullRequestSummary(entry))
-              .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
-          ),
-        ),
-      createPullRequest: (input) =>
-        execute({
+          operation: "createChangeRequest",
           cwd: input.cwd,
           args: [
             "pr",
             "create",
             "--base",
-            input.baseBranch,
+            input.baseRefName,
             "--head",
             input.headSelector,
             "--title",
@@ -598,6 +614,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(Effect.asVoid),
       getDefaultBranch: (input) =>
         execute({
+          operation: "getDefaultBranch",
           cwd: input.cwd,
           args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
         }).pipe(
@@ -606,8 +623,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             return value.length > 0 ? value : null;
           }),
         ),
-      getPullRequest: (input) =>
+      getChangeRequest: (input) =>
         execute({
+          operation: "getChangeRequest",
           cwd: input.cwd,
           args: [
             "pr",
@@ -617,23 +635,21 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
-          Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
+          Effect.map((result) =>
+            toChangeRequest(JSON.parse(result.stdout) as FakePullRequestSummary),
+          ),
         ),
       getRepositoryCloneUrls: (input) =>
         execute({
+          operation: "getRepositoryCloneUrls",
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       createRepository: (input) =>
-        Effect.fail(
-          new GitHubCli.GitHubCliCommandError({
-            command: "gh",
-            cwd: input.cwd,
-            cause: new Error(`Unexpected repository create: ${input.repository}`),
-          }),
-        ),
-      checkoutPullRequest: (input) =>
+        Effect.fail(fail(input.cwd, `Unexpected repository create: ${input.repository}`)),
+      checkoutChangeRequest: (input) =>
         execute({
+          operation: "checkoutChangeRequest",
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
@@ -691,7 +707,9 @@ function makeManager(input?: {
     ProjectionStore.ProjectionStoreV2 | ProjectStore.ProjectStoreV2
   >;
 }) {
-  const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
+  const { service: fakeGitHubProvider, ghCalls } = createGitHubProviderWithFakeGh(
+    input?.ghScenario,
+  );
   const textGeneration = createTextGeneration(input?.textGeneration);
   const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
@@ -725,10 +743,7 @@ function makeManager(input?: {
       );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    (input?.sourceControlProvider === undefined
-      ? GitHubSourceControlProvider.make
-      : Effect.succeed(input.sourceControlProvider)
-    ).pipe(
+    Effect.succeed(input?.sourceControlProvider ?? fakeGitHubProvider).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
@@ -737,12 +752,6 @@ function makeManager(input?: {
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
-      ),
-      Effect.provide(
-        Layer.merge(
-          Layer.succeed(GitHubCli.GitHubCli, gitHubCli),
-          Layer.mock(GitHubApi.GitHubApi)({}),
-        ),
       ),
     ),
   );
@@ -1296,11 +1305,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/rate-limited"]);
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
       yield* manager.remoteStatus({ cwd: repoDir });
@@ -1779,11 +1785,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -2640,11 +2643,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               },
             ]),
           },
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2717,11 +2717,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -2743,11 +2740,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const upstreamCause = "GraphQL rate limit for user ID 51714798 and token secret-value";
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliRateLimitError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error(upstreamCause),
-          }),
+          failWith: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
+          failCause: new Error(upstreamCause),
         },
       });
       const logs: Array<{ message: string; annotations: Record<string, unknown> }> = [];
@@ -2770,7 +2764,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         errorTag: "SourceControlProviderError",
         provider: "github",
         providerOperation: "listChangeRequests",
-        providerCommand: "gh",
         errorDetail: "GitHub API rate limit exceeded. Requests resume when the limit resets.",
       });
       const loggedText = [
@@ -2801,11 +2794,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2844,11 +2834,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager } = yield* makeManager({
           ghScenario: {
             prListSequence: [JSON.stringify([existingPr])],
-            failWith: new GitHubCli.GitHubCliUnavailableError({
-              command: "gh",
-              cwd: repoDir,
-              cause: new Error("rate limited"),
-            }),
+            failWith:
+              "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
             failAfterCalls: 1,
           },
         });
@@ -2892,11 +2879,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2931,11 +2915,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -2973,11 +2954,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [JSON.stringify([existingPr])],
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
           failAfterCalls: 1,
         },
       });
@@ -4618,11 +4596,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not available on PATH"),
-          }),
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
         },
       });
 
@@ -4648,11 +4623,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliAuthenticationError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("gh is not authenticated"),
-          }),
+          failWith: "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
         },
       });
 
