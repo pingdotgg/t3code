@@ -5,6 +5,7 @@ import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider
 import { useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import type { ProviderBadge } from "../lib/modelOptions";
 import { AppText as Text } from "./AppText";
 
 type ProviderIconProps = {
@@ -220,5 +221,28 @@ export function ProviderInstanceIcon(props: {
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** A provider glyph that carries the account badge when its instance needs one. */
+export function ProviderAccountIcon(props: {
+  readonly provider: string | null | undefined;
+  readonly iconUrl?: string | null | undefined;
+  readonly badge: ProviderBadge | undefined;
+  readonly size: number;
+  readonly surfaceColor: string;
+}) {
+  return props.badge ? (
+    <ProviderInstanceIcon
+      provider={props.provider}
+      iconUrl={props.iconUrl}
+      size={props.size}
+      displayName={props.badge.displayName}
+      {...(props.badge.accentColor ? { accentColor: props.badge.accentColor } : {})}
+      showBadge
+      surfaceColor={props.surfaceColor}
+    />
+  ) : (
+    <ProviderIcon provider={props.provider} iconUrl={props.iconUrl} size={props.size} />
   );
 }

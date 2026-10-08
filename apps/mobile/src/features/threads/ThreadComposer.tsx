@@ -80,7 +80,7 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderAccountIcon } from "../../components/ProviderIcon";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -379,7 +379,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
-  const foregroundColor = useUniwindTheme()["--color-foreground"];
+  const theme = useUniwindTheme();
+  const foregroundColor = theme["--color-foreground"];
+  const composerSurfaceColor = theme["--color-composer-surface"];
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
@@ -1124,13 +1126,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     />
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                        accessibilityLabel={
+                          currentModelOption?.providerBadge
+                            ? `Model and reasoning settings, ${currentModelOption.providerBadge.displayName} account`
+                            : "Model and reasoning settings"
+                        }
                         emphasized
                         renderIcon={(size) => (
-                          <ProviderIcon
-                            iconUrl={currentModelOption?.providerIconUrl}
+                          <ProviderAccountIcon
                             provider={currentModelOption?.providerDriver}
+                            iconUrl={currentModelOption?.providerIconUrl}
+                            badge={currentModelOption?.providerBadge}
                             size={size}
+                            surfaceColor={composerSurfaceColor}
                           />
                         )}
                         label={currentModelOption?.label ?? currentModelSelection.model}

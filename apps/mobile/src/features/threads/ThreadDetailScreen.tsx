@@ -91,6 +91,7 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import { resolveProviderBadge } from "../../lib/modelOptions";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
@@ -1348,7 +1349,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       }}
                     >
                       <ProviderSubagentBar
-                        provider={providerSubagentProvider ?? null}
+                        provider={
+                          providerSubagentProvider
+                            ? {
+                                ...providerSubagentProvider,
+                                badge: resolveProviderBadge(
+                                  props.serverConfig,
+                                  providerSubagentProvider,
+                                ),
+                              }
+                            : null
+                        }
                         modelLabel={
                           providerSubagentCatalogModel?.name ??
                           formatModelSlugName(props.selectedThread.modelSelection.model)

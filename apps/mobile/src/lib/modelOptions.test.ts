@@ -54,6 +54,68 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("badges the account when two instances share a provider or one has an accent", () => {
+    const claude = (instanceId: string, extra: Record<string, unknown> = {}) => ({
+      instanceId,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      ],
+      ...extra,
+    });
+    const badges = (providers: ReadonlyArray<unknown>) =>
+      buildModelOptions({ providers } as unknown as ServerConfig, null).map(
+        (option) => option.providerBadge,
+      );
+
+    expect(badges([claude("claudeAgent")])).toEqual([undefined]);
+    expect(
+      badges([claude("claudeAgent", { displayName: "Work", accentColor: "#eae10c" })]),
+    ).toEqual([{ displayName: "Work", accentColor: "#eae10c" }]);
+    expect(
+      badges([
+        claude("claudeAgent", { displayName: "Personal" }),
+        claude("claude_work", { displayName: "Work" }),
+      ]),
+    ).toEqual([{ displayName: "Personal" }, { displayName: "Work" }]);
+
+    // Different ACP agents have their own glyphs, so they need no badge.
+    const acp = (instanceId: string) => ({
+      ...claude(instanceId),
+      driver: "acpRegistry",
+    });
+    const acpConfig = {
+      providers: [acp("acp_a"), acp("acp_b")],
+      settings: {
+        providerInstances: {
+          acp_a: { driver: "acpRegistry", config: { agentId: "agent-a" } },
+          acp_b: { driver: "acpRegistry", config: { agentId: "agent-b" } },
+        },
+      },
+    } as unknown as ServerConfig;
+    expect(buildModelOptions(acpConfig, null).map((option) => option.providerBadge)).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    // Local ACP commands have no registry agent, so two of them share a glyph.
+    const localConfig = {
+      ...acpConfig,
+      settings: {
+        providerInstances: {
+          acp_a: { driver: "acpRegistry", config: { source: "local", agentId: "agent-a" } },
+          acp_b: { driver: "acpRegistry", config: { source: "local", agentId: "agent-b" } },
+        },
+      },
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(localConfig, null).every((option) => option.providerBadge !== undefined),
+    ).toBe(true);
+  });
+
   it("carries configured ACP identity into model and provider catalogs", () => {
     const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
     const config = {

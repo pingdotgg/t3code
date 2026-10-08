@@ -6,7 +6,8 @@ import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderAccountIcon } from "../../components/ProviderIcon";
+import type { ProviderBadge } from "../../lib/modelOptions";
 import { RequestActionButton } from "./RequestActionButton";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
@@ -16,8 +17,12 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
  * model is working, for how long, and leads back to the parent.
  */
 export function ProviderSubagentBar(props: {
-  /** Driver and catalog icon of the provider running the subagent. */
-  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  /** Driver, catalog icon and account badge of the provider running the subagent. */
+  readonly provider: {
+    readonly driver: string;
+    readonly iconUrl?: string | undefined;
+    readonly badge?: ProviderBadge | undefined;
+  } | null;
   readonly modelLabel: string;
   /** Reasoning effort as the composer names it, when the subagent has one. */
   readonly effortLabel: string | null;
@@ -36,15 +41,18 @@ export function ProviderSubagentBar(props: {
       {/* Only the text is one element, so "Open parent" stays reachable. */}
       <View
         accessible
-        accessibilityLabel={`${modelDescription} subagent, ${statusLabel}. It runs on its own and cannot take messages.`}
+        accessibilityLabel={`${modelDescription} subagent${props.provider?.badge ? ` on the ${props.provider.badge.displayName} account` : ""}, ${statusLabel}. It runs on its own and cannot take messages.`}
         className="min-w-0 flex-1 gap-0.5"
       >
         <View className="min-w-0 flex-row items-center gap-1.5">
           {props.provider ? (
-            <ProviderIcon
-              iconUrl={props.provider.iconUrl}
+            <ProviderAccountIcon
               provider={props.provider.driver}
+              iconUrl={props.provider.iconUrl}
+              badge={props.provider.badge}
               size={16}
+              // Theme colours aren't readable here, so the ring stays transparent.
+              surfaceColor="transparent"
             />
           ) : null}
           <Text numberOfLines={1} className="min-w-0 shrink font-t3-bold text-sm text-foreground">

@@ -9,6 +9,11 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 
 export type ModelOption = {
   readonly key: string;
@@ -19,12 +24,54 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  /** Set when the instance needs the account badge. */
+  readonly providerBadge?: ProviderBadge;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
+
+/** The account badge an instance's glyph carries. */
+export type ProviderBadge = { readonly displayName: string; readonly accentColor?: string };
+
+type ServerProvider = T3ServerConfig["providers"][number];
+
+/**
+ * The badge an instance needs by the shared rule: an accent colour, or another
+ * instance of the same provider. Settings carry each ACP instance's agent,
+ * whose own glyph already tells it apart.
+ */
+export function resolveProviderBadge(
+  config: T3ServerConfig | null | undefined,
+  provider: ServerProvider,
+): ProviderBadge | undefined {
+  const badgeEntry = (candidate: ServerProvider) => {
+    const settings = config?.settings?.providerInstances[candidate.instanceId]?.config;
+    // A local ACP command has no registry agent, as on web.
+    const agentId =
+      typeof settings === "object" && settings && Reflect.get(settings, "source") !== "local"
+        ? Reflect.get(settings, "agentId")
+        : null;
+    return {
+      driverKind: candidate.driver,
+      ...(typeof agentId === "string" && agentId.trim()
+        ? { acpRegistryAgentId: agentId.trim() }
+        : {}),
+    };
+  };
+  const accentColor = normalizeProviderAccentColor(provider.accentColor);
+  return shouldShowInstanceBadge(
+    { ...badgeEntry(provider), accentColor },
+    (config?.providers ?? []).map(badgeEntry),
+  )
+    ? {
+        displayName: resolveProviderInstanceDisplayName(provider),
+        ...(accentColor ? { accentColor } : {}),
+      }
+    : undefined;
+}
 
 export type ProviderGroup = {
   readonly providerKey: string;
@@ -174,6 +221,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const providerBadge = resolveProviderBadge(config, provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -187,6 +235,7 @@ export function buildModelOptions(
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
+        ...(providerBadge ? { providerBadge } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
@@ -230,6 +279,7 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const providerBadge = provider ? resolveProviderBadge(config, provider) : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
@@ -237,6 +287,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        ...(providerBadge ? { providerBadge } : {}),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)

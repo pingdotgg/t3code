@@ -46,10 +46,10 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderAccountIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import type { ModelOption, ProviderBadge, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -128,15 +128,23 @@ const FAVORITES_PROVIDER_FILTER = "@favorites";
 function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
+  readonly badge: ProviderBadge | undefined;
   readonly label: string;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
   readonly onToggle: () => void;
 }) {
+  const sheetColor = useUniwindTheme()["--color-sheet-solid"];
   const content = (
     <>
-      <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
+      <ProviderAccountIcon
+        provider={props.driver}
+        iconUrl={props.iconUrl}
+        badge={props.badge}
+        size={15}
+        surfaceColor={sheetColor}
+      />
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
       {props.collapsible ? (
         <>
@@ -545,6 +553,7 @@ type ThreadSettingsProviderCatalog = {
   readonly key: string;
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
+  readonly badge: ProviderBadge | undefined;
   readonly label: string;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
@@ -614,6 +623,7 @@ function ThreadSettingsProviderListHeader(props: {
       collapsed={props.provider.collapsed}
       driver={props.provider.driver}
       iconUrl={props.provider.iconUrl}
+      badge={props.provider.badge}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
       onToggle={onToggle}
@@ -676,6 +686,7 @@ function useThreadSettingsCatalogItems(
           key: group.providerKey,
           driver,
           iconUrl: group.models[0]?.providerIconUrl,
+          badge: group.models[0]?.providerBadge,
           label: group.providerLabel,
           collapsible,
           collapsed,
