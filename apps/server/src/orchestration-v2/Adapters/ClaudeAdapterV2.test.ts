@@ -7812,6 +7812,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
+          assert.isUndefined(
+            child?.appThread.modelSelection?.options?.find((option) => option.id === "effort"),
+          );
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );

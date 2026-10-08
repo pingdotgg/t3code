@@ -136,6 +136,17 @@ import {
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
+// A subagent's effort comes from its agent definition or Agent call, which the
+// SDK does not report, so the parent's effort would mislabel it.
+function withoutEffort(modelSelection: ModelSelection): ModelSelection {
+  const options = modelSelection.options?.filter((option) => option.id !== "effort");
+  return {
+    instanceId: modelSelection.instanceId,
+    model: modelSelection.model,
+    ...(options === undefined || options.length === 0 ? {} : { options }),
+  };
+}
+
 function claudeContextWindow(modelSelection: ModelSelection): number | null {
   return (
     resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ?? null
@@ -4314,7 +4325,7 @@ export function makeClaudeAdapterV2(
               modelSelection:
                 task.model && task.model !== input.context.input.modelSelection.model
                   ? { instanceId: input.context.input.modelSelection.instanceId, model: task.model }
-                  : input.context.input.modelSelection,
+                  : withoutEffort(input.context.input.modelSelection),
               title: subagentThreadTitle({
                 parentTitle: input.context.input.appThread.title,
                 prompt: task.prompt,
