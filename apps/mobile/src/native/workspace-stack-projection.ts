@@ -57,17 +57,18 @@ export function partitionStackPresentations<T>(
   return groups;
 }
 
-/** Preserve UIKit's outgoing screens, before newly pushed screens, until dismissal. */
+/** Keep outgoing screens in place until dismissal; Fabric moves enqueue native pop/push operations. */
 export function reconcileStackScreens<T extends { readonly key: string }>(
   previous: readonly T[],
   current: readonly T[],
   completedNativeDismissals: ReadonlySet<string> = new Set(),
 ): T[] {
   const active = new Set(current.map((route) => route.key));
-  return [
-    ...previous.filter(
-      (route) => !active.has(route.key) && !completedNativeDismissals.has(route.key),
-    ),
-    ...current,
-  ];
+  const screens = [...current];
+  previous.forEach((route, index) => {
+    if (!active.has(route.key) && !completedNativeDismissals.has(route.key)) {
+      screens.splice(Math.min(index, screens.length), 0, route);
+    }
+  });
+  return screens;
 }

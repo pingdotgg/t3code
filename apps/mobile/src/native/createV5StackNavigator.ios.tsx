@@ -181,7 +181,14 @@ export function V5CardStackView(props: V5StackViewProps) {
             >
               <NavigationContext value={descriptor.navigation}>
                 <NavigationRouteContext value={descriptor.route}>
-                  <V5StackHeader options={descriptor.options} canGoBack={index > 0} />
+                  <V5StackHeader
+                    options={descriptor.options}
+                    canGoBack={
+                      attached
+                        ? props.state.routes.findIndex((current) => current.key === route.key) > 0
+                        : index > 0
+                    }
+                  />
                   <NativeColumnContent>{descriptor.render()}</NativeColumnContent>
                 </NavigationRouteContext>
               </NavigationContext>
