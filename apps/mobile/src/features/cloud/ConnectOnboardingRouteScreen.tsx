@@ -3,7 +3,7 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -54,15 +54,15 @@ function ConfiguredConnectOnboardingRouteScreen() {
     cloudEnvironments: null,
   });
 
-  // Pull-to-refresh tracks its own spinner instead of discovery's refreshing
-  // flag, so background refreshes (e.g. the sign-in one) don't yank the
-  // content down.
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullRefresh = useCallback(() => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = useCallback(() => {
     void (async () => {
-      setIsPullRefreshing(true);
-      await refreshRelayEnvironments();
-      setIsPullRefreshing(false);
+      setIsRefreshing(true);
+      try {
+        await refreshRelayEnvironments();
+      } finally {
+        setIsRefreshing(false);
+      }
     })();
   }, [refreshRelayEnvironments]);
 
@@ -87,14 +87,30 @@ function ConfiguredConnectOnboardingRouteScreen() {
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
           title="Set up T3 Connect"
-          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+          actions={[
+            {
+              accessibilityLabel: "Refresh environments",
+              disabled: isRefreshing,
+              icon: "arrow.clockwise",
+              loading: isRefreshing,
+              onPress: handleRefresh,
+            },
+            { accessibilityLabel: "Close", icon: "xmark", onPress: handleClose },
+          ]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Refresh environments"
+            disabled={isRefreshing}
+            icon="arrow.clockwise"
+            onPress={handleRefresh}
+          />
           <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
         </NativeHeaderToolbar>
       )}
       <ScrollView
+        nestedScrollEnabled
         alwaysBounceVertical
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -105,9 +121,6 @@ function ConfiguredConnectOnboardingRouteScreen() {
           paddingHorizontal: 20,
           paddingTop: 16,
         }}
-        refreshControl={
-          <RefreshControl refreshing={isPullRefreshing} onRefresh={handlePullRefresh} />
-        }
       >
         {isSignedIn ? (
           <CloudEnvironmentRows

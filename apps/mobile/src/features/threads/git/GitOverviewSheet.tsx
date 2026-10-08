@@ -252,21 +252,22 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Deterministic pull-to-refresh state. Tying RefreshControl to the query's
+  // Deterministic refresh state. Tying RefreshControl to the query's
   // isPending flag left the spinner stuck (the status query reports pending
   // during quiet background refreshes too).
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullRefresh = useCallback(async () => {
-    setIsPullRefreshing(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
     try {
       await gitActions.refreshSelectedThreadGitStatus();
     } finally {
-      setIsPullRefreshing(false);
+      setIsRefreshing(false);
     }
   }, [gitActions]);
 
   const content = (
     <ScrollView
+      nestedScrollEnabled
       alwaysBounceVertical
       className="flex-1 android:bg-sheet-solid ios:bg-screen"
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
@@ -278,7 +279,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
+        isInspector ? (
+          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        ) : undefined
       }
     >
       <View
@@ -434,9 +437,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   if (Platform.OS === "ios") {
     // Compact form sheet: a plain screen presented as formSheet never renders a
     // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet. This reuses the exact structure of the
-    // inspector branch below: branch as the title, status summary as the native
-    // subtitle, and content that owns pull-to-refresh.
+    // nested native stack INSIDE the sheet. Refresh belongs in the header so
+    // dragging down at the top of the content can dismiss the sheet.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
@@ -452,6 +454,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             <ScreenStackHeaderConfig
               backgroundColor="rgba(0,0,0,0)"
               color={foregroundColor}
+              headerRightBarButtonItems={[
+                {
+                  accessibilityLabel: "Refresh repository status",
+                  disabled: busy || isRefreshing,
+                  icon: { name: "arrow.clockwise", type: "sfSymbol" },
+                  identifier: "thread-git-sheet-refresh",
+                  onPress: () => void handleRefresh(),
+                  sharesBackground: false,
+                  tintColor: foregroundColor,
+                  type: "button",
+                },
+              ]}
               hideBackButton
               hideShadow={false}
               navigationItemStyle="editor"
@@ -474,11 +488,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {
           id: "refresh",
           title: "Refresh repository status",
-          attributes: { disabled: busy || isPullRefreshing },
+          attributes: { disabled: busy || isRefreshing },
         },
       ]}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "refresh") void handlePullRefresh();
+        if (nativeEvent.event === "refresh") void handleRefresh();
       }}
     >
       {(open) => (

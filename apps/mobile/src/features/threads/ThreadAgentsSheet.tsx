@@ -53,6 +53,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
 
   const content = (
     <ScrollView
+      nestedScrollEnabled
       className="flex-1"
       // The iOS header is translucent and floats over this view; UIKit has to
       // inset the content or the first row sits underneath the title.
