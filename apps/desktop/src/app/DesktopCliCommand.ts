@@ -146,6 +146,14 @@ export const make = Effect.gen(function* () {
     return Option.none<string>();
   });
 
+  /** The `t3` a new shell runs when it is not this app's, on Unix. */
+  const foreignFirstOnPath = Effect.gen(function* () {
+    if (windows) return Option.none<string>();
+    const first = yield* firstOnPath;
+    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    return first;
+  });
+
   /** Where this app's command is installed now, if anywhere. */
   const installedAt = Effect.gen(function* () {
     if (windows) {
@@ -167,12 +175,16 @@ export const make = Effect.gen(function* () {
       return { supported: false, installedPath: null, onPath: false } as const;
     }
     const installed = yield* installedAt;
-    if (Option.isNone(installed)) return { supported: true, installedPath: null, onPath: false };
+    const shadowedBy = yield* foreignFirstOnPath;
+    const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
+    if (Option.isNone(installed)) {
+      return { supported: true, installedPath: null, onPath: false, ...shadow };
+    }
     // On Windows only terminals opened after the change see it. On Unix the
     // first `t3` on PATH must be ours; a `t3` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
     const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
-    return { supported: true, installedPath: installed.value, onPath };
+    return { supported: true, installedPath: installed.value, onPath, ...shadow };
   }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
 
   /** Writes the launcher if the app has not yet, e.g. when no local backend runs. */
@@ -208,6 +220,13 @@ export const make = Effect.gen(function* () {
       yield* fs
         .remove(existing.value)
         .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
+    }
+    // A link behind another `t3` never runs, so installing one would only hide the problem.
+    const shadowedBy = yield* foreignFirstOnPath;
+    if (Option.isSome(shadowedBy)) {
+      return yield* fail(
+        `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
+      );
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
