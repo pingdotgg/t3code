@@ -171,6 +171,9 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
 });
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
+// Forgejo cannot filter pulls by head branch, so a branch without a PR would otherwise page
+// through every PR in the repository. Only the most recently updated ones are searched.
+const HEAD_BRANCH_LOOKUP_MAX_PAGES = 2;
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
@@ -235,7 +238,7 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
+        for (let page = 1; page <= HEAD_BRANCH_LOOKUP_MAX_PAGES && results.length < limit; page++) {
           const items = yield* request(
             {
               ...input,
