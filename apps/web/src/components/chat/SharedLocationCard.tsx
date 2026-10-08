@@ -28,7 +28,7 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
       className="group/location block overflow-hidden rounded-lg border border-border/70 bg-background/70 text-left transition-colors hover:border-border hover:bg-background focus-visible:outline-2 focus-visible:outline-ring"
     >
       <div
-        className="relative h-[112px] overflow-hidden bg-muted/35 text-muted-foreground"
+        className="relative h-[112px] overflow-hidden bg-primary/10 text-muted-foreground"
         aria-hidden="true"
       >
         <svg viewBox="0 0 420 112" className="size-full" preserveAspectRatio="xMidYMid slice">
@@ -37,31 +37,21 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
             fill="none"
             stroke="currentColor"
             strokeWidth="12"
-            opacity=".12"
+            opacity=".4"
           />
           <path
             d="M0 18 420 94M-12 94 378 -8M92 112 176 -8M300 120 230 -8"
             fill="none"
             stroke="var(--background)"
             strokeWidth="7"
-            opacity=".8"
           />
-          <path
-            d="M12 68c40-12 63-6 87 8s47 17 77 5 49-30 81-27 65 23 151 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeDasharray="5 5"
-            opacity=".3"
-          />
-          <circle cx="210" cy="55" r="24" fill="var(--primary)" opacity=".14" />
           <path
             d="M210 39c-8.3 0-15 6.6-15 14.8 0 10.7 15 25.2 15 25.2s15-14.5 15-25.2c0-8.2-6.7-14.8-15-14.8Z"
             fill="var(--primary)"
           />
           <circle cx="210" cy="54" r="5" fill="var(--primary-foreground)" />
         </svg>
-        <span className="absolute right-2 top-2 rounded-full border border-border/60 bg-background/85 px-2 py-1 text-3xs font-medium text-muted-foreground backdrop-blur-sm">
+        <span className="absolute right-2 top-2 rounded-full border border-border bg-background px-2 py-1 text-3xs font-medium text-muted-foreground">
           Location snapshot
         </span>
       </div>
@@ -84,7 +74,7 @@ export function SharedLocationCard(props: { record: LocationContextRecord; copyM
             {coordinates}
           </span>
           {accuracy || capturedAt ? (
-            <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-muted-foreground/80">
+            <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-muted-foreground">
               {accuracy ? <span>{accuracy}</span> : null}
               {capturedAt ? <span>Captured {capturedAt}</span> : null}
             </span>

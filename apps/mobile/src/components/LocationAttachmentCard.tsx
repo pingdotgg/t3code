@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { sharedLocationLocalCaptureTime } from "@t3tools/shared/sharedLocation";
 
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { sharedLocationMapsUrl, type DraftComposerLocationAttachment } from "../lib/sharedLocation";
 import { SymbolView } from "./AppSymbol";
 import { AppText } from "./AppText";
@@ -12,6 +14,7 @@ export function LocationAttachmentCard(props: {
   readonly compact?: boolean;
 }) {
   const { location, onRemove, compact = false } = props;
+  const { themeVariables: colors } = useAppearancePreferences();
   const [openError, setOpenError] = useState(false);
 
   const openInMaps = async () => {
@@ -72,12 +75,28 @@ export function LocationAttachmentCard(props: {
       >
         <View
           accessible={false}
-          className="relative h-[76px] items-center justify-center overflow-hidden rounded-xl bg-subtle"
+          className="relative h-[88px] items-center justify-center overflow-hidden rounded-xl bg-primary/10"
         >
-          <View className="absolute -left-5 top-[22px] h-3 w-[310px] rotate-[-12deg] rounded-full bg-card/85" />
-          <View className="absolute -left-8 top-[62px] h-2 w-[310px] rotate-[16deg] rounded-full bg-card/80" />
-          <View className="absolute left-[44px] -top-4 h-[140px] w-2 rotate-[21deg] rounded-full bg-card/80" />
-          <View className="absolute right-[42px] -top-4 h-[140px] w-2 rotate-[-28deg] rounded-full bg-card/80" />
+          <Svg
+            pointerEvents="none"
+            style={{ position: "absolute", width: "100%", height: "100%" }}
+            viewBox="0 0 246 88"
+            preserveAspectRatio="xMidYMid slice"
+          >
+            <Path
+              d="M-12 64 258 8M-12 24 258 94M36 100 76 -12M208 100 154 -12"
+              fill="none"
+              stroke={colors["--color-foreground-muted"]}
+              strokeWidth={11}
+              opacity={0.4}
+            />
+            <Path
+              d="M-12 64 258 8M-12 24 258 94M36 100 76 -12M208 100 154 -12"
+              fill="none"
+              stroke={colors["--color-card"]}
+              strokeWidth={7}
+            />
+          </Svg>
           <View className="size-9 items-center justify-center rounded-full bg-primary shadow-sm">
             <SymbolView name="mappin" size={20} tintColorClassName="accent-primary-foreground" />
           </View>
