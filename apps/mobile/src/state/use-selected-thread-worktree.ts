@@ -1,3 +1,4 @@
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useMemo } from "react";
 
 import { useSelectedThreadWorktreePath } from "./use-thread-detail";
@@ -19,6 +20,17 @@ export function useSelectedThreadWorktree() {
 
   return {
     selectedThreadWorktreePath,
+    /** Git surfaces work from the checkout root, like the web diff panel. */
     selectedThreadCwd: selectedThreadWorktreePath ?? selectedThreadProject?.workspaceRoot ?? null,
+    /** Where the agent works: a subdirectory project stays in that directory of its worktree. */
+    selectedThreadWorkingDirectory: selectedThreadProject
+      ? projectScriptCwd({
+          project: {
+            cwd: selectedThreadProject.workspaceRoot,
+            repositoryRoot: selectedThreadProject.repositoryIdentity?.rootPath,
+          },
+          worktreePath: selectedThreadWorktreePath,
+        })
+      : null,
   };
 }

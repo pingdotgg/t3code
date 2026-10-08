@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 
 interface TerminalLocationLike {
   readonly cwd: string;
@@ -59,6 +60,7 @@ export function resolveTerminalOpenLocation(input: {
   readonly terminalLocation: TerminalLocationLike | null;
   readonly activeSessionLocation: TerminalLocationLike | null;
   readonly workspaceRoot: string;
+  readonly repositoryRoot?: string | null | undefined;
   readonly threadShellWorktreePath: string | null;
   readonly threadDetailWorktreePath: string | null;
 }): {
@@ -74,8 +76,10 @@ export function resolveTerminalOpenLocation(input: {
     cwd:
       input.terminalLocation?.cwd ??
       input.activeSessionLocation?.cwd ??
-      preferredThreadWorktreePath ??
-      input.workspaceRoot,
+      projectScriptCwd({
+        project: { cwd: input.workspaceRoot, repositoryRoot: input.repositoryRoot },
+        worktreePath: preferredThreadWorktreePath,
+      }),
     worktreePath:
       input.terminalLocation?.worktreePath ??
       input.activeSessionLocation?.worktreePath ??

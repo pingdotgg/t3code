@@ -341,3 +341,66 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
     ),
   ),
 );
+
+it.effect("keeps a subdirectory project's session when the model changes", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const sessionIn = (cwd: string) => ({
+      ...thread,
+      providerSessions: [{ ...thread.providerSessions[0]!, cwd }],
+    });
+    const targetModelSelection = { instanceId: currentInstanceId, model: "gpt-5.2-codex" };
+    // The worktree is /repo; the project's agent runs in /repo/ios.
+    const sameWorktree = yield* service.plan({
+      projection: sessionIn("/repo/ios"),
+      targetModelSelection,
+    });
+    const otherCheckout = yield* service.plan({
+      projection: sessionIn("/elsewhere/ios"),
+      targetModelSelection,
+    });
+    assert.notEqual(sameWorktree.transition.type, "restart_and_resume");
+    assert.deepEqual(sameWorktree.releaseProviderSessionIds, []);
+    assert.equal(otherCheckout.transition.type, "restart_and_resume");
+  }).pipe(
+    Effect.provide(
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, () =>
+        Effect.succeed({ type: "apply_on_next_turn" }),
+      ),
+    ),
+  ),
+);
+
+it.effect("matches the session to its worktree regardless of path spelling", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const transitionFor = (worktreePath: string, cwd: string) =>
+      service
+        .plan({
+          projection: {
+            ...thread,
+            thread: { ...thread.thread, worktreePath },
+            providerSessions: [{ ...thread.providerSessions[0]!, cwd }],
+          },
+          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+        })
+        .pipe(Effect.map((result) => result.transition.type));
+
+    // Same worktree, spelled differently: the session is kept.
+    assert.notEqual(yield* transitionFor("/repo/", "/repo/ios"), "restart_and_resume");
+    assert.notEqual(
+      yield* transitionFor("C:\\Worktrees\\Feature", "c:/worktrees/feature\\ios"),
+      "restart_and_resume",
+    );
+    // A sibling directory sharing the prefix is a different workspace.
+    assert.equal(yield* transitionFor("/repo", "/repo-other/ios"), "restart_and_resume");
+  }).pipe(
+    Effect.provide(
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, () =>
+        Effect.succeed({ type: "apply_on_next_turn" }),
+      ),
+    ),
+  ),
+);

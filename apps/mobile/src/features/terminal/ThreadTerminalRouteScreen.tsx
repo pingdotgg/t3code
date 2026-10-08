@@ -404,6 +404,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       terminalLocation: activeKnownSession?.state.summary ?? null,
       activeSessionLocation: activeKnownSession?.state.summary ?? null,
       workspaceRoot: selectedThreadProject.workspaceRoot,
+      repositoryRoot: selectedThreadProject.repositoryIdentity?.rootPath,
       threadShellWorktreePath: selectedThread.worktreePath ?? null,
       threadDetailWorktreePath: selectedThreadDetailWorktreePath,
     });
@@ -412,6 +413,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     pendingLaunch,
     selectedThread,
     selectedThreadDetailWorktreePath,
+    selectedThreadProject?.repositoryIdentity?.rootPath,
     selectedThreadProject?.workspaceRoot,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({

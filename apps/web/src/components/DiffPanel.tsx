@@ -28,6 +28,7 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
@@ -236,9 +237,22 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  // Git reads run at the checkout root; opened files resolve in the project's
+  // directory, where the file panel is rooted. In a worktree that directory
+  // sits at the same place below the worktree as the project does in its
+  // repository.
   const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
+    ? activeThread.worktreePath
     : activeProject?.repositoryIdentity?.rootPath;
+  const activeFileRoot = activeProject
+    ? projectScriptCwd({
+        project: {
+          cwd: activeProject.workspaceRoot,
+          repositoryRoot: activeProject.repositoryIdentity?.rootPath,
+        },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : activeCwd;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -654,7 +668,7 @@ export default function DiffPanel({
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
-        activeCwd,
+        activeCwd: activeFileRoot,
         repositoryRoot: activeRepositoryRoot,
         openInEditor: (targetPath) => {
           void (async () => {
@@ -675,7 +689,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
+    [activeFileRoot, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
   const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFileKeys });
   useLayoutEffect(() => {
@@ -1164,7 +1178,7 @@ export default function DiffPanel({
                       {
                         environmentId: activeThread?.environmentId ?? null,
                         filePath,
-                        workspaceRoot: activeCwd,
+                        workspaceRoot: activeFileRoot,
                         repositoryRoot: activeRepositoryRoot,
                       },
                       event,

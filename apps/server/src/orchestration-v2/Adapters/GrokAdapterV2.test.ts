@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
@@ -24,6 +25,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../ProjectStore.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
@@ -426,9 +428,11 @@ describe("Grok launch permission mode", () => {
           RuntimePolicy.layerFromProjectStore.pipe(
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
-                get: () => Effect.die("the thread has a worktree"),
+                get: () => Effect.succeed(Option.none()),
               }),
             ),
+            Layer.provide(Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({})),
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({}))),
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: () =>

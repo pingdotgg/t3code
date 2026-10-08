@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -56,6 +57,27 @@ export class ProviderSwitchServiceV2 extends Context.Service<
 const isLiveProviderSession = (
   session: OrchestrationV2ThreadProjection["providerSessions"][number],
 ) => session.status !== "stopped" && session.status !== "error";
+
+/**
+ * The workspace a switched session runs in. A session already inside the
+ * thread's worktree stays where it is: a project rooted in a subdirectory runs
+ * in that directory of the worktree, not at its root.
+ */
+const targetWorkspace = (
+  worktreePath: string | null,
+  sessionCwd: string | undefined,
+): string | undefined => {
+  if (worktreePath === null) return sessionCwd;
+  if (sessionCwd === undefined) return worktreePath;
+  // Compared in normalized form, so trailing separators, mixed separators and
+  // Windows drive-letter case do not read as a different workspace.
+  const root = normalizeProjectPathForComparison(worktreePath);
+  const cwd = normalizeProjectPathForComparison(sessionCwd);
+  const separator = root.includes("\\") ? "\\" : "/";
+  const insideWorktree =
+    cwd === root || cwd.startsWith(root.endsWith(separator) ? root : `${root}${separator}`);
+  return insideWorktree ? sessionCwd : worktreePath;
+};
 
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
@@ -157,8 +179,7 @@ export const layer: Layer.Layer<
                     runtimeMode: projection.thread.runtimeMode,
                     interactionMode: projection.thread.interactionMode,
                     workspace:
-                      projection.thread.worktreePath ??
-                      currentSession?.cwd ??
+                      targetWorkspace(projection.thread.worktreePath, currentSession?.cwd) ??
                       "<unresolved-workspace>",
                     capabilities: targetInstance.value.capabilities,
                     available: targetInstance.value.enabled,

@@ -1,6 +1,7 @@
 "use client";
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -2025,7 +2026,13 @@ function OpenCommandPaletteDialog(props: {
           environmentId,
           input: {
             instanceId: thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
-            cwd: thread.worktreePath ?? project.workspaceRoot,
+            cwd: projectScriptCwd({
+              project: {
+                cwd: project.workspaceRoot,
+                repositoryRoot: project.repositoryIdentity?.rootPath,
+              },
+              worktreePath: thread.worktreePath,
+            }),
             fresh: true,
           },
         });
