@@ -4606,6 +4606,74 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect(
+      "discovers worktree folders and their current refs, including detached checkouts",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const worktreesRoot = yield* makeTmpDir("git-worktrees-");
+          const selectedPath = path.join(worktreesRoot, "my existing checkout");
+          const detachedPath = path.join(worktreesRoot, "detached");
+          const missingPath = path.join(worktreesRoot, "missing");
+          yield* git(cwd, ["worktree", "add", "-b", "old-feature", selectedPath]);
+          yield* git(cwd, ["worktree", "add", "--detach", detachedPath]);
+          yield* git(cwd, ["worktree", "add", "-b", "missing-feature", missingPath]);
+          yield* fs.remove(missingPath, { recursive: true });
+
+          const worktrees = (yield* driver.listWorktrees({ cwd })).worktrees;
+          const canonicalCwd = path.normalize(yield* fs.realPath(cwd));
+          const canonicalSelectedPath = path.normalize(yield* fs.realPath(selectedPath));
+          const canonicalDetachedPath = path.normalize(yield* fs.realPath(detachedPath));
+          assert.sameDeepMembers(
+            [...worktrees],
+            [
+              { path: canonicalCwd, refName: initialBranch },
+              { path: canonicalSelectedPath, refName: "old-feature" },
+              { path: canonicalDetachedPath, refName: null },
+            ],
+          );
+
+          // The selected folder remains the same when its branch changes.
+          yield* driver.createRef({
+            cwd: selectedPath,
+            refName: "fresh-feature",
+            baseRefName: initialBranch,
+            switchRef: true,
+          });
+          const refreshed = (yield* driver.listWorktrees({ cwd: selectedPath })).worktrees;
+          assert.deepStrictEqual(
+            refreshed.find((worktree) => worktree.path === canonicalSelectedPath),
+            {
+              path: canonicalSelectedPath,
+              refName: "fresh-feature",
+            },
+          );
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+        }),
+    );
+
+    it.effect("excludes a bare repository while listing its linked worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeTmpDir("git-worktrees-");
+        const barePath = path.join(root, "bare.git");
+        const checkoutPath = path.join(root, "checkout");
+        yield* git(cwd, ["clone", "--bare", cwd, barePath]);
+        yield* git(barePath, ["worktree", "add", "--detach", checkoutPath]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        assert.deepStrictEqual(yield* driver.listWorktrees({ cwd: barePath }), {
+          worktrees: [{ path: path.normalize(yield* fs.realPath(checkoutPath)), refName: null }],
+        });
+      }),
+    );
+
     it.effect("uses parallel checkout without skipping filters or hooks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

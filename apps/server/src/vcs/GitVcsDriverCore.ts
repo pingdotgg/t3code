@@ -314,35 +314,33 @@ function paginateBranches(input: {
   };
 }
 
+function parseWorktrees(stdout: string) {
+  return stdout.split("\0\0").flatMap((record) => {
+    const fields = record.split("\0");
+    const worktree = fields.find((field) => field.startsWith("worktree "));
+    if (
+      worktree === undefined ||
+      fields.includes("bare") ||
+      fields.some((field) => field === "prunable" || field.startsWith("prunable "))
+    ) {
+      return [];
+    }
+    const branch = fields.find((field) => field.startsWith("branch refs/heads/"));
+    return [
+      {
+        path: worktree.slice("worktree ".length),
+        refName: branch?.slice("branch refs/heads/".length) ?? null,
+      },
+    ];
+  });
+}
+
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-  let currentPrunable = false;
-
-  const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
-    }
-    currentPath = null;
-    currentBranch = null;
-    currentPrunable = false;
-  };
-
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      flush();
-    } else if (field.startsWith("worktree ")) {
-      currentPath = field.slice("worktree ".length);
-    } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      currentPrunable = true;
-    }
-  }
-  flush();
-
-  return worktreePaths;
+  return new Map(
+    parseWorktrees(stdout).flatMap((worktree) =>
+      worktree.refName === null ? [] : [[worktree.refName, worktree.path] as const],
+    ),
+  );
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -5243,6 +5241,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
+  const listWorktrees: GitVcsDriver.GitVcsDriver["Service"]["listWorktrees"] = Effect.fn(
+    "listWorktrees",
+  )(function* (input) {
+    const stdout = yield* runGitStdout("GitVcsDriver.listWorktrees", input.cwd, [
+      "worktree",
+      "list",
+      "--porcelain",
+      "-z",
+    ]);
+    const worktrees = yield* Effect.filter(
+      parseWorktrees(stdout).map((worktree) => ({
+        ...worktree,
+        path: path.normalize(path.resolve(input.cwd, worktree.path)),
+      })),
+      (worktree) =>
+        fileSystem.stat(worktree.path).pipe(
+          Effect.map((info) => info.type === "Directory"),
+          Effect.orElseSucceed(() => false),
+        ),
+      { concurrency: 16 },
+    );
+    return { worktrees };
+  });
+
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
     executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
       // A `prunable` record's directory is gone; another checkout may now sit there.
@@ -5400,5 +5422,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,
     listWorktreePaths,
+    listWorktrees,
   });
 });

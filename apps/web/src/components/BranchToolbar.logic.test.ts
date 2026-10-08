@@ -4,6 +4,7 @@ import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
   buildBranchPickerItems,
   resolveNewRefBase,
+  resolveWorkspacePickerItems,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchSelectionTarget,
@@ -406,5 +407,56 @@ describe("resolveNewRefBase", () => {
   it("falls back to the current checkout, including detached HEAD", () => {
     expect(resolveNewRefBase([], "trunk")).toBe("trunk");
     expect(resolveNewRefBase([], null)).toBe("HEAD");
+  });
+});
+
+describe("resolveWorkspacePickerItems", () => {
+  const worktrees = [{ path: "/repo" }, { path: "/worktrees/b" }, { path: "/worktrees/a" }];
+
+  it("puts the selected folder first, then creation, then other folders", () => {
+    const items = resolveWorkspacePickerItems({
+      activeWorktreePath: "/worktrees/b",
+      projectCwd: "/repo",
+      effectiveEnvMode: "local",
+      worktrees,
+    });
+    expect(items.map((item) => item.value)).toEqual([
+      "worktree:/worktrees/b",
+      "worktree",
+      "worktree:/repo",
+      "worktree:/worktrees/a",
+    ]);
+    expect(items[0]?.label).toBe("b");
+    expect(items[1]?.label).toBe("New worktree");
+  });
+
+  it("shows new worktree once when creation is selected", () => {
+    expect(
+      resolveWorkspacePickerItems({
+        activeWorktreePath: null,
+        projectCwd: "/repo",
+        effectiveEnvMode: "worktree",
+        worktrees,
+      }).map((item) => item.value),
+    ).toEqual(["worktree", "worktree:/repo", "worktree:/worktrees/a", "worktree:/worktrees/b"]);
+  });
+
+  it("names the project checkout and keeps a selected folder absent from discovery", () => {
+    expect(
+      resolveWorkspacePickerItems({
+        activeWorktreePath: null,
+        projectCwd: "/repo",
+        effectiveEnvMode: "local",
+        worktrees,
+      })[0],
+    ).toEqual({ value: "worktree:/repo", path: "/repo", label: "repo" });
+    expect(
+      resolveWorkspacePickerItems({
+        activeWorktreePath: "/worktrees/missing",
+        projectCwd: "/repo",
+        effectiveEnvMode: "local",
+        worktrees: [],
+      }).map((item) => item.value),
+    ).toEqual(["worktree:/worktrees/missing", "worktree"]);
   });
 });

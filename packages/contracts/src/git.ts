@@ -168,6 +168,22 @@ export const VcsListRefsInput = Schema.Struct({
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
+export const VcsListWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsListWorktreesInput = typeof VcsListWorktreesInput.Type;
+
+export const VcsExistingWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+});
+export type VcsExistingWorktree = typeof VcsExistingWorktree.Type;
+
+export const VcsListWorktreesResult = Schema.Struct({
+  worktrees: Schema.Array(VcsExistingWorktree),
+});
+export type VcsListWorktreesResult = typeof VcsListWorktreesResult.Type;
+
 export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,

@@ -111,6 +111,43 @@ export function resolveLockedWorkspaceLabel(
   return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
 
+export function resolveWorkspaceDisplayName(path: string | null): string | null {
+  if (!path) return null;
+  const normalizedPath = path.replace(/[\\/]+$/, "");
+  if (normalizedPath.length === 0) return path;
+  return normalizedPath.split(/[\\/]/).at(-1) ?? normalizedPath;
+}
+
+export function resolveWorkspacePickerItems(input: {
+  activeWorktreePath: string | null;
+  projectCwd: string | null;
+  effectiveEnvMode: EnvMode;
+  worktrees: readonly { readonly path: string }[];
+}) {
+  const creatingWorktree = input.effectiveEnvMode === "worktree" && !input.activeWorktreePath;
+  const selectedPath = creatingWorktree ? null : (input.activeWorktreePath ?? input.projectCwd);
+  const newWorktreeItem = { value: "worktree", path: null, label: resolveEnvModeLabel("worktree") };
+  const selectedItem = creatingWorktree
+    ? newWorktreeItem
+    : {
+        value: `worktree:${selectedPath}`,
+        path: selectedPath,
+        label: resolveWorkspaceDisplayName(selectedPath) ?? "Checkout",
+      };
+  return [
+    selectedItem,
+    ...(creatingWorktree ? [] : [newWorktreeItem]),
+    ...input.worktrees
+      .filter((worktree) => worktree.path !== selectedPath)
+      .toSorted((left, right) => left.path.localeCompare(right.path))
+      .map((worktree) => ({
+        value: `worktree:${worktree.path}`,
+        path: worktree.path,
+        label: resolveWorkspaceDisplayName(worktree.path) ?? worktree.path,
+      })),
+  ];
+}
+
 export interface PreviousWorktreeSeed {
   branch: string | null;
   worktreePath: string;
@@ -147,10 +184,6 @@ export function resolvePreviousWorktreeSeed(input: {
     }
   }
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
-}
-
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
 }
 
 export function resolveEffectiveEnvMode(input: {
