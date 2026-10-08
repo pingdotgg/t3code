@@ -86,3 +86,20 @@ it("returns the existing failures for a missing environment or editor", async ()
   expect((await useOpenInPreferredEditor(secondary, [])("/work"))._tag).toBe("Failure");
   expect(state.run).not.toHaveBeenCalled();
 });
+
+it("keeps an established editor as the default when Devin is also installed", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["devin", "webstorm", "file-manager"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "webstorm" });
+  expect(state.setPreference).toHaveBeenCalledWith(
+    "t3code:last-editor",
+    "webstorm",
+    expect.anything(),
+  );
+});
+
+it("defaults to Devin over the file manager", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["file-manager", "devin"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "devin" });
+});

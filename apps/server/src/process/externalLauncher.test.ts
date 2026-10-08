@@ -950,6 +950,24 @@ for (const { platform, installPath, editor, args } of [
   },
   {
     platform: "darwin",
+    installPath: "Applications/Devin.app/Contents/Resources/app/bin/devin-desktop",
+    editor: "devin",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "linux",
+    installPath: ".local/bin/windsurf",
+    editor: "devin",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "win32",
+    installPath: "Programs/Devin/bin/devin-desktop.cmd",
+    editor: "devin",
+    args: ['^"--goto^"', '^"/workspace^ with^ spaces/file.ts:12:4^"'],
+  },
+  {
+    platform: "darwin",
     installPath: "Applications/WebStorm.app/Contents/MacOS/webstorm",
     editor: "webstorm",
     args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],

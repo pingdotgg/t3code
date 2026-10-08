@@ -79,6 +79,10 @@ export const EDITORS = [
   { id: "rubymine", label: "RubyMine", commands: ["rubymine"], launchStyle: "line-column" },
   { id: "rustrover", label: "RustRover", commands: ["rustrover"], launchStyle: "line-column" },
   { id: "webstorm", label: "WebStorm", commands: ["webstorm"], launchStyle: "line-column" },
+  // Devin Desktop was Windsurf. Installs from before the rename only have `windsurf`.
+  // Without a saved choice the first available editor here is the default, so newer
+  // entries go last to keep existing users on the editor they already get.
+  { id: "devin", label: "Devin", commands: ["devin-desktop", "windsurf"], launchStyle: "goto" },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 

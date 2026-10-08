@@ -34,6 +34,7 @@ import {
 import {
   AntigravityIcon,
   CursorIcon,
+  DevinIcon,
   FileExplorerIcon,
   FinderIcon,
   Icon,
@@ -95,6 +96,11 @@ export const resolveOpenInOptions = (
     {
       Icon: KiroIcon,
       value: "kiro",
+      kind: "brand",
+    },
+    {
+      Icon: DevinIcon,
+      value: "devin",
       kind: "brand",
     },
     {
