@@ -9,10 +9,9 @@ const SinglelineString = (maxLength: number) =>
   Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(maxLength),
-    // Native geocoders sometimes return line breaks in an address.
-    // oxlint-disable-next-line no-control-regex
     Schema.makeFilter(
       (value) =>
+        // oxlint-disable-next-line no-control-regex -- Reject control characters in geocoded fields.
         value.trim().length > 0 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value),
       {
         expected: "a non-blank single-line string",
