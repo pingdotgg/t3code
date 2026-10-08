@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as ThreadHandoff from "./peer/handoff/ThreadHandoff.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1287,6 +1288,7 @@ const layerWsRpc = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const threadHandoff = yield* ThreadHandoff.ThreadHandoff;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2399,6 +2401,29 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
+        [WS_METHODS.threadHandoffOptions]: ({ threadId }) =>
+          threadHandoff.options(threadId).pipe(
+            Effect.map((options) => ({ options })),
+            Effect.mapError((error) => ({
+              _tag: "ThreadHandoffError" as const,
+              message: error.message,
+            })),
+          ),
+        [WS_METHODS.threadHandoffStart]: (input) =>
+          threadHandoff.start(input).pipe(
+            Effect.mapError((error) => ({
+              _tag: "ThreadHandoffError" as const,
+              message: error.message,
+            })),
+          ),
+        [WS_METHODS.threadHandoffCancel]: ({ threadId }) =>
+          threadHandoff.cancel(threadId).pipe(
+            Effect.as({}),
+            Effect.mapError((error) => ({
+              _tag: "ThreadHandoffError" as const,
+              message: error.message,
+            })),
+          ),
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
@@ -3146,6 +3171,7 @@ export const layer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const threadHandoff = yield* ThreadHandoff.ThreadHandoff;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3214,6 +3240,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(ThreadHandoff.ThreadHandoff, threadHandoff)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

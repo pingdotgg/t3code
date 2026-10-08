@@ -42,10 +42,22 @@ export class ThreadImportService extends Context.Service<
         readonly runtimeMode: RuntimeMode;
         readonly interactionMode: ProviderInteractionMode;
         readonly linkOrigin: OrchestrationV2LinkOrigin | undefined;
+        /**
+         * Prepares the checkout the thread works in, run only when this import
+         * creates the thread; `undo` runs if the thread then cannot be written.
+         */
+        readonly workspace?: Effect.Effect<ImportedWorkspace, OrchestratorMcpFailure>;
       },
     ) => Effect.Effect<OrchestratorMcpThreadImportResult, OrchestratorMcpFailure>;
   }
 >()("t3/orchestration-v2/ThreadImportService") {}
+
+/** A checkout an import prepared for its thread. */
+export interface ImportedWorkspace {
+  readonly worktreePath: string;
+  readonly branch: string | null;
+  readonly undo: Effect.Effect<void>;
+}
 
 const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
   new OrchestratorMcpFailure({ code, message });
@@ -152,6 +164,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => null));
       let created = false;
       if (existing === null) {
+        const workspace = input.workspace === undefined ? undefined : yield* input.workspace;
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           createdBy: "agent",
@@ -163,8 +176,9 @@ const make = Effect.gen(function* () {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
-          branch: input.branch ?? null,
-          worktreePath: input.worktreePath ?? null,
+          branch: workspace === undefined ? (input.branch ?? null) : workspace.branch,
+          worktreePath:
+            workspace === undefined ? (input.worktreePath ?? null) : workspace.worktreePath,
           activeProviderThreadId: null,
           historyOrigin: "v1_import",
           ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
@@ -202,6 +216,7 @@ const make = Effect.gen(function* () {
                 Effect.flatMap((raced) => (raced === null ? Effect.failCause(cause) : Effect.void)),
               ),
             ),
+            Effect.tapError(() => workspace?.undo ?? Effect.void),
             Effect.mapError(() =>
               failure("orchestration_error", "The thread could not be imported."),
             ),

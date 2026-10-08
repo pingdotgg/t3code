@@ -20,6 +20,7 @@ import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2Shape,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -42,7 +43,12 @@ const unimplemented = (detail: string) =>
  */
 export const makeCapturingCodexAdapter = (
   capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>,
-  options: { readonly response: string; readonly modelSelection: ModelSelection },
+  options: {
+    readonly response: string;
+    readonly modelSelection: ModelSelection;
+    /** Holds each turn open until this completes, so a test can act mid-turn. */
+    readonly holdTurn?: Effect.Effect<void>;
+  },
 ) =>
   ({
     instanceId,
@@ -65,6 +71,78 @@ export const makeCapturingCodexAdapter = (
           updatedAt: now,
           lastError: null,
         };
+        const providerTurnUpdate = (
+          turnInput: ProviderAdapterV2TurnInput,
+          status: "running" | "completed",
+          startedAt: DateTime.Utc,
+          completedAt: DateTime.Utc | null,
+        ): ProviderAdapterV2Event => ({
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            id: ProviderTurnId.make(`provider-turn:${turnInput.threadId}:${turnInput.runOrdinal}`),
+            providerThreadId: turnInput.providerThread.id,
+            nodeId: turnInput.rootNodeId,
+            runAttemptId: turnInput.attemptId,
+            nativeTurnRef: {
+              driver,
+              nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+              strength: "strong",
+            },
+            ordinal: turnInput.runOrdinal,
+            status,
+            startedAt,
+            completedAt,
+          },
+        });
+        const finishTurn = (turnInput: ProviderAdapterV2TurnInput) =>
+          Effect.gen(function* () {
+            const eventTime = yield* DateTime.now;
+            const providerTurnId = ProviderTurnId.make(
+              `provider-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+            );
+            yield* PubSub.publishAll(events, [
+              providerTurnUpdate(turnInput, "completed", eventTime, eventTime),
+              {
+                type: "turn_item.updated",
+                driver,
+                turnItem: {
+                  id: TurnItemId.make(
+                    `turn-item:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                  ),
+                  threadId: turnInput.threadId,
+                  runId: turnInput.runId,
+                  nodeId: turnInput.rootNodeId,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: turnInput.runOrdinal * 100 + 1,
+                  status: "completed",
+                  title: null,
+                  startedAt: eventTime,
+                  completedAt: eventTime,
+                  updatedAt: eventTime,
+                  type: "assistant_message",
+                  messageId: MessageId.make(
+                    `message:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                  ),
+                  text: options.response,
+                  streaming: false,
+                },
+              },
+              {
+                type: "turn.terminal",
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId,
+                runOrdinal: turnInput.runOrdinal,
+                status: "completed",
+                failure: null,
+                threadDisposition: "reusable",
+              },
+            ] satisfies ReadonlyArray<ProviderAdapterV2Event>);
+          });
         return {
           instanceId,
           driver,
@@ -108,69 +186,19 @@ export const makeCapturingCodexAdapter = (
                   text: turnInput.message.text,
                 },
               ]);
-              const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
-              yield* PubSub.publishAll(events, [
-                {
-                  type: "provider_turn.updated",
-                  driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
-                    },
-                    ordinal: turnInput.runOrdinal,
-                    status: "completed",
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                  },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: {
-                    id: TurnItemId.make(
-                      `turn-item:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    threadId: turnInput.threadId,
-                    runId: turnInput.runId,
-                    nodeId: turnInput.rootNodeId,
-                    providerThreadId: turnInput.providerThread.id,
-                    providerTurnId,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: turnInput.runOrdinal * 100 + 1,
-                    status: "completed",
-                    title: null,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                    updatedAt: eventTime,
-                    type: "assistant_message",
-                    messageId: MessageId.make(
-                      `message:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    text: options.response,
-                    streaming: false,
-                  },
-                },
-                {
-                  type: "turn.terminal",
-                  driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId,
-                  runOrdinal: turnInput.runOrdinal,
-                  status: "completed",
-                  failure: null,
-                  threadDisposition: "reusable",
-                },
-              ] satisfies ReadonlyArray<ProviderAdapterV2Event>);
+              if (options.holdTurn !== undefined) {
+                // Ends the turn later, as a live provider does; startTurn returns now.
+                // Until then the turn is running, so Stop and steering can target it.
+                yield* PubSub.publish(
+                  events,
+                  providerTurnUpdate(turnInput, "running", yield* DateTime.now, null),
+                );
+                yield* Effect.forkDetach(
+                  options.holdTurn.pipe(Effect.andThen(finishTurn(turnInput))),
+                );
+                return;
+              }
+              yield* finishTurn(turnInput);
             }),
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,

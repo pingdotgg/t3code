@@ -252,6 +252,21 @@ that session; otherwise paste a pairing code from that machine's
   removes it here.
 - Links last 30 days. Link again with a new pairing code to renew one.
 
+### Continue a thread on another machine
+
+A thread can move to a linked machine with its conversation and its code:
+commits you have not pushed, uncommitted edits and new files. It continues
+there in a new worktree of the project with the same repository, and the copy
+here becomes read-only with a link to it. Ignored files such as `.env` stay
+behind, and a move larger than 50 MB asks you to push the branch first.
+
+You can also tell the agent to move it, for example "I need to wrap up, move
+this to my VPS". It finishes its reply first, then the thread moves and picks
+up where it said it would. Sending a message before then cancels the move.
+
+If the other machine's branch has commits this one lacks, the move is refused
+and nothing changes on either side.
+
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it

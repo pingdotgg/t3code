@@ -557,6 +557,19 @@ export const OrchestratorMcpThreadImportInput = Schema.Struct({
   /** The checkout the thread works in here, already prepared. Omit for the project root. */
   worktreePath: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The thread's git work, uploaded with t3_attachment_prepare_upload: a
+   * bundle of its branch and working tree. It lands in a new worktree here,
+   * which the thread then works in; worktreePath must then be omitted.
+   */
+  bundle: Schema.optional(
+    Schema.Struct({
+      attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+      branch: Schema.NullOr(TrimmedNonEmptyString),
+      tip: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+      snapshot: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+    }),
+  ),
   messages: Schema.Array(OrchestratorMcpImportedMessage).check(Schema.isMaxLength(2_000)),
   /** Sent as the thread's first message here, so its agent picks up where it left off. */
   continuationPrompt: Schema.optional(OrchestratorMcpPrompt),
@@ -571,6 +584,35 @@ export const OrchestratorMcpThreadImportResult = Schema.Struct({
   runId: Schema.NullOr(RunId),
 });
 export type OrchestratorMcpThreadImportResult = typeof OrchestratorMcpThreadImportResult.Type;
+
+export const OrchestratorMcpThreadHandoffInput = Schema.Struct({
+  /** The thread to move; omit for the calling thread. */
+  threadId: Schema.optional(ThreadId),
+  environmentId: EnvironmentId.annotate({
+    description: "The linked environment to move to; t3_environment_links lists them.",
+  }),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description: "That environment's project; omit for the one with this thread's repository.",
+    }),
+  ),
+  continuationPrompt: Schema.optional(
+    OrchestratorMcpPrompt.annotate({
+      description: "The first message there, so the agent picks up where it said it would.",
+    }),
+  ),
+});
+export type OrchestratorMcpThreadHandoffInput = typeof OrchestratorMcpThreadHandoffInput.Type;
+
+export const OrchestratorMcpThreadHandoffResult = Schema.Struct({
+  state: Schema.Literals(["pending", "departing", "departed", "failed"]),
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  /** The thread there, once it has moved. */
+  threadId: Schema.NullOr(ThreadId),
+  message: Schema.String,
+});
+export type OrchestratorMcpThreadHandoffResult = typeof OrchestratorMcpThreadHandoffResult.Type;
 
 export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

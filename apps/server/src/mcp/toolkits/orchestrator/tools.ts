@@ -6,6 +6,8 @@ import {
   OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpEnvironmentUnlinkInput,
   OrchestratorMcpEnvironmentUnlinkResult,
+  OrchestratorMcpThreadHandoffInput,
+  OrchestratorMcpThreadHandoffResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -43,6 +45,7 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
+import * as ThreadHandoff from "../../../peer/handoff/ThreadHandoff.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -277,6 +280,19 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+const ThreadHandoffTool = Tool.make("t3_thread_handoff", {
+  description:
+    "Move a thread to a linked environment (t3_environment_links), such as the user's VPS, with its conversation and its git work: unpushed commits, uncommitted edits and new files. It continues there in a new worktree of the project with the same repository, and the copy here becomes read-only. Omit threadId to move the calling thread: the move then happens as soon as this turn ends, and continuationPrompt becomes its first message there, so end the turn after saying what you will do there. A message to the thread before then cancels the move. Another thread must be idle to move.",
+  parameters: OrchestratorMcpThreadHandoffInput,
+  success: OrchestratorMcpThreadHandoffResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, ThreadHandoff.ThreadHandoff],
+})
+  .annotate(Tool.Title, "Move a thread to a linked environment")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
     "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. A machine the user names that is not listed is not linked yet: call t3_environment_link for it rather than looking elsewhere. Pass one's environmentId to t3_project_list, t3_thread_launch, t3_thread_list, t3_thread_read, t3_thread_send, t3_thread_wait, t3_thread_interrupt, or orchestrator_capabilities to act there. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
@@ -336,4 +352,5 @@ export const OrchestratorToolkit = Toolkit.make(
   EnvironmentLinksTool,
   EnvironmentLinkTool,
   EnvironmentUnlinkTool,
+  ThreadHandoffTool,
 );

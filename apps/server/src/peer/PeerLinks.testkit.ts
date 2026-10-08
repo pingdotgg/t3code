@@ -54,9 +54,16 @@ export const descriptorOf = (
  * socket. The descriptor can be swapped, as when its address comes to answer
  * as another environment, and every bearer it receives is recorded.
  */
-export const servePeer = <E, R>(
+export const servePeer = <E, R, E2 = never, R2 = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  /** More routes the peer serves, such as attachment uploads. */
+  routes: Layer.Layer<never, E2, R2> = Layer.empty as Layer.Layer<never, E2, R2>,
+  /**
+   * The peer's own config and secret store, when its tools need the same ones
+   * its auth uses, as signed uploads do. A fresh pair otherwise.
+   */
+  base?: Context.Context<ServerConfig.ServerConfig | ServerSecretStore.ServerSecretStore>,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -66,11 +73,18 @@ export const servePeer = <E, R>(
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
     });
+    const layerBase =
+      base === undefined
+        ? ServerSecretStore.layer.pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" }),
+            ),
+          )
+        : Layer.succeedContext(base);
     const authContext = yield* EnvironmentAuth.layer.pipe(
       Layer.provide(Sqlite.layerMemory),
-      Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" })),
+      Layer.provideMerge(layerBase),
       Layer.provideMerge(NodeServices.layer),
       Layer.fresh,
       Layer.build,
@@ -105,6 +119,7 @@ export const servePeer = <E, R>(
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),
       ),
+      routes,
     ).pipe(
       Layer.provide(layerRecordBearers),
       Layer.provide(layerEnvironment),

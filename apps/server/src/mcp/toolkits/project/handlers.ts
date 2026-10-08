@@ -8,8 +8,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
+import * as HandoffImport from "../../../peer/handoff/HandoffImport.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -19,6 +21,9 @@ import * as Repositories from "../../../sourceControl/SourceControlRepositorySer
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as Settings from "../../../serverSettings.ts";
+import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -217,10 +222,37 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "invalid_request",
             message: "The project was not found.",
           });
+        if (input.worktreePath !== undefined && input.bundle !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A bundle lands in a new worktree; omit worktreePath.",
+          });
         if (input.worktreePath !== undefined)
           yield* assertProjectWorktree(project.workspaceRoot, input.worktreePath);
         const imports = yield* ThreadImportService.ThreadImportService;
-        return yield* imports.importThread({ ...input, runtimeMode, interactionMode, linkOrigin });
+        const bundle = input.bundle;
+        const context = yield* Effect.context<
+          | ServerConfig.ServerConfig
+          | Settings.ServerSettingsService
+          | VcsProcess.VcsProcess
+          | FileSystem.FileSystem
+          | Path.Path
+        >();
+        const workspace =
+          bundle === undefined
+            ? undefined
+            : HandoffImport.applyBundle({
+                repoRoot: project.workspaceRoot,
+                handoffId: input.source.handoffId,
+                bundle,
+              }).pipe(Effect.provideContext(context));
+        return yield* imports.importThread({
+          ...input,
+          runtimeMode,
+          interactionMode,
+          linkOrigin,
+          ...(workspace === undefined ? {} : { workspace }),
+        });
       }),
     // A moved thread carries the link that moved it, like a launch.
     "stamped",

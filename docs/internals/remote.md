@@ -108,6 +108,16 @@ internal command reuses the parent half of a local finalize, so the parent
 wakes the same way. Open remote tasks are followed again at startup, which is
 also what keeps restart recovery from treating them as abandoned provider work.
 
+**A thread moves with exactly one live copy.** [`ThreadHandoff`](../../apps/server/src/peer/handoff/ThreadHandoff.ts)
+marks the thread `departing`, which the orchestrator refuses new turns for,
+packs its git work with [`HandoffGit`](../../apps/server/src/peer/handoff/HandoffGit.ts),
+uploads the bundle through the other side's signed attachment route, and calls
+its `t3_thread_import`. Only then is the thread `departed` here. Any failure
+marks it `failed`, which takes turns again. Import ids derive from the handoff,
+so a move that a restart cut short is retried by the startup sweep without
+creating a second thread there. An agent's move of its own thread waits as
+`pending` until its run ends, and any message to the thread in between cancels it.
+
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user, inside the limits above.
 

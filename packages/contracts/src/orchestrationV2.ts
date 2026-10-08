@@ -118,6 +118,44 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
+/**
+ * A thread moving to a linked environment. `pending` waits for the thread's
+ * own turn to end (the agent asked to move); `departing` is moving now and
+ * takes no new runs; `departed` lives on there as `threadId`, and this copy
+ * only reads. Cleared when a move fails, with the reason in `lastError`.
+ */
+export const OrchestrationV2ThreadHandoff = Schema.Union([
+  Schema.Struct({
+    state: Schema.Literal("pending"),
+    handoffId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    label: Schema.String,
+    continuationPrompt: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("departing"),
+    handoffId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    label: Schema.String,
+    continuationPrompt: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("departed"),
+    handoffId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    label: Schema.String,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    state: Schema.Literal("failed"),
+    handoffId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    label: Schema.String,
+    lastError: Schema.String,
+  }),
+]);
+export type OrchestrationV2ThreadHandoff = typeof OrchestrationV2ThreadHandoff.Type;
+
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
@@ -407,6 +445,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  handoff: Schema.optional(OrchestrationV2ThreadHandoff),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -1946,6 +1985,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  handoff: Schema.optional(OrchestrationV2ThreadHandoff),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3182,6 +3222,19 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * Sets where a thread is in a move to a linked environment, or clears it
+   * (`handoff: null`). Moving to `pending` or `departing` requires none in
+   * progress, and `departing` requires no live or queued run, so a turn and
+   * a move never overlap. `expected` is the state this transition is from.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.handoff.update"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expected: Schema.NullOr(Schema.Literals(["pending", "departing", "departed", "failed"])),
+    handoff: Schema.NullOr(OrchestrationV2ThreadHandoff),
   }),
   /**
    * Records a delegated task that runs in a linked environment: the task, its

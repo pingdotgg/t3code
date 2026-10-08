@@ -196,6 +196,23 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+/** The thread is moving, or has moved, to a linked environment and takes no new turns here. */
+export class OrchestratorThreadMovedError extends Schema.TaggedError<OrchestratorThreadMovedError>()(
+  "OrchestratorThreadMovedError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    label: Schema.String,
+    state: Schema.Literals(["departing", "departed"]),
+  },
+) {
+  override get message(): string {
+    return this.state === "departed"
+      ? `This thread moved to ${this.label}. Continue it there.`
+      : `This thread is moving to ${this.label}.`;
+  }
+}
+
 /** The command's thread runs above the modes its sender may touch (see `DispatchModeLimit`). */
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
@@ -261,6 +278,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadMovedError,
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -472,6 +490,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.stop":
+    case "thread.handoff.update":
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
@@ -1275,6 +1294,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
+        // A thread waiting to move, moving or moved starts nothing more here.
+        (projection.thread.handoff !== undefined && projection.thread.handoff.state !== "failed") ||
         projection.runs.some(isBlockingRun) ||
         projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
       ) {
@@ -6745,6 +6766,61 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /** Moves a thread through a handoff to a linked environment; see the command. */
+  const dispatchThreadHandoffUpdate = Effect.fn("orchestrationV2.dispatch.threadHandoffUpdate")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "thread.handoff.update" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const thread = projection.thread;
+      const reject = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (thread.deletedAt !== null) return yield* reject(`Thread ${thread.id} is deleted.`);
+      const current = thread.handoff?.state ?? null;
+      if (current !== command.expected) {
+        return yield* reject(
+          current === null
+            ? "This thread is not being moved."
+            : `This thread's move is ${current}, not ${command.expected ?? "absent"}.`,
+        );
+      }
+      const next = command.handoff?.state ?? null;
+      if (
+        next === "departing" &&
+        projection.runs.some((run) => isBlockingRun(run) || run.status === "queued")
+      ) {
+        return yield* reject("A thread moves only while no turn runs or waits on it.");
+      }
+      const now = yield* DateTime.now;
+      const { handoff: _previous, ...rest } = thread;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...rest,
+          ...(command.handoff === null ? {} : { handoff: command.handoff }),
+          updatedAt: now,
+        },
+      });
+    },
+  );
+
   /**
    * Records a task that runs in a linked environment on its parent: the
    * task, its node and its turn item, as a local delegation does, but no child
@@ -10737,6 +10813,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
           });
         }
+        // A thread moving away, or gone, takes no new turns here.
+        if (thread.handoff?.state === "departing" || thread.handoff?.state === "departed") {
+          return yield* new OrchestratorThreadMovedError({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            label: thread.handoff.label,
+            state: thread.handoff.state,
+          });
+        }
         yield* dispatchMessage(command, events, effects);
         break;
       }
@@ -10871,6 +10956,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "delegated_task.remote.request":
         yield* dispatchRemoteDelegatedTaskRequest(command, events);
+        break;
+      case "thread.handoff.update":
+        yield* dispatchThreadHandoffUpdate(command, events);
         break;
       case "delegated_task.remote.complete":
         yield* dispatchRemoteDelegatedTaskComplete(command, events);
