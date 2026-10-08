@@ -30,33 +30,53 @@ const encodeEnvelope = Schema.encodeEffect(
 );
 
 /**
- * Encode the shell cache payload exactly like `fromJsonString(StoredOrchestrationShellSnapshot)`,
- * yielding to the host between bounded chunks of thread rows. The final envelope encode and
- * JSON stringify still run synchronously over the whole payload.
+ * Make an encoder for the shell cache payload that produces exactly what
+ * `fromJsonString(StoredOrchestrationShellSnapshot)` would, yielding to the host
+ * between bounded chunks of thread rows. The final envelope encode and JSON
+ * stringify still run synchronously over the whole payload.
+ *
+ * Shell rows are immutable and the shell reducer keeps unchanged rows by
+ * reference, so each encoder remembers the canonical encoding of rows it has
+ * already encoded successfully and only runs the row codec for new rows.
  */
-export const encodeStoredShellSnapshot = Effect.fnUntraced(function* (
-  stored: typeof StoredOrchestrationShellSnapshot.Type,
-) {
-  let hasWorked = false;
-  const yieldBetweenChunks = Effect.suspend(() => {
-    if (hasWorked) return yieldToHost;
-    hasWorked = true;
-    return Effect.void;
-  });
-  const encodeRows = (rows: ReadonlyArray<OrchestrationV2ThreadShellJson>) =>
-    Effect.gen(function* () {
-      const encoded: Array<unknown> = [];
-      for (let start = 0; start < rows.length; start += ROWS_PER_CHUNK) {
-        yield* yieldBetweenChunks;
-        const chunk = yield* encodeThreadChunk(rows.slice(start, start + ROWS_PER_CHUNK));
-        for (const row of chunk) encoded.push(row);
-      }
-      return encoded;
-    });
+export function makeStoredShellSnapshotEncoder() {
+  const encodedRows = new WeakMap<OrchestrationV2ThreadShellJson, unknown>();
 
-  const { snapshot } = stored;
-  const threads = yield* encodeRows(snapshot.threads);
-  const archivedThreads = yield* encodeRows(snapshot.archivedThreads);
-  yield* yieldBetweenChunks;
-  return yield* encodeEnvelope({ ...stored, snapshot: { ...snapshot, threads, archivedThreads } });
-});
+  return Effect.fnUntraced(function* (stored: typeof StoredOrchestrationShellSnapshot.Type) {
+    let hasWorked = false;
+    const yieldBetweenChunks = Effect.suspend(() => {
+      if (hasWorked) return yieldToHost;
+      hasWorked = true;
+      return Effect.void;
+    });
+    const encodeMisses = (misses: ReadonlyArray<OrchestrationV2ThreadShellJson>) =>
+      Effect.gen(function* () {
+        yield* yieldBetweenChunks;
+        const chunk = yield* encodeThreadChunk(misses);
+        chunk.forEach((row, index) => encodedRows.set(misses[index]!, row));
+      });
+    const encodeRows = (rows: ReadonlyArray<OrchestrationV2ThreadShellJson>) =>
+      Effect.gen(function* () {
+        let misses: Array<OrchestrationV2ThreadShellJson> = [];
+        for (const row of rows) {
+          if (encodedRows.has(row)) continue;
+          misses.push(row);
+          if (misses.length === ROWS_PER_CHUNK) {
+            yield* encodeMisses(misses);
+            misses = [];
+          }
+        }
+        if (misses.length > 0) yield* encodeMisses(misses);
+        return rows.map((row) => encodedRows.get(row));
+      });
+
+    const { snapshot } = stored;
+    const threads = yield* encodeRows(snapshot.threads);
+    const archivedThreads = yield* encodeRows(snapshot.archivedThreads);
+    if (hasWorked) yield* yieldToHost;
+    return yield* encodeEnvelope({
+      ...stored,
+      snapshot: { ...snapshot, threads, archivedThreads },
+    });
+  });
+}
