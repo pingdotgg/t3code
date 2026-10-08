@@ -267,6 +267,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  var readOnly = false {
+    didSet {
+      if readOnly {
+        inputField.resignFirstResponder()
+      }
+    }
+  }
+
   var autoFocus = true {
     didSet {
       guard oldValue != autoFocus else { return }
@@ -640,7 +648,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
 
       DispatchQueue.main.async {
-        view.onInput(["data": input])
+        view.emitInput(input)
       }
     }, userdata)
   }
@@ -717,13 +725,13 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func requestKeyboardFocus() {
-    guard window != nil else { return }
+    guard window != nil, !readOnly else { return }
     inputField.becomeFirstResponder()
     textInputModeDidChange()
   }
 
   private func emitInput(_ data: String) {
-    guard !data.isEmpty else { return }
+    guard !readOnly, !data.isEmpty else { return }
     onInput(["data": data])
   }
 

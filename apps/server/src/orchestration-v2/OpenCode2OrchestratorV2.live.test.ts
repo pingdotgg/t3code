@@ -39,22 +39,22 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe } from "vite-plus/test";
 
-import * as ResetCreditCoordinator from "../provider/Layers/resetCreditCoordinator.ts";
+import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../provider/CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
-import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
-import * as ProviderEventLoggers from "../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderInstanceRegistryHydration from "../provider/ProviderInstanceRegistryHydration.ts";
+import * as ProviderEventLoggers from "../provider/ProviderEventLoggers.ts";
 import * as OpenCode2Client from "../provider/opencode2/OpenCode2Client.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
@@ -63,9 +63,9 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
-import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -84,7 +84,7 @@ const SWITCHED_MODEL = "opencode/mimo-v2.6-flash-free";
 
 /** The OpenCode servers the driver spawned, newest last, so a test can kill one by its own PID. */
 const spawnedPids: Array<number> = [];
-const spawnedServers = Layer.succeed(
+const layerSpawnedServers = Layer.succeed(
   OpenCodeServerLedger.OpenCodeServerLedger,
   OpenCodeServerLedger.OpenCodeServerLedger.of({
     track: ({ pid }) =>
@@ -100,7 +100,7 @@ const spawnedServers = Layer.succeed(
  * MCP server the run can see called; without it they point nowhere, as in replay.
  */
 const MCP_URL = process.env.OPENCODE2_MCP_URL ?? "http://127.0.0.1/mcp";
-const mcpRegistryLayer = Layer.succeed(
+const layerMcpRegistry = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
     issue: ({ threadId, providerInstanceId }) =>
@@ -123,20 +123,20 @@ const mcpRegistryLayer = Layer.succeed(
   }),
 );
 
-const PlatformTestLayer = Layer.merge(
+const layerPlatformTest = Layer.merge(
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
 );
-const serverConfigLayer = ServerConfig.layerTest(`${ROOT}/work`, { prefix: "t3-opencode2-live-" });
-const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
+const layerServerConfig = ServerConfig.layerTest(`${ROOT}/work`, { prefix: "t3-opencode2-live-" });
+const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(serverConfigLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerPlatformTest),
 );
 // Isolated OpenCode state: the server never touches the developer's own data.
-const serverSettingsLayer = ServerSettings.layerTest({
+const layerServerSettings = ServerSettings.layerTest({
   providerInstances: {
     [INSTANCE]: {
       driver: ProviderDriverKind.make("opencode"),
@@ -162,24 +162,24 @@ const serverSettingsLayer = ServerSettings.layerTest({
     },
   },
 });
-const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
+const layerBackgroundPolicy = BackgroundPolicy.layer.pipe(
   Layer.provide(Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make())),
-  Layer.provide(serverSettingsLayer),
+  Layer.provide(layerServerSettings),
 );
-const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
+const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      serverConfigLayer.pipe(Layer.provide(PlatformTestLayer)),
-      serverSettingsLayer,
+      layerServerConfig.pipe(Layer.provide(layerPlatformTest)),
+      layerServerSettings,
       ServerSecretStore.layer.pipe(
-        Layer.provide(serverConfigLayer),
-        Layer.provide(PlatformTestLayer),
+        Layer.provide(layerServerConfig),
+        Layer.provide(layerPlatformTest),
       ),
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
-        Layer.provide(spawnedServers),
-        Layer.provide(PlatformTestLayer),
+      OpenCodeRuntime.layer.pipe(
+        Layer.provide(layerSpawnedServers),
+        Layer.provide(layerPlatformTest),
       ),
       Layer.succeed(
         ProviderEventLoggers.ProviderEventLoggers,
@@ -187,9 +187,9 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       ),
       ModelManifest.layerTest,
       AntigravityInstallation.AntigravityInstallation.layer.pipe(
-        Layer.provide(serverConfigLayer.pipe(Layer.provide(PlatformTestLayer))),
+        Layer.provide(layerServerConfig.pipe(Layer.provide(layerPlatformTest))),
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(PlatformTestLayer),
+        Layer.provide(layerPlatformTest),
       ),
       // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
       Layer.mock(CodexInstallation.CodexInstallation)({
@@ -203,22 +203,22 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
     ),
   ),
 );
-const orchestrationLayer = OrchestrationV2LayerLive.pipe(
-  Layer.provide(worktreeRepairDependenciesTestLayer),
-  Layer.provide(mcpRegistryLayer),
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer))),
-  Layer.provide(serverConfigLayer),
-  Layer.provide(serverSettingsLayer),
+const layerOrchestration = RuntimeLayer.layer.pipe(
+  Layer.provide(ProviderTurnStartServiceTestkit.layer),
+  Layer.provide(layerMcpRegistry),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry))),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerServerSettings),
   // Merged, not only provided: the test reads the same instance the orchestrator uses.
-  Layer.provideMerge(providerInstanceRegistryLayer),
+  Layer.provideMerge(layerProviderInstanceRegistry),
   Layer.provide(ResetCreditCoordinator.layer),
-  Layer.provide(backgroundPolicyLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerBackgroundPolicy),
+  Layer.provide(layerPlatformTest),
 );
 
 // Starts the continuation run a provider wake asks for, as the production layer does.
-const continuationWorkerLayer = ProviderContinuationService.workerLive.pipe(
+const layerContinuationWorker = ProviderContinuationService.layer.pipe(
   Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {
@@ -234,7 +234,7 @@ const continuationWorkerLayer = ProviderContinuationService.workerLive.pipe(
   Layer.provide(IdAllocator.layer),
   Layer.provide(ProviderContinuationRequests.layer),
 );
-const liveLayer = continuationWorkerLayer.pipe(Layer.provideMerge(orchestrationLayer));
+const layerLive = layerContinuationWorker.pipe(Layer.provideMerge(layerOrchestration));
 
 // How long one step may take, in seconds. A free model sometimes takes minutes
 // before its first tool call; `OPENCODE2_STEP_WAIT` raises it for such runs.
@@ -432,7 +432,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         const models = yield* assistantModels(sessionId!);
         assert.equal(models.at(-1), SWITCHED_MODEL);
         assert.notEqual(models[0], SWITCHED_MODEL);
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 
@@ -542,7 +542,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         assert.equal(answered.runs.at(-1)?.status, "completed");
         const reply = answered.messages.findLast((message) => message.role === "assistant");
         assert.match(reply?.text ?? "", /blue/i);
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     600_000,
   );
 
@@ -582,7 +582,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         assert.equal(planned.runs.at(-1)?.status, "completed");
         assert.isFalse(yield* fs.exists(path.join(ROOT, "work", "plan_write_probe.txt")));
         assert.isTrue(yield* fs.exists(path.join(planDir, "probe-plan.md")));
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 
@@ -718,7 +718,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           stoppedChild.turnItems.some((item) => item.status === "running"),
           "the stopped child shows nothing running",
         );
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     480_000,
   );
 
@@ -927,7 +927,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           .map((row) => String(row.id));
         db.close();
         assert.lengthOf(userMessages, 2);
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     600_000,
   );
 
@@ -1028,7 +1028,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           compaction?.type === "compaction" ? (compaction.summary ?? "").length : 0,
           0,
         );
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 
@@ -1114,7 +1114,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         const answer = next.turnItems.findLast((item) => item.type === "assistant_message");
         assert.include(answer?.type === "assistant_message" ? answer.text : "", "sleep 60");
         assert.lengthOf(next.providerThreads, 1);
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 
@@ -1175,7 +1175,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           [],
           "an external server gets no T3 MCP server, as with 1.x",
         );
-      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.merge(layerLive, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 });

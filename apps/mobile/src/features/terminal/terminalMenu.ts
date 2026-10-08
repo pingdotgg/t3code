@@ -70,15 +70,16 @@ export function getTerminalStatusLabel(input: {
 export function nextOpenTerminalId(input: {
   readonly listedTerminalIds: ReadonlyArray<string>;
   readonly activeRouteTerminalId?: string | null;
+  readonly uniqueSuffix?: string;
 }): string {
   const listed = input.listedTerminalIds.filter((id) => id.trim().length > 0);
   const routeId = input.activeRouteTerminalId?.trim() ? input.activeRouteTerminalId : null;
 
   if (!routeId || listed.includes(routeId)) {
-    return nextTerminalId(listed);
+    return nextTerminalId(listed, input.uniqueSuffix);
   }
 
-  return nextTerminalId([...listed, routeId]);
+  return nextTerminalId([...listed, routeId], input.uniqueSuffix);
 }
 
 export function buildTerminalMenuSessions(input: {
@@ -146,16 +147,13 @@ export function previousLiveTerminalId(input: {
 export function resolveProjectScriptTerminalId(input: {
   readonly existingTerminalIds: ReadonlyArray<string>;
   readonly hasRunningTerminal: boolean;
+  readonly uniqueSuffix?: string;
 }): string {
-  if (!input.hasRunningTerminal) {
+  if (!input.hasRunningTerminal && input.uniqueSuffix === undefined) {
     return DEFAULT_TERMINAL_ID;
   }
 
-  return nextTerminalId(input.existingTerminalIds);
-}
-
-export function projectScriptMenuLabel(script: ProjectScript): string {
-  return script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name;
+  return nextTerminalId(input.existingTerminalIds, input.uniqueSuffix);
 }
 
 export function projectScriptMenuIcon(icon: ProjectScript["icon"]) {

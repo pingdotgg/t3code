@@ -12,6 +12,8 @@ import {
   type ToolActivitySurface,
   type ToolActivityIcon,
   type ToolActivitySource,
+  type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -20,6 +22,10 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
+import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
+import type { McpAppReference } from "@t3tools/shared/mcpApp";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
@@ -129,6 +135,26 @@ export type TimelineEntry = (
       readonly kind: "proposed-plan";
       readonly createdAt: string;
       readonly proposedPlan: ProposedPlan;
+    }
+  | {
+      /** A page a completed `html_render` call published, shown where the call happened. */
+      readonly id: string;
+      readonly kind: "html-render";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly htmlRender: HtmlRenderReference;
+    }
+  | {
+      /** An MCP App a completed tool call captured, hosted where the call happened. */
+      readonly id: string;
+      readonly kind: "mcp-app";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      /** The thread and item that own the app; a fork's inherited app is its source's. */
+      readonly sourceThreadId: ThreadId;
+      readonly itemId: TurnItemId;
+      readonly revision: string;
+      readonly mcpApp: McpAppReference;
     }
   | {
       readonly id: string;
@@ -305,12 +331,15 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "handoff",
   "run_interrupt_request",
   "run_interrupt_result",
+  "secret_request",
   "subagent",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "fork",
   "thread_created",
+  // Still answerable after a steer supersedes the attempt that asked.
+  "secret_request",
 ]);
 
 export function timelineEntryIsPersistentResourceCard(entry: TimelineEntry): boolean {
@@ -680,6 +709,41 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         kind: "proposed-plan",
         createdAt,
         proposedPlan,
+        ...attemptMetadata,
+      });
+      continue;
+    }
+
+    const htmlRender =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? htmlRenderFromToolItem(item)
+        : undefined;
+    if (htmlRender !== undefined) {
+      entries.push({
+        id: item.id,
+        kind: "html-render",
+        createdAt,
+        runId: item.runId,
+        htmlRender,
+        ...attemptMetadata,
+      });
+      continue;
+    }
+
+    const mcpApp =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? mcpAppFromToolItem(item)
+        : undefined;
+    if (mcpApp !== undefined) {
+      entries.push({
+        id: item.id,
+        kind: "mcp-app",
+        createdAt,
+        runId: item.runId,
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
+        revision: turnItemDetailRevision(item),
+        mcpApp,
         ...attemptMetadata,
       });
       continue;

@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/unstable/ai";
+import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
@@ -23,7 +23,10 @@ import {
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import { listThreadPullRequests } from "./handlers.ts";
+import * as PullRequestsHandlers from "./handlers.ts";
 import { PullRequestLinkFailedError, PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -38,9 +41,13 @@ const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
-  threadId: THREAD_ID,
-  providerSessionId: "provider-session-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-1",
+  thread: {
+    threadId: THREAD_ID,
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });
@@ -148,7 +155,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       yield* Ref.update(commands, (recorded) => [...recorded, command]);
       return { sequence: 1, storedEvents: [] };
     });
-  const dependencies = Layer.mergeAll(
+  const layerDependencies = Layer.mergeAll(
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
     }),
@@ -158,9 +165,14 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       dispatch,
     }),
     Layer.succeed(Crypto.Crypto, testCrypto),
+    McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
-    Effect.provide(PullRequestsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer).pipe(
+        Layer.provide(layerDependencies),
+      ),
+    ),
   );
   const call = <Name extends keyof typeof PullRequestsToolkit.tools>(
     name: Name,
@@ -175,7 +187,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
-      Effect.provide(dependencies),
+      Effect.provide(layerDependencies),
     );
   return { commands, call };
 });
@@ -248,6 +260,7 @@ describe("pull request toolkit handlers", () => {
         headSha: null,
         failedChecks: [],
         passed: false,
+        passedChecks: [],
         remarksThrough: "2026-08-20T00:00:00.000Z",
         remarkIds: [],
         conflicting: false,
@@ -271,6 +284,41 @@ describe("pull request toolkit handlers", () => {
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.watch", number: 3, watching: false },
       ]);
+    }),
+  );
+
+  it.effect("watches a pull request saved as closed, since it may have reopened", () =>
+    Effect.gen(function* () {
+      const closed = makeLink(1, { headBranch: "closed" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
+        ]),
+      });
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
+      ]);
+    }),
+  );
+
+  it.effect("refuses a watch from a subagent thread, whose parent owns the pull request", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(1, { headBranch: "feature" })]),
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 

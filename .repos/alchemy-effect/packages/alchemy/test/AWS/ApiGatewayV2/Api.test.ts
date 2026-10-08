@@ -84,7 +84,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertApiDeleted(api.apiId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:apigatewayv2", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -118,7 +121,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertApiDeleted(wsApi.apiId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:apigatewayv2", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -198,5 +204,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertApiDeleted(out.apiId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:apigatewayv2", "live"],
+    timeout: 240_000,
+  },
 );

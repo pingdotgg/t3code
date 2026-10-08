@@ -18,8 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Socket } from "effect/unstable/socket";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { Socket } from "effect/socket";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -295,11 +295,11 @@ try {
   const ticket = Schema.decodeUnknownSync(Schema.Struct({ ticket: Schema.String }))(
     await ticketResponse.json(),
   );
-  const socket = Socket.layerWebSocket(
+  const layerSocket = Socket.layerWebSocket(
     `${origin.replace("http:", "ws:")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket.ticket)}`,
   ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
-  const protocol = RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(socket),
+  const layerProtocol = RpcClient.layerProtocolSocket().pipe(
+    Layer.provide(layerSocket),
     Layer.provide(RpcSerialization.layerJson),
   );
   const threadId = ThreadId.make(NodeCrypto.randomUUID());
@@ -483,7 +483,7 @@ try {
         .filter((message) => message.role === "assistant" && message.text.includes(secret))
         .map((message) => message.id),
     };
-  }).pipe(Effect.scoped, Effect.provide(protocol), Effect.timeout(timeoutMs));
+  }).pipe(Effect.scoped, Effect.provide(layerProtocol), Effect.timeout(timeoutMs));
   const finished = await Effect.runPromise(program, { signal: abort.signal });
   verdict = finished;
   // Check persistence through an actual clean server restart on the same SQLite DB.

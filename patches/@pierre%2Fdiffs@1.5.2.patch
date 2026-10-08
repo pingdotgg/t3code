@@ -1,0 +1,995 @@
+diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
+index cc32d28..3a46bf4 100644
+--- a/dist/components/CodeView.d.ts
++++ b/dist/components/CodeView.d.ts
+@@ -158,6 +158,12 @@ interface CodeViewOptions<LAnnotation, Caret> extends CodeViewPassThroughOptions
+    * final pre-detach state.
+    */
+   onItemEditComplete?: CodeViewItemEditCompleteHandler<LAnnotation, Caret>;
++  /**
++   * Called when find navigates to a match inside a collapsed item. Folding is
++   * host state, so the host unfolds the item (a controlled update with
++   * `collapsed: false` and a new `version`); the viewer then scrolls to it.
++   */
++  onRevealSearchMatch?(item: CodeViewItem<LAnnotation>): void;
+   /** Render a non-virtualized element at the very start of the scroll content,
+    * before the first item. It is always rendered and scrolls with the content.
+    * Return the same element across calls and mutate it in place to update;
+@@ -268,6 +274,13 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
+   getSelectedLines(): CodeViewLineSelection | null;
+   clearSelectedLines(options?: SelectionWriteOptions): void;
+   getItem(itemId: string): CodeViewItem<LAnnotation> | undefined;
++  /**
++   * Open the find panel, or refocus it when open. It searches every diff
++   * item's lines (including folded files and virtualized rows), and is also
++   * opened by the primary-modifier+F shortcut while focus is in the viewer.
++   */
++  openSearch(): void;
++  closeSearch(): void;
+   /**
+    * Returns the editor while this item is being edited. Partial diffs get an
+    * editor after their files load; scrolling away or collapsing keeps it.
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index 140f94f..96fc774 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -16,6 +16,7 @@ import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
+ import { roundToDevicePixel } from "../utils/roundToDevicePixel.js";
+ import { VirtualizedFile } from "./VirtualizedFile.js";
+ import { VirtualizedFileDiff } from "./VirtualizedFileDiff.js";
++import { CodeViewSearch } from "./CodeViewSearch.js";
+ //#region src/components/CodeView.ts
+ const CODE_VIEW_DIFF_OPTION_KEYS = [
+ 	"theme",
+@@ -114,6 +115,8 @@ function defineItemOption(target, key, get) {
+ }
+ const DEFAULT_SCROLL_INTERACTION_RESTORE_DELAY_MS = 120;
+ const SUB_PIXEL_TOLERANCE = 1;
++/** Room the find panel covers at the top of the viewport; matches under it get scrolled clear. */
++const SEARCH_PANEL_RESERVED_HEIGHT = 48;
+ const SCROLLING_CODE_OVERFLOW_FIX_VARIABLE = "--diffs-overflow-override";
+ function createScrollRebaseConfig(containerHeight, triggerTop, targetTop) {
+ 	return {
+@@ -211,6 +214,8 @@ var CodeView = class CodeView {
+ 	isReadySubscription;
+ 	pendingHighlighterTheme;
+ 	isContainerManaged;
++	search = new CodeViewSearch(this);
++	pendingSearchReveal;
+ 	constructor(options = { theme: DEFAULT_THEMES }, workerManager, isContainerManaged = false) {
+ 		this.options = options;
+ 		this.computeMetricsCache(options.itemMetrics);
+@@ -392,6 +397,7 @@ var CodeView = class CodeView {
+ 		this.root.addEventListener("touchstart", this.clearPendingScroll, { passive: true });
+ 		this.root.addEventListener("pointerdown", this.clearPendingScroll, { passive: true });
+ 		this.root.addEventListener("keydown", this.clearPendingScroll, { passive: true });
++		this.root.addEventListener("keydown", this.search.handleKeyDown);
+ 		this.resizeObserver.observe(this.root);
+ 		this.render(true);
+ 		window.__INSTANCE = this;
+@@ -464,6 +470,7 @@ var CodeView = class CodeView {
+ 		this.heightDirty = true;
+ 		this.resetRenderState();
+ 		if (!this.isContainerManaged) this.flushSlotCoordinator();
++		this.search.refresh();
+ 		if (failed) throw failure;
+ 	}
+ 	cleanUp() {
+@@ -485,6 +492,8 @@ var CodeView = class CodeView {
+ 		this.root?.removeEventListener("touchstart", this.clearPendingScroll);
+ 		this.root?.removeEventListener("pointerdown", this.clearPendingScroll);
+ 		this.root?.removeEventListener("keydown", this.clearPendingScroll);
++		this.root?.removeEventListener("keydown", this.search.handleKeyDown);
++		this.search.cleanUp();
+ 		this.root?.style.removeProperty("overflow-anchor");
+ 		this.container?.remove();
+ 		this.stickyOffset.remove();
+@@ -626,6 +635,137 @@ var CodeView = class CodeView {
+ 	getItem(itemId) {
+ 		return this.idToItem.get(itemId)?.item;
+ 	}
++	/** Open the find panel, or refocus it when it is already open. */
++	openSearch() {
++		this.search.open();
++	}
++	closeSearch() {
++		this.search.close();
++	}
++	getSearchItems() {
++		return this.items.map((item) => item.item);
++	}
++	/** Index of the first match at or below the top of the viewport, or 0 when every match is above it. */
++	getFirstVisibleSearchMatchIndex(entries) {
++		if (this.items.length === 0) return 0;
++		const visibleTop = this.getScrollTop() - this.getItemTopOffset() + this.getStickyHeaderOffset();
++		const itemIndex = this.findFirstVisibleIndex(Math.max(this.getScrollTop() - this.getItemTopOffset(), 0));
++		const item = this.items[itemIndex];
++		for (let index = 0; index < entries.length; index++) {
++			const entry = entries[index];
++			if (entry.itemIndex < itemIndex) continue;
++			if (entry.itemIndex > itemIndex) return index;
++			const position = this.getLineScrollPosition(item, entry);
++			if (position == null || item.top + position.top >= visibleTop) return index;
++		}
++		return 0;
++	}
++	/**
++	* Bring a match on screen. A folded file is unfolded by the host through
++	* `onRevealSearchMatch` (folding is host state); the reveal resumes once the
++	* item arrives unfolded. Collapsed context around the line is expanded here.
++	*/
++	revealSearchMatch(match, afterUnfold = false) {
++		const item = this.idToItem.get(match.id);
++		if (item == null || item.type !== "diff") return;
++		if (item.item.collapsed === true) {
++			if (this.options.onRevealSearchMatch == null) {
++				this.scrollTo({
++					type: "item",
++					id: match.id,
++					align: "start"
++				});
++				return;
++			}
++			this.pendingSearchReveal = match;
++			this.options.onRevealSearchMatch(item.item);
++			return;
++		}
++		const target = {
++			type: "line",
++			id: match.id,
++			lineNumber: match.lineNumber,
++			side: match.side,
++			align: "center",
++			// Center in the space below the sticky header and the find panel.
++			offset: -(this.getStickyHeaderOffset() + SEARCH_PANEL_RESERVED_HEIGHT) / 2
++		};
++		// Before its first render a file reports every line renderable, so collapsed
++		// context can't be expanded yet: scroll there and finish once it has rendered.
++		const rendered = item.instance.getRenderedDiff() != null;
++		this.pendingSearchReveal = rendered ? void 0 : match;
++		if (rendered && match.side === "additions" && !item.instance.isLineRenderable(match.lineNumber)) item.instance.revealLine(match.lineNumber);
++		else if (rendered && !afterUnfold && this.isScrollTargetInView(target)) return;
++		this.scrollTo(target);
++	}
++	cancelSearchReveal() {
++		this.pendingSearchReveal = void 0;
++	}
++	/** Finish a reveal that was waiting for its file to render for the first time. */
++	resumePendingSearchReveal(updatedItems) {
++		const reveal = this.pendingSearchReveal;
++		if (reveal == null) return;
++		for (const item of updatedItems) if (item.item.id === reveal.id && item.item.collapsed !== true && item.instance.getRenderedDiff() != null) {
++			queueMicrotask(() => {
++				if (this.pendingSearchReveal === reveal) this.revealSearchMatch(reveal, true);
++			});
++			return;
++		}
++	}
++	/** Scroll a wide code column so the current match is visible when lines don't wrap. */
++	revealSearchMatchHorizontally(match, element) {
++		const item = this.idToItem.get(match.id);
++		const code = element.closest("[data-code]");
++		if (item == null || code == null || code.scrollWidth <= code.clientWidth) return;
++		const codeRect = code.getBoundingClientRect();
++		const matchRect = getTextRangeRect(element, match.start, match.end);
++		if (matchRect == null) return;
++		// The line-number gutter is sticky at the left edge and covers the code under it.
++		const gutterRight = code.querySelector(":scope > [data-gutter]")?.getBoundingClientRect().right;
++		const visibleLeft = gutterRight != null && gutterRight > codeRect.left ? gutterRight : codeRect.left;
++		const padding = 24;
++		let next = code.scrollLeft;
++		if (matchRect.left < visibleLeft + padding) next -= visibleLeft + padding - matchRect.left;
++		else if (matchRect.right > codeRect.right - padding) next += matchRect.right - (codeRect.right - padding);
++		else return;
++		item.instance.setCodeScrollLeft(Math.max(0, next));
++	}
++	/** Whether a line already sits fully below the sticky header and find panel. */
++	isScrollTargetInView(target) {
++		const rect = this.getScrollTargetRect(target);
++		if (rect == null) return false;
++		const top = this.getItemTopOffset() + rect.top;
++		const scrollTop = this.getScrollTop();
++		return top >= scrollTop + this.getStickyHeaderOffset() + SEARCH_PANEL_RESERVED_HEIGHT && top + rect.height <= scrollTop + this.getHeight();
++	}
++	/** Pair each match with its mounted line element; rows outside the window are skipped. */
++	getMountedSearchMatches(entriesByItem) {
++		const mounted = [];
++		const { firstIndex, lastIndex } = this.renderState;
++		if (firstIndex === -1) return mounted;
++		for (let index = firstIndex; index <= lastIndex; index++) {
++			const itemEntries = entriesByItem.get(index);
++			const shadowRoot = itemEntries != null ? this.items[index]?.element?.shadowRoot : void 0;
++			if (shadowRoot == null) continue;
++			const lines = /* @__PURE__ */ new Map();
++			for (const element of shadowRoot.querySelectorAll("[data-line][data-line-index]")) {
++				const unifiedIndex = element.getAttribute("data-line-index").split(",")[0];
++				const column = element.closest("[data-deletions]") != null ? "deletions" : "additions";
++				lines.set(`${column}:${unifiedIndex}`, element);
++			}
++			for (const entry of itemEntries) {
++				// Split view draws unchanged context in both columns, so paint each copy.
++				const additions = lines.get(`additions:${entry.unifiedLineIndex}`);
++				const deletions = lines.get(`deletions:${entry.unifiedLineIndex}`);
++				const elements = entry.side === "deletions" ? [deletions ?? additions] : entry.isContext ? [additions, deletions] : [additions];
++				for (const element of elements) if (element != null) mounted.push({
++					entry,
++					element
++				});
++			}
++		}
++		return mounted;
++	}
+ 	/**
+ 	* Returns the editor while this item is being edited. Partial diffs get an
+ 	* editor after their files load; scrolling away or collapsing keeps it.
+@@ -645,6 +785,7 @@ var CodeView = class CodeView {
+ 		this.render();
+ 		this.syncItemEditors();
+ 		this.syncSelection();
++		this.search.refresh();
+ 		return true;
+ 	}
+ 	updateItemId(oldId, newId) {
+@@ -678,6 +819,7 @@ var CodeView = class CodeView {
+ 		this.renamePendingScrollTarget(oldId, newId);
+ 		this.renamePendingLayoutAnchor(oldId, newId);
+ 		this.render();
++		this.search.refresh();
+ 		return true;
+ 	}
+ 	addItem(input) {
+@@ -687,6 +829,7 @@ var CodeView = class CodeView {
+ 		this.appendItemsInternal(inputs);
+ 		this.syncItemEditors();
+ 		this.syncSelection();
++		this.search.refresh();
+ 	}
+ 	removeItem(itemId) {
+ 		const item = this.idToItem.get(itemId);
+@@ -709,6 +852,7 @@ var CodeView = class CodeView {
+ 			for (const removedItem of removedItemsById?.values() ?? []) removedItem.instance.cleanUp();
+ 		}
+ 		this.syncSelection();
++		this.search.refresh();
+ 	}
+ 	/**
+ 	* Append new records to the viewer while preserving existing layout state.
+@@ -1330,6 +1474,10 @@ var CodeView = class CodeView {
+ 		item.item = nextItem;
+ 		item.version = nextItem.version;
+ 		item.renderedOptionsRevision = -1;
++		const reveal = this.pendingSearchReveal;
++		if (reveal != null && reveal.id === nextItem.id && nextItem.collapsed !== true) queueMicrotask(() => {
++			if (this.pendingSearchReveal === reveal) this.revealSearchMatch(reveal, true);
++		});
+ 		return true;
+ 	}
+ 	getMaxScrollTopForHeight(scrollHeight) {
+@@ -1710,6 +1858,10 @@ var CodeView = class CodeView {
+ 		this.updateStickyPositioning();
+ 		this.validateStickyContainerHeight();
+ 		this.fixContainerFocus();
++		if (updatedItems.size > 0) {
++			this.resumePendingSearchReveal(updatedItems);
++			this.search.repaint();
++		}
+ 		if (fitPerfectly || this.scrollAnimation != null) this.render();
+ 	};
+ 	flushManagers(updatedItems) {
+@@ -1804,7 +1956,8 @@ var CodeView = class CodeView {
+ 		this.notifyScroll();
+ 		this.render();
+ 	};
+-	clearPendingScroll = () => {
++	clearPendingScroll = (event) => {
++		if (event != null && this.search.isOpen && this.search.ownsEvent(event)) return;
+ 		this.pendingScrollTarget = void 0;
+ 		this.pendingLayoutAnchor = void 0;
+ 		this.scrollAnimation = void 0;
+@@ -2066,7 +2219,12 @@ var CodeView = class CodeView {
+ 			const item = this.items[index];
+ 			if (item == null) throw new Error("CodeView.recomputeLayout: invalid item index");
+ 			item.top = runningTop;
+-			if (item.type === "diff") item.height = item.instance.updateCodeViewLayout(item.item.fileDiff, runningTop, reset, item.item.annotations ?? []);
++			if (item.type === "diff") {
++				const wasPartial = item.item.fileDiff.isPartial;
++				item.height = item.instance.updateCodeViewLayout(item.item.fileDiff, runningTop, reset, item.item.annotations ?? []);
++				// Hydration fills the diff's lines in place, so the search has new text to cover.
++				if (wasPartial && !item.item.fileDiff.isPartial) this.search.refresh(true);
++			}
+ 			else item.height = item.instance.updateCodeViewLayout(item.item.file, runningTop, reset, item.item.annotations ?? []);
+ 			runningTop += item.height;
+ 			if (index < this.items.length - 1) runningTop += layout.gap;
+@@ -2086,6 +2244,27 @@ var CodeView = class CodeView {
+ 		return this.getLayout().gap + this.itemMetricsCache.diffHeaderHeight;
+ 	}
+ };
++function getTextRangeRect(lineElement, start, end) {
++	const walker = document.createTreeWalker(lineElement, NodeFilter.SHOW_TEXT);
++	let consumed = 0;
++	let startNode;
++	let startOffset = 0;
++	let node;
++	while ((node = walker.nextNode()) != null) {
++		const length = node.data.length;
++		if (startNode == null && start < consumed + length) {
++			startNode = node;
++			startOffset = start - consumed;
++		}
++		if (startNode != null && end <= consumed + length) {
++			const range = document.createRange();
++			range.setStart(startNode, startOffset);
++			range.setEnd(node, end - consumed);
++			return range.getBoundingClientRect();
++		}
++		consumed += length;
++	}
++}
+ function prepareItemInstance(item) {
+ 	item.instance.cleanUp(true);
+ 	if (item.type === "diff") return item.instance.updateCodeViewLayout(item.item.fileDiff, item.top, void 0, item.item.annotations ?? []);
+diff --git a/dist/components/CodeViewSearch.js b/dist/components/CodeViewSearch.js
+new file mode 100644
+index 0000000..29370ad
+--- /dev/null
++++ b/dist/components/CodeViewSearch.js
+@@ -0,0 +1,360 @@
++import { isPrimaryModifier } from "../editor/platform.js";
++import { resolveFindAgainShortcut } from "../editor/command.js";
++import { SearchPanelWidget } from "../editor/searchPanel.js";
++import { SVGSpriteSheet } from "../editor/sprite.js";
++import editor_default from "../editor/editor2.js";
++import { iterateOverDiff } from "../utils/iterateOverDiff.js";
++//#region src/components/CodeViewSearch.ts
++const MAX_SEARCH_MATCHES = 1e5;
++const WORD_SEPARATORS = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
++const SEARCH_HOST_ATTRIBUTE = "data-diffs-search";
++const SEARCH_PANEL_HOST_CSS = `:host {
++  display: block;
++  position: sticky;
++  z-index: 100;
++  height: 0;
++}
++[data-icon-sprite] {
++  position: absolute;
++}
++[data-search-panel] {
++  position: relative;
++  top: 8px;
++}
++[data-editor-widget] {
++  --diffs-bg: var(--diffs-search-panel-bg, Canvas);
++  --diffs-fg: var(--diffs-search-panel-fg, CanvasText);
++  --diffs-modified-base: var(--diffs-search-panel-accent, light-dark(#009fff, #69b1ff));
++  --diffs-header-font-fallback: var(--diffs-search-panel-font, system-ui, sans-serif);
++}`;
++let sharedHighlights;
++/**
++* Find-in-diff for a CodeView. It searches every diff item's line data rather
++* than the rendered rows, so matches in virtualized rows, expanded context, and
++* folded files are all found, and navigating to one reveals it.
++*
++* Matches are painted with the CSS Custom Highlight API. Ranges are rebuilt for
++* whichever rows a render leaves mounted, so highlighting never touches the
++* rendered DOM or the renderer's caches.
++*/
++var CodeViewSearch = class {
++	#view;
++	#host;
++	#widget;
++	#entries = [];
++	#entriesByItem = /* @__PURE__ */ new Map();
++	#current;
++	#revealHorizontally;
++	#ranges = [];
++	#searchedDiffs = [];
++	constructor(view) {
++		this.#view = view;
++	}
++	get isOpen() {
++		return this.#host != null;
++	}
++	/** Open the panel, or refocus it when it is already open. */
++	open() {
++		if (this.#widget != null) {
++			this.#widget.setMode("find");
++			return;
++		}
++		const root = this.#view.getContainerElement();
++		if (root == null) return;
++		const host = document.createElement("div");
++		host.setAttribute(SEARCH_HOST_ATTRIBUTE, "");
++		host.style.top = `${this.#view.getStickyHeaderOffset()}px`;
++		const shadowRoot = host.attachShadow({ mode: "open" });
++		const style = document.createElement("style");
++		style.textContent = `${editor_default}\n${SEARCH_PANEL_HOST_CSS}`;
++		const sprite = document.createElement("div");
++		sprite.innerHTML = SVGSpriteSheet;
++		const anchor = document.createElement("div");
++		shadowRoot.append(style, ...sprite.children, anchor);
++		root.prepend(host);
++		this.#host = host;
++		const defaultQuery = getSelectionQuery();
++		// The widget runs its first search a frame after opening, so callbacks from a
++		// panel that has since closed must not touch the current search.
++		const isLive = () => this.#widget === widget;
++		// Without a selection that first frame reports no matches; ignore it if a
++		// query typed before then has already found some.
++		let initializing = defaultQuery === "";
++		const widget = new SearchPanelWidget({
++			textDocument: { search: (params) => isLive() ? this.#search(params) : [] },
++			containerElement: anchor,
++			defaultQuery,
++			mode: "find",
++			allowReplace: false,
++			initialMatch: defaultQuery !== "" ? [0, 0] : void 0,
++			scrollToMatch: ([offset]) => {
++				if (isLive()) this.#goTo(offset);
++			},
++			applyReplace: () => {},
++			onUpdate: (matches, options) => {
++				if (!isLive()) return;
++				if (matches.length === 0) {
++					if (!initializing || this.#entries.length === 0) this.#setEntries([]);
++					return;
++				}
++				if (options?.syncSelection === false) {
++					this.#paint();
++					return this.#current != null ? matches[this.#current] : void 0;
++				}
++				const next = matches[this.#current ?? this.#view.getFirstVisibleSearchMatchIndex(this.#entries)];
++				if (next != null) this.#goTo(next[0]);
++				return next;
++			},
++			onClose: () => this.#teardown(true)
++		});
++		this.#widget = widget;
++		// Runs after the widget's own first-frame callback, which was scheduled first.
++		if (initializing) requestAnimationFrame(() => {
++			initializing = false;
++		});
++		widget.focus();
++	}
++	close() {
++		this.#widget?.close();
++	}
++	/**
++	* Rerun the query after the items change, keeping the current match when it
++	* survives. Updates that keep every diff (folding, annotations) only repaint;
++	* `force` covers diffs whose lines were filled in place.
++	*/
++	refresh(force = false) {
++		if (this.#widget == null) return;
++		if (!force && haveSameDiffs(this.#searchedDiffs, this.#view.getSearchItems())) {
++			this.#paint();
++			return;
++		}
++		this.#widget.updateMatches({ syncSelection: false });
++	}
++	/** Repaint highlights for the rows the last render pass left mounted. */
++	repaint() {
++		if (this.#entries.length > 0) this.#paint();
++	}
++	/** Whether an event came from the panel, which handles its own keys and pointer input. */
++	ownsEvent(event) {
++		return event.composedPath().some((node) => node instanceof Element && node.hasAttribute(SEARCH_HOST_ATTRIBUTE));
++	}
++	handleKeyDown = (event) => {
++		if (event.isComposing || event.keyCode === 229) return;
++		// The panel's inputs handle their own keys; its buttons get the shortcuts below.
++		if (this.ownsEvent(event) && isEditableTarget(event)) {
++			if (event.key === "Escape") event.stopPropagation();
++			return;
++		}
++		if (event.defaultPrevented) return;
++		if (isPrimaryModifier(event) && !event.altKey && !event.shiftKey && (event.key.toLowerCase() === "f" || event.code === "KeyF")) {
++			event.preventDefault();
++			this.open();
++			return;
++		}
++		if (this.#widget == null) return;
++		const findAgain = resolveFindAgainShortcut(event);
++		if (findAgain != null) {
++			event.preventDefault();
++			this.#widget.navigate(findAgain === "previous");
++		} else if (event.key === "Escape" && !isEditableTarget(event)) {
++			event.preventDefault();
++			event.stopPropagation();
++			this.close();
++		}
++	};
++	cleanUp() {
++		this.#teardown(false);
++	}
++	#teardown(restoreFocus) {
++		if (this.#host == null) return;
++		this.#widget?.cleanup();
++		this.#widget = void 0;
++		this.#host.remove();
++		this.#host = void 0;
++		this.#searchedDiffs = [];
++		this.#setEntries([]);
++		if (restoreFocus) this.#view.getContainerElement()?.focus({ preventScroll: true });
++	}
++	#search(params) {
++		const previous = this.#current != null ? this.#entries[this.#current] : void 0;
++		const items = this.#view.getSearchItems();
++		this.#searchedDiffs = items.map((item) => [item.id, item.fileDiff]);
++		this.#setEntries(collectMatches(items, params), previous);
++		return this.#entries.map((entry) => entry.range);
++	}
++	#setEntries(entries, previous) {
++		this.#entries = entries;
++		this.#entriesByItem = groupByItem(entries);
++		this.#current = previous != null ? findSameMatch(entries, previous) : void 0;
++		if (entries.length === 0) {
++			this.#view.cancelSearchReveal();
++			this.#paint();
++		}
++	}
++	#goTo(offset) {
++		const index = this.#entries.findIndex((entry) => entry.range[0] === offset);
++		if (index === -1) return;
++		this.#current = index;
++		this.#revealHorizontally = this.#entries[index];
++		this.#view.revealSearchMatch(this.#entries[index]);
++		this.#paint();
++	}
++	#paint() {
++		const highlights = getSharedHighlights();
++		if (highlights == null) return;
++		for (const range of this.#ranges) {
++			highlights.match.delete(range);
++			highlights.focus.delete(range);
++		}
++		this.#ranges = [];
++		const current = this.#current != null ? this.#entries[this.#current] : void 0;
++		let currentElement;
++		for (const { entry, element } of this.#view.getMountedSearchMatches(this.#entriesByItem)) {
++			const range = createTextRange(element, entry.start, entry.end);
++			if (range == null) continue;
++			(entry === current ? highlights.focus : highlights.match).add(range);
++			this.#ranges.push(range);
++			if (entry === current) currentElement ??= element;
++		}
++		if (current != null && currentElement != null && this.#revealHorizontally === current) {
++			this.#revealHorizontally = void 0;
++			this.#view.revealSearchMatchHorizontally(current, currentElement);
++		}
++	}
++};
++/**
++* Collect matches across diff items in render order. Each match gets a
++* synthetic, increasing offset so the panel's offset-based navigation works
++* across files; nothing else reads those offsets.
++*/
++function collectMatches(items, params) {
++	if (params.text === "" || params.text.includes("\n")) return [];
++	let pattern;
++	try {
++		pattern = new RegExp(params.regex ? params.text : escapeRegExp(params.text), params.caseSensitive ? "g" : "gi");
++	} catch {
++		return [];
++	}
++	const entries = [];
++	let offset = 0;
++	for (let itemIndex = 0; itemIndex < items.length && entries.length < MAX_SEARCH_MATCHES; itemIndex++) {
++		const item = items[itemIndex];
++		if (item.type !== "diff") continue;
++		const { fileDiff } = item;
++		iterateOverDiff({
++			diff: fileDiff,
++			diffStyle: "unified",
++			expandedHunks: true,
++			callback: ({ type, deletionLine, additionLine }) => {
++				const isDeletion = type === "change" && deletionLine != null;
++				const line = isDeletion ? deletionLine : additionLine;
++				const text = trimLineBreak((isDeletion ? fileDiff.deletionLines : fileDiff.additionLines)[line.lineIndex] ?? "");
++				pattern.lastIndex = 0;
++				let match;
++				while ((match = pattern.exec(text)) !== null) {
++					const length = match[0].length;
++					if (length === 0) {
++						pattern.lastIndex++;
++						continue;
++					}
++					if (params.wholeWord && !isWholeWord(text, match.index, length)) continue;
++					entries.push({
++						id: item.id,
++						itemIndex,
++						side: isDeletion ? "deletions" : "additions",
++						isContext: type !== "change",
++						lineNumber: line.lineNumber,
++						unifiedLineIndex: line.unifiedLineIndex,
++						start: match.index,
++						end: match.index + length,
++						range: [offset + match.index, offset + match.index + length]
++					});
++					if (entries.length >= MAX_SEARCH_MATCHES) return true;
++				}
++				offset += text.length + 1;
++			}
++		});
++	}
++	return entries;
++}
++function haveSameDiffs(searched, items) {
++	return searched.length === items.length && items.every((item, index) => item.id === searched[index][0] && item.fileDiff === searched[index][1]);
++}
++function groupByItem(entries) {
++	const byItem = /* @__PURE__ */ new Map();
++	for (const entry of entries) {
++		let list = byItem.get(entry.itemIndex);
++		if (list == null) byItem.set(entry.itemIndex, list = []);
++		list.push(entry);
++	}
++	return byItem;
++}
++function findSameMatch(entries, previous) {
++	const index = entries.findIndex((entry) => entry.id === previous.id && entry.side === previous.side && entry.lineNumber === previous.lineNumber && entry.start === previous.start);
++	return index === -1 ? void 0 : index;
++}
++function createTextRange(lineElement, start, end) {
++	const walker = document.createTreeWalker(lineElement, NodeFilter.SHOW_TEXT);
++	let consumed = 0;
++	let startNode;
++	let startOffset = 0;
++	let node;
++	while ((node = walker.nextNode()) != null) {
++		const length = node.data.length;
++		if (startNode == null && start < consumed + length) {
++			startNode = node;
++			startOffset = start - consumed;
++		}
++		if (startNode != null && end <= consumed + length) {
++			const range = document.createRange();
++			range.setStart(startNode, startOffset);
++			range.setEnd(node, end - consumed);
++			return range;
++		}
++		consumed += length;
++	}
++}
++function trimLineBreak(text) {
++	if (text.endsWith("\r\n")) return text.slice(0, -2);
++	if (text.endsWith("\n") || text.endsWith("\r")) return text.slice(0, -1);
++	return text;
++}
++function isWholeWord(text, start, length) {
++	return isSeparator(text, start - 1) && isSeparator(text, start + length);
++}
++function isSeparator(text, index) {
++	if (index < 0 || index >= text.length) return true;
++	const code = text.charCodeAt(index);
++	return code <= 32 || code === 127 || WORD_SEPARATORS.includes(text[index]);
++}
++function escapeRegExp(text) {
++	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++}
++function isEditableTarget(event) {
++	const target = event.composedPath()[0];
++	return target instanceof HTMLElement && (target.isContentEditable || target.matches("input, textarea, select"));
++}
++function getSelectionQuery() {
++	const text = document.getSelection()?.toString() ?? "";
++	return text.includes("\n") ? "" : text;
++}
++/**
++* Two registry entries shared by every CodeView on the page; each search adds
++* and removes only its own ranges. The `::highlight()` colours live in the core
++* stylesheet, because a highlight rule only styles text in its own tree.
++*/
++function getSharedHighlights() {
++	if (sharedHighlights != null) return sharedHighlights;
++	if (typeof CSS === "undefined" || !("highlights" in CSS) || typeof Highlight === "undefined") return;
++	sharedHighlights = {
++		match: new Highlight(),
++		focus: new Highlight()
++	};
++	CSS.highlights.set("diffs-search-match", sharedHighlights.match);
++	CSS.highlights.set("diffs-search-focus", sharedHighlights.focus);
++	return sharedHighlights;
++}
++//#endregion
++export { CodeViewSearch, collectMatches };
++
++//# sourceMappingURL=CodeViewSearch.js.map
+diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+index 5e68e35..79dcd88 100644
+--- a/dist/components/VirtualizedFile.d.ts
++++ b/dist/components/VirtualizedFile.d.ts
+@@ -49,7 +49,7 @@ declare class VirtualizedFile<LAnnotation = undefined, Caret = undefined> extend
+   setVisibility(visible: boolean): void;
+   rerender(): void;
+   syncGhostTextRows(): void;
+-  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean): void;
++  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean, startLine?: number): void;
+   render({ fileContainer, file, forceRender, lineAnnotations, ...props }: FileRenderProps<LAnnotation>): boolean;
+   protected finalizeRender(): void;
+   private updatePendingRender;
+diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+index d1f57cd..5908ad7 100644
+--- a/dist/components/VirtualizedFile.js
++++ b/dist/components/VirtualizedFile.js
+@@ -23,6 +23,7 @@ var VirtualizedFile = class extends File {
+ 		heights: /* @__PURE__ */ new Map(),
+ 		checkpoints: [],
+ 		fileAnnotationHeight: 0,
++		codeWidth: void 0,
+ 		ghostTextRows: NO_GHOST_TEXT_ROWS
+ 	};
+ 	pendingRender;
+@@ -35,6 +36,8 @@ var VirtualizedFile = class extends File {
+ 		super(options, workerManager, isContainerManaged);
+ 		this.virtualizer = virtualizer;
+ 		this.metrics = metrics;
++		const simpleVirtualizer = this.getSimpleVirtualizer();
++		if (simpleVirtualizer != null) this.resizeManager.onResize = () => simpleVirtualizer.requestHeightReconcile(this);
+ 	}
+ 	setMetrics(metrics, force = false) {
+ 		const nextMetrics = computeVirtualFileMetrics(metrics);
+@@ -86,10 +89,12 @@ var VirtualizedFile = class extends File {
+ 		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
+ 		super.setThemeType(themeType);
+ 	}
+-	resetLayoutCache(recompute = false, resetRenderRange = true) {
++	resetLayoutCache(recompute = false, resetRenderRange = true, startLine = 0) {
+ 		this.layoutDirty = true;
+-		this.cache.fileAnnotationHeight = 0;
+-		if (this.cache.heights.size > 0) this.cache.heights.clear();
++		if (startLine === 0) this.cache.fileAnnotationHeight = 0;
++		// Dropping unchanged wrapped rows moves the viewport before they can be remeasured.
++		if (startLine === 0) this.cache.heights.clear();
++		else for (const lineIndex of this.cache.heights.keys()) if (lineIndex >= startLine) this.cache.heights.delete(lineIndex);
+ 		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
+ 		this.cache.ghostTextRows = NO_GHOST_TEXT_ROWS;
+ 		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
+@@ -135,6 +140,13 @@ var VirtualizedFile = class extends File {
+ 		if (this.code == null) return hasHeightChange;
+ 		const content = this.code.children[1];
+ 		if (!(content instanceof HTMLElement)) return hasHeightChange;
++		const codeWidth = this.code.getBoundingClientRect().width;
++		if (!(codeWidth > 0)) return hasHeightChange;
++		if (this.cache.codeWidth != null && this.cache.codeWidth !== codeWidth) {
++			this.resetLayoutCache(false, false);
++			hasHeightChange = true;
++		}
++		this.cache.codeWidth = codeWidth;
+ 		if (this.renderRange != null && shouldRenderFileAnnotations(this.renderRange)) {
+ 			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
+ 			if (nextFileAnnotationHeight !== this.cache.fileAnnotationHeight) {
+@@ -358,12 +370,12 @@ var VirtualizedFile = class extends File {
+ 			codeView.instanceChanged(this, true);
+ 		} else this.getSimpleVirtualizer()?.requestHeightReconcile(this);
+ 	}
+-	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false) {
++	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false, startLine = 0) {
+ 		const { renderRange: previousRenderRange } = this;
+ 		this.getAdvancedVirtualizer()?.capturePendingLayoutAnchor();
+ 		super.applyDocumentChange(textDocument, newLineAnnotations);
+ 		this.getSimpleVirtualizer()?.markDOMDirty();
+-		this.resetLayoutCache(this.isSimpleMode(), false);
++		this.resetLayoutCache(this.isSimpleMode(), false, startLine);
+ 		const file = this.getRenderedFile();
+ 		if (!this.isSimpleMode()) this.computeApproximateSize(true);
+ 		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
+diff --git a/dist/components/web-components.js b/dist/components/web-components.js
+index 6e7b486..5b7290f 100644
+--- a/dist/components/web-components.js
++++ b/dist/components/web-components.js
+@@ -2,8 +2,17 @@ import { DIFFS_TAG_NAME } from "../constants.js";
+ import style_default from "../style.js";
+ import { getMeasuredScrollbarGutter } from "../utils/scrollbarGutter.js";
+ //#region src/components/web-components.ts
++// `::highlight()` rules only style text in their own tree, so find's match colours ride
++// along with every container's shadow root.
++const SEARCH_HIGHLIGHT_CSS = `::highlight(diffs-search-match) {
++  background-color: var(--diffs-search-match-bg, light-dark(#ff963288, #ff963266));
++}
++::highlight(diffs-search-focus) {
++  background-color: var(--diffs-search-focus-bg, color-mix(in lab, var(--diffs-modified-base) 45%, transparent));
++}`;
+ if (typeof HTMLElement !== "undefined" && customElements.get("diffs-container") == null) {
+ 	let sheet;
++	let searchSheet;
+ 	class FileDiffContainer extends HTMLElement {
+ 		constructor() {
+ 			super();
+@@ -12,8 +21,10 @@ if (typeof HTMLElement !== "undefined" && customElements.get("diffs-container")
+ 			if (sheet == null) {
+ 				sheet = new CSSStyleSheet();
+ 				sheet.replaceSync(style_default);
++				searchSheet = new CSSStyleSheet();
++				searchSheet.replaceSync(SEARCH_HIGHLIGHT_CSS);
+ 			}
+-			shadowRoot.adoptedStyleSheets = [sheet];
++			shadowRoot.adoptedStyleSheets = [sheet, searchSheet];
+ 		}
+ 		connectedCallback() {
+ 			const shadowRoot = this.shadowRoot ?? this.attachShadow({ mode: "open" });
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index 8f04a6f..c203023 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -1899,7 +1899,11 @@ var Editor = class {
+ 			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
+ 			documentLineCount: textDocument.lineCount
+ 		});
+-		if (didLineCountChange) applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
++		if (didLineCountChange) {
++			// A wider or narrower line-number gutter can rewrap unchanged rows.
++			const layoutStartLine = String(change.previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
++			applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
++		}
+ 		if (didLineCountChange || this.#isDiff && this.#diffSyle === "unified") this.#resetCache();
+ 		if (newLineAnnotations != null) {
+ 			this.#lineAnnotations = newLineAnnotations;
+diff --git a/dist/editor/searchPanel.d.ts b/dist/editor/searchPanel.d.ts
+index 9542849..1c1a51f 100644
+--- a/dist/editor/searchPanel.d.ts
++++ b/dist/editor/searchPanel.d.ts
+@@ -15,6 +15,8 @@ interface SearchPanelOptions {
+   containerElement: HTMLElement;
+   defaultQuery: string;
+   mode?: SearchPanelMode;
++  /** False keeps the panel in find mode, for hosts with nothing to replace into. */
++  allowReplace?: boolean;
+   initialMatch?: MatchRange;
+   scrollToMatch: (nextMatch: MatchRange, retainFocus: boolean) => void;
+   applyReplace: (edits: ResolvedTextEdit[]) => void;
+diff --git a/dist/editor/searchPanel.js b/dist/editor/searchPanel.js
+index df1ba63..676751b 100644
+--- a/dist/editor/searchPanel.js
++++ b/dist/editor/searchPanel.js
+@@ -12,7 +12,7 @@ var SearchPanelWidget = class {
+ 	#navigate;
+ 	#close;
+ 	constructor(options) {
+-		const { textDocument, containerElement, defaultQuery, mode = "find", initialMatch, scrollToMatch, applyReplace, onUpdate, onClose } = options;
++		const { textDocument, containerElement, defaultQuery, mode = "find", allowReplace = true, initialMatch, scrollToMatch, applyReplace, onUpdate, onClose } = options;
+ 		const searchParams = {
+ 			text: defaultQuery,
+ 			replaceText: "",
+@@ -278,7 +278,7 @@ var SearchPanelWidget = class {
+ 			]
+ 		});
+ 		const applyMode = (next) => {
+-			gridElement.dataset.mode = next;
++			gridElement.dataset.mode = allowReplace ? next : "find";
+ 			this.#inputElement.focus();
+ 			this.#inputElement.select();
+ 		};
+diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+index 3efafc4..9e5b751 100644
+--- a/dist/managers/ResizeManager.d.ts
++++ b/dist/managers/ResizeManager.d.ts
+@@ -5,6 +5,8 @@ interface ResizeManagerSetupOptions {
+   columnVariables?: ResizeManagerColumnVariableMode;
+ }
+ declare class ResizeManager {
++  /** Schedule owner measurement after an observed code or gutter size change. */
++  onResize?: () => void;
+   private static resizeObserver;
+   private static managersByElement;
+   private static getResizeObserver;
+diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+index 9724cb1..14145d8 100644
+--- a/dist/managers/ResizeManager.js
++++ b/dist/managers/ResizeManager.js
+@@ -19,6 +19,7 @@ var ResizeManager = class ResizeManager {
+ 		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
+ 	}
+ 	observedNodes = /* @__PURE__ */ new Map();
++	onResize;
+ 	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
+ 		const annotationUpdates = /* @__PURE__ */ new Set();
+ 		const applyColumnVariables = columnVariables === "apply";
+@@ -212,6 +213,7 @@ var ResizeManager = class ResizeManager {
+ 		this.applyAnnotationUpdates(annotationUpdates);
+ 		annotationUpdates.clear();
+ 		this.applyColumnUpdates(codeUpdates);
++		if (codeUpdates.size > 0) this.onResize?.();
+ 		codeUpdates.clear();
+ 	}
+ 	applyAnnotationUpdates(annotationUpdates) {
+diff --git a/dist/react/CodeView.d.ts b/dist/react/CodeView.d.ts
+index e78e713..642b235 100644
+--- a/dist/react/CodeView.d.ts
++++ b/dist/react/CodeView.d.ts
+@@ -56,6 +56,8 @@ interface CodeViewBaseProps<LAnnotation, Caret> {
+    * is frozen; re-key the accepted value in place before accepting.
+    */
+   onItemEditComplete?: CodeViewItemEditCompleteHandler<LAnnotation, Caret>;
++  /** Unfold a collapsed item that holds the find match being navigated to. */
++  onRevealSearchMatch?(item: CodeViewItem<LAnnotation>): void;
+   renderCustomHeader?(item: CodeViewItem<LAnnotation>): ReactNode;
+   renderHeaderPrefix?(item: CodeViewItem<LAnnotation>): ReactNode;
+   renderHeaderFilenameSuffix?(item: CodeViewItem<LAnnotation>): ReactNode;
+diff --git a/dist/react/CodeView.js b/dist/react/CodeView.js
+index 84c7915..d1930bf 100644
+--- a/dist/react/CodeView.js
++++ b/dist/react/CodeView.js
+@@ -24,7 +24,7 @@ function createDefaultCache(controlled) {
+ 	};
+ }
+ function CodeViewInner(props, ref) {
+-	const { className, containerRef, disableWorkerPool = false, editorOptions, getEditStateKey, initialItems, items: controlledItems, onItemEditChange, onItemEditComplete, onScroll, onSelectedLinesChange, options, renderAnnotation, renderCodeViewFooter, renderCodeViewHeader, renderCustomHeader, renderGutterUtility, renderHeaderFilenameSuffix, renderHeaderMetadata, renderHeaderPrefix, selectedLines, style } = props;
++	const { className, containerRef, disableWorkerPool = false, editorOptions, getEditStateKey, initialItems, items: controlledItems, onItemEditChange, onItemEditComplete, onRevealSearchMatch, onScroll, onSelectedLinesChange, options, renderAnnotation, renderCodeViewFooter, renderCodeViewHeader, renderCustomHeader, renderGutterUtility, renderHeaderFilenameSuffix, renderHeaderMetadata, renderHeaderPrefix, selectedLines, style } = props;
+ 	const controlled = controlledItems !== void 0;
+ 	const contextCreateEditor = useCreateEditor();
+ 	const poolManager = useContext(WorkerPoolContext);
+@@ -52,6 +52,9 @@ function CodeViewInner(props, ref) {
+ 		onItemEditChange?.(event, item);
+ 	});
+ 	const emitItemEditComplete = useStableCallback((event, item, nextItem) => onItemEditComplete?.(event, item, nextItem) ?? "reject");
++	const emitRevealSearchMatch = useStableCallback((item) => {
++		onRevealSearchMatch?.(item);
++	});
+ 	const managedOptions = useMemo(() => createManagedCodeViewOptions({
+ 		options,
+ 		hasCustomHeader,
+@@ -63,13 +66,15 @@ function CodeViewInner(props, ref) {
+ 		getEditStateKey,
+ 		createEditor: contextCreateEditor != null ? createEditor : void 0,
+ 		onItemEditChange: onItemEditChange != null ? emitItemEditChange : void 0,
+-		onItemEditComplete: onItemEditComplete != null ? emitItemEditComplete : void 0
++		onItemEditComplete: onItemEditComplete != null ? emitItemEditComplete : void 0,
++		onRevealSearchMatch: onRevealSearchMatch != null ? emitRevealSearchMatch : void 0
+ 	}), [
+ 		contextCreateEditor,
+ 		controlledSelection,
+ 		createEditor,
+ 		emitItemEditChange,
+ 		emitItemEditComplete,
++		emitRevealSearchMatch,
+ 		emitSelectedLinesChange,
+ 		hasCodeViewFooter,
+ 		hasCodeViewHeader,
+@@ -78,6 +83,7 @@ function CodeViewInner(props, ref) {
+ 		getEditStateKey,
+ 		onItemEditChange,
+ 		onItemEditComplete,
++		onRevealSearchMatch,
+ 		onSelectedLinesChange,
+ 		options
+ 	]);
+@@ -302,7 +308,7 @@ function createSlotContentStore() {
+ 		}
+ 	};
+ }
+-function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRenderer, hasCodeViewHeader, hasCodeViewFooter, onSelectedLinesChange, controlledSelection, getEditStateKey, createEditor, onItemEditChange, onItemEditComplete }) {
++function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRenderer, hasCodeViewHeader, hasCodeViewFooter, onSelectedLinesChange, controlledSelection, getEditStateKey, createEditor, onItemEditChange, onItemEditComplete, onRevealSearchMatch }) {
+ 	const managedOptions = {
+ 		...options,
+ 		controlledSelection,
+@@ -312,6 +318,7 @@ function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRende
+ 	if (getEditStateKey != null) managedOptions.getEditStateKey = getEditStateKey;
+ 	if (onItemEditChange != null) managedOptions.onItemEditChange = onItemEditChange;
+ 	if (onItemEditComplete != null) managedOptions.onItemEditComplete = onItemEditComplete;
++	if (onRevealSearchMatch != null) managedOptions.onRevealSearchMatch = onRevealSearchMatch;
+ 	if (hasCustomHeader) managedOptions.renderCustomHeader = noopRender;
+ 	if (hasGutterRenderer) managedOptions.renderGutterUtility = noopRender;
+ 	if (hasCodeViewHeader) managedOptions.renderCodeViewHeader = noopRender;
+diff --git a/package.json b/package.json
+index d9dc7b5..3c37bae 100644
+--- a/package.json
++++ b/package.json
+@@ -58,6 +58,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

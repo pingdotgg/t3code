@@ -7,7 +7,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import { presentThreadShell } from "./models.ts";
@@ -202,7 +202,7 @@ export function createEnvironmentThreadShellAtoms(input: {
   let previousNavigationShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const navigationThreadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
           continue;

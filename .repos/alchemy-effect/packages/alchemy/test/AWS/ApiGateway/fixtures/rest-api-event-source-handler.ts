@@ -1,7 +1,7 @@
 import * as ApiGateway from "@/AWS/ApiGateway";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class RestApiEventSourceFunction extends Lambda.Function<RestApiEventSourceFunction>()(
   "RestApiEventSourceFunction",

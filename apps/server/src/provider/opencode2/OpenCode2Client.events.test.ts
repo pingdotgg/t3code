@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
 import * as OpenCode2Client from "./OpenCode2Client.ts";
@@ -54,7 +54,7 @@ const newerServerStream = Effect.gen(function* () {
   ];
 });
 
-const serving = (events: ReadonlyArray<unknown>) =>
+const layerServing = (events: ReadonlyArray<unknown>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -75,7 +75,7 @@ const connect = Effect.gen(function* () {
 });
 
 /** Sends `events`, then keeps the connection open without another byte, like a frozen server. */
-const servingThenSilent = (events: ReadonlyArray<unknown>) =>
+const layerServingThenSilent = (events: ReadonlyArray<unknown>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -103,7 +103,9 @@ describe("OpenCode2Client events", () => {
       const { events } = yield* connect.pipe(
         Effect.provide(
           OpenCode2Client.layer.pipe(
-            Layer.provide(servingThenSilent([{ id: "evt_1", type: "server.connected", data: {} }])),
+            Layer.provide(
+              layerServingThenSilent([{ id: "evt_1", type: "server.connected", data: {} }]),
+            ),
           ),
         ),
       );
@@ -124,7 +126,7 @@ describe("OpenCode2Client events", () => {
           Effect.provide(
             OpenCode2Client.layer.pipe(
               Layer.provide(
-                serving([
+                layerServing([
                   {
                     id: "evt_1",
                     created: 1,
@@ -167,7 +169,7 @@ describe("OpenCode2Client events", () => {
     Effect.gen(function* () {
       const events = yield* newerServerStream;
       const { events: subscribe } = yield* connect.pipe(
-        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(serving(events)))),
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(layerServing(events)))),
       );
       const types = yield* (yield* subscribe).pipe(
         Stream.map((event) => event.type),
@@ -185,7 +187,7 @@ describe("OpenCode2Client events", () => {
     Effect.gen(function* () {
       const events = yield* newerServerStream;
       const { client } = yield* connect.pipe(
-        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(serving(events)))),
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(layerServing(events)))),
       );
       const failure = yield* client.event.subscribe().pipe(Stream.runDrain, Effect.flip);
       assert.strictEqual(failure._tag, "ClientError");

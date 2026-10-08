@@ -13,74 +13,74 @@ import {
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ResetCreditCoordinator from "../provider/Layers/resetCreditCoordinator.ts";
-import { FetchHttpClient } from "effect/unstable/http";
+import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
+import { FetchHttpClient } from "effect/http";
 import { describe } from "vite-plus/test";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../provider/CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
-import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
-import * as ProviderEventLoggers from "../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderInstanceRegistryHydration from "../provider/ProviderInstanceRegistryHydration.ts";
+import * as ProviderEventLoggers from "../provider/ProviderEventLoggers.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
-import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import { GROK_MODEL_SELECTION } from "./testkit/fixtures/shared.ts";
 
-const PlatformTestLayer = Layer.merge(
+const layerPlatformTest = Layer.merge(
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
 );
 
-const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-grok-v2-live-",
 });
 
-const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
+const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(serverConfigLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerPlatformTest),
 );
 
-const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer));
+const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
-const serverSettingsLayer = ServerSettings.layerTest({
+const layerServerSettings = ServerSettings.layerTest({
   providers: {
     grok: { enabled: true },
   },
 });
-const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
+const layerBackgroundPolicy = BackgroundPolicy.layer.pipe(
   Layer.provide(Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make())),
-  Layer.provide(serverSettingsLayer),
+  Layer.provide(layerServerSettings),
 );
-const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
+const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      serverConfigLayer.pipe(Layer.provide(PlatformTestLayer)),
-      serverSettingsLayer,
+      layerServerConfig.pipe(Layer.provide(layerPlatformTest)),
+      layerServerSettings,
       ServerSecretStore.layer.pipe(
-        Layer.provide(serverConfigLayer),
-        Layer.provide(PlatformTestLayer),
+        Layer.provide(layerServerConfig),
+        Layer.provide(layerPlatformTest),
       ),
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+      OpenCodeRuntime.layer.pipe(
         Layer.provide(OpenCodeServerLedger.layerTest),
-        Layer.provide(PlatformTestLayer),
+        Layer.provide(layerPlatformTest),
       ),
       Layer.succeed(
         ProviderEventLoggers.ProviderEventLoggers,
@@ -88,9 +88,9 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       ),
       ModelManifest.layerTest,
       AntigravityInstallation.AntigravityInstallation.layer.pipe(
-        Layer.provide(serverConfigLayer.pipe(Layer.provide(PlatformTestLayer))),
+        Layer.provide(layerServerConfig.pipe(Layer.provide(layerPlatformTest))),
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(PlatformTestLayer),
+        Layer.provide(layerPlatformTest),
       ),
       // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
       Layer.mock(CodexInstallation.CodexInstallation)({
@@ -105,17 +105,17 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
   ),
 );
 
-const liveLayer = OrchestrationV2LayerLive.pipe(
-  Layer.provide(worktreeRepairDependenciesTestLayer),
+const layerLive = RuntimeLayer.layer.pipe(
+  Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(checkpointStoreLayer),
-  Layer.provide(serverConfigLayer),
-  Layer.provide(serverSettingsLayer),
-  Layer.provide(providerInstanceRegistryLayer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStore),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerServerSettings),
+  Layer.provide(layerProviderInstanceRegistry),
   Layer.provide(ResetCreditCoordinator.layer),
-  Layer.provide(backgroundPolicyLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerBackgroundPolicy),
+  Layer.provide(layerPlatformTest),
 );
 
 const waitForIdle = Effect.fn("GrokOrchestratorV2Live.waitForIdle")(function* (threadId: ThreadId) {
@@ -230,7 +230,7 @@ describe.runIf(process.env.T3_GROK_LIVE_ORCHESTRATOR === "1")("Grok V2 live orch
         );
         assert.include(targetProjection.contextHandoffs[0]?.summaryText ?? "", marker);
         assert.include(assistantText(targetProjection), marker);
-      }).pipe(Effect.provide(liveLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerLive), Effect.scoped),
     360_000,
   );
 });

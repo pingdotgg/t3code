@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vitest";
 import type * as ViteModule from "vite";
 import { loadProjectModule, resolveProjectPackageDirectory } from "../index.ts";
-import { run } from "./helpers.ts";
+import { makeProject, run } from "./helpers.ts";
 
 const packageRoot = NodePath.resolve(import.meta.dirname, "..");
 
@@ -36,5 +36,37 @@ describe("resolveProjectPackageDirectory", () => {
       await NodeFsPromises.readFile(NodePath.join(dir, "package.json"), "utf8"),
     ) as { name: string };
     expect(packageJson.name).toBe("vite");
+  });
+
+  it("resolves an ESM-only package that does not export package.json", async () => {
+    const root = await makeProject({
+      "node_modules/vinext/package.json": JSON.stringify({
+        name: "vinext",
+        type: "module",
+        exports: { ".": { import: "./index.js" } },
+      }),
+      "node_modules/vinext/index.js": "export {}",
+    });
+    const dir = await run(resolveProjectPackageDirectory(root, "vinext"));
+    expect(dir).toBe(NodePath.join(root, "node_modules", "vinext"));
+  });
+
+  it("resolves a hoisted package from a parent node_modules", async () => {
+    const workspace = await makeProject({
+      "node_modules/vinext/package.json": JSON.stringify({
+        name: "vinext",
+        type: "module",
+        exports: { ".": { import: "./index.js" } },
+      }),
+      "node_modules/vinext/index.js": "export {}",
+      "apps/site/package.json": JSON.stringify({
+        name: "site",
+        private: true,
+        type: "module",
+      }),
+    });
+    const project = NodePath.join(workspace, "apps", "site");
+    const dir = await run(resolveProjectPackageDirectory(project, "vinext"));
+    expect(dir).toBe(NodePath.join(workspace, "node_modules", "vinext"));
   });
 });

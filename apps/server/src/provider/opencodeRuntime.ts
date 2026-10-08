@@ -28,7 +28,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { signalProcessGroup } from "../process/processGroup.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
@@ -1106,6 +1106,6 @@ export class OpenCodeRuntime extends Context.Service<OpenCodeRuntime, OpenCodeRu
   "t3/provider/opencodeRuntime",
 ) {}
 
-export const OpenCodeRuntimeLive = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
+export const layer = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
   Layer.provide(NetService.layer),
 );

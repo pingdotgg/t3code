@@ -6,8 +6,8 @@
  */
 import { assert, layer } from "@effect/vitest"
 import { Effect, Layer } from "effect"
-import { HttpClientRequest, HttpServer } from "effect/unstable/http"
-import { HttpApiMiddleware, HttpApiTest } from "effect/unstable/httpapi"
+import { HttpClientRequest, HttpServer } from "effect/http"
+import { HttpApiMiddleware, HttpApiTest } from "effect/http-api"
 import { Api } from "./fixtures/api/Api.ts"
 import { Authorization } from "./fixtures/api/Authorization.ts"
 import { UserId } from "./fixtures/domain/User.ts"

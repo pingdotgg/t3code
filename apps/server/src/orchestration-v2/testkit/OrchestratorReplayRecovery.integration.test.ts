@@ -12,18 +12,16 @@ import {
   ClaudeOrchestratorReplayHarness,
   makeClaudeRestartReplayHarness,
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
-import {
-  CodexOrchestratorReplayHarness,
-  makeCodexProviderAdapterRegistryReplayLayer,
-} from "../Adapters/CodexAdapterV2.testkit.ts";
+import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
+import * as CodexAdapterV2Testkit from "../Adapters/CodexAdapterV2.testkit.ts";
 import {
   type CursorAgentSdkReplayTranscript,
   CursorOrchestratorReplayHarness,
   makeCursorAgentSdkReplayRunner,
-  makeCursorProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CursorAdapterV2.testkit.ts";
+import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -136,12 +134,12 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
   const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
     splitAfterFirstIdle(materialized);
   const options = {
-    databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer)),
+    databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
   };
   const harness = {
     ...CursorOrchestratorReplayHarness,
     makeProviderAdapterRegistryLayer: () =>
-      makeCursorProviderAdapterRegistryReplayLayer(input.transcript, {
+      CursorAdapterV2Testkit.layer(input.transcript, {
         runner: input.runner,
         assertCompleteOnFinalize: false,
       }),
@@ -237,10 +235,10 @@ describe("orchestrator replay recovery", () => {
           const harness = {
             ...CodexOrchestratorReplayHarness,
             makeProviderAdapterRegistryLayer: () =>
-              makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
+              CodexAdapterV2Testkit.layer({ transcript, driver }),
           };
           const options = {
-            databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(
+            databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
               Layer.provide(NodeServices.layer),
             ),
           };
@@ -340,7 +338,7 @@ describe("orchestrator replay recovery", () => {
           splitAfterFirstIdle(materialized);
         const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
         const options = {
-          databaseLayer: makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
+          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
             Layer.provide(NodeServices.layer),
           ),
         };

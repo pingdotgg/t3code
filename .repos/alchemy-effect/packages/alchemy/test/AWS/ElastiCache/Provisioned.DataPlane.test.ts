@@ -9,7 +9,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import ProvisionedCacheDataPlaneLive, {
   ProvisionedCacheDataPlaneFunction,
 } from "./Provisioned.DataPlane.handler.ts";
@@ -102,5 +102,14 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
 
       yield* stack.destroy();
     }),
-  { timeout: 2_700_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:elasticache",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 2_700_000,
+  },
 );

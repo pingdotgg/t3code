@@ -296,7 +296,7 @@ function ProviderEnvironmentFieldRow(props: {
   );
 }
 
-function ProviderEnvironmentSection(props: {
+export function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
@@ -478,6 +478,7 @@ interface ProviderInstanceCardProps {
   readonly selected?: boolean | undefined;
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
+  readonly canWriteSettings?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   /**
    * Pass `undefined` to hide the delete footer entirely. Built-in default
@@ -546,6 +547,7 @@ export function ProviderInstanceCard({
   selected = false,
   onSelect,
   readOnly = false,
+  canWriteSettings = true,
   onUpdate,
   onDelete,
   headerAction,
@@ -588,12 +590,28 @@ export function ProviderInstanceCard({
     enabled,
   );
   const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const updateState = liveProvider?.updateState;
+  // The server reports each update step. `isUpdating` also covers the moment
+  // between the click and the server's first report.
+  const updateProgress = isUpdating
+    ? ((updateState?.status === "queued" || updateState?.status === "running"
+        ? updateState.message
+        : null) ?? "Starting update")
+    : null;
+  const updateProblem =
+    !isUpdating && (updateState?.status === "failed" || updateState?.status === "unchanged")
+      ? updateState.message
+      : null;
   const hasCompatibilityWarning =
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
-  const onRunVersionAction = versionAdvisory?.targetVersion ? onInstallRecommended : onRunUpdate;
+  const onRunVersionAction = readOnly
+    ? undefined
+    : versionAdvisory?.targetVersion
+      ? onInstallRecommended
+      : onRunUpdate;
   const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -713,8 +731,16 @@ export function ProviderInstanceCard({
       driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
-      acpRegistryAgentId={readConfigString(instance.config, "agentId") ?? undefined}
-      acpRegistryIconUrl={readConfigString(instance.config, "registryIconUrl") ?? undefined}
+      acpRegistryAgentId={
+        readConfigString(instance.config, "source") === "local"
+          ? undefined
+          : (readConfigString(instance.config, "agentId") ?? undefined)
+      }
+      acpRegistryIconUrl={
+        readConfigString(instance.config, "source") === "local"
+          ? undefined
+          : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
+      }
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
@@ -765,6 +791,118 @@ export function ProviderInstanceCard({
         ) : null}
       </>
     );
+  const versionAdvisoryNode = versionAdvisory ? (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  size={mode === "list" ? "icon-micro" : "icon-xs"}
+                  variant="ghost-muted"
+                  className={mode === "list" ? "pointer-events-auto relative shrink-0" : undefined}
+                  aria-label={`${updateProgress ? "Updating" : versionAdvisory.title} — view details`}
+                >
+                  {updateProgress ? (
+                    <Spinner tone="muted" {...(mode === "list" ? { size: "sm" as const } : {})} />
+                  ) : (
+                    <VersionAdvisoryIcon
+                      className={cn(
+                        mode === "list" && "size-3.5",
+                        hasCompatibilityWarning && "text-warning",
+                      )}
+                    />
+                  )}
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">
+          {updateProgress ? "Updating" : versionAdvisory.title}
+        </TooltipPopup>
+      </Tooltip>
+      <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
+        <div className="grid min-w-0 gap-3">
+          <div className="grid gap-0.5">
+            <p className="text-sm font-semibold leading-tight text-foreground">
+              {versionAdvisory.title}
+            </p>
+            <p
+              className={cn(
+                "text-xs leading-snug",
+                versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {versionAdvisory.detail}
+            </p>
+          </div>
+          {onRunVersionAction ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="w-full"
+              disabled={isUpdating}
+              onClick={onRunVersionAction}
+            >
+              {isUpdating ? <Spinner /> : <DownloadIcon />}
+              {isUpdating
+                ? "Updating"
+                : versionAdvisory.targetVersion
+                  ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
+                  : "Update now"}
+            </Button>
+          ) : null}
+          {updateProgress || updateProblem ? (
+            <p
+              aria-live="polite"
+              className={cn(
+                "text-xs leading-snug [overflow-wrap:anywhere]",
+                updateProblem ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {updateProgress ?? updateProblem}
+            </p>
+          ) : null}
+          {onRunVersionAction && updateCommand ? (
+            <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+              <span aria-hidden className="h-px flex-1 bg-border" />
+              or, update manually using
+              <span aria-hidden className="h-px flex-1 bg-border" />
+            </div>
+          ) : null}
+          {updateCommand ? (
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
+                {updateCommand}
+              </code>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      className="shrink-0"
+                      onClick={() => copyToClipboard(updateCommand, { providerName: displayName })}
+                      aria-label="Copy update command"
+                    >
+                      <CopyIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Copy command</TooltipPopup>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  ) : null;
+
   if (mode === "list") {
     return (
       <div
@@ -796,61 +934,27 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </code>
               ) : null}
-              {versionAdvisory ? (
-                hasCompatibilityWarning ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          tabIndex={0}
-                          role="img"
-                          aria-label={versionAdvisory.title}
-                          className="pointer-events-auto relative inline-flex shrink-0 text-warning"
-                        >
-                          <VersionAdvisoryIcon className="size-3.5" />
-                        </span>
-                      }
-                    />
-                    <TooltipPopup side="top">{versionAdvisory.detail}</TooltipPopup>
-                  </Tooltip>
-                ) : updateCommand ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-micro"
-                          variant="ghost-muted"
-                          className="pointer-events-auto relative shrink-0"
-                          aria-label={`Copy ${displayName} update command`}
-                          onClick={() =>
-                            copyToClipboard(updateCommand, { providerName: displayName })
-                          }
-                        >
-                          <ArrowUpCircleIcon className="size-3.5" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Copy update command</TooltipPopup>
-                  </Tooltip>
-                ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                )
-              ) : null}
+              {versionAdvisoryNode}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
-              {statusDotNode ? (
+              {/* The dot describes provider health, not the update in progress. */}
+              {statusDotNode && !updateProgress ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}
               <ProviderStatusDiagnostic detail={statusDiagnostic}>
                 <span
                   tabIndex={statusDiagnostic ? 0 : undefined}
+                  aria-live="polite"
                   className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
                 >
-                  {summary.headline}
-                  {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                  {updateProgress ? (
+                    `Updating · ${updateProgress}`
+                  ) : (
+                    <>
+                      {summary.headline}
+                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                    </>
+                  )}
                 </span>
               </ProviderStatusDiagnostic>
             </span>
@@ -876,105 +980,12 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
+      {versionAdvisoryNode}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
         className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
       >
-        {versionAdvisory ? (
-          <Popover>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        aria-label={`${versionAdvisory.title} — view details`}
-                      >
-                        <VersionAdvisoryIcon
-                          className={cn(hasCompatibilityWarning && "text-warning")}
-                        />
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TooltipPopup side="top">{versionAdvisory.title}</TooltipPopup>
-            </Tooltip>
-            <PopoverPopup side="bottom" align="end" width="md">
-              <div className="grid min-w-0 gap-3">
-                <div className="grid gap-0.5">
-                  <p className="text-sm font-semibold leading-tight text-foreground">
-                    {versionAdvisory.title}
-                  </p>
-                  <p
-                    className={cn(
-                      "text-xs leading-snug",
-                      versionAdvisory.emphasis === "strong"
-                        ? "text-warning"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {versionAdvisory.detail}
-                  </p>
-                </div>
-                {onRunVersionAction ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    className="w-full"
-                    disabled={isUpdating}
-                    onClick={onRunVersionAction}
-                  >
-                    {isUpdating ? <Spinner /> : <DownloadIcon />}
-                    {isUpdating
-                      ? "Updating"
-                      : versionAdvisory.targetVersion
-                        ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
-                        : "Update now"}
-                  </Button>
-                ) : null}
-                {onRunVersionAction && updateCommand ? (
-                  <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                    or, update manually using
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                  </div>
-                ) : null}
-                {updateCommand ? (
-                  <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                    <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
-                      {updateCommand}
-                    </code>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            className="shrink-0"
-                            onClick={() =>
-                              copyToClipboard(updateCommand, { providerName: displayName })
-                            }
-                            aria-label="Copy update command"
-                          >
-                            <CopyIcon className="size-3" />
-                          </Button>
-                        }
-                      />
-                      <TooltipPopup side="top">Copy command</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                ) : null}
-              </div>
-            </PopoverPopup>
-          </Popover>
-        ) : null}
         {titleTailNode}
         {onDelete ? (
           <Button
@@ -1144,30 +1155,27 @@ export function ProviderInstanceCard({
           environment={genericEnvironment}
           onChange={updateGenericEnvironment}
         />
-        {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
-          <AcpSessionManagementSection
-            environmentId={environmentId}
-            instanceId={instanceId}
-            provider={liveProvider}
-            projects={acpProjects}
-            readOnly={readOnly}
-          />
-        ) : null}
       </SettingsSection>
+      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+        <AcpSessionManagementSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          provider={liveProvider}
+          projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
 
       {driverOption !== undefined ? (
-        <SettingsSection
-          title="Models"
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
-        >
+        <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
               Favorites, visibility, and ordering are saved on this device. Custom models are saved
               on the selected environment.
             </p>
             <ProviderModelsSection
+              canManageCustomModels={!readOnly}
+              canWritePreferences={canWriteSettings}
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}

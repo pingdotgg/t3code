@@ -107,6 +107,7 @@ devTest.provider.skipIf(inSweep)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 devTest.provider.skipIf(inSweep)(
@@ -154,370 +155,400 @@ devTest.provider.skipIf(inSweep)(
         yield* assertBucketDeleted(output.bucketName);
       }).pipe(Effect.provide(liveContext));
     }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-actionTest.provider("Action - uses the configured S3 data plane", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+actionTest.provider(
+  "Action - uses the configured S3 data plane",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const output = yield* stack.deploy(
-      Effect.gen(function* () {
-        const bucket = yield* Bucket("ActionDataPlaneBucket", {
-          forceDestroy: true,
-        });
-        const PutWithAction = Action(
-          "PutWithAction",
-          Effect.gen(function* () {
-            const putObject = yield* PutObject(bucket);
-            return () =>
-              Effect.gen(function* () {
-                const environment = yield* AWSEnvironment.current;
-                if (forceLocal && environment.accountId !== "000000000000") {
-                  return { accountId: environment.accountId };
-                }
-                const result = yield* putObject({
-                  Key: "action.txt",
-                  Body: "hello from Action",
+      const output = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("ActionDataPlaneBucket", {
+            forceDestroy: true,
+          });
+          const PutWithAction = Action(
+            "PutWithAction",
+            Effect.gen(function* () {
+              const putObject = yield* PutObject(bucket);
+              return () =>
+                Effect.gen(function* () {
+                  const environment = yield* AWSEnvironment.current;
+                  if (forceLocal && environment.accountId !== "000000000000") {
+                    return { accountId: environment.accountId };
+                  }
+                  const result = yield* putObject({
+                    Key: "action.txt",
+                    Body: "hello from Action",
+                  });
+                  return {
+                    accountId: environment.accountId,
+                    etag: result.ETag,
+                  };
                 });
-                return {
-                  accountId: environment.accountId,
-                  etag: result.ETag,
-                };
-              });
-          }).pipe(Effect.provide(PutObjectHttp)),
-        );
-        return yield* PutWithAction({});
-      }),
-    );
+            }).pipe(Effect.provide(PutObjectHttp)),
+          );
+          return yield* PutWithAction({});
+        }),
+      );
 
-    expect(output.etag).toBeDefined();
-    if (forceLocal) {
-      expect(output.accountId).toBe("000000000000");
-    }
-    yield* stack.destroy();
-  }),
+      expect(output.etag).toBeDefined();
+      if (forceLocal) {
+        expect(output.accountId).toBe("000000000000");
+      }
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("listObjectsV2 - list objects in bucket", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "listObjectsV2 - list objects in bucket",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "file1.txt",
-      Body: "content 1",
-    });
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "file2.txt",
-      Body: "content 2",
-    });
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "folder/file3.txt",
-      Body: "content 3",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "file1.txt",
+        Body: "content 1",
+      });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "file2.txt",
+        Body: "content 2",
+      });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "folder/file3.txt",
+        Body: "content 3",
+      });
 
-    const result = yield* S3.listObjectsV2({
-      Bucket: bucketName,
-    });
+      const result = yield* S3.listObjectsV2({
+        Bucket: bucketName,
+      });
 
-    expect(result.Contents).toBeDefined();
-    expect(result.Contents!.length).toBe(3);
-    expect(result.Contents!.map((c) => c.Key)).toContain("file1.txt");
-    expect(result.Contents!.map((c) => c.Key)).toContain("file2.txt");
-    expect(result.Contents!.map((c) => c.Key)).toContain("folder/file3.txt");
+      expect(result.Contents).toBeDefined();
+      expect(result.Contents!.length).toBe(3);
+      expect(result.Contents!.map((c) => c.Key)).toContain("file1.txt");
+      expect(result.Contents!.map((c) => c.Key)).toContain("file2.txt");
+      expect(result.Contents!.map((c) => c.Key)).toContain("folder/file3.txt");
 
-    const prefixResult = yield* S3.listObjectsV2({
-      Bucket: bucketName,
-      Prefix: "folder/",
-    });
-    expect(prefixResult.Contents!.length).toBe(1);
-    expect(prefixResult.Contents![0].Key).toBe("folder/file3.txt");
+      const prefixResult = yield* S3.listObjectsV2({
+        Bucket: bucketName,
+        Prefix: "folder/",
+      });
+      expect(prefixResult.Contents!.length).toBe(1);
+      expect(prefixResult.Contents![0].Key).toBe("folder/file3.txt");
 
-    const limitResult = yield* S3.listObjectsV2({
-      Bucket: bucketName,
-      MaxKeys: 1,
-    });
-    expect(limitResult.Contents!.length).toBe(1);
-    expect(limitResult.IsTruncated).toBe(true);
+      const limitResult = yield* S3.listObjectsV2({
+        Bucket: bucketName,
+        MaxKeys: 1,
+      });
+      expect(limitResult.Contents!.length).toBe(1);
+      expect(limitResult.IsTruncated).toBe(true);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("headObject - get object metadata", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "headObject - get object metadata",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "test-file.txt",
-      Body: "Hello, World!",
-      ContentType: "text/plain",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "test-file.txt",
+        Body: "Hello, World!",
+        ContentType: "text/plain",
+      });
 
-    const result = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "test-file.txt",
-    });
+      const result = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "test-file.txt",
+      });
 
-    expect(result.ContentType).toBe("text/plain");
-    expect(result.ContentLength).toBe(13);
-    expect(result.ETag).toBeDefined();
+      expect(result.ContentType).toBe("text/plain");
+      expect(result.ContentLength).toBe(13);
+      expect(result.ETag).toBeDefined();
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("headObject - returns error for non-existent object", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "headObject - returns error for non-existent object",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    const result = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "non-existent.txt",
-    }).pipe(
-      Effect.map(() => "found" as const),
-      Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
-    );
+      const result = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "non-existent.txt",
+      }).pipe(
+        Effect.map(() => "found" as const),
+        Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
+      );
 
-    expect(result).toBe("not-found");
+      expect(result).toBe("not-found");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("copyObject - copy object within bucket", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "copyObject - copy object within bucket",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "source.txt",
-      Body: "Original content",
-      ContentType: "text/plain",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "source.txt",
+        Body: "Original content",
+        ContentType: "text/plain",
+      });
 
-    yield* S3.copyObject({
-      Bucket: bucketName,
-      Key: "destination.txt",
-      CopySource: `${bucketName}/source.txt`,
-    });
+      yield* S3.copyObject({
+        Bucket: bucketName,
+        Key: "destination.txt",
+        CopySource: `${bucketName}/source.txt`,
+      });
 
-    const destHead = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "destination.txt",
-    });
-    expect(destHead.ContentType).toBe("text/plain");
-    expect(destHead.ContentLength).toBe(16);
+      const destHead = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "destination.txt",
+      });
+      expect(destHead.ContentType).toBe("text/plain");
+      expect(destHead.ContentLength).toBe(16);
 
-    const sourceHead = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "source.txt",
-    });
-    expect(sourceHead.ContentLength).toBe(16);
+      const sourceHead = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "source.txt",
+      });
+      expect(sourceHead.ContentLength).toBe(16);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("copyObject - copy with metadata replacement", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "copyObject - copy with metadata replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "source.txt",
-      Body: "Content",
-      ContentType: "text/plain",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "source.txt",
+        Body: "Content",
+        ContentType: "text/plain",
+      });
 
-    yield* S3.copyObject({
-      Bucket: bucketName,
-      Key: "destination.txt",
-      CopySource: `${bucketName}/source.txt`,
-      ContentType: "application/octet-stream",
-      MetadataDirective: "REPLACE",
-    });
+      yield* S3.copyObject({
+        Bucket: bucketName,
+        Key: "destination.txt",
+        CopySource: `${bucketName}/source.txt`,
+        ContentType: "application/octet-stream",
+        MetadataDirective: "REPLACE",
+      });
 
-    const destHead = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "destination.txt",
-    });
-    // AWS may normalize content-type to binary/octet-stream
-    expect(destHead.ContentType).toBe("binary/octet-stream");
+      const destHead = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "destination.txt",
+      });
+      expect(destHead.ContentType).toBe("application/octet-stream");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("multipart upload - complete workflow", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "multipart upload - complete workflow",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    const createResult = yield* S3.createMultipartUpload({
-      Bucket: bucketName,
-      Key: "multipart-file.txt",
-      ContentType: "text/plain",
-    });
+      const createResult = yield* S3.createMultipartUpload({
+        Bucket: bucketName,
+        Key: "multipart-file.txt",
+        ContentType: "text/plain",
+      });
 
-    expect(createResult.UploadId).toBeDefined();
-    const uploadId = createResult.UploadId!;
+      expect(createResult.UploadId).toBeDefined();
+      const uploadId = createResult.UploadId!;
 
-    // AWS S3 requires parts to be at least 5MB except for the last (or only)
-    // part, so a single-part upload works with any size
-    const partContent = "Complete multipart upload content";
+      // AWS S3 requires parts to be at least 5MB except for the last (or only)
+      // part, so a single-part upload works with any size
+      const partContent = "Complete multipart upload content";
 
-    const partResult = yield* S3.uploadPart({
-      Bucket: bucketName,
-      Key: "multipart-file.txt",
-      UploadId: uploadId,
-      PartNumber: 1,
-      Body: partContent,
-    });
-    expect(partResult.ETag).toBeDefined();
+      const partResult = yield* S3.uploadPart({
+        Bucket: bucketName,
+        Key: "multipart-file.txt",
+        UploadId: uploadId,
+        PartNumber: 1,
+        Body: partContent,
+      });
+      expect(partResult.ETag).toBeDefined();
 
-    yield* S3.completeMultipartUpload({
-      Bucket: bucketName,
-      Key: "multipart-file.txt",
-      UploadId: uploadId,
-      MultipartUpload: {
-        Parts: [{ ETag: partResult.ETag!, PartNumber: 1 }],
-      },
-    });
+      yield* S3.completeMultipartUpload({
+        Bucket: bucketName,
+        Key: "multipart-file.txt",
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: [{ ETag: partResult.ETag!, PartNumber: 1 }],
+        },
+      });
 
-    const headResult = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "multipart-file.txt",
-    });
-    // AWS S3 may use binary/octet-stream for multipart uploads even when
-    // ContentType is set on createMultipartUpload
-    expect(headResult.ContentLength).toBe(partContent.length);
+      const headResult = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "multipart-file.txt",
+      });
+      // AWS S3 may use binary/octet-stream for multipart uploads even when
+      // ContentType is set on createMultipartUpload
+      expect(headResult.ContentLength).toBe(partContent.length);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("multipart upload - abort", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "multipart upload - abort",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    const createResult = yield* S3.createMultipartUpload({
-      Bucket: bucketName,
-      Key: "aborted-file.txt",
-      ContentType: "text/plain",
-    });
+      const createResult = yield* S3.createMultipartUpload({
+        Bucket: bucketName,
+        Key: "aborted-file.txt",
+        ContentType: "text/plain",
+      });
 
-    const uploadId = createResult.UploadId!;
+      const uploadId = createResult.UploadId!;
 
-    yield* S3.uploadPart({
-      Bucket: bucketName,
-      Key: "aborted-file.txt",
-      UploadId: uploadId,
-      PartNumber: 1,
-      Body: "Some content",
-    });
+      yield* S3.uploadPart({
+        Bucket: bucketName,
+        Key: "aborted-file.txt",
+        UploadId: uploadId,
+        PartNumber: 1,
+        Body: "Some content",
+      });
 
-    yield* S3.abortMultipartUpload({
-      Bucket: bucketName,
-      Key: "aborted-file.txt",
-      UploadId: uploadId,
-    });
+      yield* S3.abortMultipartUpload({
+        Bucket: bucketName,
+        Key: "aborted-file.txt",
+        UploadId: uploadId,
+      });
 
-    const headResult = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "aborted-file.txt",
-    }).pipe(
-      Effect.map(() => "found" as const),
-      Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
-    );
+      const headResult = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "aborted-file.txt",
+      }).pipe(
+        Effect.map(() => "found" as const),
+        Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
+      );
 
-    expect(headResult).toBe("not-found");
+      expect(headResult).toBe("not-found");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("putObject and getObject - basic operations", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "putObject and getObject - basic operations",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "test-put.txt",
-      Body: "Test content for put operation",
-      ContentType: "text/plain",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "test-put.txt",
+        Body: "Test content for put operation",
+        ContentType: "text/plain",
+      });
 
-    const headResult = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "test-put.txt",
-    });
-    expect(headResult.ContentType).toBe("text/plain");
-    expect(headResult.ContentLength).toBe(30);
+      const headResult = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "test-put.txt",
+      });
+      expect(headResult.ContentType).toBe("text/plain");
+      expect(headResult.ContentLength).toBe(30);
 
-    const getResult = yield* S3.getObject({
-      Bucket: bucketName,
-      Key: "test-put.txt",
-    });
-    expect(getResult.ContentType).toBe("text/plain");
-    expect(getResult.ContentLength).toBe(30);
+      const getResult = yield* S3.getObject({
+        Bucket: bucketName,
+        Key: "test-put.txt",
+      });
+      expect(getResult.ContentType).toBe("text/plain");
+      expect(getResult.ContentLength).toBe(30);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("deleteObject - remove object", (stack) =>
-  Effect.gen(function* () {
-    const bucket = yield* deployTestBucket(stack);
-    const bucketName = bucket.bucketName;
+test.provider(
+  "deleteObject - remove object",
+  (stack) =>
+    Effect.gen(function* () {
+      const bucket = yield* deployTestBucket(stack);
+      const bucketName = bucket.bucketName;
 
-    yield* S3.putObject({
-      Bucket: bucketName,
-      Key: "to-delete.txt",
-      Body: "Delete me",
-    });
+      yield* S3.putObject({
+        Bucket: bucketName,
+        Key: "to-delete.txt",
+        Body: "Delete me",
+      });
 
-    yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "to-delete.txt",
-    });
+      yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "to-delete.txt",
+      });
 
-    yield* S3.deleteObject({
-      Bucket: bucketName,
-      Key: "to-delete.txt",
-    });
+      yield* S3.deleteObject({
+        Bucket: bucketName,
+        Key: "to-delete.txt",
+      });
 
-    const headResult = yield* S3.headObject({
-      Bucket: bucketName,
-      Key: "to-delete.txt",
-    }).pipe(
-      Effect.map(() => "found" as const),
-      Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
-    );
+      const headResult = yield* S3.headObject({
+        Bucket: bucketName,
+        Key: "to-delete.txt",
+      }).pipe(
+        Effect.map(() => "found" as const),
+        Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
+      );
 
-    expect(headResult).toBe("not-found");
+      expect(headResult).toBe("not-found");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 class BucketStillExists extends Data.TaggedError("BucketStillExists") {}
@@ -527,9 +558,9 @@ const assertBucketDeleted = Effect.fn(function* (bucketName: string) {
     Effect.flatMap(() => Effect.fail(new BucketStillExists())),
     Effect.retry({
       while: (e) => e._tag === "BucketStillExists",
-      schedule: Schedule.max([Schedule.exponential(100), Schedule.recurs(10)]),
+      schedule: Schedule.spaced("2 seconds"),
+      times: 9,
     }),
     Effect.catchTag("NotFound", () => Effect.void),
-    Effect.catch(() => Effect.void),
   );
 });

@@ -1,10 +1,11 @@
 import { PgClient } from "@effect/sql-pg"
 import { assert, expect, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber, Option, Queue, Stream, String } from "effect"
+import { Cause, DateTime, Deferred, Effect, Fiber, Option, Queue, Schedule, Schema, Stream, String } from "effect"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import { Model } from "effect/schema"
+import { SqlClient, SqlError, SqlModel } from "effect/sql"
+import * as Statement from "effect/sql/Statement"
 import { TestClock } from "effect/testing"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import { SqlClient } from "effect/unstable/sql"
-import * as Statement from "effect/unstable/sql/Statement"
 import { PgContainer } from "./utils.ts"
 
 const compilerTransform = PgClient.makeCompiler(String.camelToSnake)
@@ -12,6 +13,33 @@ const transformsNested = Statement.defaultTransforms(String.snakeToCamel)
 const transforms = Statement.defaultTransforms(String.snakeToCamel, false)
 
 it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) => {
+  it.effect("round trips Model.DateTimeInsertFromDate through a repository", () =>
+    Effect.gen(function*() {
+      class Entry extends Model.Class<Entry>("Entry")({
+        id: Schema.Int.pipe(Model.FieldExcept(["insert"])),
+        created_at: Model.DateTimeInsertFromDate
+      }) {}
+
+      const sql = yield* PgClient.PgClient
+      const repo = yield* SqlModel.makeRepository(Entry, {
+        tableName: "model_timestamp",
+        idColumn: "id",
+        spanPrefix: "EntryRepository"
+      })
+      const instant = new Date("2024-05-06T07:08:09.123Z")
+      yield* sql.withTransaction(Effect.gen(function*() {
+        yield* sql`SET LOCAL TIME ZONE 'Europe/Berlin'`
+        yield* sql`CREATE TEMP TABLE model_timestamp (id SERIAL PRIMARY KEY, created_at TIMESTAMPTZ) ON COMMIT DROP`
+        const inserted = yield* repo.insert(
+          Entry.insert.make({ created_at: Model.Override(DateTime.makeUnsafe(instant)) })
+        )
+        assert.strictEqual(DateTime.toEpochMillis(inserted.created_at), instant.getTime())
+        const selected = yield* repo.findById(inserted.id)
+        assert.deepStrictEqual(selected, inserted)
+        assert.strictEqual(DateTime.toEpochMillis(selected.created_at), instant.getTime())
+      }))
+    }))
+
   it.effect("insert helper", () =>
     Effect.gen(function*() {
       const sql = yield* PgClient.PgClient
@@ -238,6 +266,30 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       expect(rows[0].json).toEqual({ testValue: 123 })
     }))
 
+  it.effect("reads scalar enums as strings without registering their OIDs", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql.withTransaction(Effect.gen(function*() {
+        yield* sql`CREATE TYPE capability_scalar AS ENUM ('use_key', 'manage', 'gérer')`
+        const rows = yield* sql`
+          SELECT 'use_key'::capability_scalar AS capability,
+                 ${"gérer"}::capability_scalar AS bound,
+                 NULL::capability_scalar AS nullable
+        `
+        yield* sql`DROP TYPE capability_scalar`
+        assert.deepStrictEqual(rows, [{ capability: "use_key", bound: "gérer", nullable: null }])
+      }))
+    }))
+
+  it.effect("reads bytea as Uint8Array", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const payload = new Uint8Array([0, 1, 254, 255])
+      const rows = yield* sql`SELECT ${payload}::bytea AS payload`
+      assert.instanceOf(rows[0].payload, Uint8Array)
+      assert.deepStrictEqual(rows, [{ payload }])
+    }))
+
   it.effect("stream", () =>
     Effect.gen(function*() {
       const sql = yield* SqlClient.SqlClient
@@ -249,6 +301,27 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
         { "generate_series": 2 },
         { "generate_series": 3 }
       ])
+    }))
+
+  it.effect("releases completed nested transaction locks", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const locks = sql`SELECT count(*)::integer AS count FROM pg_locks
+        WHERE pid = pg_backend_pid() AND locktype = 'transactionid'`
+      yield* sql.withTransaction(Effect.gen(function*() {
+        yield* sql`CREATE TEMP TABLE savepoint_locks (value INTEGER) ON COMMIT DROP`
+
+        yield* sql.withTransaction(sql`INSERT INTO savepoint_locks VALUES (1)`)
+        assert.deepStrictEqual(yield* locks, [{ count: 1 }])
+
+        const error = yield* sql.withTransaction(
+          sql`INSERT INTO savepoint_locks VALUES (2)`.pipe(Effect.andThen(Effect.fail("rollback")))
+        ).pipe(Effect.flip)
+        assert.strictEqual(error, "rollback")
+        assert.deepStrictEqual(yield* locks, [{ count: 1 }])
+
+        assert.deepStrictEqual(yield* sql`SELECT value FROM savepoint_locks`, [{ value: 1 }])
+      }))
     }))
 
   it.effect("preserves successful concurrent nested transactions", () =>
@@ -283,7 +356,45 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
 
       assert.deepStrictEqual(rows, [{ value: "first" }])
     }).pipe(TestClock.withLive))
+
+  it.effect("fails a transaction whose COMMIT rolls back after a caught error", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const cause = yield* sql.withTransaction(Effect.gen(function*() {
+        yield* Effect.ignore(sql`SELECT 1 / 0`)
+      })).pipe(Effect.sandbox, Effect.flip)
+
+      assert.isTrue(Cause.hasDies(cause))
+      assert.isFalse(Cause.hasFails(cause))
+      const defect = Cause.squash(cause)
+      assert.instanceOf(defect, SqlError.SqlError)
+      assert.strictEqual(defect.reason._tag, "UnknownError")
+      assert.strictEqual(defect.reason.operation, "commit")
+    }))
 })
+
+it.layer(PgContainer.layerMakeClientUnprepared, { timeout: "30 seconds" })(
+  "PgClient.makeClient without preparation",
+  (it) => {
+    it.effect("fails an aborted COMMIT and reuses the connection", () =>
+      Effect.gen(function*() {
+        const sql = yield* PgClient.PgClient
+        const cause = yield* sql.withTransaction(Effect.gen(function*() {
+          yield* Effect.ignore(sql`SELECT 1 / 0`)
+        })).pipe(Effect.sandbox, Effect.flip)
+
+        assert.isTrue(Cause.hasDies(cause))
+        assert.isFalse(Cause.hasFails(cause))
+        const defect = Cause.squash(cause)
+        assert.instanceOf(defect, SqlError.SqlError)
+        assert.strictEqual(defect.reason._tag, "UnknownError")
+        assert.strictEqual(defect.reason.operation, "commit")
+
+        const rows = yield* sql.withTransaction(sql<{ value: number }>`SELECT 1 AS value`)
+        assert.deepStrictEqual(rows, [{ value: 1 }])
+      }))
+  }
+)
 
 it.layer(PgContainer.layerMakeClient, { timeout: "30 seconds" })("PgClient.makeClient", (it) => {
   it.effect("connects before executing queries", () =>
@@ -529,6 +640,41 @@ it.layer(PgContainer.layerClientForListen, { timeout: "30 seconds", concurrent: 
       )
       expect(payload.payload).toEqual("payload")
     }).pipe(TestClock.withLive), { timeout: 20_000 })
+
+  it.effect("retries a failed listener and receives notifications on a new connection", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const channel = "retry_listener"
+      const registered = yield* Queue.unbounded<void>()
+      const consumer = yield* Stream.unwrap(Effect.gen(function*() {
+        const notifications = yield* sql.listen(channel)
+        yield* Queue.offer(registered, undefined)
+        return Stream.fromQueue(notifications)
+      })).pipe(
+        Stream.retry(Schedule.recurs(1)),
+        Stream.runHead,
+        Effect.forkScoped
+      )
+
+      yield* Queue.take(registered)
+      const [listener] = yield* sql<{ pid: number }>`
+        SELECT pid FROM pg_stat_activity WHERE query = ${`LISTEN "${channel}"`}
+      `
+      assert.isDefined(listener)
+      yield* sql`SELECT pg_terminate_backend(${listener.pid})`
+
+      // Wait for registration; PostgreSQL does not replay missed notifications.
+      yield* Queue.take(registered)
+      const [replacement] = yield* sql<{ pid: number }>`
+        SELECT pid FROM pg_stat_activity
+        WHERE query = ${`LISTEN "${channel}"`} AND pid <> ${listener.pid}
+      `
+      assert.isDefined(replacement)
+      yield* sql.notify(channel, "after reconnect")
+      const notification = Option.getOrThrow(yield* Fiber.join(consumer))
+      assert.strictEqual(notification.channel, channel)
+      assert.strictEqual(notification.payload, "after reconnect")
+    }), { timeout: 20_000 })
 
   it.effect("listen rejects channel names longer than 63 UTF-8 bytes", () =>
     Effect.gen(function*() {

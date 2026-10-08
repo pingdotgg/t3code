@@ -7,6 +7,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -17,8 +18,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
@@ -26,6 +27,7 @@ const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
 const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
+const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 /**
@@ -65,6 +67,8 @@ export interface ProviderMaintenanceCapabilities {
    * installer was asked and did not know.
    */
   readonly latestVersion?: string | null;
+  /** Compare native release revisions when the provider does not use plain semver. */
+  readonly compareVersions?: (current: string, latest: string) => number;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -105,9 +109,15 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
+  /**
+   * The provider's own updater (`claude update`, `pi update --self`). It runs
+   * first for paths its installer owns, and otherwise only when no package
+   * manager is proven, because these updaters detect their installer too.
+   */
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
-    readonly isCommandPath: (commandPath: string) => boolean;
+    /** Paths the provider's own installer owns; omit when it has none. */
+    readonly isCommandPath?: (commandPath: string) => boolean;
     /** Environment the native updater needs to target this instance's install. */
     readonly env?: NodeJS.ProcessEnv;
   } | null;
@@ -195,7 +205,11 @@ export function makeTargetedProviderUpdateAction(
   const update = capabilities.update;
   const packageName = capabilities.packageName;
   if (!update || !packageName) return null;
-  if (!/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$)/.test(update.lockKey))
+  if (
+    !/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
+      update.lockKey,
+    )
+  )
     return null;
   const packageIndex = update.args.findIndex(
     (arg) => arg === `${packageName}@latest` || arg === packageName,
@@ -236,6 +250,17 @@ function isVitePlusGlobalCommandPath(commandPath: string): boolean {
 
 function isBunGlobalCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/.bun/bin/");
+}
+
+function isYarnGlobalCommandPath(commandPath: string): boolean {
+  // `~/.config/yarn/global/…` on POSIX, `%LOCALAPPDATA%\Yarn\Data\global\…` on Windows.
+  return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
+}
+
+/** Version-manager installs are pinned in its config, so updating them means editing that. */
+function isMiseCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
@@ -371,9 +396,10 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
 
 /**
  * Derive update capabilities from where the executable actually lives. Every
- * branch that yields a one-click command has evidence that the named tool
- * owns that path; anything unproven stays manual-only so T3 Code never runs
- * a package manager against an install it did not create.
+ * package-manager branch has evidence that the named tool owns that path, so
+ * T3 Code never runs a package manager against an install it did not create.
+ * An unproven install falls back to the provider's own updater, which detects
+ * its installer itself, and stays manual-only without one.
  */
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
@@ -392,17 +418,27 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const packageName = definition.npmPackageName;
 
   const nativeUpdate = definition.nativeUpdate;
-  if (nativeUpdate && commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))) {
-    return makeProviderMaintenanceCapabilities({
-      provider: definition.provider,
-      packageName,
-      updateExecutable: context.resolvedCommandPath,
-      updateArgs: nativeUpdate.args,
-      updateLockKey: `${definition.provider}-native`,
-      platform: context.platform,
-      ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
-    });
+  const native = nativeUpdate
+    ? makeProviderMaintenanceCapabilities({
+        provider: definition.provider,
+        packageName,
+        updateExecutable: context.resolvedCommandPath,
+        updateArgs: nativeUpdate.args,
+        updateLockKey: `${definition.provider}-native`,
+        platform: context.platform,
+        ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+      })
+    : manual;
+  if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
+    return native;
   }
+  // A `node_modules` path not proven below belongs to another package or a
+  // project, so the provider's own updater could act on the wrong install.
+  const fallback = commandPaths.some((commandPath) =>
+    normalizeCommandPath(commandPath).includes("/node_modules/"),
+  )
+    ? manual
+    : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
@@ -428,6 +464,25 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+    });
+  }
+
+  if (commandPaths.some(isYarnGlobalCommandPath)) {
+    return makeProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      updateExecutable: "yarn",
+      updateArgs: ["global", "add", `${packageName}@latest`],
+      updateLockKey: "yarn-global",
+    });
+  }
+  if (yield* isVoltaPackageInstall(context, packageName)) {
+    return makeProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      updateExecutable: "volta",
+      updateArgs: ["install", `${packageName}@latest`],
+      updateLockKey: "volta",
     });
   }
 
@@ -457,21 +512,31 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
 
+  if (commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context))) {
+    return manual;
+  }
+
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
   if (homebrew) {
     // Mise shims resolve to the version manager, not the provider.
     if (homebrew.kind === "formula" && homebrew.name.toLowerCase() === "mise") {
       return manual;
     }
-    const brewPath = yield* resolveCommandPath("brew", { env: context.env }).pipe(
-      Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
-    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // The keg's own brew works even when a GUI-launched server has no
+    // Homebrew on PATH; the prefix check below still applies to it.
+    const kegBrewPath = path.join(homebrew.prefix, "bin", "brew");
+    const brewPath = (yield* fileSystem.exists(kegBrewPath).pipe(Effect.orElseSucceed(() => false)))
+      ? kegBrewPath
+      : yield* resolveCommandPath("brew", { env: context.env }).pipe(
+          Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
+        );
     if (!brewPath) {
-      return manual;
+      return fallback;
     }
     // A keg-shaped path is only Homebrew's if it sits under the prefix of the
     // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
-    const fileSystem = yield* FileSystem.FileSystem;
     const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
@@ -480,7 +545,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       !realBrewPrefix ||
       normalizeCommandPath(realBrewPrefix) !== normalizeCommandPath(homebrew.prefix)
     ) {
-      return manual;
+      return fallback;
     }
     const args =
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
@@ -498,7 +563,46 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
 
-  return manual;
+  return fallback;
+});
+
+/** A launcher script that runs the provider through mise (`exec mise x codex -- codex`). */
+const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const size = yield* fileSystem.stat(context.realCommandPath).pipe(
+    Effect.map((info) => Number(info.size)),
+    Effect.orElseSucceed(() => Infinity),
+  );
+  if (size > MISE_WRAPPER_MAX_BYTES) {
+    return false;
+  }
+  const script = yield* fileSystem
+    .readFileString(context.realCommandPath)
+    .pipe(Effect.orElseSucceed(() => ""));
+  return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
+});
+
+/**
+ * Volta's `bin/<cmd>` is a link to its `volta-shim`, which picks the package
+ * at run time; the package's own image directory proves Volta installed it.
+ */
+const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
+  context: ProviderMaintenanceResolutionContext,
+  packageName: string,
+) {
+  const path = yield* Path.Path;
+  if (
+    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") !==
+    "volta-shim"
+  ) {
+    return false;
+  }
+  const voltaHome = path.dirname(path.dirname(context.resolvedCommandPath));
+  const packageDir = path.join(voltaHome, "tools", "image", "packages", ...packageName.split("/"));
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
 });
 
 /**
@@ -601,22 +705,26 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 /**
  * Turn a one-shot resolution into the shape drivers expose: a cached read for
  * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked.
+ * ownership derived before the user clicked. An interrupted resolution is not
+ * cached, so the next read resolves again.
  */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
-  const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    resolve,
-    MAINTENANCE_CAPABILITIES_CACHE_TTL,
-  );
+  const cache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: MAINTENANCE_CAPABILITIES_CACHE_TTL,
+    lookup: () => resolve,
+  });
+  const cached = Cache.get(cache, undefined);
   return (options?: { readonly fresh?: boolean }) =>
-    options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;
+    options?.fresh ? Cache.invalidate(cache, undefined).pipe(Effect.andThen(cached)) : cached;
 });
 
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
+  readonly compareVersions?: (current: string, latest: string) => number;
 }): Pick<ServerProviderVersionAdvisory, "status" | "message"> {
   if (!input.currentVersion) {
     return { status: "unknown", message: null };
@@ -624,7 +732,9 @@ function deriveVersionAdvisory(input: {
   if (!input.latestVersion) {
     return { status: "unknown", message: null };
   }
-  if (compareSemverVersions(input.currentVersion, input.latestVersion) < 0) {
+  if (
+    (input.compareVersions ?? compareSemverVersions)(input.currentVersion, input.latestVersion) < 0
+  ) {
     return {
       status: "behind_latest",
       message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
@@ -646,6 +756,7 @@ export function createProviderVersionAdvisory(input: {
   const advisory = deriveVersionAdvisory({
     currentVersion: input.currentVersion,
     latestVersion,
+    ...(capabilities.compareVersions ? { compareVersions: capabilities.compareVersions } : {}),
   });
 
   return {

@@ -128,6 +128,7 @@ export interface App extends Resource<
  * ```
  *
  * @resource
+ * @product Compute
  */
 export const App = Resource<App>("Prisma.App");
 

@@ -30,6 +30,34 @@ const makeEffectObject2Schema = () =>
     age: Schema.Number
   })
 
+const makeEffectEncodedObject8Schema = () => {
+  const amount = Schema.String.pipe(Schema.decodeTo(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+    SchemaTransformation.numberFromString
+  ))
+  return Schema.fromJsonString(Schema.Struct({
+    id: Schema.String,
+    name: Schema.String.check(Schema.isMinLength(1)),
+    price: amount,
+    quantity: amount,
+    active: Schema.Boolean,
+    address: Schema.Struct({ city: Schema.String, country: Schema.String }),
+    tags: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    note: Schema.optionalKey(Schema.String)
+  }))
+}
+
+const encodedObject8Value = {
+  id: "product-1",
+  name: "Product",
+  price: 12,
+  quantity: 2,
+  active: true,
+  address: { city: "Rome", country: "IT" },
+  tags: ["new"]
+}
+const encodedObject8Input = JSON.stringify({ ...encodedObject8Value, price: "12", quantity: "2" })
+
 const makeObjectFields = (size: number) =>
   Object.fromEntries(Array.from({ length: size }, (_, index) => [`field${index}`, Schema.NonEmptyString]))
 
@@ -108,9 +136,26 @@ export const effectFirstMakeObject2 = () => ({
   validate: (result) => assert.deepEqual(result, object2Input)
 })
 
+export const effectSchemaCreationEncodedObject8 = () => ({
+  run: makeEffectEncodedObject8Schema,
+  validate: (schema) => {
+    assert.deepEqual(Schema.decodeUnknownSync(schema)(encodedObject8Input), encodedObject8Value)
+    assert.deepEqual(schema.make(encodedObject8Value), encodedObject8Value)
+    assert.throws(() => schema.make({ ...encodedObject8Value, price: -1 }))
+  }
+})
+
+export const effectFirstMakeEncodedObject8 = () => ({
+  run: () => makeEffectEncodedObject8Schema().make(encodedObject8Value),
+  validate: (result) => assert.deepEqual(result, encodedObject8Value)
+})
+
 export const effectFirstDecodeCheckedObject32 = () => ({
   run: () => SchemaParser.decodeUnknownExit(makeEffectCheckedSchema())(input),
-  validate: (result) => assert.equal(result._tag, "Success")
+  validate: (result) => {
+    assert.equal(result._tag, "Success")
+    assert.deepEqual(result.value, input)
+  }
 })
 
 export const effectFirstDecodeTemplateLiteral = () => ({
@@ -120,17 +165,26 @@ export const effectFirstDecodeTemplateLiteral = () => ({
 
 export const effectFirstDecodeRecord32 = () => ({
   run: () => SchemaParser.decodeUnknownExit(makeEffectRecordSchema())(input),
-  validate: (result) => assert.equal(result._tag, "Success")
+  validate: (result) => {
+    assert.equal(result._tag, "Success")
+    assert.deepEqual(result.value, input)
+  }
 })
 
 export const effectFirstDecodeLiteral100 = () => ({
   run: () => SchemaParser.decodeUnknownExit(makeEffectLiteral100Schema())("value99"),
-  validate: (result) => assert.equal(result._tag, "Success")
+  validate: (result) => {
+    assert.equal(result._tag, "Success")
+    assert.equal(result.value, "value99")
+  }
 })
 
 export const effectFirstDecodeTagged100 = () => ({
   run: () => SchemaParser.decodeUnknownExit(makeEffectTagged100Schema())(taggedInput),
-  validate: (result) => assert.equal(result._tag, "Success")
+  validate: (result) => {
+    assert.equal(result._tag, "Success")
+    assert.deepEqual(result.value, taggedInput)
+  }
 })
 
 export const effectFirstDecodeEncodingChain8 = () => ({

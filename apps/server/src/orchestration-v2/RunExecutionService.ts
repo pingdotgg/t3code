@@ -36,6 +36,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -507,6 +508,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
+  readonly nativeThreadHasTurns?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -543,6 +545,7 @@ export const layer: Layer.Layer<
   | IdAllocator.IdAllocatorV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
+  | McpAppModelContext.McpAppModelContext
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -551,6 +554,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
@@ -782,6 +786,7 @@ export const layer: Layer.Layer<
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
             expectedStatus: input.writeIfRunCurrent.expectedStatus,
             events: finalization.events,
+            effects: finalization.effects,
           });
           if (!result.committed) {
             return;
@@ -970,7 +975,15 @@ export const layer: Layer.Layer<
                 attempt: input.attempt,
                 ...(input.shouldFinalizeRun === undefined
                   ? {}
-                  : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                  : {
+                      shouldFinalizeRun: input.shouldFinalizeRun,
+                      // Stop may commit between the ownership read and this
+                      // terminal write. Gate the events and checkpoint together.
+                      writeIfRunCurrent: {
+                        activeAttemptId: input.attempt.id,
+                        expectedStatus: "running" as const,
+                      },
+                    }),
                 ...(input.hasUnpairedRunInterruptRequest === undefined
                   ? {}
                   : {
@@ -1342,12 +1355,32 @@ export const layer: Layer.Layer<
           // its already-issued MCP credential valid even when the agent goes
           // a long time between browser-tool calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
+          // A context read that fails costs the agent the apps' notes for
+          // this turn, not the turn itself.
+          const appContext = (yield* mcpAppModelContext
+            .forThread(input.run.threadId)
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
+                  Effect.as([]),
+                ),
+              ),
+            )).map((entry) => ({
+            // The item id alone is unique and needs no escaping; server and
+            // tool names are free text that would break the tag Codex wraps
+            // the context in.
+            key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
+            text: entry.text,
+          }));
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
             runId: input.run.id,
             runOrdinal: input.run.ordinal,
             providerTurnOrdinal: input.providerTurnOrdinal,
+            ...(input.nativeThreadHasTurns === undefined
+              ? {}
+              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
             ...(input.run.restartContinuationOfRunId === undefined
               ? {}
               : {
@@ -1359,6 +1392,7 @@ export const layer: Layer.Layer<
             message: input.message,
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
+            ...(appContext.length === 0 ? {} : { appContext }),
           };
           const compact =
             input.message.attachments.length === 0 &&
@@ -1433,7 +1467,7 @@ export const layer: Layer.Layer<
   }),
 );
 
-function makeInterruptResultTurnItem(input: {
+export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;

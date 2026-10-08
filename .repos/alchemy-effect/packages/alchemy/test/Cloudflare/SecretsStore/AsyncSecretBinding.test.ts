@@ -5,8 +5,8 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type { HttpClientResponse } from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import Stack from "./fixtures/stack.ts";
 import { SECRET_VALUE } from "./fixtures/secret.ts";
 
@@ -81,7 +81,15 @@ test(
     expect(effect).toBeTypeOf("string");
     yield* assertSecret(effect);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:secretsstore",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );
 
 // Style (2): the same Secret declared on the Worker `env` async binding. The
@@ -94,5 +102,13 @@ test(
     expect(async).toBeTypeOf("string");
     yield* assertSecret(async);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:secretsstore",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );

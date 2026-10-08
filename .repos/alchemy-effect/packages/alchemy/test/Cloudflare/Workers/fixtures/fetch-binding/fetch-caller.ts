@@ -1,8 +1,8 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import FetchTargetWorker from "./fetch-target.ts";
 
 /**
@@ -12,7 +12,7 @@ import FetchTargetWorker from "./fetch-target.ts";
  *
  * GET /?name=foo  →  forwards to the target and pipes its body back, prefixed
  * with `caller saw:` so the test can assert the response crossed both hops.
- * Failures surface as a 500 with the cause in the body.
+ * Upstream HTTP statuses are preserved. Effect failures return 500 with the cause.
  */
 export default class FetchCallerWorker extends Cloudflare.Worker<FetchCallerWorker>()(
   "FetchCallerWorker",
@@ -33,7 +33,9 @@ export default class FetchCallerWorker extends Cloudflare.Worker<FetchCallerWork
           ),
         );
         const body = yield* res.text;
-        return HttpServerResponse.text(`caller saw: ${body}`);
+        return HttpServerResponse.text(`caller saw: ${body}`, {
+          status: res.status,
+        });
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.succeed(

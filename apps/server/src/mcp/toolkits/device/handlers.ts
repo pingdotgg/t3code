@@ -16,6 +16,7 @@ import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
 
 /** The flags that pin every agent-device command to one device. */
@@ -66,7 +67,7 @@ export function agentDeviceQuickStart(
   ].join("\n");
 }
 
-const requireDeviceAccess = McpInvocationContext.requireMcpCapability("device").pipe(
+const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("device").pipe(
   Effect.mapError(
     () =>
       new DeviceToolUnavailableError({
@@ -119,7 +120,7 @@ const pickDevice = (
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
 const handlers = {
-  device_list: (input) =>
+  device_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -132,7 +133,7 @@ const handlers = {
       }
       const hostId = input?.hostId;
       const open = state.sessions
-        .filter((session) => session.threadId === scope.threadId)
+        .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
         hostStatuses: Object.fromEntries(
@@ -145,7 +146,8 @@ const handlers = {
         open,
       };
     }).pipe(Effect.mapError(toolError)),
-  device_open: (input) =>
+  ),
+  device_open: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -159,12 +161,12 @@ const handlers = {
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
       const agentArgs = yield* devices.agentTarget({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
       });
       const session = yield* devices.open({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
         platform: target.platform,
@@ -203,11 +205,12 @@ const handlers = {
         quickStart: agentDeviceQuickStart(device, targetArgs, command),
       };
     }).pipe(Effect.mapError(toolError)),
-  device_screenshot: (input) =>
+  ),
+  device_screenshot: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
-      const sessions = yield* devices.sessionsForThread(scope.threadId);
+      const sessions = yield* devices.sessionsForThread(scope.thread.threadId);
       const target =
         input.deviceId !== undefined
           ? { hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID, deviceId: input.deviceId }
@@ -229,19 +232,21 @@ const handlers = {
         },
       };
     }).pipe(Effect.mapError(toolError)),
-  device_close: (input) =>
+  ),
+  device_close: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       yield* devices.close({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
         ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
         ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
       });
       return {};
     }).pipe(Effect.mapError(toolError)),
-} satisfies Parameters<typeof DeviceToolkit.toLayer>[0];
+  ),
+} satisfies McpToolAccess.Handlers<typeof DeviceToolkit.tools>;
 
 /** Width and height from the IHDR chunk; a PNG that lacks one reports 0×0. */
 export function pngDimensions(png: Uint8Array): { width: number; height: number } {
@@ -258,8 +263,8 @@ export function pngDimensions(png: Uint8Array): { width: number; height: number 
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
-export const DeviceStandardToolkitHandlersLive = DeviceStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = McpToolAccess.toLayer(DeviceStandardToolkit, standardHandlers);
 
-export const DeviceScreenshotToolkitHandlersLive = DeviceScreenshotToolkit.toLayer({
+export const layerScreenshot = McpToolAccess.toLayer(DeviceScreenshotToolkit, {
   device_screenshot,
 });

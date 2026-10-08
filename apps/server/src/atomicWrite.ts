@@ -20,10 +20,16 @@ export const writeFileStringAtomically = (input: {
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
-      const tempDirectory = yield* fs.makeTempDirectoryScoped({
-        directory: targetDirectory,
-        prefix: `${path.basename(targetPath)}.`,
-      });
+      // The temp directory is cleanup, not part of the write: failing to remove
+      // it (a virus scanner holding it on Windows) must not fail a write that
+      // already landed.
+      const tempDirectory = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({
+          directory: targetDirectory,
+          prefix: `${path.basename(targetPath)}.`,
+        }),
+        (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: true })),
+      );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
       yield* fs.writeFileString(tempPath, input.contents);

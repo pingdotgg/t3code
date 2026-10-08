@@ -21,8 +21,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as OpenCode2TextGeneration from "../../textGeneration/OpenCode2TextGeneration.ts";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
@@ -34,7 +34,7 @@ import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdap
 import * as ServerSettings from "../../serverSettings.ts";
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
+import { readOpenCodeGoUsageLimits } from "../openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
@@ -44,7 +44,7 @@ import {
   openCode2SkillsToServerProviderSkills,
   openCodeSkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
-} from "../Layers/OpenCodeProvider.ts";
+} from "../OpenCodeProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import {
@@ -199,6 +199,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const serverConfig = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
+      const crypto = yield* Crypto.Crypto;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -388,6 +389,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       );

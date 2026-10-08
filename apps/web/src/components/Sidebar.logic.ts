@@ -10,7 +10,7 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { AsyncResult } from "effect/unstable/reactivity";
+import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
@@ -274,6 +274,34 @@ export function resolveSidebarDropVerb(
   return "wake";
 }
 
+/** Eligible rows between the pressed action and the pointer, in sidebar order. */
+export function resolveSidebarSweepKeys(
+  orderedKeys: readonly string[],
+  originKey: string,
+  targetKey: string,
+  canApply: (key: string) => boolean,
+): string[] {
+  const origin = orderedKeys.indexOf(originKey);
+  const target = orderedKeys.indexOf(targetKey);
+  if (origin === -1 || target === -1) return [];
+  return orderedKeys.slice(Math.min(origin, target), Math.max(origin, target) + 1).filter(canApply);
+}
+
+/** The thread row at a pointer height, clamped to the rows visible in the
+    sidebar's scroll viewport. A gap between rows resolves to the row above
+    it. Rows carry their key in data-thread-item, which departing motion
+    clones drop. */
+export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null {
+  const viewport = list.closest('[data-slot="scroll-area-viewport"]')?.getBoundingClientRect();
+  const visibleY = viewport ? Math.min(Math.max(y, viewport.top), viewport.bottom - 1) : y;
+  let key: string | null = null;
+  for (const row of list.querySelectorAll<HTMLElement>("li[data-thread-item]")) {
+    if (key !== null && row.getBoundingClientRect().top > visibleY) break;
+    key = row.dataset.threadItem ?? null;
+  }
+  return key;
+}
+
 export function planSidebarThreadDrop(input: {
   readonly activeKey: string;
   readonly activeSection: SidebarSection;
@@ -308,6 +336,24 @@ export function planSidebarThreadDrop(input: {
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
+  // Rows whose server cannot store an order (an older server, or a machine
+  // that is offline) are never written. Keyless ones sort outside the keyed
+  // run, so they leave the plan; keyed ones stay as bounds. Before, one keyless row
+  // refused every drop that needed fresh keys for its neighbors.
+  const arrange = (
+    order: readonly string[],
+    keysById: ReadonlyMap<string, string | null | undefined>,
+    writable: ReadonlySet<string> | undefined,
+  ) => {
+    if (!writable) return planPinnedReorder({ orderedIds: order, keysById, movedId: activeKey });
+    if (!writable.has(activeKey)) return null;
+    const assignments = planPinnedReorder({
+      orderedIds: order.filter((key) => writable.has(key) || keysById.get(key) != null),
+      keysById,
+      movedId: activeKey,
+    });
+    return assignments.every(({ id }) => writable.has(id)) ? assignments : null;
+  };
   switch (target.section) {
     case "active": {
       // Like the settled tail: threads can enter a time-ordered inbox, but
@@ -332,14 +378,8 @@ export function planSidebarThreadDrop(input: {
       ) {
         return { kind: "none" };
       }
-      const assignments = planPinnedReorder({
-        orderedIds: order,
-        keysById: activeKeysById,
-        movedId: activeKey,
-      });
-      if (activeReorderableKeys && assignments.some(({ id }) => !activeReorderableKeys.has(id))) {
-        return { kind: "none" };
-      }
+      const assignments = arrange(order, activeKeysById, activeReorderableKeys);
+      if (assignments === null) return { kind: "none" };
       return {
         kind: "move-active",
         order,
@@ -361,14 +401,8 @@ export function planSidebarThreadDrop(input: {
       ) {
         return { kind: "none" };
       }
-      const assignments = planPinnedReorder({
-        orderedIds: order,
-        keysById: pinnedKeysById,
-        movedId: activeKey,
-      });
-      if (reorderableKeys && assignments.some(({ id }) => !reorderableKeys.has(id))) {
-        return { kind: "none" };
-      }
+      const assignments = arrange(order, pinnedKeysById, reorderableKeys);
+      if (assignments === null) return { kind: "none" };
       if (activeSection === "pinned") {
         return assignments.length === 0
           ? { kind: "none" }
@@ -1027,6 +1061,7 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/c
 export {
   isThreadWorking as isSidebarThreadWorking,
   sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
 
 // Pinned-reorder key math and the keyed sort live in client-runtime

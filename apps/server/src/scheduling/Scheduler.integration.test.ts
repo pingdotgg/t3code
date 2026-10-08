@@ -15,15 +15,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "./Scheduler.ts";
 
@@ -85,7 +86,7 @@ it.effect.each(["on time", "after restart"])(
       const current = yield* Ref.make(thread);
       const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
       const receipts = yield* Queue.unbounded<"task" | "retry">();
-      const dependencies = Layer.mergeAll(
+      const layerDependencies = Layer.mergeAll(
         NodeCrypto.layer,
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: () =>
@@ -112,11 +113,12 @@ it.effect.each(["on time", "after restart"])(
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
       );
-      const workers = Layer.mergeAll(
+      const layerWorkers = Layer.mergeAll(
         ScheduledTasks.layer,
-        UsageLimitRecoveryWorker.workerLive,
-      ).pipe(Layer.provide(dependencies), Layer.provide(Scheduler.layer));
+        UsageLimitRecoveryWorker.layer,
+      ).pipe(Layer.provide(layerDependencies), Layer.provide(Scheduler.layer));
       yield* Effect.gen(function* () {
         const tasks = yield* ScheduledTasks.ScheduledTaskService;
         const { task } = yield* tasks.upsert({
@@ -149,6 +151,6 @@ it.effect.each(["on time", "after restart"])(
           usageLimitRecoveryRequestId: thread.limitRecovery!.requestId,
           text: "Continue where you left off.",
         });
-      }).pipe(Effect.provide(workers));
-    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+      }).pipe(Effect.provide(layerWorkers));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

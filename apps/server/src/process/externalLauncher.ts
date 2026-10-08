@@ -30,7 +30,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -39,8 +39,8 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 // ==============================
 // Definitions
@@ -175,7 +175,7 @@ function encodeUtf16LeBase64(input: string): string {
     bytes[index * 2] = code & 0xff;
     bytes[index * 2 + 1] = code >>> 8;
   }
-  return Encoding.encodeBase64(bytes);
+  return Base64.encode(bytes);
 }
 
 function escapePowerShellStringLiteral(input: string): string {
@@ -471,7 +471,7 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
 // waiting on, or throw away work a slow host (a busy server at startup, a
 // long PATH) needs more than one connect to finish. A failed scan clears the
 // entry so the next caller starts over rather than replaying the failure.
-// Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
+// Expiry uses the monotonic clock (Clock.monotonicTimeNanos), matching the
 // command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
 // adjustment cannot keep an expired entry alive.
 const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
@@ -772,7 +772,8 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.onExit((exit) =>
         Effect.gen(function* () {
-          const expiresAtNanos = (yield* Clock.currentTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
+          const expiresAtNanos =
+            (yield* Clock.monotonicTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
           yield* Ref.update(editorDiscoveryCache, (current) =>
             Option.isNone(current) || current.value.scan !== scan
               ? current
@@ -789,7 +790,7 @@ export const make = Effect.gen(function* () {
   // Claiming the cache entry and starting its scan must not be split by an
   // interrupt, or the entry would wait on a scan that never runs.
   const acquireEditorDiscovery = Effect.gen(function* () {
-    const nowNanos = yield* Clock.currentTimeNanos;
+    const nowNanos = yield* Clock.monotonicTimeNanos;
     const [scan, isNewScan] = yield* Ref.modify(
       editorDiscoveryCache,
       (

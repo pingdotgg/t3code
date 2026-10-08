@@ -162,7 +162,7 @@ const DEFAULT_COMMIT_MESSAGE_INPUT = {
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
-const OpenCodeTextGenerationTestLayer = Layer.succeed(
+const layerOpenCodeTextGenerationTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
@@ -175,7 +175,7 @@ const OpenCodeTextGenerationTestLayer = Layer.succeed(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
+const layerOpenCodeTextGenerationExistingServerTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
@@ -234,7 +234,7 @@ const advanceIdleClock = Effect.gen(function* () {
   yield* Effect.yieldNow;
 });
 
-it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
+it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
   it.effect("excludes generic files from thread title generation", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -545,7 +545,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
   );
 });
 
-it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
+it.layer(layerOpenCodeTextGenerationExistingServerTest)(
   "OpenCodeTextGeneration with configured server URL",
   (it) => {
     it.effect("does not send a local environment password to a configured server", () =>

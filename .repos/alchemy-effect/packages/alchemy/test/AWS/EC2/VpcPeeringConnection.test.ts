@@ -84,7 +84,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(peering.vpcPeeringConnectionId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 240_000 },
 );
 
 test.provider(
@@ -120,5 +120,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(peering.vpcPeeringConnectionId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 240_000 },
 );

@@ -1,9 +1,9 @@
 /**
  * Source for the T3-owned Pi extension that consumes T3's HTTP MCP server.
  *
- * Pi core has no MCP client. This file is TypeScript that Pi itself loads via
- * `--extension`. It is written to a cache path at session open so packaged
- * AppImage builds do not need a sibling .ts file next to the bundled server.
+ * Pi 0.99+ discovers optional HTTP bridge tools on demand. Older versions
+ * keep them directly available. Pi loads this TypeScript via `--extension`; the
+ * server writes it to a cache so packaged builds need no sibling .ts file.
  *
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
@@ -108,8 +108,11 @@ function formatMcpContent(result: unknown): string {
       if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
     }
   }
+  // Most T3 tools mirror structuredContent in a text block. Repeating it would
+  // leave T3's own output parsing two JSON documents instead of one.
   if (record.structuredContent !== undefined) {
-    texts.push(JSON.stringify(record.structuredContent));
+    const structured = JSON.stringify(record.structuredContent);
+    if (!texts.includes(structured)) texts.push(structured);
   }
   if (texts.length > 0) return texts.join("\\n");
   return JSON.stringify(result);
@@ -231,9 +234,18 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Pi deliberately leaves permission policy to extensions. T3's injected
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
+  // Only Pi's own search is known to be read-only. An extension that replaces
+  // it keeps the name, and cannot discover deferred tools either.
+  const hasBuiltinToolSearch = () =>
+    typeof pi.getAllTools === "function" &&
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
+
   pi.on("tool_call", async (event, ctx) => {
     const mode = runtimeMode();
-    if (mode === "full-access" || READ_ONLY_TOOLS.has(event.toolName)) return;
+    if (mode === "full-access") return;
+    if (event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) {
+      return;
+    }
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
       return;
     }
@@ -258,28 +270,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     return;
   }
 
+  // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
+  // bridge as the credential owner: mcp.json overrides native registrations.
+  const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
+  const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
+  let deferOptionalTools = supportsExposure;
+  let catalog: ReadonlyArray<McpTool> = [];
+
   const client = createMcpClient(endpoint, token);
   let started: Promise<void> | undefined;
 
-  const ensureStarted = () => {
-    if (started !== undefined) return started;
-    const attempt = (async () => {
-      const signal = AbortSignal.timeout(10_000);
-      await client.connect(signal);
-      const tools = await client.listTools(signal);
-      for (const tool of tools) {
-        const name = tool.name;
-        const registeredName = \`mcp__t3-code__\${name}\`;
-        const description = tool.description ?? name;
+  const registerTools = () => {
+    // Preserve public names for saved loadouts and tool selectors. Hidden
+    // canonical names reserve ownership against Pi's configured MCP servers.
+    const prefixes = supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : ["mcp__t3-code__"];
+    for (const tool of catalog) {
+      const name = tool.name;
+      for (const prefix of prefixes) {
+        const exposure = prefix === "mcp__t3_code__" ? "hidden" :
+          deferOptionalTools && !directTools.has(name) ? "deferred" : "direct";
         pi.registerTool({
-          name: registeredName,
+          name: \`\${prefix}\${name}\`,
           label: name,
-          description,
-          promptSnippet: description.split("\\n")[0] ?? name,
-          promptGuidelines: [
-            \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
-          ],
+          description: tool.description ?? name,
           parameters: jsonSchemaToTypebox(tool.inputSchema),
+          ...(supportsExposure ? { exposure } : {}),
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
               name,
@@ -295,6 +310,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           },
         });
       }
+    }
+  };
+
+  const ensureStarted = () => {
+    if (started !== undefined) return started;
+    const attempt = (async () => {
+      const signal = AbortSignal.timeout(10_000);
+      await client.connect(signal);
+      catalog = await client.listTools(signal);
+      registerTools();
     })();
     started = attempt;
     void attempt.catch(() => {
@@ -303,13 +328,28 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     return attempt;
   };
 
-  // Await here so tools exist before session_start and the first prompt.
-  // session_start is a retry if the process later reloads the extension.
-  // Best effort during extension load. A failed first connection is retried
-  // below on session_start instead of pinning this process to the failure.
+  // CLI extensions load before builtins, and Pi keeps the first registration
+  // of a tool name. Register now so the bridge owns the T3 namespace even when
+  // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
+  const reconcileDiscovery = () => {
+    if (!supportsExposure) return;
+    // A disabled or replaced search builtin cannot discover deferred tools.
+    const hasToolSearch = hasBuiltinToolSearch();
+    const exposureChanged = deferOptionalTools !== hasToolSearch;
+    deferOptionalTools = hasToolSearch;
+    if (exposureChanged) registerTools();
+    if (hasToolSearch) {
+      const active = pi.getActiveTools();
+      if (!active.includes("tool_search")) pi.setActiveTools([...active, "tool_search"]);
+    }
+  };
+
+  // Tree navigation restores its saved loadout after session_start.
+  pi.on("session_tree", reconcileDiscovery);
   pi.on("session_start", async (_event, ctx) => {
+    reconcileDiscovery();
     try {
       await ensureStarted();
     } catch (error) {

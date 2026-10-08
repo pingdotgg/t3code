@@ -4,7 +4,8 @@ import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { readCaller, unavailable } from "../../threadAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
 export function preferences(settings: ServerSettings) {
@@ -28,22 +29,21 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
-const access = (writable = false) =>
-  Effect.gen(function* () {
-    const context = yield* writable ? readMutationCaller() : readCaller();
-    const environment = yield* Environment.ServerEnvironment;
-    const descriptor = yield* environment.getDescriptor;
-    if (descriptor.environmentId !== context.scope.environmentId)
-      return yield* new OrchestratorMcpFailure({
-        code: "capability_denied",
-        message: "This credential belongs to another environment.",
-      });
-    return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
-  });
-export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
-  t3_environment_read: () =>
+const access = Effect.gen(function* () {
+  const context = yield* readCaller();
+  const environment = yield* Environment.ServerEnvironment;
+  const descriptor = yield* environment.getDescriptor;
+  if (descriptor.environmentId !== context.scope.environmentId)
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: "This credential belongs to another environment.",
+    });
+  return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
+});
+export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
+  t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
-      const { descriptor, settings } = yield* access();
+      const { descriptor, settings } = yield* access;
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       return {
         environmentId: descriptor.environmentId,
@@ -53,27 +53,23 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
         preferences: preferences(current),
       };
     }),
-  t3_environment_preferences_update: (patch) =>
+  ),
+  t3_environment_preferences_update: McpToolAccess.writesEnvironment((patch, check) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      return yield* executor.withLock(
-        scope.threadId,
-        Effect.gen(function* () {
-          const { caller, settings } = yield* access(true);
-          if (
-            caller.archivedAt !== null ||
-            caller.runtimeMode !== "full-access" ||
-            caller.interactionMode !== "default"
-          )
-            return yield* new OrchestratorMcpFailure({
-              code: "capability_denied",
-              message: "Preference updates require a live full-access/default thread.",
-            });
-          return preferences(
-            yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
-          );
-        }),
-      );
+      const update = Effect.gen(function* () {
+        // The turn may have ended, or the thread's modes changed, while this waited for the lock.
+        yield* check;
+        const { settings } = yield* access;
+        return preferences(
+          yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
+        );
+      });
+      // A thread caller serializes with its own turn; a client has no thread to lock.
+      return yield* scope.thread === undefined
+        ? update
+        : executor.withLock(scope.thread.threadId, update);
     }),
+  ),
 });

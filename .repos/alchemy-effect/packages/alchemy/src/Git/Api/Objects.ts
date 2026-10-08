@@ -4,9 +4,9 @@
  * octet-stream, and a file at a path under a ref. The raw routes declare
  * no success schema and answer with the response they build.
  */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as Schema from "effect/Schema";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import {
   CommitDiff,
   CommitInfo,

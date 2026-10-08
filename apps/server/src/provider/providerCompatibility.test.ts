@@ -10,9 +10,8 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
-import { ProviderRegistryLive } from "./Layers/ProviderRegistry.ts";
-import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
-import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
@@ -166,6 +165,26 @@ describe("provider compatibility", () => {
       resolveProviderCompatibility([policy], driver, "2.0.0-a1b2c3d")?.status,
       "unknown",
     );
+  });
+
+  it("compares Muse versions by their release, ignoring the revision suffix", () => {
+    const muse = ProviderDriverKind.make("muse");
+    for (const [version, expected] of [
+      ["1.4.3-R5018.1", "supported"],
+      ["1.4.2-R4684", "supported"],
+      ["1.4.1-R4100.2", "unknown"],
+      ["1.4.3-beta.1", "unknown"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          muse,
+          version,
+          V2_RELEASE,
+        )?.status,
+        expected,
+      );
+    }
   });
 
   it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
@@ -323,7 +342,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         })),
       ),
     );
-    const dependencies = Layer.mergeAll(
+    const layerDependencies = Layer.mergeAll(
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,
@@ -362,7 +381,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       assert.strictEqual(updated?.compatibilityAdvisory?.status, "supported");
       assert.strictEqual(updated?.status, "error");
       assert.strictEqual(updated?.message, "Authentication failed");
-    }).pipe(Effect.provide(ProviderRegistryLive.pipe(Layer.provide(dependencies))));
+    }).pipe(Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.scoped),
 );
 

@@ -8,6 +8,7 @@ import {
   type ProjectSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,6 @@ import * as Schema from "effect/Schema";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
-import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
@@ -155,8 +155,8 @@ export const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   // Commands for one project run in order. Commands that claim a workspace root
   // also hold that root, so two projects cannot both claim it.
-  const projectLocks = yield* makeKeyedSerialExecutor<ProjectId>();
-  const workspaceLocks = yield* makeKeyedSerialExecutor<string>();
+  const projectLocks = yield* KeyedLock.make<ProjectId>();
+  const workspaceLocks = yield* KeyedLock.make<string>();
 
   const toProject = (
     row: ProjectStore.ProjectRow,

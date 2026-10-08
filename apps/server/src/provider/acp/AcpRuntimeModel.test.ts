@@ -13,6 +13,7 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  sessionModelStateFromInitialize,
   sessionUpdateCountsAsLoadReplayActivity,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
@@ -214,6 +215,63 @@ describe("AcpRuntimeModel", () => {
 
     expect(response.modes?.currentModeId).toBe("code");
     expect(response.modes?.availableModes).toHaveLength(2);
+  });
+
+  it("keeps initialize mode state whose modes have null descriptions", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modeState: {
+          currentModeId: "code",
+          availableModes: [
+            { id: "ask", name: "Ask", description: null },
+            { id: "code", name: "Code", description: "Edit files", _meta: null },
+          ],
+          _meta: null,
+        },
+      },
+    } satisfies EffectAcpSchema.InitializeResponse);
+
+    expect(parseSessionModeState(response)).toEqual({
+      currentModeId: "code",
+      availableModes: [
+        { id: "ask", name: "Ask" },
+        { id: "code", name: "Code", description: "Edit files" },
+      ],
+    });
+  });
+
+  it("reads initialize model state and ignores malformed model state", () => {
+    const modelState = {
+      currentModelId: "grok-4.7",
+      availableModels: [
+        {
+          modelId: "grok-4.7",
+          name: "Grok 4.7",
+          description: null,
+          _meta: { reasoningEfforts: [{ id: "high", default: true }] },
+        },
+        { modelId: "grok-4.6", name: "Grok 4.6" },
+      ],
+    };
+
+    expect(sessionModelStateFromInitialize({ protocolVersion: 1, _meta: { modelState } })).toEqual(
+      modelState,
+    );
+    expect(
+      sessionModelStateFromInitialize({
+        protocolVersion: 1,
+        _meta: {
+          modelState: { currentModelId: "grok-4.7", availableModels: [{ modelId: "grok-4.7" }] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      sessionModelStateFromInitialize({
+        protocolVersion: 1,
+        _meta: { modelState: { ...modelState, _meta: "not an object" } },
+      }),
+    ).toBeUndefined();
   });
 
   it("projects typed ACP tool call updates into runtime events", () => {
@@ -1539,9 +1597,44 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
-  it("does not brand tools whose meta asserts a foreign server", () => {
-    // The foreign assertion vetoes every loose source, including a title
-    // that would otherwise match a T3 convention.
+  it.each([
+    { _meta: { claudeCode: { toolName: "mcp__weather__get_weather" } } },
+    { _meta: { toolName: "mcp::weather::get_weather", serverId: "weather" } },
+  ])("recovers external MCP identity from provider metadata", (metadata) => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "weather-call",
+      title: "Checking the forecast",
+      status: "in_progress",
+      ...metadata,
+    });
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "weather",
+      tool: "get_weather",
+    });
+  });
+
+  it.each([
+    { kind: "execute", toolName: "developer__shell", extensionName: "developer" },
+    { kind: "edit", toolName: "developer__edit", extensionName: "developer" },
+    { kind: "other", toolName: "weather__get_weather", extensionName: "weather" },
+  ] as const)(
+    "leaves goose $toolName unclassified so built-ins keep their projection",
+    ({ kind, toolName, extensionName }) => {
+      // goose tags built-in extensions exactly like user MCP servers.
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "goose-builtin",
+        kind,
+        title: "developer: shell",
+        status: "in_progress",
+        _meta: { goose: { toolCall: { toolName, extensionName } } },
+      });
+      expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+    },
+  );
+
+  it("uses the asserted server instead of a misleading T3 title", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "foreign-1",
@@ -1551,7 +1644,10 @@ describe("extractMcpToolCallIdentity", () => {
       _meta: { toolName: "delegate_task", serverId: "other-orchestrator" },
     });
 
-    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "other-orchestrator",
+      tool: "delegate_task",
+    });
   });
 
   it("does not brand path-like or unknown-tool titles", () => {

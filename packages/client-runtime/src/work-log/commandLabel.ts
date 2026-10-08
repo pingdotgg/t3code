@@ -1368,8 +1368,31 @@ export function commandProgramName(command: string, depth = 0): string | null {
   return commandProgramNameInternal(command, depth, "shell", MAX_COMMAND_SEGMENTS);
 }
 
-/** Removes a plain shell -c wrapper for display; callers retain the original for details. */
+// Escape bytes and other control characters render as invisible gaps; display
+// shows them as Unicode control pictures (ESC becomes ␛) instead. Tab, newline
+// and carriage return lay out as whitespace, so CRLF scripts stay unmarked.
+// oxlint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
+
+/**
+ * The command as rows show it: a plain shell -c wrapper removed and control
+ * characters made visible. Callers retain the original for details.
+ */
 export function commandDisplayText(command: string): string {
+  return withVisibleControlCharacters(withoutShellWrapper(command));
+}
+
+/** Replaces each control character with its control picture; the length does not change. */
+export function withVisibleControlCharacters(text: string): string {
+  return text.replace(CONTROL_CHARACTERS, (character) =>
+    character === "\u007f" ? "␡" : String.fromCharCode(0x2400 + character.charCodeAt(0)),
+  );
+}
+
+// A wrapper whose quoting does not balance is kept: the script's end cannot be
+// known, which happens when Codex's secret redaction removes the backslash of
+// an escaped quote inside `-lc "…"`.
+function withoutShellWrapper(command: string): string {
   const trimmed = command.trim();
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
@@ -1383,4 +1406,56 @@ export function commandDisplayText(command: string): string {
   // Positional arguments can affect the script; keep those invocations intact.
   if (scriptIndex === null || scriptIndex !== tokens.length - 1) return trimmed;
   return tokens[scriptIndex]?.trim() || trimmed;
+}
+
+const POWERSHELL_PROGRAMS = new Set(["powershell", "pwsh"]);
+
+// PowerShell's approved verbs (`Get-Verb`), plus the ForEach, Where, Sort and
+// Tee of its built-in *-Object cmdlets. Cmdlets match only capitalized, as
+// agents write them: lowercase `update-grub` or `install-info` are Linux tools.
+const POWERSHELL_VERBS = new Set(
+  `Add Approve Assert Backup Block Build Checkpoint Clear Close Compare Complete Compress Confirm Connect Convert ConvertFrom ConvertTo Copy Debug Deny Deploy Disable Disconnect Dismount Edit Enable Enter Exit Expand Export Find ForEach Format Get Grant Group Hide Import Initialize Install Invoke Join Limit Lock Measure Merge Mount Move New Open Optimize Out Ping Pop Protect Publish Push Read Receive Redo Register Remove Rename Repair Request Reset Resize Resolve Restart Restore Resume Revoke Save Search Select Send Set Show Skip Sort Split Start Step Stop Submit Suspend Switch Sync Tee Test Trace Unblock Undo Uninstall Unlock Unprotect Unpublish Unregister Update Use Wait Watch Where Write`.split(
+    " ",
+  ),
+);
+
+function isPowerShellCmdlet(word: string): boolean {
+  const cmdlet = /^([A-Z][a-z]+(?:[A-Z][a-z]+)?)-[A-Z][A-Za-z]*$/u.exec(word);
+  return cmdlet !== null && POWERSHELL_VERBS.has(cmdlet[1]!);
+}
+
+/**
+ * The grammar to highlight a command with: PowerShell when pwsh or powershell
+ * runs it, or when it is written in PowerShell, as Windows agents run it.
+ */
+export function commandHighlightLanguage(command: string): "powershell" | "shellscript" {
+  const program = /^(?:&\s*)?(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(command.trim());
+  const name = (program?.[1] ?? program?.[2] ?? program?.[3] ?? "")
+    .split(/[\\/]/u)
+    .at(-1)
+    ?.toLowerCase()
+    .replace(/\.exe$/u, "");
+  if (name && POWERSHELL_PROGRAMS.has(name)) return "powershell";
+  return isPowerShellScript(command) ? "powershell" : "shellscript";
+}
+
+/** Whether any statement starts like PowerShell and never like POSIX shell. */
+function isPowerShellScript(command: string): boolean {
+  let rest: string | null = command.trim();
+  // A leading call operator; POSIX shell cannot start a command with `&`.
+  if (/^&\s*\S/u.test(rest)) return true;
+  for (let segment = 0; rest && segment < MAX_COMMAND_SEGMENTS; segment += 1) {
+    const { firstCommand, remainingCommand } = splitFirstShellCommand(rest);
+    const statement = firstCommand.trim();
+    if (
+      // `$env:NAME` or `$name = value`; neither parses as POSIX shell.
+      /^\$(?:env|global|local|script):/iu.test(statement) ||
+      /^\$[A-Za-z_]\w*\s+=/u.test(statement) ||
+      isPowerShellCmdlet(statement.match(/^\S+/u)?.[0] ?? "")
+    ) {
+      return true;
+    }
+    rest = remainingCommand;
+  }
+  return false;
 }
