@@ -72,6 +72,61 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 
+  it.each(["./image.png", "./clip.mp4", "./report.pdf"])(
+    "opens relative media through the environment: %s",
+    (href) => {
+      const preview = resolveMarkdownMediaPreview(href, input);
+      expect(preview?.source).toMatchObject({
+        environmentId: input.environmentId,
+        resource: { _tag: "media-file", threadId: input.threadId, path: `/repo/${href}` },
+      });
+    },
+  );
+
+  it("preserves a signed PDF URL and its authored name", () => {
+    const href = "//cdn.example.com/report%20one.pdf?signature=a%2fb#page=2";
+    expect(resolveMarkdownMediaPreview(href, input)).toMatchObject({
+      kind: "pdf",
+      source: { uri: `https:${href}`, name: "report one.pdf", mimeType: "application/pdf" },
+    });
+  });
+
+  it("recognizes a URL-encoded PDF extension and filename without rewriting the URL", () => {
+    const href = "https://cdn.example.com/report%23one%2520%2Epdf?signature=a%2fb";
+    expect(resolveMarkdownMediaPreview(href, input)).toMatchObject({
+      kind: "pdf",
+      source: { uri: href, name: "report#one%20.pdf" },
+    });
+  });
+
+  it("opens encoded host PDFs without interpreting literal filename characters twice", () => {
+    expect(resolveMarkdownMediaPreview("/tmp/report%23one.pdf:12#page=2", input)).toMatchObject({
+      kind: "pdf",
+      source: { resource: { path: "/tmp/report#one.pdf" }, srcFragment: "#page=2" },
+    });
+  });
+
+  it.each(["./image.png", "./clip.mp4", "./report.pdf"])(
+    "uses the draft workspace when no thread exists: %s",
+    (href) => {
+      expect(
+        resolveMarkdownMediaPreview(href, { ...input, threadId: undefined })?.source,
+      ).toMatchObject({
+        resource: { _tag: "draft-workspace-file", cwd: "/repo", path: `/repo/${href}` },
+      });
+    },
+  );
+
+  it("keeps captured host media unavailable while allowing direct media", () => {
+    const captured = { ...input, captured: true };
+    for (const href of ["./image.png", "./clip.mp4", "./report.pdf"]) {
+      expect(resolveMarkdownMediaPreview(href, captured)).toBeNull();
+    }
+    expect(resolveMarkdownMediaPreview("https://cdn.example.com/report.pdf", captured)?.kind).toBe(
+      "pdf",
+    );
+  });
+
   it("resolves protocol-relative media for native APIs without rewriting its signed query", () => {
     expect(
       resolveMarkdownMediaPreview("//cdn.example.com/clip.mp4?signature=a%2fb#t=2", input),

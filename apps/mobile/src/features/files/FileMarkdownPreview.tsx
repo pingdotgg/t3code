@@ -16,6 +16,7 @@ import {
 import { ThreadMarkdownVideo } from "../threads/ThreadMarkdownVideo";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -96,6 +97,7 @@ export function FileMarkdownPreview(props: {
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
+  const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const handlePullToRefresh = useCallback(async () => {
     if (!props.onRefresh) {
       return;
@@ -192,46 +194,34 @@ export function FileMarkdownPreview(props: {
     workspaceRoot: markdownDirectory,
     captured: props.captured,
   });
-  const onImagePress = useCallback(
-    (href: string) => {
-      const direct = resolveMobileMarkdownMediaSource(href, {
-        threadId: props.threadId ?? undefined,
-        workspaceRoot: markdownDirectory,
-        imageEmbed: true,
-      });
-      if (direct?.access === "direct" && direct.kind === "image") {
-        setExpandedFile({
-          kind: "image",
-          uri: normalizeNativeMarkdownUrl(direct.uri),
-          name: direct.name,
-        });
-        return;
-      }
-      if (props.captured) return;
-      if (!props.threadId) {
-        if (direct?.access === "environment" && direct.kind === "image") {
-          setExpandedFile({
-            kind: "image",
-            name: direct.name,
-            environmentId: props.environmentId,
-            resource: direct.resource,
-            srcFragment: direct.srcFragment,
-          });
-        }
-        return;
-      }
+  const openMedia = useCallback(
+    (href: string, imageEmbed = false) => {
       const media = resolveMarkdownMediaPreview(href, {
         environmentId: props.environmentId,
-        threadId: props.threadId,
+        threadId: props.threadId ?? undefined,
         workspaceRoot: markdownDirectory,
+        captured: props.captured,
+        imageEmbed,
       });
-      if (media?.kind === "image") setExpandedFile(media.source);
+      if (!media) return false;
+      if (media.kind === "video") setExpandedVideo(media.source);
+      else setExpandedFile(media.source);
+      return true;
     },
     [markdownDirectory, props.environmentId, props.threadId, props.captured],
   );
-  const onLinkPress = useCallback((href: string) => {
-    void tryOpenExternalUrl(href, "markdown-link");
-  }, []);
+  const onImagePress = useCallback(
+    (href: string) => {
+      openMedia(href, true);
+    },
+    [openMedia],
+  );
+  const onLinkPress = useCallback(
+    (href: string) => {
+      if (!openMedia(href)) void tryOpenExternalUrl(href, "markdown-link");
+    },
+    [openMedia],
+  );
 
   return (
     <ScrollView
@@ -257,6 +247,7 @@ export function FileMarkdownPreview(props: {
           textStyle={styles.nativeTextStyle}
         />
         <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+        <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
       </View>
     </ScrollView>
   );

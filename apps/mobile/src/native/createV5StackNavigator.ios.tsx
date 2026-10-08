@@ -269,6 +269,8 @@ export function V5StackView(props: V5StackViewProps) {
         first.key,
         {
           ...descriptor,
+          // Focus belongs to the pushed page inside this presentation group.
+          route: group.at(-1)!,
           options: modalEnvelopeOptions(descriptor.options),
           render: () => (
             <V5CardStackView
