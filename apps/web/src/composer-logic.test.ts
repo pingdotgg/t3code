@@ -77,6 +77,57 @@ describe("composerSubmissionIntentForKey", () => {
   };
   const enter = { key: "Enter", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
 
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "sends and starts without a project from drafts and existing threads on %s",
+    (platform) => {
+      for (const isDraftThread of [false, true]) {
+        for (const isRunning of [false, true]) {
+          expect(
+            composerSubmissionIntentForKey({
+              ...input,
+              platform,
+              isDraftThread,
+              isRunning,
+              event: {
+                ...enter,
+                metaKey: platform === "MacIntel",
+                ctrlKey: platform !== "MacIntel",
+                altKey: true,
+                shiftKey: true,
+              },
+            }),
+          ).toBe("newWithoutProject");
+        }
+      }
+    },
+  );
+
+  it("remaps sending and starting without a project without retaining its default shortcut", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        {
+          key: "alt+p",
+          command: "composer.sendAndNewThreadWithoutProject",
+          when: "composerFocus",
+        },
+      ]),
+    );
+    expect(
+      composerSubmissionIntentForKey({
+        ...input,
+        keybindings,
+        event: { ...enter, key: "p", altKey: true },
+      }),
+    ).toBe("newWithoutProject");
+    expect(
+      composerSubmissionIntentForKey({
+        ...input,
+        keybindings,
+        event: { ...enter, ctrlKey: true, altKey: true, shiftKey: true },
+      }),
+    ).toBeNull();
+  });
+
   it.each([
     ["enter", "one line", false, "foreground"],
     ["enter", "two\nlines", false, "foreground"],

@@ -18,6 +18,11 @@ does the same. Change these shortcuts in **Settings → Keybindings** under
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
 
+Use `mod+Alt+Shift+Enter` to send and then open a new thread without a project
+on the same machine. It works in new and existing threads. Customize it under
+**Composer: Send and Start New Thread Without a Project**. If sending fails,
+the current composer stays open so you can retry.
+
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 

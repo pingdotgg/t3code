@@ -78,13 +78,19 @@ export function useScratchProject() {
   );
 
   const startScratchThread = useCallback(
-    async (environmentId: EnvironmentId) => {
+    async (environmentId: EnvironmentId, shouldStart: () => boolean = () => true) => {
+      if (!shouldStart()) return false;
       const project = await openScratchProject(environmentId);
-      if (project) {
-        await handleNewThread(scopeProjectRef(project.environmentId, project.id)).catch(
-          (error: unknown) => reportScratchFailure("Could not start without a project", error),
+      // A send can finish after the user moves on; opening the scratch project
+      // also crosses the wire, so check again before changing their composer.
+      if (project && shouldStart()) {
+        return Boolean(
+          await handleNewThread(scopeProjectRef(project.environmentId, project.id)).catch(
+            (error: unknown) => reportScratchFailure("Could not start without a project", error),
+          ),
         );
       }
+      return false;
     },
     [handleNewThread, openScratchProject],
   );

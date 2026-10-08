@@ -101,6 +101,13 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedSendWithoutProject = yield* decode(KeybindingRule, {
+      key: "mod+alt+shift+enter",
+      command: "composer.sendAndNewThreadWithoutProject",
+      when: "composerFocus",
+    });
+    assert.strictEqual(parsedSendWithoutProject.command, "composer.sendAndNewThreadWithoutProject");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",
