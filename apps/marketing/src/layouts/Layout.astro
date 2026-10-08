@@ -8,7 +8,6 @@ import {
   ANDROID_PLAY_STORE_URL,
   GITHUB_REPOSITORY_URL,
   IOS_APP_STORE_URL,
-  MARKETING_STATS,
 } from "../lib/site";
 
 interface Props {
@@ -87,12 +86,13 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
               href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
+              aria-label="Star T3 Code on GitHub"
+              data-github-star-link
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
               </svg>
-              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
+              <span><strong data-github-star-count></strong> GitHub stars</span>
             </a>
           </div>
         </div>
@@ -133,6 +133,22 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     </div>
 
     <script>
+      import { fetchGithubStars } from "../lib/githubStars";
+
+      void fetchGithubStars().then((count) => {
+        if (count === undefined) return;
+        const stars = new Intl.NumberFormat("en-US").format(count);
+        document.querySelectorAll("[data-github-star-count]").forEach((element) => {
+          element.textContent = stars;
+        });
+        document.querySelectorAll<HTMLElement>("[data-github-stars-stat]").forEach((element) => {
+          element.hidden = false;
+        });
+        document.querySelectorAll("[data-github-star-link]").forEach((element) => {
+          element.setAttribute("aria-label", `Star T3 Code on GitHub — ${stars} stars`);
+        });
+      });
+
       const nav = document.querySelector(".nav");
       const onScroll = () => {
         if (!nav) return;
