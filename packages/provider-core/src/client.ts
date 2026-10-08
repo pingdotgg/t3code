@@ -31,9 +31,26 @@ export interface ProviderEnvironmentField {
   readonly sensitive?: boolean;
 }
 
+/**
+ * A provider glyph as plain data, so web and mobile can each draw it with
+ * their own SVG renderer. Colors are per theme; a path without a fill uses
+ * the icon's `fill`.
+ */
+export interface ProviderIcon {
+  readonly viewBox: string;
+  readonly fill: { readonly light: string; readonly dark: string };
+  readonly paths: ReadonlyArray<{
+    readonly d: string;
+    readonly fillRule?: "evenodd" | "nonzero";
+    readonly fill?: { readonly light: string; readonly dark: string };
+  }>;
+}
+
 export interface ProviderClientDefinition {
   readonly driverKind: ProviderDriverKind;
   readonly label: string;
+  /** Omitted for drivers whose glyph a client still draws itself. */
+  readonly icon?: ProviderIcon;
   readonly settingsSchema: ProviderSettingsSchema;
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
   /** Whether the driver has a default instance backed by legacy `providers.<kind>` settings. */

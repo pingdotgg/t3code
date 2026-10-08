@@ -35,7 +35,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { PI_PROVIDER, PiAdapterV2Driver } from "./PiAdapterV2.ts";
+import { PI_PROVIDER, PiAdapterV2Driver } from "@t3tools/provider-pi/server";
 
 export const PI_RPC_REPLAY_PROTOCOL = "pi.rpc-jsonl";
 export const PI_REPLAY_ANY = "<any>";

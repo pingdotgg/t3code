@@ -96,7 +96,7 @@ import {
   type ProviderAdapterV2TurnMessage,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { backgroundWorkNotification, type BackgroundWorkReport } from "../Notification.ts";
-import type * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { museItemStatus, museToolPresentation } from "./MuseItemPresentation.ts";

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
+import { getProviderClient } from "../lib/providerClients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -131,16 +132,20 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "pi") {
-    const foreground = isDarkMode ? "#F5F5F5" : "#0F0F0F";
+  const packageIcon = getProviderClient(props.provider)?.icon;
+  if (packageIcon) {
+    const themeFill = (fill: { readonly light: string; readonly dark: string }) =>
+      isDarkMode ? fill.dark : fill.light;
     return (
-      <Svg width={size} height={size} viewBox="165.29 165.29 469.43 469.43" fill="none">
-        <Path
-          fill={foreground}
-          fillRule="evenodd"
-          d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-        />
-        <Path fill={foreground} d="M517.36 400H634.72V634.72H517.36Z" />
+      <Svg width={size} height={size} viewBox={packageIcon.viewBox} fill="none">
+        {packageIcon.paths.map((path) => (
+          <Path
+            key={path.d}
+            d={path.d}
+            fillRule={path.fillRule}
+            fill={themeFill(path.fill ?? packageIcon.fill)}
+          />
+        ))}
       </Svg>
     );
   }

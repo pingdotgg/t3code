@@ -5,7 +5,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./PiProvider.ts";
+import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
 
 const encoder = new TextEncoder();
 

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { thinkingCapabilitiesForPiModel } from "./piThinkingCapabilities.ts";
+import { thinkingCapabilitiesForPiModel } from "./thinkingCapabilities.ts";
 
 describe("thinkingCapabilitiesForPiModel", () => {
   it("gives every choice its real level id and tags Pi's default", () => {

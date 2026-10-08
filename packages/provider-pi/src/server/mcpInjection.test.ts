@@ -9,12 +9,12 @@ import {
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
-} from "./piT3McpExtensionSource.ts";
+} from "./mcpExtensionSource.ts";
 import {
   buildPiRpcLaunch,
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
-} from "./piT3McpInjection.ts";
+} from "./mcpInjection.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 

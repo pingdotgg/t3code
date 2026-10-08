@@ -71,7 +71,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import {
   AcpProviderCapabilitiesV2,
   acpProviderItemNativeId,

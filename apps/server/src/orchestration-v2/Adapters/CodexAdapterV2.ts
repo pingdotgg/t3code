@@ -1,5 +1,5 @@
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
-import { historyResponseItems } from "../ContextHandoffBudget.ts";
+import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -125,7 +125,7 @@ import { IdAllocatorV2, type IdAllocatorV2Shape } from "@t3tools/provider-core/s
 import {
   type ProviderContinuationRequest,
   ProviderContinuationRequests,
-} from "../ProviderContinuationRequests.ts";
+} from "@t3tools/provider-core/server/continuationRequests";
 import { backgroundWorkNotification } from "../Notification.ts";
 import {
   makeProviderFailure,

@@ -109,7 +109,7 @@ import {
 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
-import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";

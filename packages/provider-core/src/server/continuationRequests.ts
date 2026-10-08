@@ -59,7 +59,7 @@ export interface ProviderContinuationRequest {
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   readonly take: Effect.Effect<ProviderContinuationRequest>;
-}>("t3/orchestration-v2/ProviderContinuationRequests", {
+}>("@t3tools/provider-core/server/continuationRequests/ProviderContinuationRequests", {
   defaultValue: () => ({ offer: () => Effect.void, take: Effect.never }),
 }) {}
 

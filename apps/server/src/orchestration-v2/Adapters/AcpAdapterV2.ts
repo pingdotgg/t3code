@@ -100,7 +100,7 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { type ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,

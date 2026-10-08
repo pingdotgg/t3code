@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -7,7 +6,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,14 +16,10 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
-import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as ServerConfig from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
-import * as ProviderHostLive from "./ProviderHostLive.ts";
+import { ProviderHost, type ProviderHostShape } from "./ProviderHost.ts";
+import { makeManagedServerProvider } from "./managedProvider.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
-const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const fastModeCapabilities = createModelCapabilities({
   optionDescriptors: [
     {
@@ -102,60 +96,33 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
-function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
-  return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-    reportClientActivity: () => Effect.void,
-    removeRpcClient: () => Effect.void,
-    reportHostPowerState: () => Effect.void,
-    snapshot: Effect.succeed({
-      hostPower: {
-        source: "unknown",
-        idle: "unknown",
-        idleSeconds: null,
-        locked: "unknown",
-        suspended: false,
-        onBattery: "unknown",
-        lowPowerMode: "unknown",
-        thermalState: "unknown",
-        stale: true,
-        updatedAt: TEST_EPOCH,
+/** A host whose settings never change and whose background demand is fixed. */
+function layerProviderHost(input: {
+  readonly runBackgroundWork: boolean;
+  readonly settings?: Pick<ProviderHostShape, "settings">["settings"];
+}) {
+  return Layer.succeed(
+    ProviderHost,
+    ProviderHost.of({
+      paths: {
+        cwd: process.cwd(),
+        baseDir: "/t3",
+        stateDir: "/t3/userdata",
+        providerStatusCacheDir: "/t3/caches",
       },
-      leases: [],
-      activeForegroundLeaseCount: 0,
-      activeScopeKeys: [],
-      shouldRunOpportunisticWork: true,
-      updatedAt: TEST_EPOCH,
+      settings: input.settings ?? {
+        get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        changes: Stream.empty,
+        subscribe: Effect.succeed(Stream.empty),
+      },
+      shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      resolveAttachmentPath: () => null,
     }),
-    streamChanges: Stream.empty,
-    hasDemand: () => Effect.succeed(shouldRunScopeWork),
-    shouldRunScopeWork: () => Effect.succeed(shouldRunScopeWork),
-    shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
-  });
-}
-
-const layerBackgroundPolicyAlwaysRun = layerBackgroundPolicy(true);
-const layerBackgroundPolicyNeverRun = layerBackgroundPolicy(false);
-const layerServerSettingsTest = ServerSettings.layerTest();
-const layerServerConfigTest = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-managed-provider-test-",
-}).pipe(Layer.provide(NodeServices.layer));
-
-function layerProviderHost<BE, BR, SE, SR>(
-  layerBackground: Layer.Layer<BackgroundPolicy.BackgroundPolicy, BE, BR>,
-  layerSettings: Layer.Layer<ServerSettings.ServerSettingsService, SE, SR>,
-) {
-  return ProviderHostLive.layer.pipe(
-    Layer.provideMerge(layerBackground),
-    Layer.provideMerge(layerSettings),
-    Layer.provide(layerServerConfigTest),
   );
 }
 
-const layerAlwaysRunTest = layerProviderHost(
-  layerBackgroundPolicyAlwaysRun,
-  layerServerSettingsTest,
-);
-const layerNeverRunTest = layerProviderHost(layerBackgroundPolicyNeverRun, layerServerSettingsTest);
+const layerAlwaysRunTest = layerProviderHost({ runBackgroundWork: true });
+const layerNeverRunTest = layerProviderHost({ runBackgroundWork: false });
 
 const enrichedSnapshotSecond: ServerProvider = {
   ...refreshedSnapshotSecond,
@@ -314,21 +281,13 @@ describe("makeManagedServerProvider", () => {
         };
         const serverSettingsRef = yield* Ref.make(initialServerSettings);
         const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
-        const layerServerSettings = Layer.succeed(
-          ServerSettings.ServerSettingsService,
-          ServerSettings.ServerSettingsService.of({
-            start: Effect.void,
-            ready: Effect.void,
-            getSettings: Ref.get(serverSettingsRef),
-            updateSettings: () => Effect.die(new Error("unused in this test")),
-            updateProviderInstance: () => Effect.die(new Error("unused in this test")),
-            withSettingsSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),
-            streamChanges: Stream.empty,
-            subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
-              Effect.map((subscription) => Stream.fromSubscription(subscription)),
-            ),
-          }),
-        );
+        const hostSettings: ProviderHostShape["settings"] = {
+          get: Ref.get(serverSettingsRef),
+          changes: Stream.empty,
+          subscribe: PubSub.subscribe(serverSettingsChanges).pipe(
+            Effect.map((subscription) => Stream.fromSubscription(subscription)),
+          ),
+        };
         const checkCalls = yield* Ref.make(0);
         const initialCheckDone = yield* Deferred.make<void>();
         const periodicCheckDone = yield* Deferred.make<void>();
@@ -348,7 +307,7 @@ describe("makeManagedServerProvider", () => {
             Effect.as(refreshedSnapshot),
           ),
         }).pipe(
-          Effect.provide(layerProviderHost(layerBackgroundPolicyAlwaysRun, layerServerSettings)),
+          Effect.provide(layerProviderHost({ runBackgroundWork: true, settings: hostSettings })),
         );
 
         yield* Deferred.await(initialCheckDone);

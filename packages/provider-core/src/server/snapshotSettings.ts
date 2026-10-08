@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Stream from "effect/Stream";
 
-import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import type { ProviderHostShape } from "./ProviderHost.ts";
 
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
