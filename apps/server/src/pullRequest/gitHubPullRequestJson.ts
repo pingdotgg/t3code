@@ -35,6 +35,7 @@ import type {
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
+import { aliasedGraphQlDocument, type GraphQlDocument } from "../sourceControl/githubGraphQl.ts";
 import { dedupeChecks } from "./pullRequestChecks.ts";
 
 /**
@@ -1917,53 +1918,81 @@ function toStackMembership(
     : undefined;
 }
 
-/** What a repository selector may hold before it is written into a GraphQL document unquoted. */
+/** What GitHub allows in an owner or repository name. */
 const REPOSITORY_PART = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * The owner and name of an `owner/name` selector, or null for one GitHub cannot name. A batch is
+ * one document, and a single unanswerable alias fails all of it, so these are refused up front.
+ */
+function repositoryParts(
+  repository: string,
+): { readonly owner: string; readonly name: string } | null {
+  const [owner, name, ...rest] = repository.trim().split("/");
+  if (rest.length > 0 || owner === undefined || name === undefined) return null;
+  return REPOSITORY_PART.test(owner) && REPOSITORY_PART.test(name) ? { owner, name } : null;
+}
+
+const isPullRequestNumber = (number: number) => Number.isSafeInteger(number) && number > 0;
+
+/** One aliased `repository { pullRequest { selection } }` per change request, on one host. */
+function aliasedPullRequestsDocument(
+  name: string,
+  alias: string,
+  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+  selection: string,
+): GraphQlDocument | null {
+  const addressed = changeRequests.map((changeRequest) => ({
+    parts: repositoryParts(changeRequest.repository),
+    number: changeRequest.number,
+  }));
+  if (addressed.some(({ parts, number }) => parts === null || !isPullRequestNumber(number))) {
+    return null;
+  }
+  return aliasedGraphQlDocument({
+    operation: "query",
+    name,
+    alias,
+    items: addressed,
+    variables: ({ parts, number }) => ({
+      owner: ["String!", parts!.owner],
+      name: ["String!", parts!.name],
+      number: ["Int!", number],
+    }),
+    field: ({ owner, name, number }) =>
+      `repository(owner: ${owner}, name: ${name}) { pullRequest(number: ${number}) { ${selection} } }`,
+  });
+}
 
 /**
  * The line counts for rows a listing already handed over, as one aliased lookup each.
  *
  * Aliases rather than `nodes(ids:)` because the caller asks in the terms the page holds — a
- * repository and a number — and never sees a node id. Owner, name and number are written into
- * the document, so each is checked against what GitHub can actually name first: null for anything
- * else, which the caller reports rather than sends.
- *
- * Null too for an empty request, since a GraphQL document with no selection is not a document.
+ * repository and a number — and never sees a node id. Null for a selector GitHub cannot name,
+ * which the caller reports rather than sends, and for an empty request.
  */
 export function buildPullRequestStatsGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-): string | null {
-  if (changeRequests.length === 0) return null;
-  const selections: string[] = [];
-  for (const [index, changeRequest] of changeRequests.entries()) {
-    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
-    if (rest.length > 0 || owner === undefined || name === undefined) return null;
-    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
-    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
-    selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { additions deletions } }`,
-    );
-  }
-  return `query {\n${selections.join("\n")}\n}`;
+): GraphQlDocument | null {
+  return aliasedPullRequestsDocument(
+    "PullRequestStats",
+    "s",
+    changeRequests,
+    "additions deletions",
+  );
 }
 
 /** Stack membership for the visible rows of a per-repository listing. */
 export function buildPullRequestStackMembershipsGraphQlQuery(
   repository: string,
   numbers: ReadonlyArray<number>,
-): string | null {
-  if (numbers.length === 0) return null;
-  const [owner, name, ...rest] = repository.trim().split("/");
-  if (rest.length > 0 || owner === undefined || name === undefined) return null;
-  if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
-  const selections: string[] = [];
-  for (const [index, number] of numbers.entries()) {
-    if (!Number.isSafeInteger(number) || number <= 0) return null;
-    selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { stack { number size baseRefName } stackEntry { position } } }`,
-    );
-  }
-  return `query PullRequestStackMemberships {\n${selections.join("\n")}\n}`;
+): GraphQlDocument | null {
+  return aliasedPullRequestsDocument(
+    "PullRequestStackMemberships",
+    "s",
+    numbers.map((number) => ({ repository, number })),
+    STACK_MEMBERSHIP_SELECTION,
+  );
 }
 
 const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
@@ -2024,26 +2053,17 @@ const PULL_REQUEST_SUMMARY_SELECTION =
   "latestReviews(first: 20) { nodes { state author { login } } } " +
   "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
 
-/**
- * Summaries for pull requests anywhere on one host, one aliased lookup each. Checked and written
- * into the document the way `buildPullRequestStatsGraphQlQuery` does, so null means "do not send".
- */
+/** Summaries for pull requests anywhere on one host, one aliased lookup each; null when unsafe. */
 export function buildPullRequestSummariesGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
   includeStacks = false,
-): string | null {
-  if (changeRequests.length === 0) return null;
-  const selections: string[] = [];
-  for (const [index, changeRequest] of changeRequests.entries()) {
-    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
-    if (rest.length > 0 || owner === undefined || name === undefined) return null;
-    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
-    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
-    selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""} } }`,
-    );
-  }
-  return `query PullRequestSummaries {\n${selections.join("\n")}\n}`;
+): GraphQlDocument | null {
+  return aliasedPullRequestsDocument(
+    "PullRequestSummaries",
+    "s",
+    changeRequests,
+    `${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""}`,
+  );
 }
 
 /** One pull request's summary, aliased the way the batch is so the same decoder reads it. */
@@ -2170,19 +2190,13 @@ const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
 /** Watch fingerprints for pull requests on one host, one aliased lookup each; null when unsafe. */
 export function buildPullRequestWatchFingerprintsGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-): string | null {
-  if (changeRequests.length === 0) return null;
-  const selections: string[] = [];
-  for (const [index, changeRequest] of changeRequests.entries()) {
-    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
-    if (rest.length > 0 || owner === undefined || name === undefined) return null;
-    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
-    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
-    selections.push(
-      `  w${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_WATCH_FINGERPRINT_SELECTION} } }`,
-    );
-  }
-  return `query PullRequestWatchFingerprints {\n${selections.join("\n")}\n}`;
+): GraphQlDocument | null {
+  return aliasedPullRequestsDocument(
+    "PullRequestWatchFingerprints",
+    "w",
+    changeRequests,
+    PULL_REQUEST_WATCH_FINGERPRINT_SELECTION,
+  );
 }
 
 /**
@@ -3357,25 +3371,20 @@ export function decodePullRequestFilesViewedJson(
  * request each. GitHub has no bulk form of `markFileAsViewed`/`unmarkFileAsViewed`, which each
  * take a single path, so the batching is done with aliases; top-level mutation fields run in
  * write order, so the last word about a path is the one that sticks.
- *
- * Paths travel as variables rather than interpolated into the document, since a path is data
- * and a document is not.
  */
 export function buildSetFilesViewedGraphQlMutation(
+  pullRequestId: string,
   files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,
-): { readonly query: string; readonly variables: Readonly<Record<string, string>> } | null {
-  if (files.length === 0) return null;
-  const parameters = files.map((_, index) => `$path${index}: String!`).join(", ");
-  const fields = files
-    .map(
-      (file, index) =>
-        `  f${index}: ${file.viewed ? "markFileAsViewed" : "unmarkFileAsViewed"}(input: { pullRequestId: $pullRequestId, path: $path${index} }) { clientMutationId }`,
-    )
-    .join("\n");
-  return {
-    query: `mutation($pullRequestId: ID!, ${parameters}) {\n${fields}\n}`,
-    variables: Object.fromEntries(files.map((file, index) => [`path${index}`, file.path])),
-  };
+): GraphQlDocument | null {
+  return aliasedGraphQlDocument({
+    operation: "mutation",
+    alias: "f",
+    items: files,
+    shared: { pullRequestId: ["ID!", pullRequestId] },
+    variables: (file) => ({ path: ["String!", file.path] }),
+    field: ({ path }, file) =>
+      `${file.viewed ? "markFileAsViewed" : "unmarkFileAsViewed"}(input: { pullRequestId: $pullRequestId, path: ${path} }) { clientMutationId }`,
+  });
 }
 
 /** One pull request as the stacks API lists it: a number, a head, and whether it is done. */

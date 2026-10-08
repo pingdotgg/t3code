@@ -86,7 +86,12 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
     thread.branch !== null &&
     thread.worktreePath !== null &&
     thread.activeRunId === null &&
-    (thread.status === "idle" || thread.status === "failed") &&
+    (thread.status === "idle" ||
+      thread.status === "completed" ||
+      thread.status === "interrupted" ||
+      thread.status === "failed" ||
+      thread.status === "cancelled" ||
+      thread.status === "rolled_back") &&
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
     !threadHasQueuedTurnStart(thread, now)
@@ -103,6 +108,32 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
       thread.latestRunStartedAt,
       thread.latestRunCompletedAt,
     ].flatMap((value) => (value == null ? [] : [DateTime.toEpochMillis(value)])),
+  );
+}
+
+/**
+ * Whether the host's pull request proves this worktree's head was merged. A
+ * squash or rebase merge leaves the head outside the default branch, so the
+ * merged pull request then has to name this exact commit.
+ */
+export function storageCleanupPullRequestMerged(
+  pullRequest: Pick<
+    GitManager.GitBranchPullRequest,
+    "state" | "headRef" | "baseRef" | "headSha"
+  > | null,
+  worktree: {
+    readonly branch: string;
+    readonly defaultBranch: string;
+    readonly headSha: string;
+    readonly integrated: boolean;
+  },
+): boolean {
+  return (
+    pullRequest?.state === "merged" &&
+    (worktree.integrated ||
+      (pullRequest.headRef === worktree.branch &&
+        pullRequest.baseRef === worktree.defaultBranch &&
+        pullRequest.headSha === worktree.headSha))
   );
 }
 
@@ -295,14 +326,19 @@ export const make = Effect.gen(function* () {
             args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
             allowNonZeroExit: true,
           });
-          if (ancestor.exitCode !== 0) return;
-          eligible = settings.worktreeUnchanged;
+          const integrated = ancestor.exitCode === 0;
+          eligible = integrated && settings.worktreeUnchanged;
           if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true },
             );
-            eligible = pullRequest?.state === "merged";
+            eligible = storageCleanupPullRequestMerged(pullRequest, {
+              branch: thread.branch,
+              defaultBranch: branch,
+              headSha: head.commitSha,
+              integrated,
+            });
           }
         }
         if (!eligible) return;

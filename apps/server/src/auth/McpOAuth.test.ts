@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
-  type AuthEnvironmentScope,
+  type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -180,12 +180,20 @@ it.live("derives discovery metadata from the origin the client reached", () =>
   ),
 );
 
-it.live("registers only loopback clients and never redirects for an unverified client", () =>
+it.live("registers loopback and https clients and never redirects for an unverified client", () =>
   withRoutes((handler) =>
     Effect.gen(function* () {
-      const remote = yield* register(handler, "https://attacker.example/callback");
-      expect(remote.status).toBe(400);
-      expect(yield* json<unknown>(remote)).toMatchObject({ error: "invalid_redirect_uri" });
+      for (const refused of [
+        "http://bot.example/callback",
+        "https://user:pass@bot.example/callback",
+        "https://bot.example/callback#",
+        "http://localhost/callback#",
+        "javascript:alert(1)",
+      ]) {
+        const response = yield* register(handler, refused);
+        expect(response.status).toBe(400);
+        expect(yield* json<unknown>(response)).toMatchObject({ error: "invalid_redirect_uri" });
+      }
 
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
@@ -308,6 +316,70 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
   ),
 );
 
+it.live("signs in a hosted agent with an https callback that asked for a client secret", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const callbackUrl = "https://bot.example/oauth/callback";
+      const registered = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Hosted bot",
+            redirect_uris: [callbackUrl],
+            token_endpoint_auth_method: "client_secret_post",
+          }),
+        }),
+      );
+      expect(registered.status).toBe(201);
+      const client = (yield* json<unknown>(registered)) as {
+        client_id: string;
+        token_endpoint_auth_method: string;
+      };
+      // Registered as a public client: PKCE, not a secret, proves it at the token endpoint.
+      expect(client.token_endpoint_auth_method).toBe("none");
+
+      const params = authorizeParams(client.client_id, callbackUrl);
+      const details = yield* handler(postJson("/oauth/mcp/approval", params)).pipe(
+        Effect.flatMap(json<Record<string, unknown>>),
+      );
+      expect(details).toMatchObject({ clientName: "Hosted bot", redirectHost: "bot.example" });
+
+      const pairing = yield* auth.issuePairingCredential();
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: pairing.credential,
+      });
+      const callback = new URL(approved.redirectTo!);
+      expect(`${callback.origin}${callback.pathname}`).toBe(callbackUrl);
+
+      const tokenResponse = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code: callback.searchParams.get("code")!,
+            redirect_uri: callbackUrl,
+            client_id: client.client_id,
+            // Sent by a client that asked for one; there is none to check.
+            client_secret: "unused",
+            code_verifier: verifier,
+          }),
+        ),
+      );
+      expect(tokenResponse.status).toBe(200);
+      const token = (yield* json<unknown>(tokenResponse)) as { access_token: string };
+      const signedIn = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        ),
+      );
+      expect(signedIn).toMatchObject({ label: "Hosted bot", access: "approval-required" });
+    }),
+  ),
+);
+
 it.live("rejects a wrong PKCE verifier and spends the code", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
@@ -418,7 +490,7 @@ it.live("one-click approves only access the browser session holds the scopes for
       const clientId = yield* registeredClientId(handler);
       const params = authorizeParams(clientId);
       // Signs a browser in through the real route and returns its session cookie.
-      const browserCookie = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      const browserCookie = (scopes: NonNullable<AuthCreatePairingCredentialInput["scopes"]>) =>
         Effect.gen(function* () {
           const pairing = yield* auth.issuePairingCredential({ scopes });
           const response = yield* handler(
@@ -489,17 +561,14 @@ it.live("one-click approves only access the browser session holds the scopes for
   ),
 );
 
-it("matches loopback redirects on everything but the port", () => {
-  expect(
-    McpOAuth.loopbackRedirectMatches("http://localhost/callback", "http://localhost:9/callback"),
-  ).toBe(true);
-  expect(
-    McpOAuth.loopbackRedirectMatches("http://127.0.0.1:1/callback", "http://127.0.0.1:2/callback"),
-  ).toBe(true);
-  expect(
-    McpOAuth.loopbackRedirectMatches("http://localhost/callback", "http://127.0.0.1/callback"),
-  ).toBe(false);
-  expect(
-    McpOAuth.loopbackRedirectMatches("http://localhost/callback", "https://localhost/callback"),
-  ).toBe(false);
+it("matches loopback redirects on everything but the port, and https redirects exactly", () => {
+  const matches = McpOAuth.redirectMatches;
+  expect(matches("http://localhost/callback", "http://localhost:9/callback")).toBe(true);
+  expect(matches("http://127.0.0.1:1/callback", "http://127.0.0.1:2/callback")).toBe(true);
+  expect(matches("http://localhost/callback", "http://127.0.0.1/callback")).toBe(false);
+  expect(matches("http://localhost/callback", "https://localhost/callback")).toBe(false);
+  expect(matches("https://bot.example/cb", "https://bot.example/cb")).toBe(true);
+  expect(matches("https://bot.example/cb", "https://bot.example:8443/cb")).toBe(false);
+  expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
+  expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
 });

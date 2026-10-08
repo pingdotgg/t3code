@@ -2,7 +2,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it, assert } from "@effect/vitest";
+import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,6 +23,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
+  PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -1768,6 +1769,13 @@ it.layer(
           );
           yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
           assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+          // Nothing watches skill directories, so an expired scan is redone on use.
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS - 1);
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+          yield* TestClock.adjust(1);
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
           const newSkills = [
             ...scopedProvider.skills,
             { name: "added", path: "/workspace/added/SKILL.md", enabled: true },
@@ -1778,7 +1786,7 @@ it.layer(
             cwd: "/workspace",
             fresh: true,
           });
-          assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
+          assert.strictEqual(yield* Ref.get(snapshotCalls), 5);
           assert.strictEqual(yield* Ref.get(cacheInvalidations), 1);
           assert.deepStrictEqual(
             (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
@@ -2076,6 +2084,98 @@ it.layer(
         },
       ]);
     });
+
+    it.effect("shares one in-flight pass between concurrent untargeted refreshes", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshCalls = yield* Ref.make(0);
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        const instances = [
+          {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.gen(function* () {
+                yield* Ref.update(refreshCalls, (count) => count + 1);
+                yield* Deferred.succeed(probeStarted, undefined);
+                yield* Deferred.await(releaseProbe);
+                return provider;
+              }),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          },
+        ] satisfies ReadonlyArray<ProviderInstance>;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-shared-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const first = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(probeStarted);
+          const second = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          assert.strictEqual(yield* Ref.get(refreshCalls), 1);
+          yield* Deferred.succeed(releaseProbe, undefined);
+          expect(yield* Fiber.join(first)).toEqual([expect.objectContaining(provider)]);
+          expect(yield* Fiber.join(second)).toEqual([expect.objectContaining(provider)]);
+          assert.strictEqual(yield* Ref.get(refreshCalls), 1);
+
+          yield* registry.refresh();
+          assert.strictEqual(yield* Ref.get(refreshCalls), 2);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
 
     it.effect("persists the merged snapshot when a live update has empty models", () =>
       Effect.gen(function* () {

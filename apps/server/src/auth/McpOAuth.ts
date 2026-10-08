@@ -45,9 +45,10 @@ import {
  * Every URL is derived from the request's own origin, so the same server
  * answers correctly over loopback, Tailscale Serve and a T3 Connect tunnel.
  * Client registration is stateless: a client id is its signed metadata, so
- * an unauthenticated caller cannot grow server state. Only loopback redirect
- * URIs are accepted; an https redirect would let anyone mail the owner an
- * approval link that delivers the code to their own server.
+ * an unauthenticated caller cannot grow server state. Redirects go to a
+ * loopback address (a CLI agent on the user's machine) or any https address
+ * (a hosted agent); the approval page names where access goes, and the user
+ * decides.
  */
 
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
@@ -105,29 +106,32 @@ export const authorizationServerMetadata = (
   authorization_response_iss_parameter_supported: true,
 });
 
-const parseLoopbackRedirect = (value: string): URL | undefined => {
-  if (value.length > MAX_REDIRECT_URI_LENGTH) return undefined;
+/** A redirect URI an MCP client may register: loopback http, or any https. */
+const parseRedirect = (value: string): URL | undefined => {
+  // No fragment, not even an empty one, which `URL.hash` reports as "" (RFC 6749 §3.1.2).
+  if (value.length > MAX_REDIRECT_URI_LENGTH || value.includes("#")) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "http:" &&
-      LOOPBACK_HOSTNAMES.has(url.hostname) &&
-      url.username === "" &&
-      url.password === "" &&
-      url.hash === ""
-      ? url
-      : undefined;
+    const allowed =
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && LOOPBACK_HOSTNAMES.has(url.hostname));
+    return allowed && url.username === "" && url.password === "" ? url : undefined;
   } catch {
     return undefined;
   }
 };
 
-/** RFC 8252 §7.3: loopback redirects match on everything but the port. */
-export const loopbackRedirectMatches = (registered: string, presented: string): boolean => {
-  const left = parseLoopbackRedirect(registered);
-  const right = parseLoopbackRedirect(presented);
+/**
+ * Whether a presented redirect is one the client registered. Loopback
+ * redirects match on everything but the port (RFC 8252 §7.3), since CLI
+ * agents listen on whatever port is free; https redirects match exactly.
+ */
+export const redirectMatches = (registered: string, presented: string): boolean => {
+  const left = parseRedirect(registered);
+  const right = parseRedirect(presented);
+  if (left === undefined || right === undefined) return false;
+  if (left.protocol === "https:" || right.protocol === "https:") return left.href === right.href;
   return (
-    left !== undefined &&
-    right !== undefined &&
     left.hostname === right.hostname &&
     left.pathname === right.pathname &&
     left.search === right.search
@@ -320,24 +324,17 @@ const make = Effect.gen(function* () {
           error_description: `Register between 1 and ${MAX_REDIRECT_URIS} redirect URIs.`,
         });
       }
-      if (!redirectUris.every((uri) => parseLoopbackRedirect(uri) !== undefined)) {
+      if (!redirectUris.every((uri) => parseRedirect(uri) !== undefined)) {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_redirect_uri",
           error_description:
-            "Only http://localhost, 127.0.0.1 or [::1] redirect URIs are accepted.",
+            "Redirect URIs must be https, or http on localhost, 127.0.0.1 or [::1].",
         });
       }
-      if (
-        metadata.token_endpoint_auth_method !== undefined &&
-        metadata.token_endpoint_auth_method !== "none"
-      ) {
-        return yield* new AuthMcpRegistrationError({
-          error: "invalid_client_metadata",
-          error_description: "Only public clients (token_endpoint_auth_method none) are supported.",
-        });
-      }
-      // Requested grant types and scopes are ignored rather than rejected: RFC 7591 lets
-      // the server answer with what it supports, and Claude Code asks for refresh_token.
+      // Requested grant types, scopes and token endpoint auth methods are ignored rather
+      // than rejected: RFC 7591 lets the server answer with what it supports. Claude Code
+      // asks for refresh_token, and hosted agents may ask for a client secret; every client
+      // is registered as public and proves itself with PKCE instead.
       return { clientId: signClientId(name, redirectUris), name, redirectUris };
     });
 
@@ -352,8 +349,7 @@ const make = Effect.gen(function* () {
       const redirectUri = request.redirect_uri;
       if (
         redirectUri === undefined ||
-        parseLoopbackRedirect(redirectUri) === undefined ||
-        !client.redirectUris.some((registered) => loopbackRedirectMatches(registered, redirectUri))
+        !client.redirectUris.some((registered) => redirectMatches(registered, redirectUri))
       ) {
         return yield* new McpOAuthPageError({
           description: "This sign-in link sends you to an address the app did not register.",

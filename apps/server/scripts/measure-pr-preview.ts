@@ -1,7 +1,7 @@
 // Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
 // Numbers form a session with shared repository-permission caches. Browser and
 // service caches are excluded. Uses real GitHub reads, without a server or database.
-// Every GraphQL read carries `rateLimit`, so its cost is read off its own answer.
+// Each GraphQL read asks for `rateLimit` here, so its cost is read off its own answer.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
@@ -10,12 +10,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
-import * as GitHubPullRequestCli from "../src/pullRequest/GitHubPullRequestCli.ts";
+import * as GitHubPullRequestApi from "../src/pullRequest/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/pullRequest/GitHubPullRequestProvider.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
-import * as GitHubGraphQlBudget from "../src/sourceControl/githubGraphQlBudget.ts";
+import * as GitHubQuota from "../src/sourceControl/githubQuota.ts";
 import * as SourceControlRateLimit from "../src/sourceControl/SourceControlRateLimit.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 
@@ -33,6 +33,14 @@ const decodeCost = Schema.decodeUnknownOption(
     }),
   ),
 );
+/** The query with GitHub's own count of what it cost, for a read rather than a mutation. */
+function withRateLimit(query: string): string {
+  const end = query.lastIndexOf("}");
+  return query.trimStart().startsWith("mutation") || end === -1
+    ? query
+    : `${query.slice(0, end)}\n  rateLimit { cost }\n${query.slice(end)}`;
+}
+
 const measuredApi = Layer.effect(
   GitHubApi.GitHubApi,
   Effect.gen(function* () {
@@ -40,7 +48,7 @@ const measuredApi = Layer.effect(
     return GitHubApi.GitHubApi.of({
       ...api,
       graphql: (input) =>
-        api.graphql(input).pipe(
+        api.graphql({ ...input, query: withRateLimit(input.query) }).pipe(
           Effect.tap((body) =>
             Effect.sync(() =>
               reads.push({
@@ -66,14 +74,14 @@ const measuredApi = Layer.effect(
   }),
 ).pipe(
   Layer.provide(GitHubCredentials.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
-  Layer.provide(GitHubGraphQlBudget.layer),
+  Layer.provide(GitHubQuota.layer),
   Layer.provide(SourceControlRateLimit.layer),
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(VcsProcess.layer),
   Layer.provide(NodeServices.layer),
 );
 
-const services = GitHubPullRequestCli.layer.pipe(
+const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(measuredApi),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),

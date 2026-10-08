@@ -9,6 +9,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import { aliasedGraphQlDocument } from "../sourceControl/githubGraphQl.ts";
 import { decodePullRequestStacksJson } from "./gitHubPullRequestJson.ts";
 import { cascadeRebaseStack } from "./githubStackRebase.ts";
 
@@ -192,13 +193,18 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       host: input.host,
       operation: "runGitHubStackAction",
       allowReserve: true,
-      variables: { owner, name },
-      query: `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${open
-        .map(
-          (layer) =>
-            `pr${layer.number}:pullRequest(number:${layer.number}){headRepository{viewerPermission} maintainerCanModify}`,
-        )
-        .join(" ")}}}`,
+      // `open` is non-empty here, so there is always a document.
+      ...aliasedGraphQlDocument({
+        operation: "query",
+        alias: "pr",
+        key: (layer) => layer.number,
+        items: open,
+        shared: { owner: ["String!", owner], name: ["String!", name] },
+        variables: (layer) => ({ number: ["Int!", layer.number] }),
+        field: ({ number }) =>
+          `pullRequest(number: ${number}) { headRepository { viewerPermission } maintainerCanModify }`,
+        within: (fields) => `repository(owner: $owner, name: $name) {\n${fields}\n}`,
+      })!,
     });
     const access = yield* decodeBranchAccess(permissions).pipe(
       Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),

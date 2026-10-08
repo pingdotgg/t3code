@@ -1,3 +1,5 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
@@ -15,6 +17,8 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { MaterialFilesHeader } from "./MaterialFilesHeader";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
@@ -36,9 +40,20 @@ export function ThreadFileNavigatorPane(props: {
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(props.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useFileTreeEntries({
     environmentId: props.environmentId,
-    cwd: props.cwd,
+    cwd: canReadFiles ? props.cwd : null,
     searchQuery,
   });
   const handlePreviewFile = useCallback(
@@ -63,7 +78,6 @@ export function ThreadFileNavigatorPane(props: {
           sharesBackground: false,
           tintColor: foregroundColor,
           type: "button" as const,
-          width: 44,
         },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
     [foregroundColor, toggleAuxiliaryPane],
@@ -74,9 +88,17 @@ export function ThreadFileNavigatorPane(props: {
       key={JSON.stringify([props.environmentId, props.cwd])}
       entries={entriesQuery.entries}
       loadedDirectories={entriesQuery.loadedDirectories}
+      loadingDirectories={entriesQuery.loadingDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
-      error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      error={
+        canReadFiles
+          ? entriesQuery.error
+          : fileAccess.isPending
+            ? null
+            : (fileAccess.error ?? "This connection cannot read host files.")
+      }
+      isPending={fileAccess.isPending || entriesQuery.isPending}
+      isRefreshing={entriesQuery.isRefreshing}
       searchQuery={searchQuery}
       searchTruncated={entriesQuery.searchTruncated}
       selectedPath={props.selectedPath}
