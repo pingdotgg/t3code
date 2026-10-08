@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
+  scheduledTaskDefaultProjectId,
   scheduledTaskProjectChoices,
   matchesScheduledTaskScope,
   scheduleFromDraft,
@@ -137,6 +138,44 @@ describe("scheduled task project choices", () => {
       scratchProject: null,
       canSelectNoProject: false,
     });
+  });
+});
+
+describe("scheduled task destination defaults", () => {
+  it("stores No project when the editor opens before ordinary projects load", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, laptopId, [], "/home/t3/scratch");
+    expect(scheduledTaskDefaultProjectId(choices)).toBeNull();
+  });
+
+  it("defaults to the first scoped project when one is available", () => {
+    const scope = resolveSettingsScope({ project: "t3code" }, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, serverId, [other, third], null);
+    expect(scheduledTaskDefaultProjectId(choices)).toBe(third.id);
+  });
+
+  it("preserves No project when switching to an environment that supports it", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, serverId, [third], "/remote/scratch");
+    expect(scheduledTaskDefaultProjectId(choices, true)).toBeNull();
+  });
+
+  it("switches to an available project when the destination does not support Scratch", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, serverId, [third], null);
+    expect(scheduledTaskDefaultProjectId(choices, true)).toBe(third.id);
+  });
+
+  it("leaves the destination unset when neither Scratch nor a project is available", () => {
+    const scope = resolveSettingsScope({}, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, serverId, [], null);
+    expect(scheduledTaskDefaultProjectId(choices, true)).toBe("");
+  });
+
+  it("requires a project when the settings scope excludes Scratch", () => {
+    const scope = resolveSettingsScope({ project: "t3code" }, groups, environments);
+    const choices = scheduledTaskProjectChoices(scope, serverId, [third], "/remote/scratch");
+    expect(scheduledTaskDefaultProjectId(choices, true)).toBe(third.id);
   });
 });
 

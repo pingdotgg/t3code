@@ -68,6 +68,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
+  scheduledTaskDefaultProjectId,
   scheduledTaskProjectChoices,
   taskToDraft,
   workspaceStrategyFromDraft,
@@ -816,7 +817,12 @@ function ScheduledTaskEditorDialog({
     [providers, settings],
   );
   const [draft, setDraft] = useState<DraftState>(() =>
-    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+    task
+      ? taskToDraft(task)
+      : {
+          ...EMPTY_DRAFT,
+          projectId: scheduledTaskDefaultProjectId({ projects, canSelectNoProject }),
+        },
   );
   const [saving, setSaving] = useState(false);
   const submissionPending = useRef(false);
@@ -829,10 +835,7 @@ function ScheduledTaskEditorDialog({
   const liveTask = tasksQuery.data
     ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
     : task;
-  const selectedProjectId =
-    draft.projectId === null
-      ? null
-      : draft.projectId || projects[0]?.id || (canSelectNoProject ? null : "");
+  const selectedProjectId = draft.projectId;
   const noProject = selectedProjectId === null || selectedProjectId === scratchProject?.id;
   const selectedProject = noProject
     ? scratchProject
@@ -997,10 +1000,16 @@ function ScheduledTaskEditorDialog({
                 onValueChange={(id) => {
                   const next = connectedEnvironments.find((entry) => entry.environmentId === id);
                   if (!next) return;
+                  const nextChoices = scheduledTaskProjectChoices(
+                    scope,
+                    next.environmentId,
+                    allProjects,
+                    availableScratchWorkspaceRoot(next.connection.phase, next.serverConfig),
+                  );
                   setEnvironmentId(next.environmentId);
                   setDraft((current) => ({
                     ...current,
-                    projectId: noProject ? null : "",
+                    projectId: scheduledTaskDefaultProjectId(nextChoices, noProject),
                     threadId: "",
                     modelKey: "",
                     baseModelSelection: null,

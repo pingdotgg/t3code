@@ -77,6 +77,18 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
+/** Choose a destination when opening the editor or explicitly switching environments. */
+export function scheduledTaskDefaultProjectId(
+  choices: {
+    readonly projects: readonly { readonly id: ProjectId }[];
+    readonly canSelectNoProject: boolean;
+  },
+  preferNoProject = false,
+) {
+  if (preferNoProject && choices.canSelectNoProject) return null;
+  return choices.projects[0]?.id ?? (choices.canSelectNoProject ? null : "");
+}
+
 export type ScheduleMode = "fixed" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
@@ -89,7 +101,7 @@ export interface DraftState {
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
-  /** Null selects "No project"; empty uses the first available choice. */
+  /** Null selects "No project"; empty requires an explicit selection. */
   readonly projectId: string | null;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
