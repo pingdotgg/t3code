@@ -5,7 +5,7 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { useCallback, useMemo, useState } from "react";
-import { ActionSheetIOS, Platform, View } from "react-native";
+import { ActionSheetIOS, Platform, StyleSheet, View } from "react-native";
 import {
   EnrichedMarkdownText,
   type DocumentAssetsEvent,
@@ -29,6 +29,14 @@ function enrichedStyle(
   dark: boolean,
 ): MarkdownStyle {
   const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
+  const block = {
+    marginTop: 4,
+    marginBottom: 12,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: style.dividerColor,
+  };
   const body = {
     color: style.color,
     fontFamily: style.fontFamily,
@@ -61,7 +69,7 @@ function enrichedStyle(
     code: {
       fontFamily: monospace,
       color: style.inlineCodeColor,
-      backgroundColor: style.codeBackgroundColor,
+      backgroundColor: "transparent",
       borderColor: "transparent",
       fontSize: style.fontSize * 0.9,
     },
@@ -71,10 +79,8 @@ function enrichedStyle(
       backgroundColor: style.codeBlockBackgroundColor,
       fontFamily: monospace,
       fontSize: style.fontSize * 0.9,
-      borderRadius: 8,
+      ...block,
       padding: 12,
-      borderWidth: 1,
-      borderColor: style.dividerColor,
       syntaxColors: dark
         ? {
             keyword: "#ff7b72",
@@ -113,15 +119,14 @@ function enrichedStyle(
     thematicBreak: { color: style.dividerColor, height: 1, marginTop: 8, marginBottom: 8 },
     table: {
       ...body,
-      borderColor: style.dividerColor,
-      borderWidth: 1,
+      ...block,
       headerFontFamily: style.boldFontFamily,
       headerTextColor: style.strongColor,
-      headerBackgroundColor: style.codeBackgroundColor,
+      headerBackgroundColor: style.codeBlockBackgroundColor,
       rowEvenBackgroundColor: "transparent",
       rowOddBackgroundColor: "transparent",
-      cellPaddingHorizontal: 12,
-      cellPaddingVertical: 8,
+      cellPaddingHorizontal: 10,
+      cellPaddingVertical: 7,
     },
     taskList: {
       checkedColor: style.linkColor,

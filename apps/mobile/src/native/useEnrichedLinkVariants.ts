@@ -82,7 +82,7 @@ export function useEnrichedLinkVariants(
               fontFamily: textStyle.fontFamily,
               color,
               underline: false,
-              backgroundColor: themeColorWithAlpha(color, 0.08),
+              backgroundColor: "transparent",
             },
           ];
         }),
