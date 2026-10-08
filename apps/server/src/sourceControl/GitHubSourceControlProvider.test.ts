@@ -74,6 +74,8 @@ function harness(input: {
   readonly remotes: string;
   readonly api: Partial<GitHubApi.GitHubApi["Service"]>;
   readonly localBranches?: ReadonlyArray<string>;
+  /** Fails the local branch listing, the first git read a checkout makes. */
+  readonly gitFailure?: unknown;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const record =
@@ -99,7 +101,10 @@ function harness(input: {
     fetchRemoteTrackingBranch: (args) => record("fetchRemoteTrackingBranch", undefined)(args),
     setBranchUpstream: (args) => record("setBranchUpstream", undefined)(args),
     switchRef: (args) => record("switchRef", { refName: args.refName })(args) as never,
-    listLocalBranchNames: () => Effect.succeed([...(input.localBranches ?? [])]),
+    listLocalBranchNames: () =>
+      input.gitFailure === undefined
+        ? Effect.succeed([...(input.localBranches ?? [])])
+        : Effect.fail(input.gitFailure as never),
     resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
   });
   const process = Layer.mock(VcsProcess.VcsProcess)({
@@ -179,6 +184,23 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       // A provider's host hint for the same alias (`github` here) resolves the same way.
       yield* gh.getDefaultBranch({ cwd: "/repo", context: githubContext("github") });
       assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names a missing repository rather than a pull request", () => {
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/gone.git"]),
+      api: {
+        rest: (input) =>
+          Effect.fail(
+            new GitHubApi.GitHubApiNotFoundError({ host: input.host, operation: input.operation }),
+          ),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const error = yield* gh.getDefaultBranch({ cwd: "/repo" }).pipe(Effect.flip);
+      assert.include(error.detail, "Repository not found");
     }).pipe(Effect.provide(layer));
   });
 
@@ -578,6 +600,27 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
           { cwd: "/repo", branch: "someone/main", remoteName: "someone", remoteBranch: "main" },
         ],
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps git's own output out of what a failed checkout reports", () => {
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      gitFailure: new Error("fatal: /home/me/secret-path: permission denied"),
+      api: {
+        graphql: () =>
+          Effect.succeed(
+            encodeJson({ data: { repository: { pullRequest: node(5, "feature/x") } } }),
+          ),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const error = yield* gh
+        .checkoutChangeRequest({ cwd: "/repo", reference: "5" })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.detail, "The pull request could not be checked out with git.");
+      assert.notInclude(error.message, "secret-path");
     }).pipe(Effect.provide(layer));
   });
 

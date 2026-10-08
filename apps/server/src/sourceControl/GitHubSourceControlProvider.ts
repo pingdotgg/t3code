@@ -270,7 +270,14 @@ class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
-function fromGitHubApiError(error: GitHubApi.GitHubApiError): GitHubFailure {
+const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
+const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
+
+/** `notFound` names what was missing, which only the operation knows. */
+function fromGitHubApiError(
+  error: GitHubApi.GitHubApiError,
+  notFound = PULL_REQUEST_NOT_FOUND,
+): GitHubFailure {
   switch (error._tag) {
     case "GitHubCliMissingError":
       return failure(
@@ -293,7 +300,7 @@ function fromGitHubApiError(error: GitHubApi.GitHubApiError): GitHubFailure {
         error,
       );
     case "GitHubApiNotFoundError":
-      return failure("Pull request not found. Check the PR number or URL and try again.", error);
+      return failure(notFound, error);
     case "GitHubCliFailedError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
@@ -302,8 +309,7 @@ function fromGitHubApiError(error: GitHubApi.GitHubApiError): GitHubFailure {
   }
 }
 
-const notFound = (cause: string) =>
-  failure("Pull request not found. Check the PR number or URL and try again.", new Error(cause));
+const notFound = (cause: string) => failure(PULL_REQUEST_NOT_FOUND, new Error(cause));
 
 const RawRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -506,8 +512,8 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const rest = (input: GitHubApi.GitHubRestInput) =>
-    api.rest(input).pipe(Effect.mapError(fromGitHubApiError));
+  const rest = (input: GitHubApi.GitHubRestInput, notFoundDetail?: string) =>
+    api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
 
   const headResolver = RequestResolver.makeGrouped<PullRequestsByHeadRead, string>({
     key: ({ request, context }) =>
@@ -654,12 +660,15 @@ export const make = Effect.gen(function* () {
   const readRepository = Effect.fn("GitHubSourceControlProvider.readRepository")(function* (
     locator: GitHubRepositoryLocator,
   ) {
-    const response = yield* rest({
-      host: locator.host,
-      operation: "getRepository",
-      path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}`,
-      allowReserve: true,
-    });
+    const response = yield* rest(
+      {
+        host: locator.host,
+        operation: "getRepository",
+        path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}`,
+        allowReserve: true,
+      },
+      REPOSITORY_NOT_FOUND,
+    );
     const decoded = decodeRawRepository(response.body);
     if (Result.isFailure(decoded)) {
       return yield* failure("GitHub returned an invalid repository.", decoded.failure);
@@ -678,13 +687,10 @@ export const make = Effect.gen(function* () {
     return decoded.success.login;
   });
 
+  // Git and filesystem errors can carry arguments, paths and stderr, so the detail a client
+  // sees is fixed and the raw error stays in `cause`.
   const gitFailure = (cause: unknown) =>
-    failure(
-      cause instanceof Error && cause.message.trim() !== ""
-        ? cause.message.trim()
-        : "GitHub request failed.",
-      cause,
-    );
+    failure("The pull request could not be checked out with git.", cause);
 
   const runGit = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
     git.execute({
@@ -929,7 +935,11 @@ export const make = Effect.gen(function* () {
         const locator = yield* resolveRepository({ cwd: input.cwd });
         const body = yield* fileSystem
           .readFileString(input.bodyFile)
-          .pipe(Effect.mapError(gitFailure));
+          .pipe(
+            Effect.mapError((cause) =>
+              failure("The pull request description could not be read.", cause),
+            ),
+          );
         yield* rest({
           host: locator.host,
           operation: "createPullRequest",
@@ -975,14 +985,18 @@ export const make = Effect.gen(function* () {
         const name = locator?.name ?? input.repository.trim();
         const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
         const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
-        const response = yield* rest({
-          host,
-          operation: "createRepository",
-          method: "POST",
-          path:
-            isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
-          body: { name, private: input.visibility === "private" },
-        });
+        const response = yield* rest(
+          {
+            host,
+            operation: "createRepository",
+            method: "POST",
+            path:
+              isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
+            body: { name, private: input.visibility === "private" },
+          },
+          // GitHub answers 404 for an organization the account cannot create repositories in.
+          `No organization named ${owner ?? "that"} that this account can create repositories in.`,
+        );
         const decoded = decodeRawRepository(response.body);
         if (Result.isFailure(decoded)) {
           return yield* failure("GitHub returned an invalid repository.", decoded.failure);
