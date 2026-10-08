@@ -984,6 +984,18 @@ describe("viewer permission decoding", () => {
     });
   });
 
+  it("reads whether this viewer may merge past the branch's protections", () => {
+    const decode = (pullRequest: Record<string, unknown> | null) =>
+      expectSuccess(
+        decodeViewerPermissionsJson(viewerJson({ viewerPermission: "ADMIN", pullRequest })),
+      ).canMergeAsAdmin;
+    expect(decode({ viewerCanMergeAsAdmin: true })).toBe(true);
+    // An install that does not report it, or says no, grants nothing.
+    expect(decode({ viewerCanMergeAsAdmin: false })).toBeUndefined();
+    expect(decode({})).toBeUndefined();
+    expect(decode(null)).toBeUndefined();
+  });
+
   it("says no to a passer-by on a repository they can only read", () => {
     expect(
       expectSuccess(

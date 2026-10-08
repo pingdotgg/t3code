@@ -132,6 +132,9 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
+When GitHub lets you bypass branch protections, the merge and auto-merge dialogs offer
+**Merge now as an administrator**, the same as `gh pr merge --admin`. It merges at once without
+waiting for required reviews, checks, or the merge queue.
 
 GitHub sharing is off by default. In Settings → Connections → GitHub sharing (Environments on mobile), choose
 **Read PRs** or **Read and act** for each environment you trust to share GitHub access.

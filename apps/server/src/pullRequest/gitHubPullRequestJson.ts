@@ -711,6 +711,8 @@ const RawCoreSchema = Schema.Struct({
         ...RawDetailSchema.fields,
         ...RawViewerFieldsSchema.fields,
         viewerCanUpdateBranch: Schema.Boolean,
+        /** Optional so an install that does not report it reads as "may not", not a failed read. */
+        viewerCanMergeAsAdmin: Schema.optional(Schema.Boolean),
         baseRef: Schema.NullOr(
           Schema.Struct({
             compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
@@ -832,7 +834,7 @@ export const pullRequestCoreGraphQlQuery = (host: string) => {
       headRepositoryOwner { login }
       author { login avatarUrl ... on User { id name } }
       autoMergeRequest { mergeMethod }
-      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
+      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch viewerCanMergeAsAdmin
       baseRef { compare(headRef: $headRef) { behindBy } }
       reviewRequests(first: 100) {
         nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
@@ -2320,6 +2322,7 @@ export function decodePullRequestCoreJson(
       canWrite: toCanWrite(repository.viewerPermission),
       canTriage: toCanTriage(repository.viewerPermission),
       ...toPullRequestViewerFields(pr),
+      ...(pr.viewerCanMergeAsAdmin === true ? { canMergeAsAdmin: true } : {}),
       mergeCapabilities: {
         merge: repository.mergeCommitAllowed,
         squash: repository.squashMergeAllowed,
@@ -3153,13 +3156,19 @@ export interface GitHubViewerAccess {
    * something to update" at once. Absent where the comparison was not read.
    */
   readonly canUpdateBranch?: boolean;
+  /**
+   * GitHub's own `viewerCanMergeAsAdmin`: this viewer may merge past the branch's protections,
+   * which is what `gh pr merge --admin` does. Absent reads as "may not" — unlike the rest, it is
+   * a way around the rules rather than through them, so an unknown answer grants nothing.
+   */
+  readonly canMergeAsAdmin?: boolean;
 }
 
 /** Core detail and write checks share one read of permissions and merge settings. */
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
-    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
+    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor viewerCanMergeAsAdmin }
   }
 }`;
 
@@ -3168,7 +3177,12 @@ const RawViewerPermissionsSchema = Schema.Struct({
     repository: Schema.Struct({
       ...RawRepositoryAccessSchema.fields,
       /** Null for a number that names no pull request the viewer can see. */
-      pullRequest: Schema.NullOr(RawViewerFieldsSchema),
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          ...RawViewerFieldsSchema.fields,
+          viewerCanMergeAsAdmin: Schema.optional(Schema.Boolean),
+        }),
+      ),
     }),
   }),
 });
@@ -3192,6 +3206,7 @@ export function decodeViewerPermissionsJson(
     canWrite: toCanWrite(repository.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
+    ...(repository.pullRequest?.viewerCanMergeAsAdmin === true ? { canMergeAsAdmin: true } : {}),
   });
 }
 

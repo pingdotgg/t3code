@@ -481,6 +481,12 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * changed on this host at all.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * This viewer may merge past the branch's protections — required reviews, checks, a merge
+   * queue — as `gh pr merge --admin` does. Absent means no, unlike the rest: it is a way around
+   * the host's rules rather than through them, and only GitHub reports it.
+   */
+  mergeAsAdmin: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -1084,6 +1090,12 @@ export const PullRequestActionInput = Schema.Struct({
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /**
+   * Read for `merge` and `enable-auto-merge`: merge now with administrator privileges, past
+   * required reviews, checks and a merge queue, as `gh pr merge --admin` does. Refused unless the
+   * viewer's permissions grant `mergeAsAdmin`.
+   */
+  bypassRequirements: Schema.optional(Schema.Boolean),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 

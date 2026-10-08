@@ -567,6 +567,11 @@ export interface PullRequestProviderApi {
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
+      /**
+       * Merge now, past the branch's protections, for `merge` and `enable-auto-merge`. Only
+       * passed where the viewer's permissions grant `mergeAsAdmin`, which only GitHub reports.
+       */
+      readonly bypassRequirements?: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

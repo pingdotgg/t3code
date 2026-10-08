@@ -2424,6 +2424,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      description: "a branch still waiting on a review",
+      action: "enable-auto-merge",
+      queued: false,
+    },
+    { description: "a merge queue", action: "merge", queued: true },
+  ] as const)("merges directly as an administrator past $description", ({ action, queued }) =>
+    Effect.gen(function* () {
+      route([
+        "query PullRequestActionState",
+        actionState({ mergeStateStatus: "BLOCKED", isMergeQueueEnabled: queued }),
+      ]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action,
+        mergeMethod: "squash",
+        bypassRequirements: true,
+      });
+
+      // `gh pr merge --admin` is the plain merge mutation; GitHub decides whether it may.
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
+      ]);
+      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+    }),
+  );
+
   it.effect("takes auto-merge back off without naming a strategy", () =>
     Effect.gen(function* () {
       route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);

@@ -264,6 +264,18 @@ describe("gitHubViewerPermissions", () => {
     });
   });
 
+  it("offers the administrator's merge only where GitHub says this viewer may", () => {
+    const base = { canTriage: true, canUpdate: true, didAuthor: true };
+    expect(
+      gitHubViewerPermissions({ ...base, canWrite: true, canMergeAsAdmin: true }).mergeAsAdmin,
+    ).toBe(true);
+    // Unknown is no: this is a way around the rules, not a permission to grant on a guess.
+    expect(gitHubViewerPermissions({ ...base, canWrite: true }).mergeAsAdmin).toBeUndefined();
+    expect(
+      gitHubViewerPermissions({ ...base, canWrite: false, canMergeAsAdmin: true }).mergeAsAdmin,
+    ).toBeUndefined();
+  });
+
   it("lets a triager label without letting them merge or ask for a review", () => {
     const permissions = gitHubViewerPermissions({
       canWrite: false,

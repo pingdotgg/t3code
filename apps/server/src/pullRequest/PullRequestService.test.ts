@@ -1562,6 +1562,71 @@ it.effect("gates arming a merge for later exactly as it gates merging now", () =
   }),
 );
 
+it.effect("passes an administrator's merge on only to a viewer the host says may make one", () =>
+  Effect.gen(function* () {
+    let mergeAsAdmin = false;
+    let ranWith: { readonly action: string; readonly bypassRequirements?: boolean } | null = null;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge", "close", "enable-auto-merge"],
+            mergeMethods: ["merge", "squash"],
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge", "enable-auto-merge", "close"],
+              comment: true,
+              resolve: true,
+              verdicts: ["comment", "approve", "request-changes"],
+              requestReviewers: true,
+              ...(mergeAsAdmin ? { mergeAsAdmin: true } : {}),
+            }),
+          runAction: (input) => {
+            ranWith = {
+              action: input.action,
+              ...(input.bypassRequirements === undefined
+                ? {}
+                : { bypassRequirements: input.bypassRequirements }),
+            };
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", bypassRequirements: true }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.include(refused.message, "merge past this branch's protections");
+    assert.strictEqual(ranWith, null);
+
+    mergeAsAdmin = true;
+    // Only a merge goes around the rules; nothing else may borrow the flag.
+    const wrongAction = yield* Effect.flip(
+      service.runAction({ ...reference, action: "close", bypassRequirements: true }),
+    );
+    assert.strictEqual(wrongAction._tag, "PullRequestOperationError");
+    assert.strictEqual(ranWith, null);
+
+    yield* service.runAction({
+      ...reference,
+      action: "enable-auto-merge",
+      bypassRequirements: true,
+    });
+    assert.deepStrictEqual(ranWith, { action: "enable-auto-merge", bypassRequirements: true });
+  }),
+);
+
 it.effect("hands the host the strategy an armed merge was asked for", () =>
   Effect.gen(function* () {
     let ranWith: { readonly action: string; readonly mergeMethod?: string } | null = null;
