@@ -14,7 +14,6 @@ import {
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
 } from "../lib/enrichedLinkPresentation";
-import { themeColorWithAlpha } from "../lib/mobileTheme";
 
 function presentation(
   url: string,
@@ -73,8 +72,8 @@ export function useEnrichedLinkVariants(
             enrichedLinkVariantPattern(url),
             {
               pill: {
-                borderColor: textStyle.contextChipBorderColor ?? themeColorWithAlpha(color, 0.2),
-                borderWidth: 0.5,
+                borderColor: "transparent",
+                borderWidth: 0,
                 borderRadius: 6,
                 paddingHorizontal: 5,
                 paddingVertical: 2,
