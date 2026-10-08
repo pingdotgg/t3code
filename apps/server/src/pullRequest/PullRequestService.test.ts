@@ -516,6 +516,53 @@ function makeService(input: {
   );
 }
 
+it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "enterprise",
+          workspaceRoot: "/repo",
+          repository: "team/project",
+          provider: "unknown",
+          host: "code.example.test",
+        }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          /** Supplies a PR only after verifying discovery retained the Enterprise repository target. */
+          listChangeRequests: ({ host, repository }) => {
+            assert.strictEqual(host, "code.example.test");
+            assert.strictEqual(repository, "team/project");
+            return Effect.succeed({
+              items: [changeRequest(42, "2026-07-05T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+      /** Stands in for discovery claiming the custom host as GitHub. */
+      resolveHandle: ({ context }) => {
+        assert.ok(context);
+        return Effect.succeed({
+          context: {
+            ...context,
+            provider: { ...context.provider, kind: "github", name: "GitHub Self-Hosted" },
+          },
+          provider: undefined as never,
+        });
+      },
+    });
+    const result = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      result.entries.map(({ host, number }) => [host, number]),
+      [["code.example.test", 42]],
+    );
+  }),
+);
+
 it.effect("refines unknown self-hosted GitLab projects before listing merge requests", () =>
   Effect.gen(function* () {
     let refinementCalls = 0;

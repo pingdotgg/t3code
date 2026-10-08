@@ -99,7 +99,9 @@ export function resolveGitHubRepository(input: {
   // the ones on this host (an SSH alias counts as its API host).
   const rank = (name: string) => ["upstream", "github", "origin"].indexOf(name.toLowerCase());
   const candidates = fetchRemotes
-    .filter((remote) => remote.host === host)
+    .filter(
+      (remote) => remote.host === host || normalizeGitRemoteUrl(remote.url).split("/")[0] === host,
+    )
     .toSorted((left, right) => {
       const l = rank(left.name);
       const r = rank(right.name);
