@@ -1772,7 +1772,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("branch PR lookup announces pull requests it reads merged or closed", () =>
+  it.effect("branch PR lookup announces a pull request when it reads it merged", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
