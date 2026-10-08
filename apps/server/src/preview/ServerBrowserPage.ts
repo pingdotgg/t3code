@@ -410,12 +410,36 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
-export const evaluate = async (cdp: CDPSession, input: PreviewAutomationEvaluateInput) => {
-  const result = await cdp.send("Runtime.evaluate", {
+/**
+ * Runs an agent's expression, bounded by its request's deadline. Past it, the
+ * page's script is terminated and the call fails, so the tab's control queue
+ * frees for the next request instead of waiting on the script.
+ */
+export const evaluate = async (
+  cdp: CDPSession,
+  input: PreviewAutomationEvaluateInput,
+  timeoutMs: number,
+) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Stops a busy script; an awaited promise is abandoned and settles unread.
+      void cdp.send("Runtime.terminateExecution").catch(constVoid);
+      reject(
+        new ServerBrowserOperationError(
+          "PreviewAutomationTimeoutError",
+          `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
+        ),
+      );
+    }, timeoutMs);
+  });
+  const evaluation = cdp.send("Runtime.evaluate", {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
     returnByValue: input.returnByValue ?? true,
   });
+  void evaluation.catch(constVoid);
+  const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
   if (result.exceptionDetails) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",

@@ -1,6 +1,7 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -16,7 +17,7 @@ import {
   PREVIEW_ZOOM_LEVELS,
   type PreviewAdjustInput,
 } from "@t3tools/contracts";
-import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { normalizePreviewUrl, resolveAddressBarInput } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -37,6 +38,7 @@ import {
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { usePreviewStreamAccess } from "~/state/previewStream";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   browserMiniPlayerSource,
@@ -49,6 +51,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
+import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
@@ -61,7 +64,7 @@ import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
-import { PreviewUnreachable } from "./PreviewUnreachable";
+import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
@@ -102,6 +105,31 @@ function previewProfileName(
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
+
+/** Resolves stream access only while a server tab shows a file it downloaded. */
+function ServerTabFileNotShown(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly tabId: string;
+  readonly url: string;
+  readonly download: { readonly id: string; readonly fileName: string };
+}) {
+  const access = usePreviewStreamAccess(props.threadRef.environmentId);
+  return (
+    <PreviewFileNotShown
+      url={props.url}
+      fileName={props.download.fileName}
+      downloadUrl={
+        access
+          ? previewStreamDownloadUrl(
+              { access, threadId: props.threadRef.threadId, tabId: props.tabId },
+              props.download.id,
+            )
+          : null
+      }
+      onOpen={() => void localApi?.shell.openExternal(props.url).catch(() => undefined)}
+    />
+  );
+}
 
 /**
  * Single-tab preview surface: chrome row on top, one webview below, empty
@@ -259,12 +287,12 @@ export function PreviewView({
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       try {
-        const normalized = normalizePreviewUrl(next);
-        if (await navigateToResolvedUrl(normalized)) {
-          recordVisitForThread(threadRef, normalized);
+        const resolved = resolveAddressBarInput(next);
+        if (await navigateToResolvedUrl(resolved)) {
+          recordVisitForThread(threadRef, resolved);
         }
       } catch {
-        // Server-side `failed` event renders the unreachable view.
+        // Only empty input or an unsupported scheme lands here; the bar keeps the text.
       }
     },
     [navigateToResolvedUrl, threadRef],
@@ -995,6 +1023,7 @@ export function PreviewView({
                 onControl={(control) =>
                   setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
                 }
+                onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
                 // Stays connected under the empty state so a URL picked there reaches the page.
                 className={cn(
                   "absolute inset-0 h-full w-full",
@@ -1043,7 +1072,16 @@ export function PreviewView({
             controller={controller}
           />
         ) : null}
-        {navStatus._tag === "LoadFailed" ? (
+        {navStatus._tag === "LoadFailed" && navStatus.download ? (
+          <div className="absolute inset-0 z-10 bg-background">
+            <ServerTabFileNotShown
+              threadRef={threadRef}
+              tabId={snapshot?.tabId ?? ""}
+              url={navStatus.url}
+              download={navStatus.download}
+            />
+          </div>
+        ) : navStatus._tag === "LoadFailed" ? (
           <div className="absolute inset-0 z-10 bg-background">
             <PreviewUnreachable
               url={navStatus.url}

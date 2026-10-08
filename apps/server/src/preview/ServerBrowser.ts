@@ -36,7 +36,11 @@ import {
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -73,7 +77,7 @@ import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
-import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
@@ -185,6 +189,8 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
+  /** The page this viewer controls opened a new tab; the viewer shows it, as a browser would. */
+  | { readonly _tag: "popup"; readonly tabId: string }
   | {
       readonly _tag: "download";
       readonly id: string;
@@ -311,6 +317,17 @@ interface ServerTab {
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
+  /** Counts main-frame navigation requests, so late events can tell they were superseded. */
+  navigationGeneration: number;
+  /**
+   * The latest main-frame navigation, when it aborted, to tell a navigation's
+   * download from a page's. The timer settles it if no download follows.
+   */
+  abortedNavigation: {
+    readonly url: string;
+    readonly generation: number;
+    readonly timer: ReturnType<typeof setTimeout>;
+  } | null;
   /** The latest queued start, so a stop can find a recording still starting. */
   recordingStart: Promise<Recording> | null;
   /** Serializes captures and recording start/stop. */
@@ -336,6 +353,8 @@ const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
 const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
+/** How long an aborted navigation waits for the download that usually explains it. */
+const ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS = 5_000;
 const DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 
 const tabKey = (threadId: string, tabId: string) => `${threadId}\u0000${tabId}`;
@@ -435,6 +454,7 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const host = { platform: yield* HostProcessPlatform, arch: yield* HostProcessArchitecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -646,6 +666,7 @@ const make = Effect.gen(function* () {
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
+    clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
@@ -723,6 +744,9 @@ const make = Effect.gen(function* () {
     if (!desktop) await prepareContext(context);
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     const cdp = await context.newCDPSession(page);
+    // The desktop's page is already a normal browser. A popup's first request
+    // went out before it became a tab; everything after presents as Chrome.
+    if (!desktop) await presentAsChrome(cdp, host);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -755,6 +779,8 @@ const make = Effect.gen(function* () {
       recording: null,
       recordingStart: null,
       initialNavigation: null,
+      navigationGeneration: 0,
+      abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
     };
@@ -764,8 +790,11 @@ const make = Effect.gen(function* () {
     await applyRendering(tab, snapshot);
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
       request.isNavigationRequest() && request.frame() === page.mainFrame();
+    const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       if (!isMainNavigation(request)) return;
+      navigationGenerations.set(request, ++tab.navigationGeneration);
+      clearAbortedNavigation(tab);
       tab.loading = true;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
     });
@@ -787,7 +816,28 @@ const make = Effect.gen(function* () {
         errorText,
         timestamp: new Date().toISOString(),
       });
-      if (!isMainNavigation(request) || errorText.includes("ERR_ABORTED")) return;
+      if (!isMainNavigation(request)) return;
+      // A navigation a newer one replaced leaves the status to the newer one. A
+      // popup's first request can predate the listener, so it is untracked and
+      // superseded by any tracked one.
+      const generation = navigationGenerations.get(request) ?? 0;
+      if (generation !== tab.navigationGeneration) return;
+      // An aborted navigation is usually a download; its `download` event settles the status.
+      if (errorText.includes("ERR_ABORTED")) {
+        const url = request.url();
+        const navigationGeneration = tab.navigationGeneration;
+        clearAbortedNavigation(tab);
+        tab.abortedNavigation = {
+          url,
+          generation: navigationGeneration,
+          timer: setTimeout(() => {
+            if (tab.abortedNavigation?.generation !== navigationGeneration) return;
+            tab.abortedNavigation = null;
+            if (!tab.closing) settleAbortedNavigation(tab, navigationGeneration, url, undefined);
+          }, ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS),
+        };
+        return;
+      }
       tab.loading = false;
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
       report(tab, {
@@ -854,9 +904,46 @@ const make = Effect.gen(function* () {
       NodeCrypto.createHash("sha256").update(tabKey(tab.threadId, tab.tabId)).digest("hex"),
     );
 
+  const clearAbortedNavigation = (tab: ServerTab) => {
+    if (tab.abortedNavigation !== null) clearTimeout(tab.abortedNavigation.timer);
+    tab.abortedNavigation = null;
+  };
+
+  /**
+   * Settles the status of a navigation that aborted, usually into a download.
+   * A tab opened straight to the file has no page to show, so it reports the
+   * file with its download; a page that linked to it keeps showing itself.
+   */
+  const settleAbortedNavigation = (
+    tab: ServerTab,
+    generation: number,
+    url: string,
+    offered: { readonly id: string; readonly fileName: string } | undefined,
+  ) => {
+    // A newer navigation owns the status.
+    if (tab.navigationGeneration !== generation) return;
+    tab.loading = false;
+    if (tab.page.url() !== "about:blank") {
+      void reportLoaded(tab);
+      return;
+    }
+    report(tab, {
+      _tag: "LoadFailed",
+      url: url.slice(0, 2048),
+      title: "",
+      code: -3,
+      description: "ERR_ABORTED",
+      ...(offered === undefined ? {} : { download: offered }),
+    });
+  };
+
   const saveDownload = async (tab: ServerTab, download: Download) => {
     const id = NodeCrypto.randomUUID();
     const path = NodePath.join(downloadDir(tab), id);
+    const navigation =
+      download.url() === tab.abortedNavigation?.url ? tab.abortedNavigation.generation : null;
+    if (navigation !== null) clearAbortedNavigation(tab);
+    let offered: { readonly id: string; readonly fileName: string } | undefined;
     try {
       if (await download.failure()) return;
       await NodeFSP.mkdir(downloadDir(tab), { recursive: true });
@@ -878,6 +965,12 @@ const make = Effect.gen(function* () {
       for (const evicted of tab.downloads.splice(0, tab.downloads.length - DOWNLOAD_LIMIT)) {
         await NodeFSP.rm(evicted.path, { force: true }).catch(constVoid);
       }
+      offered = { id, fileName: saved.fileName };
+      // A tab whose own address was the file shows it in place (see
+      // settleAbortedNavigation), unless it navigated on while the file saved.
+      const shownInTab =
+        navigation === tab.navigationGeneration && tab.page.url() === "about:blank";
+      if (shownInTab) return;
       // Only the person driving the page gets the file offered; agents read it from status.
       const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
       controller?.push({
@@ -889,6 +982,10 @@ const make = Effect.gen(function* () {
     } catch (cause) {
       await NodeFSP.rm(path, { force: true }).catch(constVoid);
       runFork(Effect.logWarning("server preview download failed", { cause }));
+    } finally {
+      if (navigation !== null && !tab.closing) {
+        settleAbortedNavigation(tab, navigation, download.url(), offered);
+      }
     }
   };
 
@@ -1009,6 +1106,10 @@ const make = Effect.gen(function* () {
       return;
     }
     const url = popup.url();
+    // Captured now: the person whose click opened the popup gets switched to it.
+    const controller = [...opener.viewers].find(
+      (viewer) => viewer.id === opener.control.controller,
+    );
     await Effect.runPromise(
       manager.open({
         threadId: opener.threadId,
@@ -1025,9 +1126,16 @@ const make = Effect.gen(function* () {
             openerTabId: opener.tabId,
           }),
       }),
-    ).catch(async () => {
-      await popup.close().catch(constVoid);
-    });
+    ).then(
+      (snapshot) => {
+        // The opener stays open behind it, so `window.opener` can still report back.
+        if (opener.control.agentId === null)
+          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+      },
+      async () => {
+        await popup.close().catch(constVoid);
+      },
+    );
   };
 
   const ensureTab = (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
@@ -1187,6 +1295,12 @@ const make = Effect.gen(function* () {
     }
     await navigation.catch((cause: unknown) => {
       const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.includes("Download is starting")) {
+        throw new ServerBrowserPage.ServerBrowserOperationError(
+          "PreviewAutomationExecutionError",
+          `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
+        );
+      }
       if (/ERR_[A-Z_]+/.test(message)) {
         throw new ServerBrowserPage.ServerBrowserOperationError(
           "PreviewAutomationExecutionError",
@@ -1693,7 +1807,11 @@ const make = Effect.gen(function* () {
           ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
         );
       case "evaluate":
-        return ServerBrowserPage.evaluate(tab.cdp, input as PreviewAutomationEvaluateInput);
+        return ServerBrowserPage.evaluate(
+          tab.cdp,
+          input as PreviewAutomationEvaluateInput,
+          request.timeoutMs,
+        );
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
       case "recordingStart": {
@@ -2139,6 +2257,22 @@ const make = Effect.gen(function* () {
         const tab = tabs.get(tabKey(key.threadId, key.tabId));
         if (tab?.desktop) dropTab(tab, false);
       }),
+    ),
+    Effect.forkScoped,
+  );
+  // The page came back, for example after its DevTools closed. Reconnect now
+  // rather than on the next viewer or agent, or the tab's URL and title stop
+  // reaching every client in the meantime.
+  yield* desktopChannel.attached.pipe(
+    Stream.runForEach((key) =>
+      Effect.gen(function* () {
+        if (tabs.has(tabKey(key.threadId, key.tabId))) return;
+        const { sessions } = yield* manager.list({ threadId: ThreadId.make(key.threadId) });
+        const snapshot = sessions.find(
+          (session) => session.tabId === key.tabId && session.runtime === "server",
+        );
+        if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
+      }).pipe(Effect.ignore),
     ),
     Effect.forkScoped,
   );

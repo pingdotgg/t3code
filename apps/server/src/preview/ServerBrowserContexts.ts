@@ -3,8 +3,9 @@ import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { Browser, BrowserContext } from "playwright-core";
+import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
@@ -22,6 +23,61 @@ interface Options {
   readonly env?: NodeJS.ProcessEnv;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
+
+const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "macOS",
+  linux: "Linux",
+  win32: "Windows",
+};
+
+/**
+ * The headless shell's identity as the Chrome it is built from: its user agent
+ * without `HeadlessChrome`, and client hints whose brands agree with it. Sites
+ * block a user agent that disagrees with `Sec-CH-UA`, so both change together.
+ */
+const chromeIdentity = (
+  headlessUserAgent: string,
+  host: { readonly platform: NodeJS.Platform; readonly arch: string; readonly release: string },
+) => {
+  const version = /HeadlessChrome\/((\d+)[\d.]*)/.exec(headlessUserAgent);
+  const fullVersion = version?.[1];
+  const major = version?.[2];
+  if (!version || !fullVersion || !major) return null;
+  // Chrome's GREASE brand and order for this major version, as the shell reports them.
+  const brands = (names: (version: string) => string) => [
+    { brand: "Chromium", version: names(major) },
+    { brand: "Google Chrome", version: names(major) },
+    { brand: "Not A(Brand", version: names("99") },
+  ];
+  return {
+    // Chrome reduces its user agent to the major version.
+    userAgent: headlessUserAgent.replace(version[0], `Chrome/${major}.0.0.0`),
+    userAgentMetadata: {
+      brands: brands((value) => value),
+      fullVersionList: brands((value) => (value === major ? fullVersion : `${value}.0.0.0`)),
+      platform: UA_PLATFORMS[host.platform] ?? "Unknown",
+      platformVersion: host.platform === "linux" ? host.release : "",
+      architecture: host.arch.startsWith("arm") ? "arm" : "x86",
+      bitness: host.arch.endsWith("64") ? "64" : "32",
+      model: "",
+      mobile: false,
+      wow64: false,
+    },
+  };
+};
+
+/**
+ * Presents a headless page as plain Chrome. Applies to the page, its frames,
+ * and its workers; a popup gets its own call once it becomes a tab.
+ */
+export const presentAsChrome = async (
+  cdp: CDPSession,
+  host: { readonly platform: NodeJS.Platform; readonly arch: string },
+) => {
+  const { userAgent } = await cdp.send("Browser.getVersion");
+  const identity = chromeIdentity(userAgent, { ...host, release: NodeOS.release() });
+  if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
+};
 
 /** Persistent human profiles keep their storage; isolated agents share a browser, never a context. */
 export class ServerBrowserContexts {
@@ -42,7 +98,13 @@ export class ServerBrowserContexts {
     return {
       executablePath,
       env,
-      args: ["--disable-gpu", "--force-device-scale-factor=2"],
+      // People drive these tabs, so they must not announce automation (navigator.webdriver).
+      args: [
+        "--disable-gpu",
+        "--force-device-scale-factor=2",
+        "--disable-blink-features=AutomationControlled",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
       headless: true,
       // Only an explicit operator opt-out disables sandboxing. Launch errors never do.
       chromiumSandbox: !sandboxDisabled(env),
