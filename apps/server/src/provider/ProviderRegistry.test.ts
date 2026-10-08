@@ -343,6 +343,7 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
+      modifySettings: () => Effect.die("Unexpected settings modification"),
       updateProviderInstance: (mutation, patch = {}) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);

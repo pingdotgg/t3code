@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   params: {} as Record<string, string>,
   paletteOpen: false,
   workspaceAvailable: true,
+  shellStatus: "live",
   navigate: vi.fn(),
   openPreview: vi.fn(),
   setShortcuts: vi.fn(async () => undefined),
@@ -33,11 +34,12 @@ vi.mock("../rpc/atomRegistry", () => ({
     get: (atom: unknown) =>
       atom === "catalog"
         ? { isReady: true, entries: new Map([["remote", {}]]) }
-        : { status: "live" },
+        : { status: state.shellStatus },
   },
 }));
 vi.mock("../state/entities", () => ({
-  readThreadShell: () => ({ projectId: "project-1", worktreePath: null }),
+  readThreadShell: (threadRef: ScopedThreadRef) =>
+    threadRef.threadId === "thread-1" ? { projectId: "project-1", worktreePath: null } : null,
   readProject: () => (state.workspaceAvailable ? { workspaceRoot: "/work/project" } : null),
 }));
 vi.mock("../composerDraftStore", () => {
@@ -61,7 +63,12 @@ vi.mock("../modelPickerVisibility", () => ({ isModelPickerOpen: () => false }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 
 import { useClosedViewStore } from "../closedViewStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  issueSurfaceId,
+  pullRequestSurfaceId,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
@@ -109,6 +116,7 @@ beforeEach(() => {
     params: {},
     paletteOpen: false,
     workspaceAvailable: true,
+    shellStatus: "live",
   });
   state.navigate.mockResolvedValue(undefined);
   state.openPreview.mockReset();
@@ -304,6 +312,69 @@ describe("root reopen shortcut", () => {
       ).toBe(
         kind === "browser" ? "browser:new-tab" : kind === "file" ? "file:src/app.ts" : "files",
       );
+      expect(useClosedViewStore.getState().entries).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["issue", "live"],
+    ["issue", "cached"],
+    ["pull-request", "live"],
+    ["pull-request", "cached"],
+  ] as const)(
+    "restores a closed %s tab on the Issues page from a %s shell before older history",
+    async (kind, shellStatus) => {
+      state.shellStatus = shellStatus;
+      const issuesRef = { environmentId: "remote", threadId: "issues-panel" } as ScopedThreadRef;
+      const target = { projectId: "project-1", repository: "owner/repo", number: 42 };
+      const surface =
+        kind === "issue"
+          ? ({
+              kind,
+              id: issueSurfaceId({ ...target, provider: "github" }),
+              provider: "github",
+              ...target,
+            } as const)
+          : ({ kind, id: pullRequestSurfaceId(target), ...target } as const);
+      const store = useClosedViewStore.getState();
+      const older = store.remember({
+        kind: "panel-tab",
+        threadRef: ref,
+        surface: { kind: "diff", id: "diff" },
+      });
+      store.remember({ kind: "panel-tab", threadRef: issuesRef, surface });
+      await render();
+      await act(() => {
+        press();
+      });
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, issuesRef),
+      ).toMatchObject({ isOpen: true, activeSurfaceId: surface.id });
+      expect(state.navigate).toHaveBeenCalledOnce();
+      const [navigation] = state.navigate.mock.calls[0]!;
+      expect(navigation.to).toBe("/issues");
+      expect(
+        navigation.search({ involvement: "reviewing", state: "merged", q: "bug", number: 7 }),
+      ).toEqual({
+        involvement: "all",
+        state: "open",
+        q: "bug",
+        ...(kind === "issue"
+          ? {
+              repository: "owner/repo",
+              number: 42,
+              selectedProjectId: "project-1",
+              selectedProvider: "github",
+            }
+          : {}),
+      });
+      expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([older]);
+      await act(() => {
+        press();
+      });
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).activeSurfaceId,
+      ).toBe("diff");
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );

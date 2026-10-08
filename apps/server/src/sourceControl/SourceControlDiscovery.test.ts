@@ -67,7 +67,7 @@ const processOutput = (
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
+it.effect("reads Forgejo details and keeps review summaries out of GETs", () => {
   const methods: string[] = [];
   const fetchReview = async (
     ...[input, init]: Parameters<Context.Service.Shape<typeof FetchHttpClient.Fetch>>
@@ -79,6 +79,15 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
     });
     methods.push(request.method);
     if (request.method === "GET") {
+      if (request.url === "https://forgejo.test/api/v1/user") {
+        return new Response(encodeJson({ login: "maria" }));
+      }
+      if (request.url === "https://forgejo.test/api/v1/repos/maria/project") {
+        return new Response(encodeJson({ full_name: "maria/project" }));
+      }
+      if (request.url.startsWith("https://forgejo.test/api/v1/repos/maria/project/statuses/")) {
+        return new Response("[]");
+      }
       assert.strictEqual(request.url, "https://forgejo.test/api/v1/repos/maria/project/pulls/42");
       return new Response(
         encodeJson({
@@ -117,6 +126,13 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
       Effect.provideService(ForgejoCli.ForgejoCli, cli),
     );
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      number: 42,
+    });
+    assert.deepStrictEqual(detail.linkedIssues, []);
     yield* provider.submitReview({
       cwd: "/repo",
       repository: "maria/project",
@@ -126,7 +142,7 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
       body: "Review summary",
       comments: [],
     });
-    assert.deepStrictEqual(methods, ["GET", "POST"]);
+    assert.deepStrictEqual(methods, ["GET", "GET", "GET", "GET", "GET", "POST"]);
   }).pipe(
     Effect.provideService(
       FetchHttpClient.Fetch,
@@ -139,7 +155,9 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
         exists: () => Effect.succeed(true),
         readFileString: () =>
           Effect.succeed(
-            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: "test-token" } } }),
+            encodeJson({
+              hosts: { "forgejo.test": { type: "Application", token: "test-token" } },
+            }),
           ),
       }),
     ),

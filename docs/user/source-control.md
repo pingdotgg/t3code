@@ -177,11 +177,84 @@ does not show its diff, so marks are made and read on web and desktop.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
 
+## Track Issues Beside the Work
+
+**Browse every tracker in one place**
+
+- The **Issues** page in web and desktop lists issues from the primary connected environment.
+  Browsing issues across several environments is not yet supported.
+- Filter by state, project, host, or label. Assignment, author, and mention filters depend on the host.
+- Free-text search asks hosts that support search; other results are filtered locally.
+- Supports GitHub Issues, GitLab Issues, Bitbucket Issues, Azure DevOps work items, and Linear.
+  Forgejo issues are not yet supported; open them on the host website.
+- Available actions depend on the host and your permissions.
+
+**Read and act on one without leaving T3 Code**
+
+- Open several issues as tabs in the right panel, beside a thread or on the page
+- Read the description and the conversation, comment, close (with a reason where the host
+  records one), reopen, rename, edit the body, and change labels and assignees
+- File a new issue from the **New issue** button
+- The change requests that reference an issue are listed on it, and the issues a pull request
+  cites or closes are listed on the pull request — either one opens the other beside it
+
+**Connect Linear**
+
+Open **Settings → Integrations → Issue Tracking**, then select **Add account** under **Linear
+accounts**. Enter a Linear API key, then choose an account and team for each project. You can add
+several accounts. Keys stay on the connected server.
+
+Linear supports browsing, search, comments, reactions, and agent handoffs. Create issues and change
+their title, description, state, labels, or assignees in Linear. Disconnecting a saved account removes
+its key and project connections.
+
+**Hand one to an agent**
+
+- **Solve** opens a new worktree draft with the issue attached as context. Review the prompt, then send it.
+- **Ask** and **Explain** answer a question about the issue without changing any code
+- **Add to composer** attaches the issue to a thread you are already in, rather than starting a
+  new one
+- Issue content is marked as untrusted context. Review it before sending it to an agent.
+
+Select several issues or pull requests to prepare one task or a parent task with subtasks.
+The draft contains their source links immediately; preparing it does not make a separate model call.
+The agent fetches the details when you send the prompt. **Find matches** uses your configured text
+model to suggest related work or possible duplicates.
+
+Agents can use `link_issue`, `list_thread_issues`, and `unlink_issue` to keep issues with their
+current thread. The thread header's **Linked issues** button opens the **Linked items** panel, which
+lists them below the thread's pull requests. Click an issue to open it, or unlink it from its row menu.
+An issue's **Linked threads** section takes you back to those conversations, where you can follow
+their linked pull requests. These controls are available on web and desktop.
+
+In the **Link** dialog, paste a full issue URL or enter `owner/repo#N` for a repository on the
+current project’s host. GitLab work item URLs are accepted. Check the issue title and state in
+the preview before linking. A pull request cannot be added as an issue.
+
+Linked issue titles and status update after you change them in T3 Code. Changes made on the host
+appear after the next background refresh. When the host limits requests, refresh waits until
+requests are allowed again.
+
+### Link issues and pull requests
+
+Use **Link pull request** in an issue's related work, or **Link issue** in a pull request's related
+work. A saved link appears on both items. Open or unlink it from either side.
+
+These links are saved in T3 Code on the connected environment. They do not change the host's PR
+text or close an issue. Host-reported links remain visible separately. Use **Refresh saved links**
+to pick up changes made by an agent or another client.
+
+Agents can use `link_issue_to_pull_request`, `unlink_issue_from_pull_request`, and
+`list_issue_pull_request_links` for the current thread's project. Agent tools resolve the items
+through the host; the UI can remove a saved link without a host request.
+
 ## Linked pull requests
 
 A thread can hold several pull requests, including reviews from another repository on the same host.
-Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
-pull request link in the conversation. Creating a pull request from Git actions links it automatically.
+Use **Link issue or PR** in the command palette or the thread header's right-click menu, **Link**
+in the **Linked items** panel, or right-click an issue or pull request URL in the conversation.
+Use **Link to thread** to attach it, or **Unlink from thread** to remove its saved link.
+Creating a pull request from Git actions links it automatically.
 Agents can link their pull requests with the `link_pull_request` tool.
 
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
@@ -189,10 +262,10 @@ on the Pull Requests page, **Link to thread** lets you search for an active thre
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count or the current review number with a count of additional
-links. Clicking a badge with more than one review opens the **Linked pull requests** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+links. Clicking a badge with more than one review opens the **Linked items** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
 Linking and unlinking are available in the web and desktop clients.
 
-The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
+The **Linked items** panel lists every review and groups stacks, followed by linked issues. Unlink a review from its
 row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
 closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
 when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
@@ -208,7 +281,7 @@ when the pull request merges or closes, after 10 wakes in a row that bring only 
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
-it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
+it yourself, use the row menu in the **Linked items** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does

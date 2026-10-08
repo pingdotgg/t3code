@@ -64,6 +64,9 @@ export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureChe
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
+  if (command === "az" && /TF401320[\s\S]*\b(?:System\.)?State\b/iu.test(stderr)) {
+    return "state-rule";
+  }
 
   if (
     normalized.includes("authentication failed") ||

@@ -209,7 +209,7 @@ describe("CursorAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect.each([true, false])("gates issue instructions: %s", (issueToolsAvailable) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -218,6 +218,19 @@ describe("CursorAdapterV2", () => {
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-cursor-issue-instructions"),
+        threadId,
+        providerSessionId: "mcp-session-cursor-issue-instructions",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer fake-issue-instruction-token",
+        browserToolsAvailable: false,
+        capabilities: new Set(issueToolsAvailable ? ["issues"] : []),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
       const modelSelection = { instanceId, model: "composer-2.5" };
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -355,6 +368,7 @@ describe("CursorAdapterV2", () => {
         Stream.filter((event) => event.type === "turn.terminal"),
         Stream.runHead,
       );
+      assert.equal(sentMessages[0]?.includes("<issue_linking>"), issueToolsAvailable);
       assert.equal(sentMessages[1], "/compress");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );

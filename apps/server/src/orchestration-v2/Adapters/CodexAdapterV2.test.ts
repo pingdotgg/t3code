@@ -548,6 +548,26 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect.each([true, false])(
+    "gates issue instructions on issue access: %s",
+    (issueToolsAvailable) =>
+      Effect.gen(function* () {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-issue-instructions",
+          codexInput: [{ type: "text", text: "Work on issue #42" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          browserToolsAvailable: false,
+          issueToolsAvailable,
+        });
+        assert.equal(
+          params.additionalContext?.t3_code_runtime?.value.includes("<issue_linking>"),
+          issueToolsAvailable,
+        );
+      }),
+  );
+
   it.effect("adds T3 plan-mode developer instructions when the T3 MCP server is attached", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({

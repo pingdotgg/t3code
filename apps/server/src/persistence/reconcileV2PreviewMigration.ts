@@ -18,6 +18,52 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 53
       `;
+      const rebasedIssuePreview = history.find(
+        (row) =>
+          (row.migration_id === 57 || row.migration_id === 59 || row.migration_id === 60) &&
+          row.name === "ProjectionThreadIssues",
+      );
+      if (rebasedIssuePreview) {
+        const issueId = rebasedIssuePreview.migration_id;
+        if (
+          history.some(
+            (row) =>
+              row.migration_id > issueId &&
+              !(row.migration_id === issueId + 1 && row.name === "WorkItemLinks"),
+          )
+        ) {
+          return yield* new Migrator.MigrationError({
+            kind: "BadState",
+            message: "Cannot upgrade issue preview with unexpected later migrations.",
+          });
+        }
+        yield* sql`DELETE FROM effect_sql_migrations
+          WHERE (migration_id = ${issueId} AND name = 'ProjectionThreadIssues')
+          OR (migration_id = ${issueId + 1} AND name = 'WorkItemLinks')`;
+        return [];
+      }
+      const issuePreview = history.some(
+        (row) => row.migration_id === 54 && row.name === "ProjectionThreadIssues",
+      );
+      if (issuePreview) {
+        if (
+          !history.every(
+            (row) =>
+              (row.migration_id === 53 && row.name === "PullRequestFilesViewed") ||
+              (row.migration_id === 54 && row.name === "ProjectionThreadIssues") ||
+              (row.migration_id === 55 && row.name === "WorkItemLinks"),
+          )
+        ) {
+          return yield* new Migrator.MigrationError({
+            kind: "BadState",
+            message: "Cannot upgrade issue preview with unexpected later migrations.",
+          });
+        }
+        yield* sql`DELETE FROM effect_sql_migrations
+          WHERE (migration_id = 54 AND name = 'ProjectionThreadIssues')
+          OR (migration_id = 55 AND name = 'WorkItemLinks')`;
+        return [];
+      }
       const legacy = history.find(
         (row) =>
           row.name === "OrchestrationV2" && (row.migration_id === 53 || row.migration_id === 54),

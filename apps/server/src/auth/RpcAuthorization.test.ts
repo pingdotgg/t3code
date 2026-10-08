@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  ProjectId,
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -183,6 +184,22 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+  });
+
+  it("allows read access for the side-effect-free Linear status", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.issueTrackersStatus)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("separates saved work item link reads from writes", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.workItemsListLinks)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.workItemsLink)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.workItemsUnlink)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("rejects unknown RPC method names", () => {
@@ -400,5 +417,45 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("allows read-only issue refresh while blocking comments before their handler runs", () =>
+  Effect.gen(function* () {
+    const tested = [WS_METHODS.issuesInvalidate, WS_METHODS.issuesComment] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+          !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    const handled: Array<string> = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.issuesInvalidate, () =>
+            Effect.sync(() => {
+              handled.push("refresh");
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.issuesComment, () =>
+            Effect.sync(() => {
+              handled.push("comment");
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    yield* client[WS_METHODS.issuesInvalidate]({});
+    expect(
+      yield* client[WS_METHODS.issuesComment]({
+        projectId: ProjectId.make("project"),
+        repository: "owner/repo",
+        number: 42,
+        body: "comment",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSourceControlWriteScope });
+    expect(handled).toEqual(["refresh"]);
   }).pipe(Effect.scoped),
 );

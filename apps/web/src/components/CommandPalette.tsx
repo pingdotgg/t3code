@@ -1,6 +1,5 @@
 "use client";
 
-import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -51,6 +50,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  CircleDotIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -113,8 +113,18 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useEnvironments,
+  useIssuesSupported,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
+import {
+  readEnvironmentSupportsWorkItemLinking,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+  waitForProject,
+} from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -739,6 +749,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
+  const issuesSupported = useIssuesSupported();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -1943,28 +1954,35 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (
-    activeThread !== null &&
-    threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
-  ) {
+  if (activeThread !== null && readEnvironmentSupportsWorkItemLinking(activeThread.environmentId)) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
       value: "action:link-pull-request",
-      searchTerms: ["link", "pull request", "pr", "attach", "stack"],
-      title: "Link pull request to thread",
+      searchTerms: ["link", "issue", "pull request", "pr", "attach", "stack"],
+      title: "Link issue or PR to thread",
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
       },
     });
-    if (activeThreadServerConfig?.environment.capabilities.threadPullRequests === true) {
+  }
+
+  if (activeThread !== null) {
+    const capabilities = activeThreadServerConfig?.environment.capabilities;
+    const pullRequestCount =
+      capabilities?.threadPullRequests === true
+        ? visibleThreadPullRequests(activeThread.pullRequests).length
+        : 0;
+    const issueCount = capabilities?.issues === true ? (activeThread.issues?.length ?? 0) : 0;
+    if (capabilities?.threadPullRequests === true || capabilities?.issues === true) {
+      const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
       actionItems.push({
         kind: "action",
         value: "action:open-thread-pull-requests",
-        searchTerms: ["pull requests", "linked", "stack", "prs"],
-        title: "Show linked pull requests",
-        disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
+        searchTerms: ["pull requests", "issues", "linked", "stack", "prs"],
+        title: "Show linked items",
+        disabled: pullRequestCount + issueCount === 0,
         icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
         run: async () => {
           useRightPanelStore.getState().open(threadRef, "pull-requests");
@@ -2225,6 +2243,19 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  if (issuesSupported) {
+    actionItems.push({
+      kind: "action",
+      value: "action:issues",
+      searchTerms: ["issues", "bugs", "tickets", "github", "gitlab", "linear"],
+      title: "Open issues",
+      icon: <CircleDotIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues", search: { involvement: "all", state: "open" } });
       },
     });
   }

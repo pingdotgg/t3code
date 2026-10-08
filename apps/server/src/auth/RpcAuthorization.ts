@@ -136,6 +136,16 @@ export const RPC_REQUIRED_SCOPES = {
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesCommentsPage]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesLabelCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesAssigneeCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesTemplates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueTrackersStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.workItemsListLinks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,

@@ -12,15 +12,15 @@ export type ExternalLinkContextMenuFailureOperation =
   | "open-link-in-preview"
   | "open-link-external"
   | "copy-link"
-  | "link-pull-request-to-thread"
-  | "unlink-pull-request-from-thread";
+  | "link-to-thread"
+  | "unlink-from-thread";
 
 const FAILURE_OPERATION_BY_ACTION = {
   "open-in-preview": "open-link-in-preview",
   "open-external": "open-link-external",
   "copy-link": "copy-link",
-  "link-to-thread": "link-pull-request-to-thread",
-  "unlink-from-thread": "unlink-pull-request-from-thread",
+  "link-to-thread": "link-to-thread",
+  "unlink-from-thread": "unlink-from-thread",
 } as const satisfies Record<ExternalLinkContextMenuAction, ExternalLinkContextMenuFailureOperation>;
 
 const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [

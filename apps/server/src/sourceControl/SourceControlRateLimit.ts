@@ -6,11 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
-  SourceControlProviderKind as SourceControlProviderKindSchema,
-  type SourceControlProviderKind,
+  IssueProviderKind as IssueProviderKindSchema,
+  type IssueProviderKind,
 } from "@t3tools/contracts";
 
-const FALLBACK_COOLDOWN = Duration.seconds(30);
+const FALLBACK_COOLDOWN = Duration.minutes(1);
 const MAX_FALLBACK_COOLDOWN = Duration.minutes(15);
 
 export const CredentialScope = Context.Reference<string>("t3/sourceControl/CredentialScope", {
@@ -18,7 +18,7 @@ export const CredentialScope = Context.Reference<string>("t3/sourceControl/Crede
 });
 
 interface RateLimitKey {
-  readonly provider: SourceControlProviderKind;
+  readonly provider: IssueProviderKind;
   readonly host: string;
 }
 
@@ -35,7 +35,7 @@ interface RateLimitEntry {
 export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(
   "SourceControlRateLimitPausedError",
   {
-    provider: SourceControlProviderKindSchema,
+    provider: IssueProviderKindSchema,
     host: Schema.String,
     retryAt: Schema.Number,
   },

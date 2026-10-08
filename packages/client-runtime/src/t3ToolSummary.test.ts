@@ -7,6 +7,25 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("summarizes issue reads and failed attempts", () => {
+    expect(summarizeT3ToolCalls("read-issue", [completed({ number: 7 })])).toEqual({
+      label: "Read 1 issue",
+      failedCount: 0,
+    });
+    expect(
+      summarizeT3ToolCalls("read-issue", [{ input: {}, output: null, outcome: "failed" }]),
+    ).toEqual({ label: "Tried to read 1 issue", failedCount: 1 });
+    const page = completed({}, { issue: { url: "https://github.com/example/repo/issues/7" } });
+    expect(summarizeT3ToolCalls("read-issue", [page, page]).label).toBe("Read 1 issue");
+    const input = { provider: "github", repository: "example/repo", number: 7 };
+    expect(
+      summarizeT3ToolCalls("read-issue", [
+        completed(input, { markdown: "Issue body and comments" }),
+        completed({ ...input, commentsCursor: "next-page" }, { markdown: "More comments" }),
+      ]).label,
+    ).toBe("Read 1 issue");
+  });
+
   it("counts registered projects, repository destinations, and accepted thread launches", () => {
     expect(
       summarizeT3ToolCalls("project-create", [

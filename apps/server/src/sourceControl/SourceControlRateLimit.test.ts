@@ -43,7 +43,7 @@ it.effect("backs off repeated rate limits until a successful request", () =>
       _tag: "SourceControlRateLimitPausedError",
       provider: "github",
       host: "github.com",
-      retryAt: 30_000,
+      retryAt: 60_000,
     });
     assert.equal(
       firstPause.detail,
@@ -51,17 +51,17 @@ it.effect("backs off repeated rate limits until a successful request", () =>
     );
     assert.equal(firstPause.message, firstPause.detail);
 
-    yield* TestClock.adjust("30 seconds");
+    yield* TestClock.adjust("60 seconds");
     const secondLease = yield* limits.check(github);
     yield* limits.recordRateLimit({ ...github, lease: secondLease });
-    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 90_000);
+    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 180_000);
 
-    yield* TestClock.adjust("60 seconds");
+    yield* TestClock.adjust("120 seconds");
     const successLease = yield* limits.check(github);
     yield* limits.recordSuccess({ ...github, lease: successLease });
     const resetLease = yield* limits.check(github);
     yield* limits.recordRateLimit({ ...github, lease: resetLease });
-    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 120_000);
+    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 240_000);
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );
 
@@ -119,7 +119,7 @@ it.effect("does not let an older success clear a concurrent pause", () =>
     yield* limits.recordRateLimit({ ...github, lease: firstLease });
     yield* limits.recordSuccess({ ...github, lease: concurrentLease });
 
-    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 30_000);
+    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 60_000);
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );
 
@@ -130,9 +130,9 @@ it.effect("keeps a fresh provider reset from an older request", () =>
     const staleLease = yield* limits.check(github);
     yield* limits.recordRateLimit({ ...github, lease: staleLease });
 
-    yield* TestClock.adjust("31 seconds");
-    yield* limits.recordRateLimit({ ...github, lease: staleLease, retryAt: 61_000 });
+    yield* TestClock.adjust("61 seconds");
+    yield* limits.recordRateLimit({ ...github, lease: staleLease, retryAt: 121_000 });
 
-    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 61_000);
+    assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 121_000);
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );

@@ -24,6 +24,7 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    findWorkItemMatches: () => Effect.die("findWorkItemMatches stub not configured for this test"),
     ...overrides,
   });
 
@@ -174,6 +175,48 @@ describe("TextGeneration.make", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect("routes work item matching through the selected instance", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_work");
+      const textGeneration = makeStubTextGeneration({
+        findWorkItemMatches: () =>
+          Effect.succeed({
+            matches: [{ candidate: 1, confidence: "high", reason: "Same work." }],
+          }),
+      });
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([makeStubInstance(instanceId, textGeneration)]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const source = {
+        kind: "issue" as const,
+        provider: "github",
+        repository: "acme/app",
+        number: 12,
+        title: "Fix sessions",
+        url: "https://github.com/acme/app/issues/12",
+        body: "Sessions expire early.",
+      };
+
+      const matches = yield* tg.findWorkItemMatches({
+        cwd: process.cwd(),
+        relationship: "duplicate",
+        source,
+        candidates: [source],
+        modelSelection: createModelSelection(instanceId, "gpt-5"),
+      });
+
+      expect(matches.matches[0]?.candidate).toBe(1);
     }),
   );
 });

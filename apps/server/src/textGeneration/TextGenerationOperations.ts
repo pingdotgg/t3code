@@ -19,6 +19,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -144,7 +145,20 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
       };
     });
 
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn(`${name}.findWorkItemMatches`)(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemMatchPrompt(input);
+      return yield* run({
+        operation: "findWorkItemMatches",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        prompt,
+        outputSchema,
+      });
+    });
+
   return {
+    findWorkItemMatches,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

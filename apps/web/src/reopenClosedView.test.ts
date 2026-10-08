@@ -45,6 +45,35 @@ beforeEach(() => {
 });
 
 describe("reopenClosedView", () => {
+  it.each([false, true])("restores an issue tab and its selection: list=%s", async (list) => {
+    const target = {
+      projectId: "project-1",
+      provider: "github",
+      repository: "owner/repo",
+      number: 7,
+    };
+    useRightPanelStore.getState().openIssue(threadRef, target);
+    const issue = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef)
+      .surfaces[0]!;
+    if (issue.kind !== "issue") throw new Error("Expected an issue tab");
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const surface = list
+      ? { id: "issues" as const, kind: "issues" as const, selected: target }
+      : issue;
+    expect(
+      await reopenClosedView(
+        { kind: "panel-tab", threadRef, surface },
+        { openPreview: vi.fn(), workspaceAvailable: true },
+      ),
+    ).toBe(true);
+    const restored = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    );
+    expect(restored.isOpen).toBe(true);
+    expect(restored.surfaces[0]).toEqual(surface);
+  });
+
   it("restores a file tab at its line without creating a browser session", async () => {
     const openPreview = vi.fn();
     const reopened = await reopenClosedView(
@@ -223,6 +252,15 @@ describe("pullRequestsSearchForRestore", () => {
       selectedHost: "github.example.com",
       selectedEnvironmentId: "remote",
     });
+  });
+
+  it("resets an Issues-only involvement filter when reopening a pull request", () => {
+    expect(
+      pullRequestsSearchForRestore(
+        { involvement: "assigned", state: "closed", sort: "reactions" },
+        null,
+      ),
+    ).toEqual({ involvement: "all", state: "closed" });
   });
 
   it("clears a stale selection and fills default filters when nothing is selected", () => {

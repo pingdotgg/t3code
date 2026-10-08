@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 60 }, (_, index) => index + 1),
+        Array.from({ length: 62 }, (_, index) => index + 1),
       );
     }),
   );
@@ -32,6 +32,8 @@ layer("055_OrchestrationV2", (it) => {
         [58, "WebhookRelayDeliveries"],
         [59, "McpAppModelContext"],
         [60, "ThreadSnapshotWindowIndexes"],
+        [61, "ProjectionThreadIssues"],
+        [62, "WorkItemLinks"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -58,6 +60,8 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 58, name: "WebhookRelayDeliveries" },
         { migration_id: 59, name: "McpAppModelContext" },
         { migration_id: 60, name: "ThreadSnapshotWindowIndexes" },
+        { migration_id: 61, name: "ProjectionThreadIssues" },
+        { migration_id: 62, name: "WorkItemLinks" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -65,6 +69,7 @@ layer("055_OrchestrationV2", (it) => {
         FROM sqlite_master
         WHERE type = 'table'
           AND name IN (
+            'mcp_app_model_context',
             'orchestration_v2_projection_threads',
             'orchestration_v2_projection_subagents',
             'orchestration_v2_effect_outbox',
@@ -73,13 +78,15 @@ layer("055_OrchestrationV2", (it) => {
             'orchestration_v2_projection_provider_session_bindings',
             'orchestration_v2_thread_launch_workflows',
             'orchestration_v2_legacy_imports',
-            'scheduled_tasks'
+            'scheduled_tasks',
+            'work_item_links'
           )
         ORDER BY name
       `;
       assert.deepStrictEqual(
         tables.map(({ name }) => name),
         [
+          "mcp_app_model_context",
           "orchestration_v2_effect_outbox",
           "orchestration_v2_legacy_imports",
           "orchestration_v2_projection_metadata",
@@ -89,6 +96,7 @@ layer("055_OrchestrationV2", (it) => {
           "orchestration_v2_thread_launch_workflows",
           "orchestration_v2_turn_item_positions",
           "scheduled_tasks",
+          "work_item_links",
         ],
       );
 
@@ -101,12 +109,16 @@ layer("055_OrchestrationV2", (it) => {
       const threadColumns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(orchestration_v2_projection_threads)
       `;
+      const legacyThreadColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(projection_threads)
+      `;
       const subagentColumns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(orchestration_v2_projection_subagents)
       `;
       assert.ok(eventColumns.some(({ name }) => name === "application_event_version"));
       assert.ok(receiptColumns.some(({ name }) => name === "command_type"));
       assert.ok(threadColumns.some(({ name }) => name === "provider_instance_id"));
+      assert.ok(legacyThreadColumns.some(({ name }) => name === "issue_links_json"));
       assert.ok(subagentColumns.some(({ name }) => name === "driver"));
       assert.ok(subagentColumns.some(({ name }) => name === "provider_instance_id"));
 
@@ -117,6 +129,8 @@ layer("055_OrchestrationV2", (it) => {
           AND name IN (
             'idx_orchestration_events_application_high_water',
             'orchestration_events_v2_created_threads_idx',
+            'orchestration_v2_projection_nodes_live_idx',
+            'orchestration_v2_projection_turn_items_user_message_idx',
             'orchestration_v2_projection_turn_items_shell_pending_idx'
           )
         ORDER BY name
@@ -126,7 +140,9 @@ layer("055_OrchestrationV2", (it) => {
         [
           "idx_orchestration_events_application_high_water",
           "orchestration_events_v2_created_threads_idx",
+          "orchestration_v2_projection_nodes_live_idx",
           "orchestration_v2_projection_turn_items_shell_pending_idx",
+          "orchestration_v2_projection_turn_items_user_message_idx",
         ],
       );
     }),

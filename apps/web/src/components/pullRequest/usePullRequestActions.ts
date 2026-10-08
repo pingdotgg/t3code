@@ -27,14 +27,15 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import type { DraftId } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
+import { writeHandoffToComposer } from "../sourceControl/handoff";
 import { toastManager } from "../ui/toast";
-import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
+import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 /** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
@@ -247,13 +248,6 @@ export type PullRequestHandoffDetail = Pick<
 >;
 
 /**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
- */
-const lastHandoffPromptByDraft = new Map<DraftId, string>();
-
-/**
  * The hand-offs from a pull request into a thread: a question that needs nothing checked out, and
  * a task that needs the branch under the agent's feet first. One `handoff` key holds them all to
  * one at a time, whatever surface pressed the button.
@@ -293,29 +287,12 @@ export function usePullRequestHandoffs({
         () => null,
       ));
     if (session === null) return null;
-    const store = useComposerDraftStore.getState();
     if (task === null) return session;
     // The latest press is the ask: it takes over what an earlier hand-off left, prompt and chips
     // both, rather than stacking a second one under the first. What the reader typed themselves
     // survives — the composer they are handed is not always a fresh one, and a prompt they have
     // since edited is theirs rather than the hand-off's.
-    const draft = store.getComposerDraft(session.draftId);
-    const existingComments = draft?.reviewComments ?? [];
-    const prompt = handoffPrompt(
-      {
-        prompt: draft?.prompt ?? "",
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
-      },
-      task.prompt,
-    );
-    // Remember the hand-off's own contribution, not the merged prompt: only that sentence is
-    // this session's to take back next time, and the reader's text around it is not.
-    lastHandoffPromptByDraft.set(session.draftId, task.prompt);
-    store.setPrompt(session.draftId, prompt);
-    store.setReviewComments(
-      session.draftId,
-      handoffReviewComments(existingComments, task.reviewComments ?? []),
-    );
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 

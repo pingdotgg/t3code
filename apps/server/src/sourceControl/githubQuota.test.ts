@@ -14,6 +14,24 @@ const headers = (remaining: number, resource = "graphql", reset = RESET) => ({
 });
 
 describe("GitHubQuota", () => {
+  it.effect("checks a read's minimum cost before it can spend the reserve", () =>
+    Effect.gen(function* () {
+      const quota = yield* GitHubQuota.GitHubQuota;
+      yield* quota.observe("github.com", headers(502));
+      const refused = yield* Effect.flip(
+        quota.admit("github.com", "graphql", { allowReserve: false, minimumCost: 3 }),
+      );
+      assert.strictEqual(refused.retryAt, RESET);
+      yield* quota.admit("github.com", "graphql", { allowReserve: false, minimumCost: 2 });
+      yield* quota.admit("github.com", "graphql", { allowReserve: true, minimumCost: 3 });
+      yield* quota.observe("github.com", headers(2));
+      yield* Effect.flip(
+        quota.admit("github.com", "graphql", { allowReserve: true, minimumCost: 3 }),
+      );
+      yield* quota.admit("github.com", "graphql", { allowReserve: true, minimumCost: 2 });
+    }).pipe(Effect.provide(GitHubQuota.layer)),
+  );
+
   it.effect("refuses a background request below the reserve, per quota and account", () =>
     Effect.gen(function* () {
       const quota = yield* GitHubQuota.GitHubQuota;

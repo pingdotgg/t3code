@@ -55,7 +55,7 @@ export function planThreadPullRequestMutation({
     case "single":
       if (linked && legacyProjectId === null) return null;
       return {
-        type: "thread.meta.update" as const,
+        type: "thread.metadata.update" as const,
         input: {
           threadId,
           linkedPullRequest:

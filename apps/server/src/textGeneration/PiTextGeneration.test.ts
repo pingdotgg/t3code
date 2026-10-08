@@ -87,3 +87,33 @@ it.effect("puts linked source control context in the Pi thread title prompt", ()
     assert.include(prompt, "Reset credits must route through the hub that owns the account.");
   }),
 );
+
+it.effect("generates related issue matches through the shared operations", () =>
+  Effect.gen(function* () {
+    const reply = {
+      matches: [{ candidate: 1, confidence: "high" as const, reason: "Same callback" }],
+    };
+    const pi = yield* makeFakePi(encodeJsonLine(reply));
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+    const source = {
+      kind: "issue" as const,
+      provider: "github",
+      repository: "acme/web",
+      number: 1,
+      title: "Login fails",
+      url: "https://github.com/acme/web/issues/1",
+      body: "The callback fails.",
+    };
+    const result = yield* textGeneration.findWorkItemMatches({
+      cwd: process.cwd(),
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "default"),
+      relationship: "duplicate",
+      source,
+      candidates: [{ ...source, number: 2 }],
+    });
+    assert.deepEqual(result, reply);
+  }),
+);

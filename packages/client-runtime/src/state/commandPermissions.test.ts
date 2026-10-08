@@ -8,7 +8,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  ProjectId,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
@@ -24,6 +26,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createIssueEnvironmentAtoms } from "./issues.ts";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -260,4 +263,214 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+const issue = {
+  projectId: ProjectId.make("project"),
+  repository: "acme/repo",
+  number: 1,
+};
+
+it.effect.each([
+  {
+    tag: WS_METHODS.issuesRunAction,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, action: "close" },
+  },
+  {
+    tag: WS_METHODS.issuesComment,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, body: "comment" },
+  },
+  {
+    tag: WS_METHODS.issuesUpdateComment,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, commentId: "comment", body: "edited" },
+  },
+  {
+    tag: WS_METHODS.issuesSetReaction,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, content: "thumbs-up", reacted: true },
+  },
+  {
+    tag: WS_METHODS.issuesCreate,
+    scope: AuthSourceControlWriteScope,
+    input: {
+      projectId: issue.projectId,
+      repository: issue.repository,
+      title: "issue",
+      body: "",
+      labels: [],
+      assignees: [],
+    },
+  },
+  {
+    tag: WS_METHODS.issuesUpdate,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, title: "edited" },
+  },
+  {
+    tag: WS_METHODS.issuesSetLabels,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, labels: ["bug"] },
+  },
+  {
+    tag: WS_METHODS.issuesSetAssignees,
+    scope: AuthSourceControlWriteScope,
+    input: { ...issue, assignees: ["user"] },
+  },
+  {
+    tag: WS_METHODS.issueTrackersConnect,
+    scope: AuthSettingsWriteScope,
+    input: { provider: "linear", token: "fake-test-token" },
+  },
+  {
+    tag: WS_METHODS.issueTrackersDisconnect,
+    scope: AuthSettingsWriteScope,
+    input: { provider: "linear", credentialId: "credential" },
+  },
+  {
+    tag: WS_METHODS.issueTrackersBind,
+    scope: AuthSettingsWriteScope,
+    input: { provider: "linear", projectId: issue.projectId, binding: null },
+  },
+  {
+    tag: WS_METHODS.workItemsFindMatches,
+    scope: AuthOrchestrationOperateScope,
+    input: {
+      projectId: issue.projectId,
+      source: { ...issue, kind: "issue" },
+      relationship: "related",
+    },
+  },
+  {
+    tag: WS_METHODS.workItemsLink,
+    scope: AuthOrchestrationOperateScope,
+    input: { issue, pullRequest: { ...issue, number: 2 } },
+  },
+  {
+    tag: WS_METHODS.workItemsUnlink,
+    scope: AuthOrchestrationOperateScope,
+    input: {
+      issue: { provider: "github", url: "https://github.com/acme/repo/issues/1" },
+      pullRequest: { provider: "github", url: "https://github.com/acme/repo/pull/2" },
+    },
+  },
+] as const)("guards $tag on the origin and actual destination", ({ tag, scope, input }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      yield* AtomRegistry.mount(registry, sessions(other));
+      const rpc = vi.fn(() => Effect.void);
+      const supervisor = {
+        target: { environmentId: other, label: "destination" },
+        session: yield* SubscriptionRef.make(
+          Option.some({
+            client: { [tag]: rpc },
+          } as unknown as RpcSession),
+        ),
+      } as unknown as EnvironmentSupervisor["Service"];
+      const destinationRuntime = Atom.runtime(
+        Layer.succeed(EnvironmentRegistry, {
+          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry["Service"]),
+      );
+      const command = createEnvironmentRpcCommand(destinationRuntime, { label: tag, tag });
+      const target = { environmentId: env, input };
+      const allowed = { ...grant(false), scopes: [scope], permissions: [scope] };
+      const denied = {
+        ...grant(false),
+        scopes: [
+          AuthSourceControlWriteScope,
+          AuthSettingsWriteScope,
+          AuthOrchestrationOperateScope,
+        ],
+        permissions: [
+          AuthSourceControlWriteScope,
+          AuthSettingsWriteScope,
+          AuthOrchestrationOperateScope,
+        ].filter((value) => value !== scope),
+      };
+      const unguarded = yield* requestGuarded(tag, input).pipe(
+        Effect.provideService(EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+      expect(unguarded).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: scope,
+      });
+      expect(rpc).not.toHaveBeenCalled();
+      registry.set(sessions(env), AsyncResult.success(denied));
+      registry.set(sessions(other), AsyncResult.success(allowed));
+      expect(registry.get(command.permissionAtom(env, input))).toBe(false);
+      expect(yield* Effect.promise(() => command.run(registry, target))).toMatchObject({
+        _tag: "Failure",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+      registry.set(sessions(env), AsyncResult.success(allowed));
+      registry.set(sessions(other), AsyncResult.success(denied));
+      expect(registry.get(command.permissionAtom(env, input))).toBe(true);
+      expect(yield* Effect.promise(() => command.run(registry, target))).toMatchObject({
+        _tag: "Failure",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+      registry.set(sessions(other), AsyncResult.success(allowed));
+      expect((yield* Effect.promise(() => command.run(registry, target)))._tag).toBe("Success");
+      expect(rpc).toHaveBeenCalledExactlyOnceWith(input);
+    }),
+  ),
+);
+
+it.effect("rechecks issue write permission after waiting in the issue scheduler", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSourceControlWriteScope],
+          permissions: [AuthSourceControlWriteScope],
+        }),
+      );
+      let release!: () => void;
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(release));
+      const rpc = vi.fn(() =>
+        Effect.promise(async () => {
+          started();
+          await gate;
+        }),
+      );
+      const supervisor = {
+        target: { environmentId: env, label: "target" },
+        session: yield* SubscriptionRef.make(
+          Option.some({
+            client: { [WS_METHODS.issuesSetLabels]: rpc },
+          } as unknown as RpcSession),
+        ),
+      } as unknown as EnvironmentSupervisor["Service"];
+      const issueRuntime = Atom.runtime(
+        Layer.succeed(EnvironmentRegistry, {
+          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry["Service"]),
+      );
+      const command = createIssueEnvironmentAtoms(issueRuntime).setLabels;
+      const target = { environmentId: env, input: { ...issue, labels: ["bug"] } };
+      const first = command.run(registry, target);
+      yield* Effect.promise(() => entered);
+      const second = command.run(registry, target);
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      release();
+      expect((yield* Effect.promise(() => first))._tag).toBe("Success");
+      expect((yield* Effect.promise(() => second))._tag).toBe("Failure");
+      expect(rpc).toHaveBeenCalledExactlyOnceWith(target.input);
+    }),
+  ),
 );

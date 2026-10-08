@@ -145,6 +145,7 @@ export interface GitHubGraphQlInput {
   readonly query: string;
   readonly variables?: Readonly<Record<string, unknown>>;
   readonly allowReserve?: boolean;
+  readonly minimumCost?: number;
   readonly maxResponseBytes?: number;
 }
 
@@ -378,6 +379,7 @@ export const make = Effect.gen(function* () {
     readonly maxResponseBytes: number;
     readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
+    readonly minimumCost?: number;
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
@@ -400,7 +402,10 @@ export const make = Effect.gen(function* () {
     const key = { provider: "github" as const, host };
     const run = Effect.gen(function* () {
       const lease = yield* quota
-        .admit(host, resource, { allowReserve: input.allowReserve })
+        .admit(host, resource, {
+          allowReserve: input.allowReserve,
+          ...(input.minimumCost === undefined ? {} : { minimumCost: input.minimumCost }),
+        })
         .pipe(
           Effect.andThen(limits.check(key, input.allowReserve ? { allowPaused: true } : undefined)),
         )
@@ -566,6 +571,7 @@ export const make = Effect.gen(function* () {
           ),
           maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
           allowReserve,
+          ...(input.minimumCost === undefined ? {} : { minimumCost: input.minimumCost }),
           acceptNotModified: false,
           graphql: true,
         });

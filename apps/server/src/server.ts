@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as IssueSyncReactor from "./orchestration-v2/IssueSyncReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
@@ -32,6 +33,9 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
+import * as IssueProviderRegistry from "./issue/IssueProviderRegistry.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as LinearApi from "./issue/LinearApi.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -198,6 +202,7 @@ const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
+const LinearApiLive = LinearApi.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
 const layerNativeTelemetry = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
@@ -318,6 +323,13 @@ const layerRepositoryIdentityResolver = Layer.effect(
     });
   }),
 ).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
+
+const IssueServiceLive = IssueService.layer.pipe(
+  Layer.provide(IssueProviderRegistry.layer),
+  Layer.provide(layerSourceControlProviderRegistry),
+  Layer.provide(VcsProcess.layer),
+  Layer.provide(SourceControlRateLimit.layer),
+);
 
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
@@ -474,6 +486,8 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
     RunFinalizationService.layerObserver.pipe(
       Layer.provide(ProjectionStoreV2.layer),
       Layer.provide(layerPullRequestService),
+      Layer.provide(IssueServiceLive),
+      Layer.provide(LinearApiLive),
       Layer.provide(RuntimeLayer.layerProjectService),
     ),
   ),
@@ -537,6 +551,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   layerThreadPullRequestWorker,
   Layer.effectDiscard(
+    Effect.flatMap(IssueSyncReactor.IssueSyncReactor, (service) => service.start()),
+  ).pipe(
+    Layer.provide(IssueSyncReactor.layer),
+    Layer.provide(IssueServiceLive),
+    Layer.provide(LinearApiLive),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       yield* service.start();
@@ -544,6 +566,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
     Layer.provide(layerPullRequestService),
+    Layer.provide(IssueServiceLive),
+    Layer.provide(LinearApiLive),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   Layer.effectDiscard(
@@ -554,6 +578,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provide(PullRequestWatchReactor.layer),
     Layer.provide(layerPullRequestService),
+    Layer.provide(IssueServiceLive),
+    Layer.provide(LinearApiLive),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
@@ -690,6 +716,8 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  Layer.provide(IssueServiceLive),
+  Layer.provide(LinearApiLive),
   // The stream route and the WebSocket RPCs share one browser.
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   // Server browser tabs and HTML render previews install and run the same headless browser.

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
+vi.mock("../workItems/SavedWorkItemLinks", () => ({ SavedWorkItemLinks: () => null }));
 vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
 }));
@@ -125,6 +126,56 @@ it("toggles checks from their heading and resets sections for another pull reque
   );
   expect(heading("Checks").props["aria-expanded"]).toBe(false);
   expect(heading("Description").props["aria-expanded"]).toBe(true);
+});
+
+it("shows the related issue count while its section is open or closed", () => {
+  act(() => {
+    renderer = create(
+      render({
+        ...detail,
+        linkedIssuesTruncated: true,
+        linkedIssues: [
+          {
+            repository: "owner/repo",
+            number: 12,
+            title: "Linked issue",
+            url: "https://github.com/owner/repo/issues/12",
+            state: "open",
+            closesIssue: false,
+          },
+        ],
+      }),
+    );
+  });
+  expect(
+    heading("Related issues")
+      .findAllByType("span")
+      .some((span) => span.children.includes("1")),
+  ).toBe(true);
+  click("Related issues");
+  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
+    "The linked issue list may be incomplete.",
+  );
+  expect(
+    heading("Related issues")
+      .findAllByType("span")
+      .some((span) => span.children.includes("1")),
+  ).toBe(true);
+});
+
+it.each([
+  [false, "This change mentions no issue."],
+  [true, "Linked issues could not be read from the host."],
+] as const)("shows the empty linked issue state when incomplete is %s", (truncated, message) => {
+  act(() => {
+    renderer = create(render({ ...detail, linkedIssues: [], linkedIssuesTruncated: truncated }));
+  });
+  click("Related issues");
+  const messages = renderer.root.findAllByType("p").map((p) => p.children.join(""));
+  expect(messages).toContain(message);
+  expect(messages).not.toContain(
+    truncated ? "This change mentions no issue." : "Linked issues could not be read from the host.",
+  );
 });
 
 it("keeps an unsaved description when collapsed and reopened", () => {

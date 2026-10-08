@@ -813,6 +813,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly issueToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -904,8 +905,11 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append:
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        buildRuntimeInstructions({
+          harness: "Claude Code",
+          issueToolsAvailable:
+            input.mcpServers?.["t3-code"] !== undefined && input.issueToolsAvailable,
+        }) + (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -7331,6 +7335,12 @@ export function makeClaudeAdapterV2(
             environment: adapterOptions.environment,
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...mcpOverrides,
+            issueToolsAvailable:
+              sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) !== "readOnly" &&
+              (McpProviderSession.readMcpProviderSession(turnInput.threadId)?.capabilities?.has(
+                "issues",
+              ) ??
+                false),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

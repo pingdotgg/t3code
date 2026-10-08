@@ -222,7 +222,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           // Startup backfill reads every active thread.
           expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
           yield* service.drain;
-          yield* PubSub.publish(events, {
+          const event: OrchestrationV2DomainEvent & { readonly type: "thread.metadata-updated" } = {
             type: "thread.metadata-updated",
             id: EventId.make("event:metadata"),
             threadId: thread.id,
@@ -250,10 +250,41 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               lastVisitedAt: null,
               deletedAt: null,
             },
+          };
+          yield* PubSub.publish(events, event);
+          yield* PubSub.publish(events, {
+            ...event,
+            payload: {
+              ...event.payload,
+              title: "New title",
+              issues: [
+                {
+                  provider: "github",
+                  repository: "owner/repo",
+                  number: 7,
+                  url: "https://github.com/owner/repo/issues/7",
+                  title: "Updated issue",
+                  state: "closed",
+                },
+              ],
+            },
+          });
+          yield* PubSub.publish(events, {
+            ...event,
+            payload: { ...event.payload, worktreePath: "/workspace/changed" },
           });
           expect(yield* Queue.take(reads)).toBe(thread.id);
           yield* service.drain;
           expect(yield* Queue.size(reads)).toBe(0);
+          for (const changes of [
+            { branch: "new-branch" },
+            { projectId: ProjectId.make("new-project") },
+          ]) {
+            yield* PubSub.publish(events, { ...event, payload: { ...event.payload, ...changes } });
+            expect(yield* Queue.take(reads)).toBe(thread.id);
+            yield* service.drain;
+            expect(yield* Queue.size(reads)).toBe(0);
+          }
         }).pipe(Effect.provide(layerDependencies));
       }),
     ),

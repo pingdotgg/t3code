@@ -6836,6 +6836,12 @@ export function makeAcpAdapterV2(
             type: "text",
             text: buildRuntimeInstructions({
               harness: flavor.runtimeHarness ?? driver,
+              issueToolsAvailable:
+                instructionState.hasT3Mcp &&
+                (McpProviderSession.readMcpProviderSession(turnInput.threadId)?.capabilities?.has(
+                  "issues",
+                ) ??
+                  false),
               model: turnInput.modelSelection.model,
             }),
           });

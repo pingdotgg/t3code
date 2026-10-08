@@ -1,14 +1,32 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+import {
+  IssueInvolvement,
+  IssueListSort,
+  IssueListState,
+  type EnvironmentId,
+  type ProjectId,
+  type PullRequestInvolvement,
+} from "@t3tools/contracts";
 
 import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
-import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
+import {
+  PullRequestListSort,
+  type PullRequestListPreferences,
+  type PullRequestListPreferencePatch,
+} from "./components/pullRequest/pullRequestListPreferences";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
 import {
   type RightPanelSurface,
   type ThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
+
+const isPullRequestListSort = Schema.is(PullRequestListSort);
+const isIssueInvolvement = Schema.is(IssueInvolvement);
+const isIssueListState = Schema.is(IssueListState);
+const isIssueListSort = Schema.is(IssueListSort);
 
 export interface ReopenOwnerState {
   /** False when the entry's environment is not in the catalog. */
@@ -57,7 +75,9 @@ export function planNextReopen(
   return { drop, restore: null };
 }
 
-type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
+type PullRequestsSearchLike = Omit<PullRequestListPreferencePatch, "involvement" | "sort"> & {
+  sort?: string | undefined;
+  involvement?: PullRequestInvolvement | IssueInvolvement | undefined;
   repository?: string;
   number?: number;
   selectedProjectId?: ProjectId;
@@ -76,12 +96,17 @@ export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
     selectedProjectId: _projectId,
     selectedHost: _host,
     selectedEnvironmentId: _environmentId,
+    sort,
     ...filters
   } = previous;
   return {
     ...filters,
-    involvement: previous.involvement ?? "all",
+    involvement:
+      previous.involvement === "authored" || previous.involvement === "reviewing"
+        ? previous.involvement
+        : "all",
     state: previous.state ?? "open",
+    ...(isPullRequestListSort(sort) ? { sort } : {}),
     ...(selected?.kind === "pull-request"
       ? {
           repository: selected.repository,
@@ -94,6 +119,44 @@ export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
         }
       : {}),
   } as S & PullRequestListPreferences;
+}
+
+type IssuesSearchLike = {
+  involvement?: string | undefined;
+  state?: string | undefined;
+  sort?: string | undefined;
+  repository?: string;
+  number?: number;
+  selectedProjectId?: ProjectId;
+  selectedProvider?: string;
+};
+
+export function issuesSearchForRestore<S extends IssuesSearchLike>(
+  previous: S,
+  selected: RightPanelSurface | null,
+): S & { involvement: IssueInvolvement; state: IssueListState; sort?: IssueListSort } {
+  const {
+    repository: _repository,
+    number: _number,
+    selectedProjectId: _projectId,
+    selectedProvider: _provider,
+    sort,
+    ...filters
+  } = previous;
+  return {
+    ...filters,
+    involvement: isIssueInvolvement(previous.involvement) ? previous.involvement : "all",
+    state: isIssueListState(previous.state) ? previous.state : "open",
+    ...(isIssueListSort(sort) ? { sort } : {}),
+    ...(selected?.kind === "issue"
+      ? {
+          repository: selected.repository,
+          number: selected.number,
+          selectedProjectId: selected.projectId as ProjectId,
+          ...(selected.provider === undefined ? {} : { selectedProvider: selected.provider }),
+        }
+      : {}),
+  } as S & { involvement: IssueInvolvement; state: IssueListState; sort?: IssueListSort };
 }
 
 export async function reopenClosedView(
@@ -139,6 +202,13 @@ export async function reopenClosedView(
         panels.openDevice(ref, surface.target);
         if (surface.title) panels.renameDevice(ref, surface.id, surface.title);
       } else panels.open(ref, "device");
+      break;
+    case "issue":
+      panels.openIssue(ref, surface);
+      break;
+    case "issues":
+      panels.openIssues(ref);
+      if (surface.selected) panels.selectIssueInPanel(ref, surface.selected);
       break;
     case "pull-request":
       panels.openPullRequest(ref, surface);

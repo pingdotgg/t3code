@@ -16,6 +16,9 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
+  panelRef?: ScopedThreadRef | null;
+  /** Claims a link to open in the app; returning false leaves it to the default handling. */
+  onOpenUrl?: (url: string) => boolean;
 } | null>(null);
 
 /**
@@ -81,8 +84,29 @@ export function PullRequestMarkdown({
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
     [repositoryUrl],
   );
+  const onOpenUrl = context?.onOpenUrl;
   return (
     <div
+      onClickCapture={
+        onOpenUrl === undefined
+          ? undefined
+          : (event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              const anchor = (event.target as Element).closest?.("a[href]");
+              if (anchor instanceof HTMLAnchorElement && onOpenUrl(anchor.href)) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            }
+      }
       className={cn(
         "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
         className,
@@ -97,7 +121,9 @@ export function PullRequestMarkdown({
               text={segment.text}
               cwd={cwd}
               threadRef={resolvedThreadRef}
-              pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
+              pullRequestPanelRef={
+                context?.panelRef ?? resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF
+              }
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia

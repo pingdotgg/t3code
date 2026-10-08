@@ -30,6 +30,8 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import * as LinearApi from "./issue/LinearApi.ts";
+import { disconnectLinearAccount } from "./issue/LinearConnection.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
@@ -97,6 +99,110 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect.each([
+    "watcher reload",
+    "watcher edit",
+    "settings save",
+    "binding edit",
+    "binding removal",
+  ])(
+    "preserves the correct Linear project bindings after a failed disconnect with a concurrent %s",
+    (change) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({
+              issueTracking: {
+                connections: {
+                  linear: {
+                    projectBindings: {
+                      project_1: { credentialId: "user-1", repository: "ENG" },
+                    },
+                  },
+                },
+              },
+            }),
+          );
+          yield* service.start;
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const disconnect = yield* disconnectLinearAccount({ credentialId: "user-1" }).pipe(
+            Effect.provide(
+              Layer.mock(LinearApi.LinearApi)({
+                disconnect: () =>
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(
+                      Effect.fail(
+                        new LinearApi.LinearApiError({ operation: "disconnect", reason: "failed" }),
+                      ),
+                    ),
+                  ),
+              }),
+            ),
+            Effect.result,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(started);
+          const cleared = yield* service.getSettings;
+          const newBinding = { credentialId: "user-2", repository: "API" };
+          if (change === "watcher reload" || change === "watcher edit") {
+            const changes = yield* service.subscribeChanges;
+            const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+            yield* writeFileStringAtomically({
+              filePath: config.settingsPath,
+              contents: JSON.stringify({
+                ...persisted,
+                ...(change === "watcher edit" ? { enableAgentBrowserAccess: false } : {}),
+              }),
+            });
+            const reloaded = yield* changes.pipe(Stream.runHead);
+            assert.strictEqual(
+              Option.getOrThrow(reloaded).issueTracking.connections.linear?.projectBindings,
+              cleared.issueTracking.connections.linear?.projectBindings,
+            );
+          } else {
+            yield* service.updateSettings(
+              change === "settings save"
+                ? { enableAgentBrowserAccess: false }
+                : {
+                    issueTracking: {
+                      connections: {
+                        linear: {
+                          projectBindings: {
+                            [ProjectId.make("project_1")]:
+                              change === "binding edit" ? newBinding : null,
+                          },
+                        },
+                      },
+                    },
+                  },
+            );
+          }
+          yield* Deferred.succeed(release, undefined);
+          assert.strictEqual((yield* Fiber.join(disconnect))._tag, "Failure");
+          assert.deepStrictEqual(
+            (yield* service.getSettings).issueTracking.connections.linear?.projectBindings,
+            {
+              [ProjectId.make("project_1")]:
+                change === "binding edit"
+                  ? newBinding
+                  : change === "binding removal"
+                    ? null
+                    : { credentialId: "user-1", repository: "ENG" },
+            },
+          );
+          if (change === "settings save" || change === "watcher edit") {
+            assert.isFalse((yield* service.getSettings).enableAgentBrowserAccess);
+          }
+        }),
+      ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -467,6 +573,30 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName ?? "",
         ),
       );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("applies concurrent settings modifiers to the latest stored value", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* settings.updateSettings({ automaticGitFetchInterval: Duration.seconds(30) });
+      yield* Effect.forEach(
+        [1, 2],
+        () =>
+          settings.modifySettings((current) => ({
+            automaticGitFetchInterval: Duration.millis(
+              Duration.toMillis(current.automaticGitFetchInterval) + 1000,
+            ),
+          })),
+        { concurrency: "unbounded", discard: true },
+      );
+      assert.equal(
+        Duration.toMillis((yield* settings.getSettings).automaticGitFetchInterval),
+        32_000,
+      );
+      const snapshot = yield* settings.getSettings;
+      yield* settings.modifySettings(() => undefined);
+      assert.strictEqual((yield* settings.getSettings).issueTracking, snapshot.issueTracking);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

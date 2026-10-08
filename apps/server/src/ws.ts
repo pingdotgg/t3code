@@ -221,6 +221,10 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as WorkItemLinks from "./workItems/WorkItemLinks.ts";
+import * as WorkItemMatches from "./workItems/WorkItemMatches.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1189,7 +1193,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1316,6 +1320,9 @@ const layerWsRpc = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const issues = yield* IssueService.IssueService;
+      const workItemLinks = yield* WorkItemLinks.WorkItemLinks;
+      const workItemMatches = yield* WorkItemMatches.WorkItemMatches;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
@@ -1811,7 +1818,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = WsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2526,6 +2533,30 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
         [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
           withPullRequestViewer(input, pullRequests.requestReviewers(input)),
+        [WS_METHODS.issuesList]: (input) => issues.list(input),
+        [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
+        [WS_METHODS.issuesActivity]: (input) => issues.activity(input),
+        [WS_METHODS.issuesCommentsPage]: (input) => issues.commentsPage(input),
+        [WS_METHODS.issuesRunAction]: (input) => issues.runAction(input),
+        [WS_METHODS.issuesComment]: (input) => issues.comment(input),
+        [WS_METHODS.issuesUpdateComment]: (input) => issues.updateComment(input),
+        [WS_METHODS.issuesSetReaction]: (input) => issues.setReaction(input),
+        [WS_METHODS.issuesCreate]: (input) => issues.create(input),
+        [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
+        [WS_METHODS.issuesSetLabels]: (input) => issues.setLabels(input),
+        [WS_METHODS.issuesSetAssignees]: (input) => issues.setAssignees(input),
+        [WS_METHODS.issuesLabelCandidates]: (input) => issues.labelCandidates(input),
+        [WS_METHODS.issuesAssigneeCandidates]: (input) => issues.assigneeCandidates(input),
+        [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
+        [WS_METHODS.issuesInvalidate]: (input) => issues.invalidate(input),
+        [WS_METHODS.issueTrackersStatus]: (input) => issues.trackerStatus(input),
+        [WS_METHODS.issueTrackersConnect]: (input) => issues.trackerConnect(input),
+        [WS_METHODS.issueTrackersDisconnect]: (input) => issues.trackerDisconnect(input),
+        [WS_METHODS.issueTrackersBind]: (input) => issues.trackerBind(input),
+        [WS_METHODS.workItemsListLinks]: (input) => workItemLinks.list(input),
+        [WS_METHODS.workItemsLink]: (input) => workItemLinks.link(input),
+        [WS_METHODS.workItemsUnlink]: (input) => workItemLinks.unlink(input),
+        [WS_METHODS.workItemsFindMatches]: (input) => workItemMatches.find(input),
         [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
@@ -3120,6 +3151,8 @@ export const layer = Layer.unwrap(
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const issues = yield* IssueService.IssueService;
+    const textGeneration = yield* TextGeneration.TextGeneration;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3183,9 +3216,13 @@ export const layer = Layer.unwrap(
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+              Layer.provide(WorkItemLinks.layer),
+              Layer.provide(WorkItemMatches.layer),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
+              Layer.provide(Layer.succeed(TextGeneration.TextGeneration, textGeneration)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

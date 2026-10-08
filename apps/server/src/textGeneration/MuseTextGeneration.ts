@@ -26,6 +26,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -341,7 +342,16 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       });
       return { title: sanitizeThreadTitle(generated.title) };
     });
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn("MuseTextGeneration.findWorkItemMatches")(function* (input) {
+      return yield* runMuseJson({
+        operation: "findWorkItemMatches",
+        ...buildWorkItemMatchPrompt(input),
+        modelSelection: input.modelSelection,
+      });
+    });
   return {
+    findWorkItemMatches,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

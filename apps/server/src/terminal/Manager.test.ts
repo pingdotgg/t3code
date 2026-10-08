@@ -2200,6 +2200,7 @@ it.layer(
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
         updateSettings: () => Effect.fail(settingsError),
+        modifySettings: () => Effect.die("Unexpected settings modification"),
         updateProviderInstance: () => Effect.fail(settingsError),
         withSettingsSnapshot: () => Effect.fail(settingsError),
         streamChanges: Stream.empty,

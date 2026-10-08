@@ -54,6 +54,7 @@ export type T3McpToolSummaryAction =
   | "attachment-discard"
   | "attachment-send"
   | "link-pr"
+  | "read-issue"
   | "unlink-pr"
   | "list-prs"
   | "watch-pr"
@@ -83,6 +84,7 @@ const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
 
 // Cards, activity rows, summaries, and provider identity recovery share this inventory.
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],
     "link-pr",

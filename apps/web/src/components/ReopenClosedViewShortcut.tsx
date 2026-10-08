@@ -18,6 +18,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
+  issuesSearchForRestore,
   planNextReopen,
   pullRequestsSearchForRestore,
   reopenClosedView,
@@ -45,6 +46,7 @@ import { toastManager } from "./ui/toast";
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(PULL_REQUESTS_PANEL_REF);
+const isGlobalIssues = (ref: ScopedThreadRef) => ref.threadId === "issues-panel";
 
 export function ReopenClosedViewShortcut() {
   const navigate = useNavigate();
@@ -90,7 +92,10 @@ export function ReopenClosedViewShortcut() {
       return {
         environmentKnown: catalog.entries.has(ref.environmentId),
         catalogReady: catalog.isReady,
-        ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
+        ownerExists:
+          isGlobalIssues(ref) ||
+          readThreadShell(ref) !== null ||
+          drafts.getDraftThreadByRef(ref) !== null,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -101,7 +106,8 @@ export function ReopenClosedViewShortcut() {
 
     const ref = restore.threadRef;
     const globalPullRequests = isGlobalPullRequests(ref);
-    const thread = globalPullRequests ? null : readThreadShell(ref);
+    const globalIssues = isGlobalIssues(ref);
+    const thread = globalPullRequests || globalIssues ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
     if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
@@ -109,14 +115,19 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    const selected = selectSelectedRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      ref,
+    );
     if (globalPullRequests) {
-      const selected = selectSelectedRightPanelSurface(
-        useRightPanelStore.getState().byThreadKey,
-        ref,
-      );
       await navigate({
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
+      });
+    } else if (globalIssues) {
+      await navigate({
+        to: "/issues",
+        search: (previous) => issuesSearchForRestore(previous, selected),
       });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;

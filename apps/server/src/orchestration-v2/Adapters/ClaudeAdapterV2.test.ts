@@ -501,6 +501,33 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     }
   };
 
+  it.each([
+    { mcpAttached: true, issueToolsAvailable: true },
+    { mcpAttached: true, issueToolsAvailable: false },
+    { mcpAttached: false, issueToolsAvailable: true },
+  ])(
+    "gates issue instructions on attached issue tools: %j",
+    ({ mcpAttached, issueToolsAvailable }) => {
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        },
+        nativeThreadId: "native-thread-claude-issue",
+        resume: false,
+        cwd: "/workspace",
+        ...(mcpAttached ? { mcpServers: T3_MCP_SERVERS } : {}),
+        issueToolsAvailable,
+      });
+      const systemPrompt = options.systemPrompt;
+      assert.isObject(systemPrompt);
+      assert.equal(
+        (systemPrompt as { readonly append?: string }).append?.includes("<issue_linking>"),
+        mcpAttached && issueToolsAvailable,
+      );
+    },
+  );
+
   it("leaves an absent allowlist absent when no MCP session exists", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       threadId: ThreadId.make("thread-claude-no-mcp-no-allowlist"),
@@ -723,6 +750,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       assert.equal(systemPrompt.type, "preset");
       assert.equal(systemPrompt.preset, "claude_code");
       assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
+      assert.notInclude(systemPrompt.append ?? "", "<issue_linking>");
       const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
       assert.equal(logged.hasMcpServers, true);
       assert.notInclude(JSON.stringify(logged), "secret-claude-token");

@@ -9,6 +9,7 @@ import {
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
+import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -267,6 +268,12 @@ export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId):
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadSettlement === true
   );
+}
+
+export function readEnvironmentSupportsWorkItemLinking(environmentId: EnvironmentId): boolean {
+  const capabilities = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+    ?.environment.capabilities;
+  return threadPullRequestLinkMode(capabilities) !== "unsupported" || capabilities?.issues === true;
 }
 
 /** Whether the environment's server understands thread.snooze/unsnooze.

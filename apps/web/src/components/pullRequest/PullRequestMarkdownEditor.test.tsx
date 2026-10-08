@@ -146,3 +146,17 @@ it("keeps cancelling a local edit available without a write grant", async () => 
   expect(onCancel).toHaveBeenCalledOnce();
   expect(onSave).not.toHaveBeenCalled();
 });
+
+it("switches the named markdown mode group between writing and previewing the draft", async () => {
+  await openEditor();
+  const modes = renderer!.root.findByProps({ "aria-label": "Markdown editor mode" });
+  expect(modes.findAllByType("button").map((toggle) => toggle.props.children)).toEqual([
+    "Write",
+    "Preview",
+  ]);
+
+  await act(() => modes.props.onValueChange(["preview"]));
+
+  expect(renderer!.root.findByType("article").props.text).toBe("Original description");
+  expect(renderer!.root.findAllByType("textarea")).toHaveLength(0);
+});

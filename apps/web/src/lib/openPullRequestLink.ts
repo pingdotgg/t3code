@@ -1,4 +1,7 @@
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as Schema from "effect/Schema";
+import { PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
@@ -12,12 +15,14 @@ import {
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { useProjects, useServerConfigs } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
+
+const isPullRequestListSort = Schema.is(PullRequestListSort);
 
 export {
   parseChangeRequestUrl,
@@ -283,19 +288,29 @@ export function useOpenChangeRequestLink(
           url: targetUrl,
           number: parsed.number,
         });
-        if (!resolvedThreadRef) {
+        if (
+          !resolvedThreadRef &&
+          scopedThreadKey(resolvedPanelRef) === scopedThreadKey(PULL_REQUESTS_PANEL_REF)
+        ) {
           void navigate({
             to: "/pull-requests",
-            search: (previous) => ({
-              ...previous,
-              involvement: previous.involvement ?? "all",
-              state: previous.state ?? "all",
-              repository,
-              number: parsed.number,
-              selectedHost: parsed.authority ?? parsed.host,
-              selectedProjectId: project.id,
-              selectedEnvironmentId: project.environmentId,
-            }),
+            search: (previous) => {
+              const { sort, ...rest } = previous;
+              return {
+                ...rest,
+                ...(isPullRequestListSort(sort) ? { sort } : {}),
+                involvement:
+                  previous.involvement === "authored" || previous.involvement === "reviewing"
+                    ? previous.involvement
+                    : "all",
+                state: previous.state ?? "all",
+                repository,
+                number: parsed.number,
+                selectedHost: parsed.authority ?? parsed.host,
+                selectedProjectId: project.id,
+                selectedEnvironmentId: project.environmentId,
+              };
+            },
             replace: true,
           });
         }

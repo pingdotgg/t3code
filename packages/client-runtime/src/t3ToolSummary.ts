@@ -372,6 +372,31 @@ export function summarizeT3ToolCalls(
     case "link-pr":
       label = phrase("Linked", "link", quantity(selected.length, "pull request"));
       break;
+    case "read-issue":
+      label = phrase(
+        "Read",
+        "read",
+        quantity(
+          countEntities(
+            selected.map((call) => {
+              const repository = id(call.input?.repository);
+              return (
+                id(asRecord(call.output?.issue)?.url) ??
+                id(call.input?.url) ??
+                (repository !== undefined && typeof call.input?.number === "number"
+                  ? JSON.stringify([
+                      call.input.provider,
+                      repository.toLowerCase(),
+                      call.input.number,
+                    ])
+                  : undefined)
+              );
+            }),
+          ),
+          "issue",
+        ),
+      );
+      break;
     case "unlink-pr":
       label = phrase("Unlinked", "unlink", quantity(selected.length, "pull request"));
       break;

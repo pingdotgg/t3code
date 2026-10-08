@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
+import { buildRuntimeInstructions, ISSUE_LINKING_INSTRUCTIONS } from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
   it("requires explicit registration of every PR and stack layer", () => {
@@ -8,6 +8,32 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("with the full PR URL immediately after creating a PR");
     expect(instructions).toContain("For a stack, call it for every layer");
     expect(instructions).toContain("call list_thread_pull_requests and link any PR");
+  });
+
+  it.each(["Codex", "Claude Code", "Cursor", "Grok", "OpenCode", "Antigravity"])(
+    "links created and requested issues through the available T3 tool in %s",
+    (harness) => {
+      const instructions = buildRuntimeInstructions({ harness, issueToolsAvailable: true });
+      expect(instructions).toContain(`</pull_request_linking>\n\n${ISSUE_LINKING_INSTRUCTIONS}`);
+      expect(instructions).toContain("the user asks you to work on an issue");
+      expect(instructions).toContain(
+        "call link_issue immediately after creating an issue for this thread",
+      );
+      expect(instructions).toContain(
+        "attach that issue to the current thread before starting work",
+      );
+      expect(instructions).toContain("mcp__t3-code__link_issue or mcp__t3_code__link_issue");
+    },
+  );
+
+  it.each([false, undefined])("omits issue linking without the capability: %s", (available) => {
+    const instructions = buildRuntimeInstructions({
+      harness: "Codex",
+      issueToolsAvailable: available,
+    });
+    expect(instructions).not.toContain("<issue_linking>");
+    expect(instructions).not.toContain("link_issue");
+    expect(instructions).toContain("<pull_request_linking>");
   });
 
   it("keeps known model and effort metadata on one line", () => {

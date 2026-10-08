@@ -179,7 +179,7 @@ describe("external chat link context menu", () => {
       ...harness,
     });
 
-    expect(harness.reportFailure).toHaveBeenCalledWith("link-pull-request-to-thread", cause);
+    expect(harness.reportFailure).toHaveBeenCalledWith("link-to-thread", cause);
   });
 
   it.each([

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
+import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
   make,
@@ -38,6 +39,70 @@ const PULL_REQUEST = {
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,
 };
+
+it.effect.each(["listIterations", "listIterationChanges", "listThreads"] as const)(
+  "preserves quota errors from %s and keeps ordinary fallback",
+  (operation) =>
+    Effect.gen(function* () {
+      for (const error of [
+        new AzureDevOpsCli.AzureDevOpsCliRateLimitError({
+          command: "az",
+          cwd: "/w",
+          operation: "execute",
+          argumentCount: 1,
+          cause: "HTTP 429",
+        }),
+        new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: "/w",
+          operation,
+          cause: "unavailable",
+        }),
+      ]) {
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+              getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              listIterations: () =>
+                operation === "listIterations" ? Effect.fail(error) : Effect.succeed([ITERATION]),
+              listIterationChanges: () => Effect.fail(error),
+              listThreads: () => Effect.fail(error),
+            }),
+          ),
+        );
+        const read = operation === "listThreads" ? "getChangeRequestActivity" : "getChangeRequest";
+        const input = {
+          cwd: "/w",
+          repository: "acme/web",
+          host: "dev.azure.com",
+          number: 7,
+        };
+        const result =
+          read === "getChangeRequestActivity"
+            ? yield* provider.getChangeRequestActivity(input).pipe(Effect.result)
+            : yield* provider.getChangeRequest(input).pipe(Effect.result);
+        if (error._tag === "AzureDevOpsPullRequestReadError") {
+          expect(result).toMatchObject({
+            _tag: "Success",
+            success:
+              operation === "listThreads"
+                ? { comments: [], commentsTruncated: true }
+                : { changedFiles: 0 },
+          });
+        } else {
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              _tag: "PullRequestProviderError",
+              operation: read,
+              reason: "rate-limited",
+              cause: error,
+            },
+          });
+        }
+      }
+    }),
+);
 
 function change(
   path: string,

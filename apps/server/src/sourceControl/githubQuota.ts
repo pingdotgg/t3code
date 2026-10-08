@@ -63,7 +63,7 @@ export class GitHubQuota extends Context.Service<
     readonly admit: (
       host: string,
       resource: GitHubQuotaResource,
-      options?: { readonly allowReserve: boolean },
+      options?: { readonly allowReserve: boolean; readonly minimumCost?: number },
     ) => Effect.Effect<void, SourceControlRateLimit.SourceControlRateLimitPausedError>;
     readonly observe: (
       host: string,
@@ -83,7 +83,11 @@ const make = Effect.gen(function* () {
       const key = keyOf(host, resource, yield* SourceControlRateLimit.CredentialScope);
       const snapshot = (yield* Ref.get(snapshots)).get(key);
       if (snapshot === undefined || snapshot.resetAtMs <= now) return;
-      const floor = options?.allowReserve === true ? 1 : snapshot.limit * RESERVE_RATIO;
+      const minimumCost = Math.max(0, options?.minimumCost ?? 0);
+      const floor =
+        options?.allowReserve === true
+          ? Math.max(1, minimumCost)
+          : snapshot.limit * RESERVE_RATIO + minimumCost;
       if (snapshot.remaining >= floor) return;
       return yield* new SourceControlRateLimit.SourceControlRateLimitPausedError({
         provider: "github",

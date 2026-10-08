@@ -70,6 +70,26 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
+describe("T3 issue developer instructions", () => {
+  it("uses issue access independently of browser and device access", () => {
+    const runtime = { model: "gpt-5.4", reasoningEffort: "high" };
+    NodeAssert.match(
+      buildCodexAdditionalContext(runtime, { browser: false, device: false, issues: true })
+        .t3_code_runtime!.value,
+      /<issue_linking>/,
+    );
+    NodeAssert.doesNotMatch(
+      buildCodexAdditionalContext(runtime, { browser: true, device: true, issues: false })
+        .t3_code_runtime!.value,
+      /<issue_linking>/,
+    );
+    NodeAssert.doesNotMatch(
+      buildCodexAdditionalContext(runtime, false).t3_code_runtime!.value,
+      /<issue_linking>/,
+    );
+  });
+});
+
 describe("T3 browser developer instructions", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
 

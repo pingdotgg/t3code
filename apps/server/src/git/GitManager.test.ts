@@ -337,6 +337,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    findWorkItemMatches: () => Effect.succeed({ matches: [] }),
     ...overrides,
   };
 
@@ -380,6 +381,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    findWorkItemMatches: (input) =>
+      implementation.findWorkItemMatches(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "findWorkItemMatches",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

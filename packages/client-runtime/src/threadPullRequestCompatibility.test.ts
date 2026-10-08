@@ -47,7 +47,7 @@ describe("thread pull request capability negotiation", () => {
   it("uses metadata updates for old single-link servers, including unlink", () => {
     const capabilities = { threadPullRequestLinking: true };
     expect(planThreadPullRequestMutation({ ...input, capabilities })).toEqual({
-      type: "thread.meta.update",
+      type: "thread.metadata.update",
       input: {
         threadId: input.threadId,
         linkedPullRequest: {
@@ -66,7 +66,7 @@ describe("thread pull request capability negotiation", () => {
         legacyProjectId: null,
       }),
     ).toEqual({
-      type: "thread.meta.update",
+      type: "thread.metadata.update",
       input: { threadId: input.threadId, linkedPullRequest: null },
     });
   });
@@ -87,7 +87,7 @@ describe("thread pull request capability negotiation", () => {
         capabilities: { threadPullRequestLinking: true },
       }),
     ).toMatchObject({
-      type: "thread.meta.update",
+      type: "thread.metadata.update",
       input: { linkedPullRequest: { repository: "web", number: 42 } },
     });
     expect(

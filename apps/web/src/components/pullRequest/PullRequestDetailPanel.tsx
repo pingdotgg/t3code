@@ -2,7 +2,7 @@ import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
@@ -15,6 +15,8 @@ import {
   type PullRequestRef,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
+  type IssueLink,
+  type WorkItemMatch,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -53,7 +55,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import type { DraftId } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -139,9 +141,9 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildLinkIssuesHandoff,
   buildResolveConflictsPrompt,
-  handoffPrompt,
-  handoffReviewComments,
+  LINK_ISSUES_HANDOFF_KIND,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
@@ -162,9 +164,9 @@ import {
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
-  stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
+import { writeHandoffToComposer } from "../sourceControl/handoff";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
 import {
   resolvePickableEnvironments,
@@ -259,16 +261,6 @@ const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
 // Start the download on tab hover or focus, before the click, without loading it for every PR.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
-
-/**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
- */
-const lastHandoffPromptByDraft = new Map<string, string>();
-
-const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
-  typeof target === "string" ? target : scopedThreadKey(target);
 
 /**
  * Which server the checkout and the hand-offs land on, where more than one of them holds this
@@ -417,6 +409,7 @@ function PullRequestBaseFreshnessWarning({
 
 export function PullRequestDetailPanel({
   environmentId,
+  panelRef = null,
   shortcutsEnabled,
   getShortcutContext,
   threadRef = null,
@@ -425,12 +418,14 @@ export function PullRequestDetailPanel({
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
+  onOpenLinkedIssue,
   context = "page",
   composerDraftTarget,
   onBack,
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
+  panelRef?: ScopedThreadRef | null;
   shortcutsEnabled: boolean;
   getShortcutContext: () => ShortcutMatchContext;
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
@@ -462,6 +457,11 @@ export function PullRequestDetailPanel({
   onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
+  /**
+   * Opens one of the issues this pull request references, as a peer tab beside it. Supplied by
+   * whoever mounted the panel, because only they know which panel the tab belongs in.
+   */
+  onOpenLinkedIssue?: (link: IssueLink & { readonly provider: string }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -761,8 +761,12 @@ export function PullRequestDetailPanel({
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const markdownContext = useMemo(
-    () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
-    [detail?.provider, repositoryUrl, threadRef],
+    () => ({
+      repositoryUrl: detail?.provider === "github" ? repositoryUrl : null,
+      threadRef,
+      panelRef,
+    }),
+    [detail?.provider, repositoryUrl, threadRef, panelRef],
   );
   const authorProfileUrl =
     detail?.provider === "github" &&
@@ -1067,43 +1071,6 @@ export function PullRequestDetailPanel({
   const canFixFindings = attachTarget !== null || canPrepareWorktree;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
-  const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
-    const store = useComposerDraftStore.getState();
-    const draft = store.getComposerDraft(target);
-    const key = composerTargetKey(target);
-    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
-    const repeatedCommentIds = new Set(
-      (task.reviewComments ?? [])
-        .filter((comment) => previousCommentIds.has(comment.id))
-        .map((comment) => comment.id),
-    );
-    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
-      draft?.prompt ?? "",
-      draft?.reviewComments ?? [],
-      repeatedCommentIds,
-    );
-    const prompt = handoffPrompt(
-      {
-        prompt: promptWithoutPreviousHandoff,
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
-      },
-      task.prompt,
-    );
-    lastHandoffPromptByDraft.set(key, task.prompt);
-    store.setPrompt(target, prompt);
-    store.setReviewComments(
-      target,
-      handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
-    );
-    for (const comment of task.reviewComments ?? []) {
-      if (!repeatedCommentIds.has(comment.id)) continue;
-      store.addReviewComment(target, comment, {
-        allowDuplicateReference: true,
-        insertAtCaret: false,
-      });
-    }
-  };
-
   /**
    * Opens a thread on this project and leaves the task in its composer for the reader to send.
    *
@@ -1128,15 +1095,21 @@ export function PullRequestDetailPanel({
     // both, rather than stacking a second one under the first. What the reader typed themselves
     // survives — the composer they are handed is not always a fresh one, and a prompt they have
     // since edited is theirs rather than the hand-off's.
-    writeTaskToComposer(session.draftId, task);
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 
   /** A question about the change, which needs a thread and nothing else. */
-  const startAsk = async (kind: string, task: ThreadTask) => {
+  const startAsk = async (
+    kind: string,
+    task: ThreadTask,
+    // What the toast says landed, for the hand-offs that need a thread and no checkout but are
+    // not questions.
+    announce?: { readonly title: string; readonly description: string },
+  ) => {
     if (!detail || handoff !== null) return;
     if (attachTarget !== null) {
-      writeTaskToComposer(attachTarget, task);
+      writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
         title: "Added to the composer",
@@ -1144,6 +1117,7 @@ export function PullRequestDetailPanel({
           task.prompt.length > 0
             ? "The question is in the composer — read it over, then send."
             : "The pull request is in the composer — type your question, then send.",
+        ...announce,
       });
       return;
     }
@@ -1161,13 +1135,15 @@ export function PullRequestDetailPanel({
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
-      // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
-      // the reader looking for something that is not there. The chips are what landed.
-      description:
-        task.prompt.length > 0
-          ? "The question is in the composer — read it over, then send."
-          : "The pull request is in the composer — type your question, then send.",
+      ...(announce ?? {
+        title: "Asked in a thread",
+        // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
+        // the reader looking for something that is not there. The chips are what landed.
+        description:
+          task.prompt.length > 0
+            ? "The question is in the composer — read it over, then send."
+            : "The pull request is in the composer — type your question, then send.",
+      }),
     });
   };
 
@@ -1184,7 +1160,7 @@ export function PullRequestDetailPanel({
   ) => {
     if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
-      writeTaskToComposer(attachTarget, task);
+      writeHandoffToComposer(attachTarget, task);
       toastManager.add({
         type: "success",
         title: "Added to the composer",
@@ -1349,6 +1325,34 @@ export function PullRequestDetailPanel({
     });
   };
 
+  /**
+   * Links one selected issue with an agent. No checkout: the link is a line in
+   * the description, and nothing here touches code.
+   */
+  const linkIssues = (issue: WorkItemMatch) => {
+    if (!detail) return;
+    void startAsk(
+      LINK_ISSUES_HANDOFF_KIND,
+      buildLinkIssuesHandoff(
+        {
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          isDraft: detail.isDraft,
+        },
+        issue,
+      ),
+      {
+        title: "Task ready in the composer",
+        description: "The task is in the composer — read it over, then send.",
+      },
+    );
+  };
+
+  /** Lines the reader marked in the diff, handed to the current agent composer. */
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
     void startAsk(
@@ -2729,6 +2733,8 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                  onLinkIssues={linkIssues}
+                  {...(onOpenLinkedIssue ? { onOpenLinkedIssue } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />

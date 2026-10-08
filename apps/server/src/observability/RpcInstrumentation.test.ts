@@ -5,6 +5,7 @@ import {
   type AuthEnvironmentScope,
   ScheduledTaskError,
   ScheduledTaskId,
+  ProjectId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -102,6 +103,41 @@ const requestDuration = (snapshots: ReadonlyArray<Metric.Metric.Snapshot>, metho
   )?.state;
 
 describe("WS RPC instrumentation middleware", () => {
+  it.effect("records rejected issue calls under the Issues aggregate", () =>
+    withTelemetry((ended) =>
+      Effect.gen(function* () {
+        const group = groupOf(WS_METHODS.issuesComment);
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.merge(
+              WsRpcGroup.toLayerHandler(WS_METHODS.issuesComment, () =>
+                Effect.die("authorization let a rejected issue call through"),
+              ),
+              readOnlyConnection,
+            ),
+          ),
+        );
+        const error = yield* Effect.flip(
+          client[WS_METHODS.issuesComment]({
+            projectId: ProjectId.make("project"),
+            repository: "acme/web",
+            number: 7,
+            body: "Hello",
+          }),
+        );
+        assert.equal(error._tag, "EnvironmentAuthorizationError");
+        const spans = rpcSpans(ended);
+        assert.equal(spans.length, 1);
+        assert.equal(spans[0]?.name, "ws.rpc.issues.comment");
+        assert.equal(spans[0]?.attributes.get("rpc.aggregate"), "issues");
+        assert.equal(
+          requestCount(yield* Metric.snapshot, WS_METHODS.issuesComment, "failure")?.count,
+          1,
+        );
+      }),
+    ),
+  );
+
   it.effect("records one span and request metric per call, including rejected calls", () =>
     withTelemetry((ended) =>
       Effect.gen(function* () {

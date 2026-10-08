@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import type {
+  IssueLink,
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestCheck,
@@ -18,6 +19,12 @@ import {
   type ProviderRepositoryRef,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import {
+  CITED_ISSUE_REFERENCES_MAX,
+  mergeIssueLinks,
+  parseIssueReferences,
+  unlinkedIssueReferences,
+} from "./issueReferences.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -208,6 +215,55 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
+  /**
+   * The issues the pull request's own words name, resolved before any of them is shown: a number
+   * in a body is not proof that an issue exists, and a dead row in this section is worse than an
+   * absent one.
+   *
+   * Weaker than what GitHub itself reported, so a lookup that fails leaves the section with the
+   * host's own links rather than taking the detail down with it. What the host already reported is
+   * dropped first, which is what keeps an ordinary `Closes #12` from costing a request at all.
+   */
+  const citedIssues = (
+    input: { readonly cwd: string; readonly repository: string; readonly host: string },
+    pullRequest: { readonly title: string; readonly body: string },
+    hostLinks: ReadonlyArray<IssueLink>,
+  ): Effect.Effect<
+    { readonly links: ReadonlyArray<IssueLink>; readonly truncated: boolean },
+    GitHubPullRequestApi.GitHubPullRequestApiError
+  > => {
+    const references = unlinkedIssueReferences(
+      parseIssueReferences({
+        kind: "github",
+        host: input.host,
+        repository: input.repository,
+        title: pullRequest.title,
+        body: pullRequest.body,
+      }),
+      hostLinks,
+    );
+    return references.length === 0
+      ? Effect.succeed({ links: [], truncated: false })
+      : cli
+          .listCitedIssues({
+            cwd: input.cwd,
+            host: input.host,
+            references: references.slice(0, CITED_ISSUE_REFERENCES_MAX),
+          })
+          .pipe(
+            Effect.map((links) => ({
+              links,
+              truncated: references.length > CITED_ISSUE_REFERENCES_MAX,
+            })),
+            Effect.catchIf(
+              (error) =>
+                error._tag !== "GitHubApiRateLimitError" &&
+                error._tag !== "SourceControlRateLimitPausedError",
+              () => Effect.succeed({ links: [], truncated: true }),
+            ),
+          );
+  };
+
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
       Effect.flatMap((pullRequest) =>
@@ -289,7 +345,6 @@ export const make = Effect.gen(function* () {
           filters: input.filters,
         })
         .pipe(
-          Effect.mapError(fail("listChangeRequests")),
           Effect.flatMap((page) =>
             cli
               .listActorAvatars({
@@ -301,7 +356,12 @@ export const make = Effect.gen(function* () {
               // A listing without faces is still a listing, so a failed lookup falls back to
               // the initials rather than taking the rows down with it.
               .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
+                Effect.catchIf(
+                  (error) =>
+                    error._tag !== "GitHubApiRateLimitError" &&
+                    error._tag !== "SourceControlRateLimitPausedError",
+                  () => Effect.succeed(new Map<string, string>()),
+                ),
                 Effect.map((avatarsByLogin) => ({
                   ...page,
                   items: page.items.map((item) => ({
@@ -311,6 +371,7 @@ export const make = Effect.gen(function* () {
                 })),
               ),
           ),
+          Effect.mapError(fail("listChangeRequests")),
         ),
 
     /**
@@ -382,65 +443,86 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
-    getChangeRequest: (input) =>
-      readChecks(input).pipe(
-        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
-          ...pullRequest,
-          author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
-          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
-          mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
-          baseComparison:
-            pullRequest.comparison === null || pullRequest.comparison.behindBy === null
-              ? "unknown"
-              : pullRequest.comparison.behindBy > 0
-                ? "behind"
-                : "up-to-date",
-          ...(pullRequest.comparison?.behindBy == null
-            ? {}
-            : { behindBy: pullRequest.comparison.behindBy }),
-        })),
-        Effect.mapError(fail("getChangeRequest")),
-      ),
-
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          // Line comments live on review threads, which `gh pr view --json` cannot reach. A
-          // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
-              comments: [],
-              dismissalsByReviewId: new Map<string, string>(),
-              reactions: [],
-              reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
-              editedAtById: new Map<string, string>(),
-              reviewThreads: [],
-              commentCount: 0,
-              truncated: true,
-              reviewThreadsTruncated: true,
-              reviewers: [],
-              avatarsByLogin: new Map<string, string>(),
-              botLogins: new Set<string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
-              commits: [],
-              viewer: { canUpdate: true, didAuthor: false },
-            })),
-          ),
-        ],
+    getChangeRequest: (input) => {
+      const linkedIssues = Effect.catchIf(
+        cli.listLinkedIssues(input),
+        (error) =>
+          error._tag !== "GitHubApiRateLimitError" &&
+          error._tag !== "SourceControlRateLimitPausedError",
+        () => Effect.succeed({ links: [], truncated: true }),
+      );
+      return Effect.all(
+        {
+          pullRequest: readChecks(input),
+          linkedIssues,
+        },
         { concurrency: 2 },
       ).pipe(
+        Effect.flatMap(({ pullRequest, linkedIssues }) =>
+          citedIssues(input, pullRequest, linkedIssues.links).pipe(
+            Effect.map((cited): ProviderChangeRequestDetail => ({
+              ...pullRequest,
+              reviewers: pullRequest.reviewRequestLogins.map((login) => ({
+                login,
+                name: null,
+                avatarUrl: null,
+              })),
+              mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
+              viewerPermissions: gitHubViewerPermissions({
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              }),
+              linkedIssues: mergeIssueLinks(linkedIssues.links, cited.links),
+              linkedIssuesTruncated: linkedIssues.truncated || cited.truncated,
+              baseComparison:
+                pullRequest.comparison === null || pullRequest.comparison.behindBy === null
+                  ? "unknown"
+                  : pullRequest.comparison.behindBy > 0
+                    ? "behind"
+                    : "up-to-date",
+              ...(pullRequest.comparison?.behindBy == null
+                ? {}
+                : { behindBy: pullRequest.comparison.behindBy }),
+            })),
+          ),
+        ),
+        Effect.mapError(fail("getChangeRequest")),
+      );
+    },
+
+    getChangeRequestActivity: (input) => {
+      // Line comments live on review threads, which `gh pr view --json` cannot reach. A
+      // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
+      const reviewThreads = Effect.catchIf(
+        cli.listReviewThreadComments(input),
+        (error) =>
+          error._tag !== "GitHubApiRateLimitError" &&
+          error._tag !== "SourceControlRateLimitPausedError",
+        () =>
+          Effect.succeed({
+            comments: [],
+            dismissalsByReviewId: new Map<string, string>(),
+            reactions: [],
+            reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            editedAtById: new Map<string, string>(),
+            reviewThreads: [],
+            commentCount: 0,
+            truncated: true,
+            reviewThreadsTruncated: true,
+            reviewers: [],
+            avatarsByLogin: new Map<string, string>(),
+            botLogins: new Set<string>(),
+            commitStats: new Map<
+              string,
+              { readonly additions: number; readonly deletions: number }
+            >(),
+            commits: [],
+            viewer: { canUpdate: true, didAuthor: false },
+          }),
+      );
+      return Effect.all([cli.getPullRequestActivity(input), reviewThreads], {
+        concurrency: 2,
+      }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
           author: withAvatar(
@@ -510,7 +592,8 @@ export const make = Effect.gen(function* () {
             })),
           })),
         })),
-      ),
+      );
+    },
 
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),

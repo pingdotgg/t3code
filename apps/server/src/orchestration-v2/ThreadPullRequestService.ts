@@ -19,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -90,6 +91,11 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const encodeDiscoveryInputs = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Tuple([Schema.String, Schema.NullOr(Schema.String), Schema.NullOr(Schema.String)]),
+  ),
+);
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -106,6 +112,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const pendingBackfill = new Map<ThreadId, number>();
+  const discoveryInputs = new Map<ThreadId, string>();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -146,6 +153,14 @@ export const make = Effect.gen(function* () {
       readThreadSnapshot(request),
       projectStore.listShells(),
     ]);
+    for (const thread of threadSnapshot.threads) {
+      if (!discoveryInputs.has(thread.id)) {
+        discoveryInputs.set(
+          thread.id,
+          encodeDiscoveryInputs([thread.projectId, thread.worktreePath, thread.branch]),
+        );
+      }
+    }
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
       for (const thread of threadSnapshot.threads) {
@@ -368,7 +383,24 @@ export const make = Effect.gen(function* () {
       case "thread.created":
       case "thread.unarchived":
       case "thread.metadata-updated":
+        {
+          const inputs = encodeDiscoveryInputs([
+            event.payload.projectId,
+            event.payload.worktreePath,
+            event.payload.branch,
+          ]);
+          if (
+            event.type === "thread.metadata-updated" &&
+            discoveryInputs.get(event.threadId) === inputs
+          )
+            break;
+          discoveryInputs.set(event.threadId, inputs);
+        }
         return worker.enqueue({ threadId: event.threadId, refresh: false });
+      case "thread.deleted":
+      case "thread.archived":
+        discoveryInputs.delete(event.threadId);
+        break;
       case "thread.unsettled":
       case "checkpoint.captured":
         return worker.enqueue({ threadId: event.threadId, refresh: true });

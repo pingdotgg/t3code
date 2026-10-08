@@ -23,6 +23,7 @@ const baseState: ThreadActionMenuState = {
     snooze: true,
     pinning: true,
     titleRegeneration: true,
+    workItemLinking: true,
   },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -57,6 +58,7 @@ describe("buildThreadActionMenuItems", () => {
             "unsnooze",
             "rename",
             "regenerate-title",
+            "link-work-item",
             "auto-settle",
             "archive",
             "delete",
@@ -67,6 +69,7 @@ describe("buildThreadActionMenuItems", () => {
             "snooze",
             "rename",
             "regenerate-title",
+            "link-work-item",
             "auto-settle",
             "archive",
             "delete",
@@ -101,6 +104,7 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
+          workItemLinking: false,
         },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
@@ -187,6 +191,15 @@ describe("buildThreadActionMenuItems", () => {
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
   });
 
+  it("offers issue or PR linking only where the environment and surface support it", () => {
+    expect(
+      buildThreadActionMenuItems(baseState).find((item) => item.id === "link-work-item"),
+    ).toMatchObject({ label: "Link issue or PR…", icon: "link" });
+    expect(
+      ids({ ...baseState, supports: { ...baseState.supports, workItemLinking: false } }),
+    ).not.toContain("link-work-item");
+  });
+
   it("marks delete as destructive and keeps it last", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
@@ -211,6 +224,7 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
+          workItemLinking: false,
         },
       }),
     ).toContain("archive");

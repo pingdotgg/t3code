@@ -16,6 +16,7 @@ import { vi } from "vite-plus/test";
 import type { MuseSdkHost } from "../provider/museSdk.ts";
 import { museModelCapabilities } from "../provider/museModelCatalog.ts";
 import { makeMuseTextGeneration } from "./MuseTextGeneration.ts";
+import type { WorkItemMatchGenerationInput } from "./TextGeneration.ts";
 
 const settings = Schema.decodeSync(MuseSettings)({ enabled: true });
 const modelSelection = createModelSelection(
@@ -27,6 +28,22 @@ const titleInput = {
   cwd: "/project/should-not-be-used",
   message: "Fix the login form",
   modelSelection,
+};
+const matchSource = {
+  kind: "issue" as const,
+  provider: "github",
+  repository: "acme/web",
+  number: 1,
+  title: "Login fails",
+  url: "https://github.com/acme/web/issues/1",
+  body: "The callback fails.",
+};
+const matchInput: WorkItemMatchGenerationInput = {
+  cwd: titleInput.cwd,
+  modelSelection,
+  relationship: "duplicate",
+  source: matchSource,
+  candidates: [{ ...matchSource, number: 2, url: "https://github.com/acme/web/issues/2" }],
 };
 
 function fixture(
@@ -114,6 +131,31 @@ const finish =
   };
 
 it.layer(NodeServices.layer)("Muse text generation", (it) => {
+  it.effect("generates work item matches through Muse", () =>
+    Effect.gen(function* () {
+      const matches = [{ candidate: 1, confidence: "high", reason: "Same callback" }];
+      const test = fixture(finish(JSON.stringify({ matches })));
+      const service = yield* test.make;
+      expect(yield* service.findWorkItemMatches(matchInput)).toEqual({ matches });
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("rejects malformed work item matches and closes the host", () =>
+    Effect.gen(function* () {
+      const test = fixture(
+        finish('{"matches":[{"candidate":1,"confidence":"low","reason":"Same callback"}]}'),
+      );
+      const service = yield* test.make;
+      expect(yield* service.findWorkItemMatches(matchInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "TextGenerationError",
+        operation: "findWorkItemMatches",
+        detail: "Muse returned invalid structured output.",
+      });
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
   it.effect("validates the final item once and closes an isolated restrictive host", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'));
