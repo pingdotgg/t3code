@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-08T14:44:57Z",
+  "updatedAt": "2026-10-08T21:30:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -112,6 +112,24 @@
     "codex": {
       "profiles": {},
       "models": [
+        {
+          "slug": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "status": "current",
+          "adapter": { "codex": { "minVersion": "0.153.0" } }
+        },
+        {
+          "slug": "gpt-6-astra",
+          "name": "GPT-6 Astra",
+          "status": "current",
+          "adapter": { "codex": { "minVersion": "0.153.0" } }
+        },
+        {
+          "slug": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "status": "current",
+          "adapter": { "codex": { "minVersion": "0.155.0" } }
+        },
         { "slug": "gpt-6-sol", "name": "GPT-6 Sol", "status": "legacy" },
         { "slug": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "status": "legacy" },
         { "slug": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "status": "legacy" },
