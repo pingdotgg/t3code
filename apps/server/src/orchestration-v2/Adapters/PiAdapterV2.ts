@@ -3160,25 +3160,21 @@ function piQuestion(
       ? event["options"]
           .filter((option): option is string => typeof option === "string")
           .map((option) => ({ label: option || "Empty value", description: option, value: option }))
-      : [
-          {
-            label: "Submit empty value",
-            description: "Send an empty string to the extension.",
-            value: "",
-          },
-        ];
-  // The user-input contract has no prefill field, so an editor dialog's
-  // prefill is surfaced inside the question text; without it the user would
-  // edit blind against content they cannot see.
-  const prefill = method === "editor" ? recordString(event, "prefill") : undefined;
+      : method === "editor"
+        ? []
+        : [
+            {
+              label: "Submit empty value",
+              description: "Send an empty string to the extension.",
+              value: "",
+            },
+          ];
   const question = recordString(event, "message") ?? recordString(event, "placeholder") ?? title;
   return {
     id: questionId,
     header: title,
-    question:
-      prefill === undefined || prefill.length === 0
-        ? question
-        : `${question}\n\nCurrent value:\n${prefill.slice(0, 2_000)}`,
+    question,
+    ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
   };
 }

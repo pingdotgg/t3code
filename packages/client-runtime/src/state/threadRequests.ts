@@ -41,6 +41,27 @@ export interface PendingThreadRequests {
   readonly userInputs: ReadonlyArray<ThreadPendingUserInput>;
 }
 
+/** Seed each question once. Existing edits, cleared answers, and option selections win. */
+export function seedUserInputDraftAnswers<Draft extends { readonly customAnswer?: string }>(
+  questions: ReadonlyArray<
+    Pick<OrchestrationV2UserInputQuestion, "id" | "allowCustomAnswer" | "initialAnswer">
+  >,
+  drafts: Record<string, Draft>,
+): Record<string, Draft | { customAnswer: string }> {
+  let seeded: Record<string, Draft | { customAnswer: string }> = drafts;
+  for (const question of questions) {
+    if (
+      question.initialAnswer === undefined ||
+      question.allowCustomAnswer === false ||
+      seeded[question.id] !== undefined
+    )
+      continue;
+    if (seeded === drafts) seeded = { ...drafts };
+    seeded[question.id] = { customAnswer: question.initialAnswer };
+  }
+  return seeded;
+}
+
 /** Joins pending request entities to the request items that carry display data. */
 export function derivePendingThreadRequests(
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,

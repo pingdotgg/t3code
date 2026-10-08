@@ -189,6 +189,8 @@ export function QuestionAttachments(props: {
       <TextInputWrapper onPaste={paste}>
         <TextInput
           value={props.value}
+          multiline={props.question.initialAnswer !== undefined}
+          submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
           onChangeText={props.onChangeText}
           onFocus={() => props.onInputFocusChange?.(true)}

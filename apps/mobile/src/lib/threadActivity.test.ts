@@ -2011,6 +2011,29 @@ const multiSelectQuestion = {
 } as const;
 
 describe("pending user input answers", () => {
+  it("preserves exact editor text, including a deliberately cleared answer", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    expect(
+      buildPendingUserInputAnswers([question], {
+        runtime: { customAnswer: question.initialAnswer },
+      }),
+    ).toEqual({ runtime: question.initialAnswer });
+    expect(
+      buildPendingUserInputAnswers([question], {
+        runtime: { customAnswer: "  Edited message\n\n" },
+      }),
+    ).toEqual({ runtime: "  Edited message\n\n" });
+    expect(buildPendingUserInputAnswers([question], { runtime: { customAnswer: "" } })).toEqual({
+      runtime: "",
+    });
+    expect(buildPendingUserInputAnswers([question], { runtime: { customAnswer: " \n" } })).toEqual({
+      runtime: " \n",
+    });
+    expect(setPendingUserInputCustomAnswer(question, { selectedOptionValues: ["Go"] }, "")).toEqual(
+      { customAnswer: "" },
+    );
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(

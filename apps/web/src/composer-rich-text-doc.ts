@@ -537,8 +537,15 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean; blocks?: boolean },
+  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean },
 ): Record<string, unknown>[] {
+  // Editor answers are verbatim text, including Markdown and context-token sources.
+  if (options?.literalText) {
+    return value.split("\n").map((line) => ({
+      type: "paragraph",
+      ...(line ? { content: [{ type: "text", text: line }] } : {}),
+    }));
+  }
   const styling = options?.styling ?? true;
   // Inline marks without block structure: text pasted into a list item or
   // quote, which has no line to write a nested block into.
@@ -759,7 +766,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean },
+  options?: { styling?: boolean; literalText?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   // The empty line the rule extension keeps after a final rule.

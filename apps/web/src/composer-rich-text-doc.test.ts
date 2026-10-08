@@ -3,6 +3,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
+import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it } from "vite-plus/test";
 
 import { collapseExpandedComposerCursor } from "./composer-logic";
@@ -134,6 +135,53 @@ function roundTripPlain(value: string) {
   const doc = ProseMirrorNode.fromJSON(plainSchema, json);
   return serializeEditorDoc(doc);
 }
+
+describe("literal editor answers", () => {
+  const makeDoc = (value: string) =>
+    ProseMirrorNode.fromJSON(
+      plainSchema,
+      buildDocJson(value, (name) => ({ label: name, description: null }), {
+        literalText: true,
+      }),
+    );
+
+  it.each([
+    "",
+    "\n\n",
+    "  - [X] done\n\n**keep** €my-skill @README.md  \n",
+    "line one\r\nline two\r\n",
+    `- [X] done\n${"  detail €my-skill @README.md\n".repeat(100)}`,
+  ])("preserves the complete answer through selection and serialization", (value) => {
+    const doc = makeDoc(value);
+    doc.check();
+    const serialized = serializeEditorDoc(doc);
+    expect(serialized.value).toBe(value);
+    expect(serialized.contextIds).toEqual([]);
+    expect(serializeSelection(doc, 1, doc.content.size - 1)).toBe(value);
+    for (let offset = 0; offset <= value.length; offset += 1) {
+      expect(flatToCollapsed(serialized, offset)).toBe(offset);
+    }
+  });
+
+  it("edits literal Markdown, inserts a newline, and preserves an explicitly cleared answer", () => {
+    const value = "  - [X] done €my-skill @README.md  ";
+    const doc = makeDoc(value);
+    let state = EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, doc.content.size - 1),
+    });
+    state = state.apply(state.tr.insertText(" edited"));
+    expect(
+      splitBlockKeepMarks(state, (transaction) => {
+        state = state.apply(transaction);
+      }),
+    ).toBe(true);
+    state = state.apply(state.tr.insertText("second line  "));
+    expect(serializeEditorDoc(state.doc).value).toBe(`${value} edited\nsecond line  `);
+    state = state.apply(state.tr.delete(1, state.doc.content.size - 1));
+    expect(serializeEditorDoc(state.doc).value).toBe("");
+  });
+});
 
 describe("composer rich text document model", () => {
   it.each(["€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
