@@ -5,6 +5,8 @@ import {
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadShell,
   type ServerConfig,
+  type ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -174,11 +176,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ),
     );
 
+  // Server items and deferred link fills both read the snapshot and write it back; one at a
+  // time, so neither can overwrite what the other wrote in between.
+  const snapshotWriteLock = yield* Semaphore.make(1);
+
   // Apply each received batch with one state write. The RPC client's bounded
   // buffer can split a server chunk, so a bulk action can still need several
   // writes, but each write includes every event in that batch.
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
+    // Ids of rows whose links will fill later; they are held out of saves before one queues.
+    pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
@@ -220,6 +228,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
+    if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
+      pendingLinkRows = new Set(
+        next.snapshot.value.threads.filter((thread) => pendingLinkIds.has(thread.id)),
+      );
+    }
     if (Option.isSome(next.snapshot)) {
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
     }
@@ -233,7 +246,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
       yield* Queue.offer(persistence, next.snapshot.value);
     }
-  });
+  }, snapshotWriteLock.withPermit);
 
   // Rows can arrive before their pull request links (see DeferredShellSnapshot), so the list
   // paints first. The links then fill into the rows that still hold the object they arrived
@@ -241,12 +254,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Captured so fills started from the subscription callback still end with this state.
   const stateScope = yield* Effect.scope;
   // Each full snapshot supersedes the previous one's fill; links from an older snapshot must
-  // not land on rows a newer snapshot reused.
+  // not land on rows a newer snapshot reused. A cancelled fill's rows stay pending until the
+  // next snapshot replaces the pending set.
   let activeFill: Fiber.Fiber<void> | undefined;
   const cancelActiveFill = Effect.suspend(() => {
     const fill = activeFill;
     activeFill = undefined;
-    pendingLinkRows = new Set();
     return fill === undefined ? Effect.void : Fiber.interrupt(fill);
   });
   const fillDeferredPullRequests = Effect.fnUntraced(function* (
@@ -260,46 +273,51 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     pendingLinkRows = new Set(applied.threads.filter((thread) => arrivedIds.has(thread.id)));
     activeFill = yield* source.loadPullRequests.pipe(
       Effect.flatMap((linksByThreadId) =>
-        SubscriptionRef.modify(
-          state,
-          (current): [Option.Option<OrchestrationV2ShellSnapshot>, EnvironmentShellState] => {
-            if (Option.isNone(current.snapshot)) return [Option.none(), current];
-            const snapshot = current.snapshot.value;
-            let changed = false;
-            const threads = snapshot.threads.map((thread) => {
-              if (!arrivedRows.has(thread) || !arrivedIds.has(thread.id)) return thread;
-              const links = linksByThreadId.get(thread.id);
-              // A reused row may already hold these links from an earlier fill.
-              if (sameThreadPullRequests(thread.pullRequests, links)) return thread;
-              changed = true;
-              if (links === undefined) {
-                const { pullRequests: _previous, ...row } = thread;
-                return row;
-              }
-              return { ...thread, pullRequests: links };
-            });
-            if (!changed) return [Option.none(), current];
-            const next = { ...snapshot, threads };
-            return [Option.some(next), { ...current, snapshot: Option.some(next) }];
-          },
-        ),
+        writeFilledLinks(linksByThreadId, arrivedRows, arrivedIds),
       ),
-      // Saves skipped while links were pending are queued again. Cached rows are never live:
-      // until a server snapshot arrives there is nothing new to save.
-      Effect.flatMap((filled) =>
-        Effect.gen(function* () {
-          pendingLinkRows = new Set();
-          const live = yield* Ref.get(latestLiveSnapshot);
-          if (Option.isNone(live)) return;
-          const latest = Option.isSome(filled) ? filled : live;
-          yield* Ref.set(latestLiveSnapshot, latest);
-          yield* Queue.offer(persistence, latest.value);
-        }),
-      ),
-      Effect.asVoid,
       Effect.forkIn(stateScope),
     );
   });
+  const writeFilledLinks = Effect.fnUntraced(
+    function* (
+      linksByThreadId: ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>,
+      arrivedRows: ReadonlySet<OrchestrationV2ThreadShell>,
+      arrivedIds: ReadonlySet<ThreadId>,
+    ) {
+      const filled = yield* SubscriptionRef.modify(
+        state,
+        (current): [Option.Option<OrchestrationV2ShellSnapshot>, EnvironmentShellState] => {
+          if (Option.isNone(current.snapshot)) return [Option.none(), current];
+          const snapshot = current.snapshot.value;
+          let changed = false;
+          const threads = snapshot.threads.map((thread) => {
+            if (!arrivedRows.has(thread) || !arrivedIds.has(thread.id)) return thread;
+            const links = linksByThreadId.get(thread.id);
+            // A reused row may already hold these links from an earlier fill.
+            if (sameThreadPullRequests(thread.pullRequests, links)) return thread;
+            changed = true;
+            if (links === undefined) {
+              const { pullRequests: _previous, ...row } = thread;
+              return row;
+            }
+            return { ...thread, pullRequests: links };
+          });
+          if (!changed) return [Option.none(), current];
+          const next = { ...snapshot, threads };
+          return [Option.some(next), { ...current, snapshot: Option.some(next) }];
+        },
+      );
+      // Saves skipped while links were pending are queued again. Cached rows are never live:
+      // until a server snapshot arrives there is nothing new to save.
+      pendingLinkRows = new Set();
+      const live = yield* Ref.get(latestLiveSnapshot);
+      if (Option.isNone(live)) return;
+      const latest = Option.isSome(filled) ? filled : live;
+      yield* Ref.set(latestLiveSnapshot, latest);
+      yield* Queue.offer(persistence, latest.value);
+    },
+    (effect) => snapshotWriteLock.withPermit(effect),
+  );
   if (Option.isSome(cached) && Option.isSome(cachedSnapshot)) {
     yield* fillDeferredPullRequests(cached.value, cachedSnapshot.value);
   }
@@ -352,7 +370,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               Option.getOrNull(previous.snapshot),
               withoutDeferredPullRequests(httpSnapshot.value),
             );
-            yield* applyItems([{ kind: "snapshot", snapshot }]);
+            const pendingLinkIds = new Set(
+              httpSnapshot.value.loadPullRequests === undefined
+                ? []
+                : httpSnapshot.value.threads.map((thread) => thread.id),
+            );
+            yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
             canResume = true;
             current = yield* SubscriptionRef.get(state);
             if (Option.isSome(current.snapshot)) {
@@ -385,7 +408,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
+    ).pipe(Stream.runForEachArray((items) => applyItems(items))),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {

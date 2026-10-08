@@ -47,7 +47,7 @@ export function detachPullRequests(snapshot: unknown): ReadonlyArray<unknown> {
 
 /**
  * Attaches a `loadPullRequests` that decodes the detached links after yielding to the host.
- * Unreadable links resolve to no links; the rows stay usable and the server resends them.
+ * A thread whose links cannot be read gets none; its row stays usable.
  */
 export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
   snapshot: S,
@@ -67,17 +67,19 @@ export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
         batchSize = 0;
       }
       batchSize += size;
-      const links = yield* decodeThreadLinks(raw);
+      // An unreadable thread keeps no links; the others still fill in.
+      const links = yield* decodeThreadLinks(raw).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Discarding unreadable shell pull request links.", {
+            threadId,
+            cause: String(cause),
+          }).pipe(Effect.as(undefined)),
+        ),
+      );
       if (links !== undefined) linksByThreadId.set(threadId, links);
     }
     return linksByThreadId as ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>;
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("Discarding unreadable shell pull request links.", {
-        cause: String(cause),
-      }).pipe(Effect.as(new Map<ThreadId, ReadonlyArray<ThreadPullRequestLink>>())),
-    ),
-  );
+  });
   return { ...snapshot, loadPullRequests };
 }
 

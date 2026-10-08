@@ -296,15 +296,34 @@ describe("mobile SQLite environment cache store", () => {
       const store = yield* make().pipe(
         Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
       );
-      yield* store.saveShell(ENVIRONMENT_ID, SHELL_SNAPSHOT);
+      const link: ThreadPullRequestLink = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 5,
+        url: "https://github.com/pingdotgg/t3code/pull/5",
+        source: "agent",
+        linkedAt: "2026-07-29T12:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const readable = {
+        ...SHELL_SNAPSHOT.threads[0]!,
+        id: ThreadId.make("thread-2"),
+        pullRequests: [link],
+      };
+      yield* store.saveShell(ENVIRONMENT_ID, {
+        ...SHELL_SNAPSHOT,
+        threads: [SHELL_SNAPSHOT.threads[0]!, readable],
+      });
       const id = cacheId(ENVIRONMENT_ID, "shell", "snapshot");
       const payload = JSON.parse(memory.values.get(id)!);
       payload.snapshot.threads[0].pullRequests = [{ number: -1 }];
       memory.values.set(id, JSON.stringify(payload));
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
-      expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID]);
-      expect((yield* shell.loadPullRequests!).size).toBe(0);
+      expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID, readable.id]);
+      // Only the thread with the unreadable link loses its links.
+      expect([...(yield* shell.loadPullRequests!)]).toEqual([[readable.id, [link]]]);
       expect(messages).toHaveLength(1);
       expect(memory.removed).toEqual([]);
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
