@@ -13,6 +13,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
+  resolveSidebarProjectScopeKey,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -52,6 +53,66 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it("keeps both scratch hosts in one filter and migrates a physical scope after config loads", () => {
+    const projects = [
+      makeProject({ title: "No project", workspaceRoot: "/local/scratch" }),
+      makeProject({
+        id: ProjectId.make("scratch-remote"),
+        environmentId: remoteEnvironmentId,
+        title: "No project",
+        workspaceRoot: "/remote/scratch",
+      }),
+    ];
+    const build = (scratch: boolean) =>
+      buildSidebarProjectSnapshots({
+        projects: projects.map((project) => ({
+          ...project,
+          ...(scratch ? { isScratch: true as const } : {}),
+        })),
+        settings: defaultGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (id) => id,
+      });
+    const oldKey = derivePhysicalProjectKey(projects[1]!);
+    const unloaded = build(false);
+    const groups = build(true);
+    const scratchKey = groups[0]!.projectKey;
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.displayName).toBe("No project");
+    expect(groups[0]?.memberProjects).toHaveLength(2);
+    expect(groups[0]?.memberProjectRefs).toEqual(
+      projects.map((project) => ({ environmentId: project.environmentId, projectId: project.id })),
+    );
+    expect(resolveSidebarProjectScopeKey({ groups: unloaded, key: oldKey })).toBe(oldKey);
+    expect(resolveSidebarProjectScopeKey({ groups, key: oldKey, canClearMissingScope: true })).toBe(
+      scratchKey,
+    );
+    expect(resolveSidebarProjectScopeKey({ groups: unloaded, key: scratchKey })).toBe(scratchKey);
+    expect(
+      resolveSidebarProjectScopeKey({ groups, key: scratchKey, canClearMissingScope: true }),
+    ).toBe(scratchKey);
+    expect(
+      resolveSidebarProjectScopeKey({ groups, key: "removed", canClearMissingScope: true }),
+    ).toBeNull();
+  });
+
+  it("does not migrate an ordinary physical filter into a repository group", () => {
+    const project = makeProject({ repositoryIdentity, title: "No project" });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [project],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    expect(
+      resolveSidebarProjectScopeKey({
+        groups,
+        key: derivePhysicalProjectKey(project),
+        canClearMissingScope: true,
+      }),
+    ).toBeNull();
+  });
+
   it("groups matching repository identities across environments", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

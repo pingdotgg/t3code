@@ -11,6 +11,8 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
 
+const SCRATCH_PROJECT_SCOPE_KEY = "\0no-project";
+
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
   readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
@@ -105,7 +107,8 @@ function deriveRepositoryScopedKey(
   const canonicalKey = project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity)
     : null;
-  if (!canonicalKey) {
+  // A NUL reserves the scratch key namespace outside valid repository identities.
+  if (!canonicalKey || canonicalKey.includes("\0")) {
     return null;
   }
 
@@ -126,12 +129,13 @@ function deriveRepositoryScopedKey(
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
   },
 ): string {
+  if (project.isScratch) return SCRATCH_PROJECT_SCOPE_KEY;
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
@@ -147,13 +151,26 @@ export function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
   >,
   settings: ProjectGroupingSettings,
 ): string {
   return deriveLogicalProjectKey(project, {
     groupingMode: resolveProjectGroupingMode(project, settings),
   });
+}
+
+/** Resolves a scratch filter selected before its environment config identified the project. */
+export function resolveScratchProjectScopeKey(
+  key: string | null,
+  projects: ReadonlyArray<
+    Pick<EnvironmentProject, "environmentId" | "workspaceRoot" | "isScratch">
+  >,
+): string | null {
+  if (key === null || key === SCRATCH_PROJECT_SCOPE_KEY) return key;
+  return projects.some((project) => project.isScratch && derivePhysicalProjectKey(project) === key)
+    ? SCRATCH_PROJECT_SCOPE_KEY
+    : key;
 }
 
 export function deriveProjectGroupLabel(input: {
@@ -313,8 +330,9 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
         : null) ?? members[0]!.project;
     return {
       key,
-      label:
-        members.length > 1
+      label: representative.isScratch
+        ? "No project"
+        : members.length > 1
           ? deriveProjectGroupLabel({
               representative,
               members: members.map((member) => member.project),

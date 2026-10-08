@@ -129,6 +129,7 @@ import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalPro
 import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
+  resolveSidebarProjectScopeKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -2594,8 +2595,12 @@ export default function Sidebar() {
   // The selection lives in the persisted UI store next to the other sidebar
   // project preferences, so routes that unmount the sidebar (Settings) and
   // app restarts keep it.
-  const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
+  const persistedProjectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const projectScopeKey = useMemo(
+    () => resolveSidebarProjectScopeKey({ groups: projectGroups, key: persistedProjectScopeKey }),
+    [persistedProjectScopeKey, projectGroups],
+  );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
@@ -2678,15 +2683,28 @@ export default function Sidebar() {
           ),
     [scopedProjectGroup],
   );
-  // A persisted scope whose project is gone falls back to all projects, but
-  // only after every catalog environment has a live project snapshot. Cached
-  // or disconnected environments cannot establish that the project is gone.
+  // Configs identify scratch projects, so both they and live project snapshots
+  // must arrive before a persisted scope can be considered missing.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const allProjectConfigsReady = environments.every((environment) =>
+    serverConfigs.has(environment.environmentId),
+  );
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
-      setProjectScopeKey(null);
+    const nextKey = resolveSidebarProjectScopeKey({
+      groups: projectGroups,
+      key: persistedProjectScopeKey,
+      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    });
+    if (nextKey !== persistedProjectScopeKey) {
+      setProjectScopeKey(nextKey);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectConfigsReady,
+    allProjectSnapshotsReady,
+    persistedProjectScopeKey,
+    projectGroups,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
