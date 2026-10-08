@@ -120,6 +120,13 @@ export function FileMarkdownPreview(props: {
         workspaceRoot: markdownDirectory,
         imageEmbed: true,
       });
+      const preview = resolveMarkdownMediaPreview(image.href, {
+        environmentId: props.environmentId,
+        threadId: props.threadId ?? undefined,
+        workspaceRoot: markdownDirectory,
+        captured: props.captured,
+        imageEmbed: true,
+      });
       if (media?.access === "direct") {
         if (media.kind === "video") {
           return (
@@ -129,6 +136,7 @@ export function FileMarkdownPreview(props: {
                 name: media.name,
                 mimeType: media.mimeType,
                 uri: normalizeNativeMarkdownUrl(media.uri),
+                actionsSource: preview?.source.actionsSource,
               }}
               thumbnailVisible
             />
@@ -141,6 +149,7 @@ export function FileMarkdownPreview(props: {
             unavailable={false}
             alt={image.alt}
             format={media.mimeType === "image/svg+xml" ? "svg" : undefined}
+            actionsSource={preview?.source.actionsSource}
             onPressPreview={setExpandedFile}
           />
         );
@@ -149,26 +158,6 @@ export function FileMarkdownPreview(props: {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       }
       if (media.kind === "video") {
-        if (!props.threadId) {
-          return (
-            <ThreadMarkdownVideo
-              source={{
-                type: "media",
-                name: media.name,
-                mimeType: media.mimeType,
-                environmentId: props.environmentId,
-                resource: media.resource,
-                srcFragment: media.srcFragment,
-              }}
-              thumbnailVisible
-            />
-          );
-        }
-        const preview = resolveMarkdownMediaPreview(image.href, {
-          environmentId: props.environmentId,
-          threadId: props.threadId,
-          workspaceRoot: markdownDirectory,
-        });
         return preview?.kind === "video" ? (
           <ThreadMarkdownVideo source={preview.source} thumbnailVisible />
         ) : (
@@ -181,6 +170,7 @@ export function FileMarkdownPreview(props: {
           resource={media.resource}
           alt={image.alt}
           srcFragment={media.srcFragment}
+          actionsSource={preview?.source.actionsSource}
           onPressPreview={setExpandedFile}
         />
       );
