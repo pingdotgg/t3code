@@ -124,6 +124,12 @@ export interface BriefThread {
   readonly excerpt: string | null;
 }
 
+/** "games/_tools" reads "tools"; a thread that worked in the project root gets its title. */
+export function briefProject(workingSubpath: string | null, projectTitle: string | undefined) {
+  const folder = workingSubpath?.split("/").at(-1)?.replace(/^_+/, "");
+  return folder || projectTitle || "";
+}
+
 export interface BriefGroupDraft {
   readonly key: string;
   readonly kind: BriefOutcome;
@@ -285,8 +291,7 @@ const make = Effect.gen(function* () {
         threadId: thread.id,
         title: thread.title,
         outcome,
-        project:
-          digest?.workingSubpath?.split("/").at(-1) ?? projectTitles.get(thread.projectId) ?? "",
+        project: briefProject(digest?.workingSubpath ?? null, projectTitles.get(thread.projectId)),
         errorClass: thread.lastErrorClass ?? null,
         error: thread.lastError ?? null,
         excerpt: digest?.excerpt ?? null,

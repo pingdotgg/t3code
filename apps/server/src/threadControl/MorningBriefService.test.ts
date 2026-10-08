@@ -20,6 +20,7 @@ import {
   type BriefThread,
   briefGroups,
   briefOutcome,
+  briefProject,
   briefSince,
   plainLine,
   VISIT_GAP_MS,
@@ -63,6 +64,12 @@ describe("morning brief", () => {
     expect(briefSince({ seenAt: now - 200 * HOUR, previousSeenAt: null }, now)).toBe(
       now - 72 * HOUR,
     );
+  });
+
+  it("names done work after the folder it touched", () => {
+    expect(briefProject("games/hll", "SWE")).toBe("hll");
+    expect(briefProject("games/_tools", "SWE")).toBe("tools");
+    expect(briefProject(null, "SWE")).toBe("SWE");
   });
 
   it("calls an interrupted or cancelled run stopped, not failed", () => {

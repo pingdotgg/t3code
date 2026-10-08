@@ -19,7 +19,7 @@ page.
 
 Needs you holds only what is blocked on the owner: open Decisions and threads
 waiting on an approval or an answer. Things he might like to know about
-(finished threads, failed jobs) fold into the one-line Morning brief at the top.
+(finished threads, failed jobs) go in the Morning brief at the top.
 They don't take a slot in the queue.
 
 ## A card reads in three seconds
