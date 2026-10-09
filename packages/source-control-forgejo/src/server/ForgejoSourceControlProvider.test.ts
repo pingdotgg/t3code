@@ -1,13 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import type * as Context from "effect/Context";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
@@ -20,38 +19,45 @@ import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts
 const processOutput = TestSourceControlHost.processOutput;
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+/** The JSON body a request sends. Forgejo encodes bodies as UTF-8 text. */
+const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
+  assert.strictEqual(request.body._tag, "Uint8Array");
+  return request.body._tag === "Uint8Array"
+    ? decodeJson(new TextDecoder().decode(request.body.body))
+    : undefined;
+};
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
   const methods: string[] = [];
-  const fetchReview = async (
-    ...[input, init]: Parameters<Context.Service.Shape<typeof FetchHttpClient.Fetch>>
-  ) => {
-    const request = new Request(input instanceof Request ? input.url : String(input), {
-      ...(init?.method === undefined ? {} : { method: init.method }),
-      ...(init?.headers === undefined ? {} : { headers: init.headers }),
-      ...(init?.body === undefined ? {} : { body: init.body }),
-    });
+  const reviewClient = HttpClient.make((request) => {
     methods.push(request.method);
     if (request.method === "GET") {
       assert.strictEqual(request.url, "https://forgejo.test/api/v1/repos/maria/project/pulls/42");
-      return new Response(
-        encodeJson({
-          number: 42,
-          title: "Review target",
-          body: "",
-          html_url: "https://forgejo.test/maria/project/pulls/42",
-          user: { login: "maria" },
-          state: "open",
-          merged: false,
-          head: { ref: "feature", sha: "head", repo: null },
-          base: { ref: "main", sha: "base", repo: null },
-          created_at: "2026-09-13T00:00:00Z",
-          updated_at: "2026-09-13T00:00:00Z",
-          closed_at: null,
-          merged_at: null,
-          labels: [],
-        }),
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson({
+              number: 42,
+              title: "Review target",
+              body: "",
+              html_url: "https://forgejo.test/maria/project/pulls/42",
+              user: { login: "maria" },
+              state: "open",
+              merged: false,
+              head: { ref: "feature", sha: "head", repo: null },
+              base: { ref: "main", sha: "base", repo: null },
+              created_at: "2026-09-13T00:00:00Z",
+              updated_at: "2026-09-13T00:00:00Z",
+              closed_at: null,
+              merged_at: null,
+              labels: [],
+            }),
+          ),
+        ),
       );
     }
     assert.strictEqual(request.method, "POST");
@@ -59,14 +65,16 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
       request.url,
       "https://forgejo.test/api/v1/repos/maria/project/pulls/42/reviews",
     );
-    assert.deepStrictEqual(JSON.parse(await request.text()), {
+    assert.deepStrictEqual(requestJson(request), {
       event: "COMMENT",
       body: "Review summary",
       commit_id: "head",
       comments: [],
     });
-    return new Response('{"id":1}', { status: 200 });
-  };
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(request, new Response('{"id":1}', { status: 200 })),
+    );
+  });
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
@@ -83,11 +91,7 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
     });
     assert.deepStrictEqual(methods, ["GET", "POST"]);
   }).pipe(
-    Effect.provideService(
-      FetchHttpClient.Fetch,
-      Object.assign(fetchReview, { preconnect: () => undefined }),
-    ),
-    Effect.provide(FetchHttpClient.layer),
+    Effect.provideService(HttpClient.HttpClient, reviewClient),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -837,11 +841,7 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
         }
         assert.strictEqual(request.method, "POST");
         assert.strictEqual(request.headers.authorization, "token test-token");
-        assert.strictEqual(request.body._tag, "Uint8Array");
-        if (request.body._tag === "Uint8Array")
-          assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(request.body.body)), {
-            body: "verified through fj",
-          });
+        assert.deepStrictEqual(requestJson(request), { body: "verified through fj" });
         return Effect.succeed(
           HttpClientResponse.fromWeb(request, new Response('{"id":99}', { status: 201 })),
         );
