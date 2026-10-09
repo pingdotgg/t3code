@@ -390,7 +390,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
 
   const updateProvider = Effect.fn("ProviderMaintenanceRunner.updateProvider")(function* (
     target: Parameters<ProviderMaintenanceRunnerShape["updateProvider"]>[0],
-    alreadyAdmitted = false,
+    alreadyAdmitted: boolean = false,
   ) {
     const provider = typeof target === "string" ? target : target.provider;
     const instanceId =
