@@ -13,6 +13,7 @@ import * as ProviderMaintenanceCoordinator from "../provider/providerMaintenance
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 
 /** Work due this soon keeps the window closed, so it does not start late. */
 const UPDATE_LOOKAHEAD = Duration.minutes(5);
@@ -43,6 +44,7 @@ export type UpdateWindowBlocker =
   | { readonly type: "recent-interaction"; readonly quietAt: DateTime.Utc }
   | { readonly type: "focused-window" }
   | { readonly type: "provider-update" }
+  | { readonly type: "terminal-work" }
   | {
       readonly type: "scheduled-task";
       readonly taskId: ScheduledTaskId;
@@ -59,6 +61,8 @@ export type UpdateWindowBlocker =
 export interface UpdateWindowOptions {
   /** The update closes the app windows (a desktop install), not just a reconnect. */
   readonly closesWindows: boolean;
+  /** Server shutdown also terminates integrated terminals. */
+  readonly restartsServer?: boolean;
 }
 
 export interface UpdateWindowStatus {
@@ -98,6 +102,7 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const timings = yield* updateTimings;
   const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
+  const terminals = yield* TerminalManager.TerminalManager;
 
   const check: UpdateWindow["Service"]["check"] = Effect.fn("updates.UpdateWindow.check")(
     function* (options) {
@@ -126,6 +131,9 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
       );
       if (providerUpdating) {
         blockers.push({ type: "provider-update" });
+      }
+      if (options.restartsServer && (yield* terminals.hasBusyTerminals)) {
+        blockers.push({ type: "terminal-work" });
       }
 
       const lastInteraction = yield* backgroundPolicy.lastClientInteractionAt;
@@ -218,12 +226,14 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     },
   );
 
-  const runIfOpen: UpdateWindow["Service"]["runIfOpen"] = (options, install) =>
-    admission.withPermit(
-      check(options).pipe(
-        Effect.flatMap((status) => (status.open ? Effect.asSome(install) : Effect.succeedNone)),
-      ),
+  const runIfOpen: UpdateWindow["Service"]["runIfOpen"] = (options, install) => {
+    const attempt = check(options).pipe(
+      Effect.flatMap((status) => (status.open ? Effect.asSome(install) : Effect.succeedNone)),
     );
+    return admission.withPermit(
+      options.restartsServer ? terminals.withRestartPermit(attempt) : attempt,
+    );
+  };
   const runWhenOpen: UpdateWindow["Service"]["runWhenOpen"] = (options, install) =>
     Effect.gen(function* () {
       while (true) {
