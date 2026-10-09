@@ -15,7 +15,7 @@ export function DesktopContextMenu() {
         ],
         { x: payload.x, y: payload.y },
       ).then((action) => {
-        if (action === "copy-image" || action === "copy-link")
+        if (action === "copy-image" || action === "copy-link" || action === "select-all")
           void bridge.applyDesktopContextMenuAction({ action, requestId: payload.requestId });
       });
     });

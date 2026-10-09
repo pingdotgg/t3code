@@ -139,6 +139,15 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteView() {
+  return (
+    <>
+      <DesktopContextMenu />
+      <RootRouteContents />
+    </>
+  );
+}
+
+function RootRouteContents() {
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
@@ -236,7 +245,6 @@ function RootRouteView() {
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
-          <DesktopContextMenu />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
